@@ -19,7 +19,7 @@ import {
   type RunCreateBody,
   type StateView,
 } from "@agentos/contracts";
-import { fault, readSystemInfo, type AgentEngine, type Core, type RunCoordinator, type UserWriteMeta } from "@agentos/core";
+import { fault, readSystemInfo, type AgentEngine, type Core, type RunCoordinator, type RuntimeSystem, type UserWriteMeta } from "@agentos/core";
 import { COOKIE, parseCookies, type SessionAuth } from "./auth.js";
 import type { HostConfig } from "./config.js";
 import type { Logger } from "./log.js";
@@ -50,6 +50,8 @@ export interface HostRuntime {
   status: HostStatus;
   /** Number of business write handlers currently executing (drained on shutdown). */
   inflight: { n: number };
+  /** v0.2 code runtime (null until booted or when it failed to start). */
+  sys: RuntimeSystem | null;
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -98,6 +100,11 @@ export function buildServer(rt: HostRuntime): FastifyInstance {
     if (params.appId) fields.appId = params.appId;
     if (params.runId) fields.runId = params.runId;
     if (params.recordId) fields.recordId = params.recordId;
+    if (params.deploymentId) fields.deploymentId = params.deploymentId;
+    if (params.invocationId) fields.invocationId = params.invocationId;
+    if (params.grantId) fields.grantId = params.grantId;
+    if (params.queryId) fields.queryId = params.queryId;
+    if (params.commandId) fields.commandId = params.commandId;
     const key = req.headers["idempotency-key"];
     if (typeof key === "string") fields.operationKey = key;
     const routine = (req.method === "GET" || req.method === "HEAD") && reply.statusCode < 400;
@@ -183,7 +190,7 @@ export function buildServer(rt: HostRuntime): FastifyInstance {
   // ---- reads ----
   app.get("/api/state", async (req, reply) => {
     requireSession(req);
-    const view: StateView = core.store.read(() => {
+    const view: StateView = core.store.read((): StateView => {
       const active = core.runs.activeRun();
       const last = core.runs.lastRun();
       return {
@@ -198,7 +205,16 @@ export function buildServer(rt: HostRuntime): FastifyInstance {
         agentDiagnostic: rt.status.agentDiagnostic ?? rt.model.diagnostic,
         hostVersion: HOST_VERSION,
         ready: rt.status.phase === "ready" && rt.status.writable,
+        runtimeReady: rt.sys?.runtimeReady ?? false,
+        runtimeProblems: rt.sys ? rt.sys.environmentProblems.slice(0, 10) : ["the code runtime has not started"],
       };
+      for (const a of view.apps) {
+        const row = core.apps.requireApp(a.appId);
+        const b = core.apps.activeBundle(row);
+        a.runtime = b?.manifest.runtime;
+        a.dataEpoch = row.data_epoch;
+        a.health = b?.formatVersion === 2 ? (rt.sys?.runtime.row(a.appId)?.health ?? "stopped") : null;
+      }
     });
     return ok(reply, 200, view);
   });
@@ -272,7 +288,9 @@ export function buildServer(rt: HostRuntime): FastifyInstance {
     withWrite(() => {
       const meta = writeMeta(req);
       const body = parseDto<ActivateBody>("activate", req.body);
-      const r = core.user.activateHistorical(meta, req.params.appId, body.revisionId, body.expectedAppEpoch);
+      const r = rt.sys
+        ? rt.sys.activateDeclarativeHistory(meta, req.params.appId, body.revisionId, body.expectedAppEpoch)
+        : core.user.activateHistorical(meta, req.params.appId, body.revisionId, body.expectedAppEpoch);
       log.info("app activated", { appId: req.params.appId, revisionId: body.revisionId, appEpoch: r.body.appEpoch, replayed: r.replayed });
       return ok(reply, r.status, r.body);
     }),
@@ -328,6 +346,139 @@ export function buildServer(rt: HostRuntime): FastifyInstance {
       const meta = writeMeta(req);
       const body = parseDto<RecordDeleteBody>("recordDelete", req.body);
       const r = core.user.deleteRecord(meta, req.params.appId, req.params.recordId, body.expectedAppEpoch, body.expectedRecordVersion);
+      return ok(reply, r.status, r.body);
+    }),
+  );
+
+  // ---- v0.2: runtime, deployments, queries, commands, services (spec §19.1) ----
+  const requireSys = (): RuntimeSystem => {
+    if (!rt.sys) throw new AgentOsError("SANDBOX_UNAVAILABLE", "the code runtime is not available on this host");
+    return rt.sys;
+  };
+  const appParam = (id: string) => {
+    if (!UUID.test(id)) throw new AgentOsError("NOT_FOUND", "app not found");
+    return id;
+  };
+
+  app.get("/api/runtime/catalog", async (req, reply) => {
+    requireSession(req);
+    const sys = requireSys();
+    const locks = [];
+    for (const l of sys.opts.catalog.locks()) {
+      const present = async (name: string) => {
+        if (!sys.ctx.driver) return false;
+        try {
+          return (await sys.ctx.driver.inspectImage(name)).present;
+        } catch {
+          return false;
+        }
+      };
+      locks.push({
+        runtimeLockId: l.id, profileId: l.profileId, platform: l.platform, sdkVersion: l.sdkVersion, abiVersion: l.abiVersion,
+        modules: l.modules.map((m) => ({ name: m.name, version: m.version, license: m.license })),
+        baseImage: l.baseImage, builderImage: { ...l.builderImage, present: await present(l.builderImage.name) }, runtimeImage: { ...l.runtimeImage, present: await present(l.runtimeImage.name) },
+      });
+    }
+    return ok(reply, 200, { platform: sys.opts.catalog.platform, catalogHash: sys.opts.catalog.hash, runtimeReady: sys.runtimeReady, problems: sys.environmentProblems, locks });
+  });
+
+  app.get<{ Params: { appId: string } }>("/api/apps/:appId/runtime", async (req, reply) => {
+    requireSession(req);
+    return ok(reply, 200, requireSys().runtime.view(appParam(req.params.appId)));
+  });
+
+  for (const action of ["start", "stop", "restart"] as const) {
+    app.post<{ Params: { appId: string } }>(`/api/apps/:appId/runtime/${action}`, async (req, reply) =>
+      withWrite(() => {
+        const meta = writeMeta(req);
+        const body = parseDto<{ expectedAppEpoch: number }>("runtimeControl", req.body);
+        const r = requireSys().control(meta, appParam(req.params.appId), action, body.expectedAppEpoch);
+        log.info(`runtime ${action}`, { appId: req.params.appId, controlEpoch: r.body.controlEpoch, replayed: r.replayed });
+        return ok(reply, r.status, r.body);
+      }),
+    );
+  }
+
+  app.post<{ Params: { appId: string } }>("/api/apps/:appId/deployments", async (req, reply) =>
+    withWrite(() => {
+      const meta = writeMeta(req);
+      const body = parseDto<{ revisionId: string; expectedAppEpoch: number }>("deploymentCreate", req.body);
+      const r = requireSys().switchVersion(meta, appParam(req.params.appId), body.revisionId, body.expectedAppEpoch);
+      log.info("deployment accepted", { appId: req.params.appId, deploymentId: r.body.deploymentId, replayed: r.replayed });
+      return ok(reply, r.status, r.body);
+    }),
+  );
+
+  app.get<{ Params: { deploymentId: string } }>("/api/deployments/:deploymentId", async (req, reply) => {
+    requireSession(req);
+    const sys = requireSys();
+    const d = UUID.test(req.params.deploymentId) ? sys.deployments.get(req.params.deploymentId) : undefined;
+    if (!d) throw new AgentOsError("NOT_FOUND", "deployment not found");
+    return ok(reply, 200, sys.deployments.dto(d));
+  });
+
+  app.post<{ Params: { appId: string; queryId: string } }>("/api/apps/:appId/queries/:queryId", async (req, reply) => {
+    // Read-only: no Idempotency-Key and no receipt, but session, origin, client epoch and input are checked.
+    requireSession(req);
+    requireReady();
+    const ep = Number(req.headers["x-agentos-epoch"]);
+    if (!Number.isSafeInteger(ep)) throw new AgentOsError("INVALID_REQUEST", "X-AgentOS-Epoch header is required");
+    if (ep !== clientEpoch()) throw new AgentOsError("CLIENT_EPOCH_STALE", "this page belongs to an older workspace state; reload", { clientEpoch: clientEpoch() });
+    const body = parseDto<{ expectedAppEpoch: number; input: unknown }>("queryCall", req.body);
+    const r = await requireSys().invocations.query(appParam(req.params.appId), req.params.queryId, body.input, body.expectedAppEpoch);
+    return ok(reply, 200, r);
+  });
+
+  app.post<{ Params: { appId: string; commandId: string } }>("/api/apps/:appId/commands/:commandId", { bodyLimit: 160 * 1024 }, async (req, reply) =>
+    withWrite(() => {
+      const meta = writeMeta(req);
+      const body = parseDto<{ expectedAppEpoch: number; input: unknown }>("commandCall", req.body);
+      const r = requireSys().submitCommand(meta, appParam(req.params.appId), req.params.commandId, body.input, body.expectedAppEpoch);
+      log.info("command accepted", { appId: req.params.appId, invocationId: r.body.invocationId, replayed: r.replayed });
+      return ok(reply, r.status, r.body);
+    }),
+  );
+
+  app.get<{ Params: { invocationId: string } }>("/api/invocations/:invocationId", async (req, reply) => {
+    requireSession(req);
+    const sys = requireSys();
+    const inv = UUID.test(req.params.invocationId) ? sys.invocations.get(req.params.invocationId) : undefined;
+    if (!inv) throw new AgentOsError("NOT_FOUND", "invocation not found");
+    return ok(reply, 200, sys.invocations.dto(inv));
+  });
+
+  app.get("/api/services", async (req, reply) => {
+    requireSession(req);
+    return ok(reply, 200, { items: requireSys().interApp.catalog() });
+  });
+
+  app.get<{ Params: { appId: string } }>("/api/apps/:appId/imports", async (req, reply) => {
+    requireSession(req);
+    return ok(reply, 200, { items: requireSys().interApp.importsOf(appParam(req.params.appId)) });
+  });
+
+  app.get("/api/service-grants", async (req, reply) => {
+    requireSession(req);
+    return ok(reply, 200, { items: requireSys().interApp.list() });
+  });
+
+  app.post("/api/service-grants", async (req, reply) =>
+    withWrite(() => {
+      const meta = writeMeta(req);
+      const body = parseDto<{ sourceAppId: string; sourceRevisionId: string; alias: string; targetAppId: string; targetRevisionId: string; exportName: string; contractHash: string }>("grantCreate", req.body);
+      const r = requireSys().createGrant(meta, body);
+      log.info("service grant created", { grantId: r.body.grantId, replayed: r.replayed });
+      return ok(reply, r.status, r.body);
+    }),
+  );
+
+  app.post<{ Params: { grantId: string } }>("/api/service-grants/:grantId/revoke", async (req, reply) =>
+    withWrite(() => {
+      const meta = writeMeta(req);
+      parseDto("empty", req.body);
+      if (!UUID.test(req.params.grantId)) throw new AgentOsError("NOT_FOUND", "grant not found");
+      const r = requireSys().revokeGrant(meta, req.params.grantId);
+      log.info("service grant revoked", { grantId: req.params.grantId, replayed: r.replayed });
       return ok(reply, r.status, r.body);
     }),
   );

@@ -1,0 +1,628 @@
+{
+  "formatVersion": 2,
+  "manifest": {
+    "appId": "9efaf674-4561-4c6b-9860-cf44e09fdd01",
+    "title": "待办看板 · 工时",
+    "description": "按完成状态分列的看板，显示各优先级数量和预计/剩余工时，支持批量完成。",
+    "runtime": "isolated-code-v1",
+    "capabilities": [
+      "records.read",
+      "records.write"
+    ]
+  },
+  "data": {
+    "fields": {
+      "title": {
+        "type": "string",
+        "label": "任务",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "done": {
+        "type": "boolean",
+        "label": "已完成",
+        "default": false
+      },
+      "priority": {
+        "type": "enum",
+        "label": "优先级",
+        "values": [
+          "low",
+          "normal",
+          "high"
+        ],
+        "default": "normal"
+      },
+      "estimate_minutes": {
+        "type": "integer",
+        "label": "预计工时（分钟）",
+        "minimum": 0,
+        "maximum": 100000,
+        "default": 0
+      }
+    }
+  },
+  "code": {
+    "entry": "src/app.ts",
+    "files": {}
+  },
+  "runtimeLockId": "core-v1@1",
+  "queries": {
+    "main": {
+      "description": "看板数据和统计",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "outputSchema": {
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "open",
+          "byPriority",
+          "totalMinutes",
+          "remainingMinutes",
+          "chart"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "maxItems": 1000,
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "title",
+                "done",
+                "priority",
+                "priorityLabel",
+                "estimate_minutes"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "maxLength": 64
+                },
+                "title": {
+                  "type": "string",
+                  "maxLength": 200
+                },
+                "done": {
+                  "type": "boolean"
+                },
+                "priority": {
+                  "type": "string",
+                  "enum": [
+                    "low",
+                    "normal",
+                    "high"
+                  ]
+                },
+                "priorityLabel": {
+                  "type": "string",
+                  "maxLength": 8
+                },
+                "estimate_minutes": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "open": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "byPriority": {
+            "type": "object",
+            "required": [
+              "high",
+              "normal",
+              "low"
+            ],
+            "properties": {
+              "high": {
+                "type": "integer"
+              },
+              "normal": {
+                "type": "integer"
+              },
+              "low": {
+                "type": "integer"
+              }
+            }
+          },
+          "totalMinutes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "remainingMinutes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "chart": {
+            "type": "array",
+            "maxItems": 3,
+            "items": {
+              "type": "object",
+              "required": [
+                "priority",
+                "open",
+                "minutes"
+              ],
+              "properties": {
+                "priority": {
+                  "type": "string",
+                  "maxLength": 8
+                },
+                "open": {
+                  "type": "integer"
+                },
+                "minutes": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "summary": {
+      "description": "任务总数、未完成数和剩余工时",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "outputSchema": {
+        "type": "object",
+        "required": [
+          "total",
+          "open",
+          "remainingMinutes"
+        ],
+        "properties": {
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "open": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "remainingMinutes": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    }
+  },
+  "commands": {
+    "add": {
+      "description": "新建任务",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "title"
+        ],
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "priority": {
+            "type": "string",
+            "enum": [
+              "low",
+              "normal",
+              "high"
+            ]
+          },
+          "estimate_minutes": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100000
+          }
+        }
+      },
+      "outputSchema": {
+        "type": "object",
+        "required": [
+          "created"
+        ],
+        "properties": {
+          "created": {
+            "type": "integer"
+          }
+        }
+      },
+      "operations": [
+        "create"
+      ],
+      "writableFields": [
+        "title",
+        "priority",
+        "estimate_minutes"
+      ]
+    },
+    "completeMany": {
+      "description": "批量完成所选任务",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "recordIds"
+        ],
+        "properties": {
+          "recordIds": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 100,
+            "items": {
+              "type": "string",
+              "maxLength": 64
+            }
+          }
+        }
+      },
+      "outputSchema": {
+        "type": "object",
+        "required": [
+          "completed"
+        ],
+        "properties": {
+          "completed": {
+            "type": "integer"
+          }
+        }
+      },
+      "operations": [
+        "update"
+      ],
+      "writableFields": [
+        "done"
+      ]
+    },
+    "setEstimate": {
+      "description": "为所选任务设置预计工时",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "recordIds",
+          "minutes"
+        ],
+        "properties": {
+          "recordIds": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 100,
+            "items": {
+              "type": "string",
+              "maxLength": 64
+            }
+          },
+          "minutes": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100000
+          }
+        }
+      },
+      "outputSchema": {
+        "type": "object",
+        "required": [
+          "updated"
+        ],
+        "properties": {
+          "updated": {
+            "type": "integer"
+          }
+        }
+      },
+      "operations": [
+        "update"
+      ],
+      "writableFields": [
+        "estimate_minutes"
+      ]
+    }
+  },
+  "exports": [
+    {
+      "exportName": "summary",
+      "queryId": "summary",
+      "contractVersion": 1,
+      "description": "待办统计：任务总数、未完成数和剩余工时（分钟）"
+    }
+  ],
+  "imports": [],
+  "view": {
+    "kind": "slot-tree-v1",
+    "dataSources": {
+      "board": {
+        "queryId": "main",
+        "input": {}
+      }
+    },
+    "slots": {
+      "toolbar": {
+        "type": "Stack",
+        "props": {
+          "direction": "horizontal",
+          "gap": "sm"
+        },
+        "children": [
+          {
+            "type": "Button",
+            "props": {
+              "label": "批量完成",
+              "command": "completeMany",
+              "variant": "primary",
+              "input": {
+                "selection": {
+                  "selectionId": "picked",
+                  "as": "recordIds"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "main": {
+        "type": "Stack",
+        "props": {
+          "gap": "md"
+        },
+        "children": [
+          {
+            "type": "Grid",
+            "props": {
+              "columns": 3,
+              "gap": "sm"
+            },
+            "children": [
+              {
+                "type": "Metric",
+                "props": {
+                  "label": "未完成",
+                  "value": {
+                    "$bind": {
+                      "from": "query",
+                      "source": "board",
+                      "pointer": "/open"
+                    }
+                  }
+                }
+              },
+              {
+                "type": "Metric",
+                "props": {
+                  "label": "预计工时",
+                  "value": {
+                    "$bind": {
+                      "from": "query",
+                      "source": "board",
+                      "pointer": "/totalMinutes"
+                    }
+                  },
+                  "unit": "分钟"
+                }
+              },
+              {
+                "type": "Metric",
+                "props": {
+                  "label": "剩余工时",
+                  "value": {
+                    "$bind": {
+                      "from": "query",
+                      "source": "board",
+                      "pointer": "/remainingMinutes"
+                    }
+                  },
+                  "unit": "分钟"
+                }
+              },
+              {
+                "type": "Metric",
+                "props": {
+                  "label": "高优先级",
+                  "value": {
+                    "$bind": {
+                      "from": "query",
+                      "source": "board",
+                      "pointer": "/byPriority/high"
+                    }
+                  }
+                }
+              },
+              {
+                "type": "Metric",
+                "props": {
+                  "label": "普通",
+                  "value": {
+                    "$bind": {
+                      "from": "query",
+                      "source": "board",
+                      "pointer": "/byPriority/normal"
+                    }
+                  }
+                }
+              },
+              {
+                "type": "Metric",
+                "props": {
+                  "label": "低优先级",
+                  "value": {
+                    "$bind": {
+                      "from": "query",
+                      "source": "board",
+                      "pointer": "/byPriority/low"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "type": "BarChart",
+            "props": {
+              "title": "各优先级未完成与剩余工时",
+              "data": {
+                "$bind": {
+                  "from": "query",
+                  "source": "board",
+                  "pointer": "/chart"
+                }
+              },
+              "xPointer": "/priority",
+              "series": [
+                {
+                  "pointer": "/open",
+                  "label": "未完成"
+                },
+                {
+                  "pointer": "/minutes",
+                  "label": "剩余工时（分钟）"
+                }
+              ]
+            }
+          },
+          {
+            "type": "Kanban",
+            "props": {
+              "items": {
+                "$bind": {
+                  "from": "query",
+                  "source": "board",
+                  "pointer": "/items"
+                }
+              },
+              "groupPointer": "/done",
+              "groups": [
+                {
+                  "value": false,
+                  "label": "未完成"
+                },
+                {
+                  "value": true,
+                  "label": "已完成"
+                }
+              ],
+              "cardTitlePointer": "/title",
+              "cardFields": [
+                {
+                  "pointer": "/priorityLabel",
+                  "label": "优先级"
+                },
+                {
+                  "pointer": "/estimate_minutes",
+                  "label": "预计工时"
+                }
+              ],
+              "rowId": "/id",
+              "selectionId": "picked"
+            }
+          },
+          {
+            "type": "Form",
+            "props": {
+              "formId": "newTask",
+              "title": "新建任务"
+            },
+            "children": [
+              {
+                "type": "TextInput",
+                "props": {
+                  "name": "title",
+                  "label": "任务",
+                  "required": true,
+                  "maxLength": 200
+                }
+              },
+              {
+                "type": "Select",
+                "props": {
+                  "name": "priority",
+                  "label": "优先级",
+                  "options": [
+                    {
+                      "value": "high",
+                      "label": "高"
+                    },
+                    {
+                      "value": "normal",
+                      "label": "普通"
+                    },
+                    {
+                      "value": "low",
+                      "label": "低"
+                    }
+                  ]
+                }
+              },
+              {
+                "type": "TextInput",
+                "props": {
+                  "name": "estimate_minutes",
+                  "label": "预计工时（分钟）",
+                  "mode": "integer",
+                  "minimum": 0,
+                  "maximum": 100000
+                }
+              },
+              {
+                "type": "Button",
+                "props": {
+                  "label": "添加",
+                  "command": "add",
+                  "input": {
+                    "form": "newTask"
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "type": "Form",
+            "props": {
+              "formId": "estimate",
+              "title": "设置所选任务的工时"
+            },
+            "children": [
+              {
+                "type": "TextInput",
+                "props": {
+                  "name": "minutes",
+                  "label": "预计工时（分钟）",
+                  "mode": "integer",
+                  "required": true,
+                  "minimum": 0,
+                  "maximum": 100000
+                }
+              },
+              {
+                "type": "Button",
+                "props": {
+                  "label": "设置工时",
+                  "command": "setEstimate",
+                  "input": {
+                    "form": "estimate",
+                    "selection": {
+                      "selectionId": "picked",
+                      "as": "recordIds"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

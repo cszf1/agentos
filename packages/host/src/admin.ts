@@ -3,11 +3,12 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { createRequire } from "node:module";
-import { loadConfig, expandHome } from "./config.js";
+import { loadConfig, expandHome, type HostConfig } from "./config.js";
+import { loadCatalog } from "./runtime-setup.js";
 import { assertLockHeld } from "./lock.js";
 import { rotateSecrets } from "./auth.js";
 import { MIGRATIONS, openCore } from "@agentos/core";
-import { checkStructure } from "@agentos/contracts";
+import { checkAnyStructure } from "@agentos/contracts";
 
 /**
  * Cold backup / restore (spec §15). Run through bin/agentos-admin, which holds the same host.lock with flock,
@@ -198,14 +199,43 @@ export function restore(dataDir: string, backupDir: string, opts: { failAfterFir
  * Spec §17 M2: internal test entry that seeds hand-written fixtures (in order) into a stopped test workspace.
  * Refused unless NODE_ENV=test; production has no fixture import over HTTP or CLI.
  */
-export function seedFixtures(dataDir: string, files: string[]): { appId: string; revisionId: string; appEpoch: number }[] {
+/** A fixture is a bundle JSON file, or a v0.2 fixture directory (bundle.json + src/). */
+export function readFixture(f: string): unknown {
+  const p = path.resolve(f);
+  if (!fs.statSync(p).isDirectory()) return JSON.parse(fs.readFileSync(p, "utf8")) as unknown;
+  const b = JSON.parse(fs.readFileSync(path.join(p, "bundle.json"), "utf8")) as { code: { files: Record<string, string> } };
+  const files: Record<string, string> = {};
+  const walk = (dir: string, rel: string) => {
+    for (const name of fs.readdirSync(dir).sort()) {
+      const full = path.join(dir, name);
+      if (fs.statSync(full).isDirectory()) walk(full, `${rel}/${name}`);
+      else files[`${rel}/${name}`] = fs.readFileSync(full, "utf8");
+    }
+  };
+  walk(path.join(p, "src"), "src");
+  b.code.files = files;
+  return b;
+}
+
+export function seedFixtures(dataDir: string, files: string[], config?: HostConfig): { appId: string; revisionId: string; appEpoch: number }[] {
   const core = openCore(path.join(dataDir, "os.sqlite"));
   try {
+    if (config) core.apps.extraCheck = loadCatalog(config).check;
     return files.map((f) => {
-      const raw = JSON.parse(fs.readFileSync(path.resolve(f), "utf8")) as unknown;
-      const s = checkStructure(raw);
-      if (!s.ok) throw new Error(`${f} is not a valid AppBundle: ${JSON.stringify(s.issues.slice(0, 3))}`);
+      const raw = readFixture(f);
+      const s = checkAnyStructure(raw);
+      if (!s.ok) throw new Error(`${f} is not a valid bundle: ${JSON.stringify(s.issues.slice(0, 3))}`);
       const r = core.apps.seedActivated(s.bundle);
+      if (s.bundle.formatVersion === 2) {
+        // Test-only: the host's reconciler builds the artifact and starts the instance at boot.
+        core.store.tx(() => {
+          const now = new Date().toISOString();
+          core.store.run(
+            "INSERT INTO app_runtime (app_id, enabled, active_instance_id, generation, health, control_epoch, restart_count, updated_at) VALUES (?, 1, NULL, 0, 'recovering', 0, 0, ?) ON CONFLICT(app_id) DO UPDATE SET enabled = 1, health = 'recovering', active_instance_id = NULL",
+            r.appId, now,
+          );
+        });
+      }
       return { appId: r.appId, revisionId: r.revisionId, appEpoch: r.appEpoch };
     });
   } finally {
@@ -247,7 +277,7 @@ export function adminMain(): void {
       const files = args("--fixture");
       if (files.length === 0) throw new Error("usage: agentos-admin seed --fixture <bundle.json> [--fixture <bundle.json> ...]");
       fs.mkdirSync(config.dataDir, { recursive: true, mode: 0o700 });
-      process.stdout.write(`${JSON.stringify({ ok: true, seeded: seedFixtures(config.dataDir, files) })}\n`);
+      process.stdout.write(`${JSON.stringify({ ok: true, seeded: seedFixtures(config.dataDir, files, config) })}\n`);
     } else {
       throw new Error("usage: agentos-admin backup --output <dir> | restore --backup <dir>");
     }

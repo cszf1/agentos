@@ -1,0 +1,178 @@
+{
+  "formatVersion": 2,
+  "manifest": {
+    "appId": "5a1d2f4e-7c3b-4e8a-9f10-2b3c4d5e6f70",
+    "title": "工作概览",
+    "description": "汇总待办应用的任务总数和剩余工时。",
+    "runtime": "isolated-code-v1",
+    "capabilities": [
+      "records.read"
+    ]
+  },
+  "data": {
+    "fields": {
+      "note": {
+        "type": "string",
+        "label": "备注",
+        "maxLength": 80,
+        "default": "工作概览"
+      }
+    }
+  },
+  "code": {
+    "entry": "src/app.ts",
+    "files": {}
+  },
+  "runtimeLockId": "core-v1@1",
+  "queries": {
+    "main": {
+      "description": "概览数据",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "outputSchema": {
+        "type": "object",
+        "required": [
+          "connected",
+          "total",
+          "remainingMinutes",
+          "message"
+        ],
+        "properties": {
+          "connected": {
+            "type": "boolean"
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "remainingMinutes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "message": {
+            "type": "string",
+            "maxLength": 300
+          }
+        }
+      }
+    }
+  },
+  "commands": {},
+  "exports": [],
+  "imports": [
+    {
+      "alias": "todo",
+      "description": "待办应用的 summary 服务",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "outputSchema": {
+        "type": "object",
+        "required": [
+          "total",
+          "open",
+          "remainingMinutes"
+        ],
+        "properties": {
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "open": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "remainingMinutes": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    }
+  ],
+  "view": {
+    "kind": "slot-tree-v1",
+    "dataSources": {
+      "overview": {
+        "queryId": "main",
+        "input": {}
+      }
+    },
+    "refresh": {
+      "intervalSeconds": 10
+    },
+    "slots": {
+      "main": {
+        "type": "Stack",
+        "props": {
+          "gap": "md"
+        },
+        "children": [
+          {
+            "type": "Alert",
+            "props": {
+              "status": "warning",
+              "text": {
+                "$bind": {
+                  "from": "query",
+                  "source": "overview",
+                  "pointer": "/message"
+                }
+              }
+            },
+            "visibleWhen": {
+              "value": {
+                "$bind": {
+                  "from": "query",
+                  "source": "overview",
+                  "pointer": "/connected"
+                }
+              },
+              "op": "eq",
+              "equals": false
+            }
+          },
+          {
+            "type": "Grid",
+            "props": {
+              "columns": 2,
+              "gap": "md"
+            },
+            "children": [
+              {
+                "type": "Metric",
+                "props": {
+                  "label": "任务总数",
+                  "value": {
+                    "$bind": {
+                      "from": "query",
+                      "source": "overview",
+                      "pointer": "/total"
+                    }
+                  }
+                }
+              },
+              {
+                "type": "Metric",
+                "props": {
+                  "label": "剩余工时",
+                  "value": {
+                    "$bind": {
+                      "from": "query",
+                      "source": "overview",
+                      "pointer": "/remainingMinutes"
+                    }
+                  },
+                  "unit": "分钟"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

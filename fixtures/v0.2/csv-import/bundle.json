@@ -1,0 +1,278 @@
+{
+  "formatVersion": 2,
+  "manifest": {
+    "appId": "7c2e9a10-4b6d-4f3a-8e21-9d0c1b2a3f45",
+    "title": "CSV 导入待办",
+    "description": "把最多 100 行 CSV 待办一次性导入。",
+    "runtime": "isolated-code-v1",
+    "capabilities": [
+      "records.read",
+      "records.write"
+    ]
+  },
+  "data": {
+    "fields": {
+      "title": {
+        "type": "string",
+        "label": "任务",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "done": {
+        "type": "boolean",
+        "label": "已完成",
+        "default": false
+      },
+      "due": {
+        "type": "string",
+        "label": "截止日期",
+        "maxLength": 10,
+        "default": ""
+      },
+      "priority": {
+        "type": "enum",
+        "label": "优先级",
+        "values": [
+          "low",
+          "normal",
+          "high"
+        ],
+        "default": "normal"
+      }
+    }
+  },
+  "code": {
+    "entry": "src/app.ts",
+    "files": {}
+  },
+  "runtimeLockId": "data-v1@1",
+  "queries": {
+    "main": {
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "outputSchema": {
+        "type": "object",
+        "required": [
+          "items",
+          "total"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "maxItems": 1000,
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "title",
+                "done",
+                "due",
+                "priority"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "maxLength": 64
+                },
+                "title": {
+                  "type": "string",
+                  "maxLength": 200
+                },
+                "done": {
+                  "type": "boolean"
+                },
+                "due": {
+                  "type": "string",
+                  "maxLength": 10
+                },
+                "priority": {
+                  "type": "string",
+                  "maxLength": 8
+                }
+              }
+            }
+          },
+          "total": {
+            "type": "integer"
+          }
+        }
+      }
+    }
+  },
+  "commands": {
+    "add": {
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "title"
+        ],
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
+        }
+      },
+      "outputSchema": {
+        "type": "object",
+        "required": [
+          "created"
+        ],
+        "properties": {
+          "created": {
+            "type": "integer"
+          }
+        }
+      },
+      "operations": [
+        "create"
+      ],
+      "writableFields": [
+        "title"
+      ]
+    },
+    "importCsv": {
+      "description": "解析 CSV（表头 title,done,due,priority），最多 100 行，全部合法才写入",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "csv"
+        ],
+        "properties": {
+          "csv": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 65536
+          }
+        }
+      },
+      "outputSchema": {
+        "type": "object",
+        "required": [
+          "imported"
+        ],
+        "properties": {
+          "imported": {
+            "type": "integer"
+          }
+        }
+      },
+      "operations": [
+        "create"
+      ],
+      "writableFields": [
+        "title",
+        "done",
+        "due",
+        "priority"
+      ]
+    }
+  },
+  "exports": [],
+  "imports": [],
+  "view": {
+    "kind": "slot-tree-v1",
+    "dataSources": {
+      "list": {
+        "queryId": "main",
+        "input": {}
+      }
+    },
+    "slots": {
+      "main": {
+        "type": "Stack",
+        "props": {
+          "gap": "md"
+        },
+        "children": [
+          {
+            "type": "Table",
+            "props": {
+              "items": {
+                "$bind": {
+                  "from": "query",
+                  "source": "list",
+                  "pointer": "/items"
+                }
+              },
+              "columns": [
+                {
+                  "pointer": "/title",
+                  "label": "任务"
+                },
+                {
+                  "pointer": "/due",
+                  "label": "截止"
+                },
+                {
+                  "pointer": "/priority",
+                  "label": "优先级"
+                }
+              ],
+              "pageSize": 20,
+              "emptyText": "还没有任务"
+            }
+          },
+          {
+            "type": "Form",
+            "props": {
+              "formId": "add",
+              "title": "新建"
+            },
+            "children": [
+              {
+                "type": "TextInput",
+                "props": {
+                  "name": "title",
+                  "label": "任务",
+                  "required": true
+                }
+              },
+              {
+                "type": "Button",
+                "props": {
+                  "label": "添加",
+                  "command": "add",
+                  "input": {
+                    "form": "add"
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "type": "Form",
+            "props": {
+              "formId": "csv",
+              "title": "导入 CSV"
+            },
+            "children": [
+              {
+                "type": "TextArea",
+                "props": {
+                  "name": "csv",
+                  "label": "CSV 内容",
+                  "required": true,
+                  "maxLength": 4096
+                }
+              },
+              {
+                "type": "Button",
+                "props": {
+                  "label": "导入",
+                  "command": "importCsv",
+                  "input": {
+                    "form": "csv"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

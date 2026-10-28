@@ -17,6 +17,7 @@ import { InterAppService, type GrantDto } from "../inter-app/inter-app-service.j
 import type { UserWriteMeta } from "../user-actions.js";
 import type { WriteResult } from "../capabilities/gateway.js";
 import { fault } from "../faults.js";
+import { RUNTIME_POLICY } from "./policy.js";
 
 export interface RuntimeSystemOptions {
   dataDir: string;
@@ -102,6 +103,16 @@ export class RuntimeSystem {
     } else {
       this.environmentProblems = ["no container runtime configured"];
     }
+    if (this.environmentProblems.length === 0) {
+      const probe = await this.sandboxProbe();
+      if (probe) this.environmentProblems.push(probe);
+    }
+    if (this.environmentProblems.length > 0) {
+      // Spec §20.2 / V2-S07: never fall back to unisolated execution; code apps answer SANDBOX_UNAVAILABLE.
+      this.ctx.driver = null;
+      this.ctx.instances = null;
+      this.opts.log("warn", "code runtime disabled", { problems: this.environmentProblems });
+    }
     // Unreferenced staging directories from an interrupted artifact write.
     for (const st of this.artifacts.scan().staging) this.artifacts.removeStaging(st);
     if (this.runtimeReady) {
@@ -110,6 +121,42 @@ export class RuntimeSystem {
     this.deployments.recoverAfterBoot();
     this.invocations.recoverAfterBoot();
     if (this.opts.autoReconcile !== false) this.reconciler.start();
+  }
+
+  /**
+   * Start one throw-away container with the full app policy (no network, read-only, caps dropped, limits) and check
+   * it runs. Skipped when no runtime image is present yet (prefetch builds them). Returns a problem or null.
+   */
+  async sandboxProbe(): Promise<string | null> {
+    const driver = this.opts.driver;
+    const lock = this.opts.catalog.locks()[0];
+    if (!driver || !lock) return null;
+    try {
+      const img = await driver.inspectImage(lock.runtimeImage.name);
+      if (!img.present) return null;
+      const name = `agentos-probe-${this.bootId.slice(0, 8)}`;
+      const bridge = path.join(this.opts.dataDir, "run", "probe");
+      const { mkdirSync, rmSync } = await import("node:fs");
+      mkdirSync(bridge, { recursive: true, mode: 0o700 });
+      try {
+        await driver.remove(name).catch(() => undefined);
+        const { id } = await driver.create({
+          name, image: lock.runtimeImage.name, role: "preview",
+          labels: { "agentos.store": this.ctx.storeUUID, "agentos.role": "preview", "agentos.app": "probe", "agentos.revision": "probe", "agentos.instance": "probe", "agentos.boot": this.bootId },
+          readOnlyMount: { hostPath: this.artifacts.root, containerPath: "/app" }, bridgeDir: bridge,
+          command: ["node", "-e", "process.exit(0)"], env: { TZ: "UTC" }, limits: { ...RUNTIME_POLICY.app },
+        });
+        await driver.start(id);
+        const st = await driver.wait(id, 20_000);
+        const tail = st.exitCode === 0 ? "" : await driver.diagnostics(id, 500).catch(() => "");
+        await driver.remove(id).catch(() => undefined);
+        return st.exitCode === 0 ? null : `sandbox probe container failed (exit ${st.exitCode ?? "?"}): ${tail}`;
+      } finally {
+        rmSync(bridge, { recursive: true, force: true });
+      }
+    } catch (e) {
+      return `sandbox probe failed: ${(e as Error).message}`;
+    }
   }
 
   /** Shutdown (spec §20.1): stop admission, revoke instances, stop this workspace's containers. */

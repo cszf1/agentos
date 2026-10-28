@@ -44,6 +44,36 @@ export const DTO_SCHEMAS = {
     type: "object", additionalProperties: false, required: ["expectedAppEpoch", "expectedRecordVersion"],
     properties: { expectedAppEpoch: epoch, expectedRecordVersion: recordVersion },
   },
+  // v0.2 (spec §19.1); every DTO rejects unknown fields.
+  runtimeControl: {
+    type: "object", additionalProperties: false, required: ["expectedAppEpoch"],
+    properties: { expectedAppEpoch: epoch },
+  },
+  deploymentCreate: {
+    type: "object", additionalProperties: false, required: ["revisionId", "expectedAppEpoch"],
+    properties: { revisionId: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" }, expectedAppEpoch: epoch },
+  },
+  queryCall: {
+    type: "object", additionalProperties: false, required: ["expectedAppEpoch", "input"],
+    properties: { expectedAppEpoch: epoch, input: {} },
+  },
+  commandCall: {
+    type: "object", additionalProperties: false, required: ["expectedAppEpoch", "input"],
+    properties: { expectedAppEpoch: epoch, input: {} },
+  },
+  grantCreate: {
+    type: "object", additionalProperties: false,
+    required: ["sourceAppId", "sourceRevisionId", "alias", "targetAppId", "targetRevisionId", "exportName", "contractHash"],
+    properties: {
+      sourceAppId: uuid,
+      sourceRevisionId: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" },
+      alias: { type: "string", pattern: "^[A-Za-z][A-Za-z0-9_]{0,63}$" },
+      targetAppId: uuid,
+      targetRevisionId: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" },
+      exportName: { type: "string", pattern: "^[A-Za-z][A-Za-z0-9_]{0,63}$" },
+      contractHash: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" },
+    },
+  },
 } as const;
 
 export type DtoName = keyof typeof DTO_SCHEMAS;
@@ -167,4 +197,7 @@ export interface StateView {
   agentDiagnostic: string | null;
   hostVersion: string;
   ready: boolean;
+  /** v0.2: whether code apps can run on this host, and why not (spec §20.1). */
+  runtimeReady?: boolean;
+  runtimeProblems?: string[];
 }

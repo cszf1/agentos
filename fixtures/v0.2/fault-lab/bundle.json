@@ -1,0 +1,333 @@
+{
+  "formatVersion": 2,
+  "manifest": {
+    "appId": "f00dfa11-0000-4000-8000-00000000fa11",
+    "title": "故障实验室",
+    "description": "平台维护的故障样例（测试用）。",
+    "runtime": "isolated-code-v1",
+    "capabilities": [
+      "records.read",
+      "records.write"
+    ]
+  },
+  "data": {
+    "fields": {
+      "note": {
+        "type": "string",
+        "label": "备注",
+        "maxLength": 80,
+        "default": ""
+      }
+    }
+  },
+  "code": {
+    "entry": "src/app.ts",
+    "files": {}
+  },
+  "runtimeLockId": "core-v1@1",
+  "queries": {
+    "main": {
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "outputSchema": {
+        "type": "object",
+        "required": [
+          "ok"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "detail": {
+            "type": "string",
+            "maxLength": 4000
+          }
+        }
+      }
+    },
+    "spin": {
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "outputSchema": {
+        "type": "object",
+        "required": [
+          "ok"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "detail": {
+            "type": "string",
+            "maxLength": 4000
+          }
+        }
+      }
+    },
+    "hog": {
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "outputSchema": {
+        "type": "object",
+        "required": [
+          "ok"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "detail": {
+            "type": "string",
+            "maxLength": 4000
+          }
+        }
+      }
+    },
+    "probe": {
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "outputSchema": {
+        "type": "object",
+        "required": [
+          "ok"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "detail": {
+            "type": "string",
+            "maxLength": 4000
+          }
+        }
+      }
+    },
+    "forkbomb": {
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "outputSchema": {
+        "type": "object",
+        "required": [
+          "ok"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "detail": {
+            "type": "string",
+            "maxLength": 4000
+          }
+        }
+      }
+    },
+    "tmpfill": {
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "outputSchema": {
+        "type": "object",
+        "required": [
+          "ok"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "detail": {
+            "type": "string",
+            "maxLength": 4000
+          }
+        }
+      }
+    },
+    "logflood": {
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "outputSchema": {
+        "type": "object",
+        "required": [
+          "ok"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "detail": {
+            "type": "string",
+            "maxLength": 4000
+          }
+        }
+      }
+    },
+    "forge": {
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "outputSchema": {
+        "type": "object",
+        "required": [
+          "ok"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "detail": {
+            "type": "string",
+            "maxLength": 4000
+          }
+        }
+      }
+    },
+    "slow": {
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "ms"
+        ],
+        "properties": {
+          "ms": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 60000
+          }
+        }
+      },
+      "outputSchema": {
+        "type": "object",
+        "required": [
+          "ok"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "detail": {
+            "type": "string",
+            "maxLength": 4000
+          }
+        }
+      }
+    }
+  },
+  "commands": {
+    "touch": {
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "outputSchema": {
+        "type": "object",
+        "required": [
+          "n"
+        ],
+        "properties": {
+          "n": {
+            "type": "integer"
+          }
+        }
+      },
+      "operations": [
+        "update"
+      ],
+      "writableFields": [
+        "note"
+      ]
+    },
+    "slowTouch": {
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "ms"
+        ],
+        "properties": {
+          "ms": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 60000
+          }
+        }
+      },
+      "outputSchema": {
+        "type": "object",
+        "required": [
+          "n"
+        ],
+        "properties": {
+          "n": {
+            "type": "integer"
+          }
+        }
+      },
+      "operations": [
+        "update"
+      ],
+      "writableFields": [
+        "note"
+      ]
+    },
+    "sneaky": {
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "outputSchema": {
+        "type": "object",
+        "required": [
+          "n"
+        ],
+        "properties": {
+          "n": {
+            "type": "integer"
+          }
+        }
+      },
+      "operations": [
+        "update"
+      ],
+      "writableFields": [
+        "note"
+      ]
+    }
+  },
+  "exports": [],
+  "imports": [],
+  "view": {
+    "kind": "slot-tree-v1",
+    "dataSources": {
+      "m": {
+        "queryId": "main",
+        "input": {}
+      }
+    },
+    "slots": {
+      "main": {
+        "type": "Text",
+        "props": {
+          "text": {
+            "$bind": {
+              "from": "query",
+              "source": "m",
+              "pointer": "/detail"
+            }
+          }
+        }
+      }
+    }
+  }
+}

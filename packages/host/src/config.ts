@@ -10,6 +10,11 @@ export interface HostConfig {
   webDir: string;
   sessionTtlMs: number;
   testMode: boolean;
+  /** v0.2 code runtime: rootless Podman API socket (null = runtime disabled), platform files root and catalog. */
+  podmanSocket: string | null;
+  platformRoot: string;
+  catalogFile: string;
+  platform: "linux/amd64" | "linux/arm64";
 }
 
 export function expandHome(p: string): string {
@@ -25,6 +30,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): HostConfig {
   for (const h of (env.AGENTOS_ALLOWED_HOSTS ?? "").split(",").map((s) => s.trim()).filter(Boolean)) allowedHosts.push(h);
   const lvl = (env.AGENTOS_LOG_LEVEL || "info") as HostConfig["logLevel"];
   const webDir = path.resolve(env.AGENTOS_WEB_DIR || path.join(import.meta.dirname, "..", "..", "web", "dist"));
+  const platformRoot = path.resolve(env.AGENTOS_PLATFORM_ROOT || path.join(import.meta.dirname, "..", "..", ".."));
+  const uid = typeof process.getuid === "function" ? process.getuid() : 1000;
+  const runtimeMode = (env.AGENTOS_RUNTIME || "podman").toLowerCase();
+  const podmanSocket = runtimeMode === "off" ? null : path.resolve(expandHome(env.AGENTOS_PODMAN_SOCKET || `/run/user/${uid}/podman/podman.sock`));
   return {
     dataDir,
     host,
@@ -34,5 +43,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): HostConfig {
     webDir,
     sessionTtlMs: 12 * 3600 * 1000,
     testMode: env.NODE_ENV === "test",
+    podmanSocket,
+    platformRoot,
+    catalogFile: path.join(platformRoot, "runtime", "catalog", "catalog.json"),
+    platform: process.arch === "arm64" ? "linux/arm64" : "linux/amd64",
   };
 }

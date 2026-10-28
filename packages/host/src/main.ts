@@ -1,7 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
-import { HOST_VERSION, checkStructure } from "@agentos/contracts";
-import { RunCoordinator, openCore, type Core } from "@agentos/core";
+import { HOST_VERSION, checkAnyStructure } from "@agentos/contracts";
+import { RunCoordinator, RuntimeSystem, openCore, type Core } from "@agentos/core";
+import { catalogProblems, createDriver, loadCatalog } from "./runtime-setup.js";
 import { PiAgentEngine, modelConfigFromEnv } from "@agentos/agent-pi";
 import { loadConfig } from "./config.js";
 import { createLogger, type Logger } from "./log.js";
@@ -59,6 +60,7 @@ export async function main(): Promise<void> {
     log,
     status: { phase: "starting", writable: true, agentState: "unavailable", agentDiagnostic: null },
     inflight: { n: 0 },
+    sys: null,
   };
 
   // reserve the port early; business endpoints answer 503 until ready
@@ -74,10 +76,17 @@ export async function main(): Promise<void> {
     rt.status.phase = "stopping";
     rt.coord?.stop();
     const closing = rt.engine?.close().catch((e) => log.warn("harness close failed", { error: (e as Error).message }));
+    // Spec §20.1: total shutdown budget 30 s; a timeout is handled as a crash by the next start.
+    const hardStop = setTimeout(() => {
+      log.error("shutdown exceeded 30 s; exiting without a clean close");
+      process.exit(1);
+    }, 30_000);
+    hardStop.unref();
     const until = Date.now() + 12_000;
     while (rt.inflight.n > 0 && Date.now() < until) await new Promise((r) => setTimeout(r, 20));
     await rt.coord?.drain();
     await closing;
+    await rt.sys?.shutdown().catch((e) => log.warn("runtime shutdown incomplete; the next start reconciles", { error: (e as Error).message }));
     await server.close().catch(() => undefined);
     core.store.close();
     log.info("stopped");
@@ -123,6 +132,22 @@ export async function main(): Promise<void> {
     log.info("workspace paired with agent store", { how: bind.bound });
   }
 
+  // 5a. v0.2 runtime (spec §20.1 steps 3–5): boot id, catalog, artifacts, engine check, revoke old leases,
+  // reconcile containers, recover builds/deployments/commands, restart active code apps. Runtime problems
+  // leave the host up: declarative apps and the Shell keep working, code calls answer 503.
+  try {
+    const catalog = loadCatalog(config);
+    const problems = catalogProblems(config, catalog);
+    const sys = new RuntimeSystem(core, { dataDir: config.dataDir, catalog, driver: problems.length === 0 ? createDriver(config, catalog) : null, log: (lvl, m, f) => log[lvl](m, f) });
+    await sys.boot();
+    sys.environmentProblems.push(...problems);
+    rt.sys = sys;
+    if (!sys.runtimeReady) log.warn("code runtime unavailable", { problems: sys.environmentProblems });
+    else log.info("code runtime ready", { bootId: sys.bootId, catalog: catalog.hash });
+  } catch (e) {
+    log.error("code runtime failed to start; code apps are unavailable", { error: (e as Error).message });
+  }
+
   // 5. bind and reconcile the active run before anything can be scheduled
   const coord = new RunCoordinator(core.runs, engine, { info: log.info, warn: log.warn, error: log.error });
   rt.coord = coord;
@@ -143,7 +168,7 @@ export async function main(): Promise<void> {
   // 7. every active bundle must be renderable by this host
   for (const a of core.apps.listApps()) {
     const b = core.apps.getApp(a.appId).bundle;
-    if (b && !checkStructure(b).ok) log.error("active bundle not accepted by this renderer", { appId: a.appId });
+    if (b && !checkAnyStructure(b).ok) log.error("active bundle not accepted by this renderer", { appId: a.appId });
   }
   if (!fs.existsSync(path.join(config.webDir, "index.html"))) log.warn("web shell build not found", { webDir: config.webDir });
   rt.status.phase = "ready";
