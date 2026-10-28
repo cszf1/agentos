@@ -6,6 +6,7 @@ import { createRequire } from "node:module";
 import { loadConfig, expandHome, type HostConfig } from "./config.js";
 import { loadCatalog } from "./runtime-setup.js";
 import { gc } from "./runtime-ops.js";
+import { backupFull, restoreFull } from "./backup-v2.js";
 import { assertLockHeld } from "./lock.js";
 import { rotateSecrets } from "./auth.js";
 import { MIGRATIONS, openCore } from "@agentos/core";
@@ -106,7 +107,7 @@ export function backup(dataDir: string, output: string): Manifest {
 
 function verifySet(dir: string): Manifest {
   const manifest = JSON.parse(fs.readFileSync(path.join(dir, "manifest.json"), "utf8")) as Manifest;
-  if (manifest.format !== 1) throw new Error("unknown backup format");
+  if (manifest.format !== 1 && (manifest.format as number) !== 2) throw new Error("unknown backup format");
   for (const db of DBS) if (!manifest.files[db]) throw new Error(`backup lacks ${db}`);
   for (const [name, hash] of Object.entries(manifest.files)) {
     if (sha256File(path.join(dir, name)) !== hash) throw new Error(`${name} does not match the manifest hash`);
@@ -126,7 +127,7 @@ function checkVersions(manifest: Manifest): void {
 }
 
 /** Restore a whole workspace set. Re-running after an interruption completes the same restore. */
-export function restore(dataDir: string, backupDir: string, opts: { failAfterFirstReplace?: boolean } = {}): { storeUUID: string; clientEpoch: number; preRestoreBackup: string } {
+export function restore(dataDir: string, backupDir: string, opts: { failAfterFirstReplace?: boolean; beforeMarkerRemoval?: () => void } = {}): { storeUUID: string; clientEpoch: number; preRestoreBackup: string } {
   const src = path.resolve(expandHome(backupDir));
   const manifest = verifySet(src);
   checkVersions(manifest);
@@ -154,8 +155,9 @@ export function restore(dataDir: string, backupDir: string, opts: { failAfterFir
   const staging = path.join(dataDir, ".restore-staging");
   fs.rmSync(staging, { recursive: true, force: true });
   fs.mkdirSync(staging, { mode: 0o700 });
-  for (const name of Object.keys(manifest.files)) fs.copyFileSync(path.join(src, name), path.join(staging, name));
-  for (const name of Object.keys(manifest.files)) if (sha256File(path.join(staging, name)) !== manifest.files[name]) throw new Error(`staged ${name} is corrupt`);
+  const dbFiles = Object.keys(manifest.files).filter((n) => DBS.some((d) => n === d || n === `${d}-wal`));
+  for (const name of dbFiles) fs.copyFileSync(path.join(src, name), path.join(staging, name));
+  for (const name of dbFiles) if (sha256File(path.join(staging, name)) !== manifest.files[name]) throw new Error(`staged ${name} is corrupt`);
   // 4. replace both databases and their WAL; drop stale sidecars
   let n = 0;
   for (const db of DBS) {
@@ -190,6 +192,7 @@ export function restore(dataDir: string, backupDir: string, opts: { failAfterFir
   if (after.store_uuid !== manifest.storeUUID) throw new Error("restored store_uuid does not match the manifest");
   if (after.schema_version !== manifest.schemaVersion) throw new Error("restored os.sqlite schema does not match the manifest");
   fs.rmSync(staging, { recursive: true, force: true });
+  opts.beforeMarkerRemoval?.();
   // 6. remove and flush the marker
   fs.rmSync(markerFile);
   fsyncPath(dataDir);
@@ -266,16 +269,28 @@ export function adminMain(): void {
     if (cmd === "backup") {
       const out = arg("--output");
       if (!out) throw new Error("usage: pnpm backup -- --output <dir>");
-      const m = backup(config.dataDir, out);
-      process.stdout.write(`${JSON.stringify({ ok: true, output: path.resolve(expandHome(out)), storeUUID: m.storeUUID, files: Object.keys(m.files) })}\n`);
+      void backupFull(config, out)
+        .then((m) => process.stdout.write(`${JSON.stringify({ ok: true, output: path.resolve(expandHome(out)), storeUUID: m.storeUUID, complete: m.complete, files: Object.keys(m.files), artifacts: m.artifacts.length, images: m.images.map((i) => i.name) })}\n`))
+        .catch((e) => {
+          process.stderr.write(`${JSON.stringify({ ok: false, error: (e as Error).message })}\n`);
+          process.exit(1);
+        });
     } else if (cmd === "restore") {
       const b = arg("--backup");
       if (!b) throw new Error("usage: pnpm restore -- --backup <dir>");
-      const r = restore(config.dataDir, b, { failAfterFirstReplace: config.testMode && process.env.AGENTOS_FAULT_POINT === "restore.after_first_replace" && process.env.AGENTOS_FAULTS === "1" });
-      process.stdout.write(`${JSON.stringify({ ok: true, ...r, note: "workspace restored to the backup time; sign in again with the new auth-token" })}\n`);
+      const faults = config.testMode && process.env.AGENTOS_FAULTS === "1";
+      void restoreFull(config, b, {
+        failAfterFirstReplace: faults && process.env.AGENTOS_FAULT_POINT === "restore.after_first_replace",
+        failAfterImages: faults && process.env.AGENTOS_FAULT_POINT === "restore.after_images",
+      })
+        .then((r) => process.stdout.write(`${JSON.stringify({ ok: true, ...r, note: "workspace restored to the backup time; sign in again with the new auth-token" })}\n`))
+        .catch((e) => {
+          process.stderr.write(`${JSON.stringify({ ok: false, error: (e as Error).message })}\n`);
+          process.exit(1);
+        });
     } else if (cmd === "gc") {
       const dryRun = process.argv.includes("--dry-run");
-      void gc(config, dryRun).then((r) => process.stdout.write(`${JSON.stringify({ ok: true, ...(r as object) }, null, 2)}\n`)).catch((e) => {
+      void gc(config, dryRun, process.argv.includes("--include-images")).then((r) => process.stdout.write(`${JSON.stringify({ ok: true, ...(r as object) }, null, 2)}\n`)).catch((e) => {
         process.stderr.write(`${JSON.stringify({ ok: false, error: (e as Error).message })}\n`);
         process.exit(1);
       });

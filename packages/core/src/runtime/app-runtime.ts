@@ -272,15 +272,29 @@ export class AppRuntimeService {
   }
 
   /** The instance exited or was killed without the host asking (crash, OOM, timeout kill). */
-  async onInstanceExit(inst: LiveInstance, reason: string): Promise<void> {
+  async onInstanceExit(inst: LiveInstance, reasonIn: string): Promise<void> {
+    let reason = reasonIn;
     if (inst.stopping) return;
     const s = this.ctx.store;
     let oom = false;
+    let exitCode: number | null = null;
     try {
-      if (this.ctx.driver && inst.containerId) oom = (await this.ctx.driver.inspect(inst.containerId)).oomKilled;
+      if (this.ctx.driver && inst.containerId) {
+        const st = await this.ctx.driver.wait(inst.containerId, 3000);
+        exitCode = st.exitCode;
+        // cgroup OOM kill, or the runtime's own heap limit (V8 aborts with 134) inside the 256 MiB budget.
+        oom = st.oomKilled || (st.exitCode === 137 && !inst.killedByHost);
+        if (!oom && st.exitCode !== null && st.exitCode !== 0) {
+          // V8 hitting the heap budget aborts (134) or faults (139) after printing its fatal message.
+          const tail = await this.ctx.driver.diagnostics(inst.containerId, 4096).catch(() => "");
+          oom = /heap out of memory|Reached heap limit|Allocation failed|Fatal JavaScript out of memory/i.test(tail);
+        }
+      }
     } catch {
       /* engine unreachable */
     }
+    reason = exitCode !== null ? `${reason} (exit ${exitCode})` : reason;
+    inst.exitInfo = { exitCode, oom };
     s.tx(() => {
       const row = s.get<InstanceRow>("SELECT * FROM runtime_instances WHERE id = ?", inst.id);
       if (!row) return;

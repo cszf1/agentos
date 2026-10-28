@@ -42,6 +42,18 @@ try {
   const files = listSources(path.join(SRC_ROOT, "src"));
   if (!files.includes(ENTRY) || !statSync(ENTRY).isFile()) fail("source", [{ path: "/code/files/src/app.ts", code: "SOURCE_PATH_INVALID", message: "missing entry" }]);
 
+  // 0. Imports first: only relative, the SDK and the lock's approved modules (before any type resolution).
+  const depIssues: { path: string; code: string; message: string }[] = [];
+  for (const f of files) {
+    const info = ts.preProcessFile(readFileSync(f, "utf8"), true, true);
+    for (const imp of info.importedFiles) {
+      const spec = imp.fileName;
+      if (spec.startsWith("./") || spec.startsWith("../") || allowed.has(spec)) continue;
+      depIssues.push({ path: `/code/files/${f.replace(/^\/src\//, "")}`, code: "DEPENDENCY_NOT_ALLOWED", message: `import "${spec}" is not approved for ${approved.lockId}` });
+    }
+  }
+  if (depIssues.length > 0) fail("dependencies", depIssues);
+
   // 1. TypeScript check with fixed options.
   const options: import("typescript").CompilerOptions = {
     strict: true,

@@ -9,6 +9,7 @@ import {
   type AnyBundle,
   type CodeBundle,
   type HandlerContext,
+  LIMITS,
 } from "@agentos/contracts";
 import { iso } from "../persistence/store.js";
 import { fault } from "../faults.js";
@@ -161,7 +162,7 @@ export class DeploymentService {
     }
     if (req.origin === "agent_prepare" && req.ownerRunId) {
       const n = s.get<{ n: number }>("SELECT COUNT(*) AS n FROM deployments WHERE owner_run_id = ? AND origin = 'agent_prepare'", req.ownerRunId)!.n;
-      if (n >= 3) throw new AgentOsError("LIMIT_EXCEEDED", "a run may prepare at most 3 candidates");
+      if (n >= LIMITS.maxCandidatesPerRun) throw new AgentOsError("LIMIT_EXCEEDED", `a run may prepare at most ${LIMITS.maxCandidatesPerRun} candidates`);
     }
     const bundle = JSON.parse(rev.bundle_json) as AnyBundle;
     const noOp = app.active_revision_id === req.revisionId;

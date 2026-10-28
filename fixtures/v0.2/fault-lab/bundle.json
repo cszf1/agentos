@@ -223,6 +223,49 @@
           }
         }
       }
+    },
+    "big": {
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "outputSchema": {
+        "type": "object",
+        "required": [
+          "ok",
+          "blob"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "blob": {
+            "type": "string",
+            "maxLength": 200000
+          }
+        }
+      }
+    },
+    "nested": {
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "outputSchema": {
+        "type": "object",
+        "required": [
+          "ok"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "detail": {
+            "type": "string",
+            "maxLength": 4000
+          }
+        }
+      }
     }
   },
   "commands": {
@@ -303,9 +346,60 @@
       "writableFields": [
         "note"
       ]
+    },
+    "add": {
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "n"
+        ],
+        "properties": {
+          "n": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          }
+        }
+      },
+      "outputSchema": {
+        "type": "object",
+        "required": [
+          "n"
+        ],
+        "properties": {
+          "n": {
+            "type": "integer"
+          }
+        }
+      },
+      "operations": [
+        "create"
+      ],
+      "writableFields": [
+        "note"
+      ]
     }
   },
-  "exports": [],
+  "exports": [
+    {
+      "exportName": "slow",
+      "queryId": "slow",
+      "contractVersion": 1,
+      "description": "sleeps the given milliseconds (test)"
+    },
+    {
+      "exportName": "big",
+      "queryId": "big",
+      "contractVersion": 1,
+      "description": "returns ~70 KB (test)"
+    },
+    {
+      "exportName": "nested",
+      "queryId": "nested",
+      "contractVersion": 1,
+      "description": "tries a nested service call (test)"
+    }
+  ],
   "imports": [],
   "view": {
     "kind": "slot-tree-v1",

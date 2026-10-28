@@ -132,3 +132,25 @@ test("V2-U04: a failing code app keeps the Shell, navigation and version history
   await page.locator(".runtime-panel").getByRole("button", { name: "启动" }).click();
   await expect(page.locator(".runtime-panel")).toContainText("运行中", { timeout: 120_000 });
 });
+
+test("V2-U02: HTML and script in data render as plain text; nothing executes", async ({ page }) => {
+  let dialogs = 0;
+  page.on("dialog", (d) => {
+    dialogs++;
+    void d.dismiss();
+  });
+  await login(page);
+  const nav = page.locator(".nav-app", { hasText: "待办看板" });
+  await nav.click();
+  await expect(nav).toContainText("代码");
+  await expect(page.locator(".runtime-panel")).toContainText("运行中", { timeout: 120_000 });
+  const evil = `<img src=x onerror=alert(1)><script>alert(2)</script>`;
+  await addTask(page, evil);
+  const c = card(page, "<img src=x");
+  await expect(c).toContainText("<script>alert(2)</script>");
+  await expect(c.locator("img, script")).toHaveCount(0);
+  await page.reload();
+  await page.locator(".nav-app", { hasText: "待办看板" }).click();
+  await expect(card(page, "<img src=x")).toBeVisible({ timeout: 60_000 });
+  expect(dialogs).toBe(0);
+});

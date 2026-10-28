@@ -1,0 +1,111 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "result",
+    "mutations"
+  ],
+  "properties": {
+    "result": {},
+    "mutations": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "localKey",
+              "data"
+            ],
+            "properties": {
+              "kind": {
+                "const": "create"
+              },
+              "localKey": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,64}$"
+              },
+              "data": {
+                "type": "object",
+                "maxProperties": 32,
+                "propertyNames": {
+                  "pattern": "^[a-z][a-z0-9_]{0,31}$"
+                },
+                "additionalProperties": {
+                  "type": [
+                    "string",
+                    "boolean",
+                    "integer"
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "recordId",
+              "expectedRecordVersion",
+              "changes"
+            ],
+            "properties": {
+              "kind": {
+                "const": "update"
+              },
+              "recordId": {
+                "type": "string",
+                "maxLength": 64
+              },
+              "expectedRecordVersion": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "changes": {
+                "type": "object",
+                "maxProperties": 32,
+                "propertyNames": {
+                  "pattern": "^[a-z][a-z0-9_]{0,31}$"
+                },
+                "additionalProperties": {
+                  "type": [
+                    "string",
+                    "boolean",
+                    "integer"
+                  ]
+                },
+                "minProperties": 1
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "recordId",
+              "expectedRecordVersion"
+            ],
+            "properties": {
+              "kind": {
+                "const": "delete"
+              },
+              "recordId": {
+                "type": "string",
+                "maxLength": 64
+              },
+              "expectedRecordVersion": {
+                "type": "integer",
+                "minimum": 1
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}

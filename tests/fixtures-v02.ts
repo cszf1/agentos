@@ -3,7 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { CodeBundle } from "@agentos/contracts";
 
-export const FIXTURES_V02 = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "fixtures", "v0.2");
+export const FIXTURES_V02 = path.resolve(import.meta.dirname, "..", "fixtures", "v0.2");
 
 function walk(dir: string, rel: string, out: Record<string, string>): void {
   for (const name of readdirSync(dir).sort()) {

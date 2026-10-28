@@ -111,6 +111,15 @@ export const queries = defineQueries({
     }
     return { ok: true, detail: `ungranted=${direct}` };
   },
+  big: () => ({ ok: true, blob: "y".repeat(70 * 1024) }),
+  nested: async (_input: Record<string, never>, ctx) => {
+    try {
+      await ctx.services.call("anything", {});
+      return { ok: true, detail: "nested=ALLOWED" };
+    } catch (e) {
+      return { ok: true, detail: `nested=${(e as { code?: string }).code}` };
+    }
+  },
   slow: (input: { ms: number }) => new Promise((r) => setTimeout(() => r({ ok: true, detail: `slept ${input.ms}` }), input.ms)),
 });
 
@@ -119,6 +128,10 @@ function touchAll(records: readonly { id: string; recordVersion: number; data: R
 }
 
 export const commands = defineCommands({
+  add: (input: { n: number }) => ({
+    result: { n: input.n },
+    mutations: Array.from({ length: input.n }, (_v, i) => ({ kind: "create" as const, localKey: `k${i}`, data: { note: `n${i}` } })),
+  }),
   touch: (_input: Record<string, never>, ctx) => {
     const m = touchAll(ctx.records);
     return { result: { n: m.length }, mutations: m };

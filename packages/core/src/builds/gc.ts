@@ -25,6 +25,8 @@ export class GcService {
     private readonly catalogImages: () => string[],
     /** Artifact ids pinned by an in-progress backup. */
     private readonly pinned: () => Set<string> = () => new Set(),
+    /** Image names other workspaces on this engine still claim (their catalogs): never removed from here. */
+    private readonly claimedElsewhere: () => Set<string> = () => new Set(),
   ) {}
 
   /** Referenced artifact ids with the reason each is kept. */
@@ -65,8 +67,9 @@ export class GcService {
     if (this.driver) {
       try {
         const wanted = new Set(this.catalogImages());
+        const others = this.claimedElsewhere();
         const list = await this.driver.listPlatformImages();
-        for (const name of list) if (!wanted.has(name)) plan.images.push(name);
+        for (const name of list) if (!wanted.has(name) && !others.has(name)) plan.images.push(name);
       } catch {
         /* engine unreachable: images are left alone */
       }

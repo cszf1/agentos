@@ -1,0 +1,170 @@
+{
+  "formatVersion": 2,
+  "manifest": {
+    "appId": "1bc0ffee-0000-4000-8000-0000000001bc",
+    "title": "IPC 探针",
+    "description": "调用故障实验室的服务（测试用）。",
+    "runtime": "isolated-code-v1",
+    "capabilities": [
+      "records.read"
+    ]
+  },
+  "data": {
+    "fields": {
+      "note": {
+        "type": "string",
+        "label": "备注",
+        "maxLength": 80,
+        "default": ""
+      }
+    }
+  },
+  "code": {
+    "entry": "src/app.ts",
+    "files": {}
+  },
+  "runtimeLockId": "core-v1@1",
+  "queries": {
+    "main": {
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "which": {
+            "type": "string",
+            "enum": [
+              "none",
+              "slow",
+              "big",
+              "nested",
+              "twice",
+              "five"
+            ]
+          },
+          "ms": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 60000
+          }
+        }
+      },
+      "outputSchema": {
+        "type": "object",
+        "required": [
+          "ok"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "detail": {
+            "type": "string",
+            "maxLength": 4000
+          }
+        }
+      }
+    }
+  },
+  "commands": {},
+  "exports": [],
+  "imports": [
+    {
+      "alias": "lab_slow",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "ms"
+        ],
+        "properties": {
+          "ms": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 60000
+          }
+        }
+      },
+      "outputSchema": {
+        "type": "object",
+        "required": [
+          "ok"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "detail": {
+            "type": "string",
+            "maxLength": 4000
+          }
+        }
+      }
+    },
+    {
+      "alias": "lab_big",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "outputSchema": {
+        "type": "object",
+        "required": [
+          "ok",
+          "blob"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "blob": {
+            "type": "string",
+            "maxLength": 200000
+          }
+        }
+      }
+    },
+    {
+      "alias": "lab_nested",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "outputSchema": {
+        "type": "object",
+        "required": [
+          "ok"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "detail": {
+            "type": "string",
+            "maxLength": 4000
+          }
+        }
+      }
+    }
+  ],
+  "view": {
+    "kind": "slot-tree-v1",
+    "dataSources": {
+      "m": {
+        "queryId": "main",
+        "input": {}
+      }
+    },
+    "slots": {
+      "main": {
+        "type": "Text",
+        "props": {
+          "text": {
+            "$bind": {
+              "from": "query",
+              "source": "m",
+              "pointer": "/detail"
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { AgentOsError, type AnyBundle } from "@agentos/contracts";
@@ -21,6 +23,8 @@ import { fault } from "../faults.js";
 import { RUNTIME_POLICY } from "./policy.js";
 
 export interface RuntimeSystemOptions {
+  /** Shared per-user directory where each workspace records the platform images its catalog uses (GC safety). */
+  imageClaimsDir?: string;
   dataDir: string;
   catalog: RuntimeCatalogService;
   driver: RuntimeDriver | null;
@@ -65,7 +69,7 @@ export class RuntimeSystem {
       },
     });
     this.ctx = { ...ctxPartial, builds: this.builds };
-    this.gc = new GcService(core.store, this.artifacts, opts.driver, () => opts.catalog.locks().flatMap((l) => [l.builderImage.name, l.runtimeImage.name]));
+    this.gc = new GcService(core.store, this.artifacts, opts.driver, () => this.catalogImageNames(), () => new Set(), () => this.imagesClaimedElsewhere());
     core.apps.extraCheck = opts.catalog.check;
     this.runtime = new AppRuntimeService(this.ctx);
     this.reconciler = new Reconciler(this.ctx, this.runtime);
@@ -90,6 +94,47 @@ export class RuntimeSystem {
     };
   }
 
+  catalogImageNames(): string[] {
+    return this.opts.catalog.locks().flatMap((l) => [l.builderImage.name, l.runtimeImage.name]);
+  }
+
+  /** Images are shared by every workspace on this user's engine: each records the names its catalog uses. */
+  get imageClaimsDir(): string {
+    return this.opts.imageClaimsDir ?? path.join(os.homedir(), ".local", "share", "agentos", "image-claims");
+  }
+
+  writeImageClaim(): void {
+    try {
+      fs.mkdirSync(this.imageClaimsDir, { recursive: true, mode: 0o700 });
+      const f = path.join(this.imageClaimsDir, `${this.ctx.storeUUID}.json`);
+      fs.writeFileSync(`${f}.tmp`, JSON.stringify({ storeUUID: this.ctx.storeUUID, dataDir: this.opts.dataDir, images: this.catalogImageNames(), at: new Date().toISOString() }));
+      fs.renameSync(`${f}.tmp`, f);
+    } catch {
+      /* best effort: without a claim file other workspaces simply keep fewer images */
+    }
+  }
+
+  imagesClaimedElsewhere(): Set<string> {
+    const out = new Set<string>();
+    try {
+      for (const n of fs.readdirSync(this.imageClaimsDir)) {
+        if (!n.endsWith(".json") || n === `${this.ctx.storeUUID}.json`) continue;
+        try {
+          const c = JSON.parse(fs.readFileSync(path.join(this.imageClaimsDir, n), "utf8")) as { images?: string[]; dataDir?: string };
+          // A workspace whose data dir is gone no longer needs anything (test dirs, deleted workspaces).
+          if (c.dataDir && !fs.existsSync(path.join(c.dataDir, "os.sqlite"))) continue;
+          for (const i of c.images ?? []) out.add(i);
+        } catch {
+          /* unreadable claim: be conservative and keep everything */
+          return new Set(["*"]);
+        }
+      }
+    } catch {
+      /* no claims directory */
+    }
+    return out;
+  }
+
   get runtimeReady(): boolean {
     return !!this.opts.driver && this.environmentProblems.length === 0 && this.runtime.engineReachable;
   }
@@ -100,6 +145,7 @@ export class RuntimeSystem {
     s.tx(() => s.run("UPDATE meta SET host_boot_id = ?, catalog_hash = ? WHERE id = 1", this.bootId, this.opts.catalog.hash));
     this.runtime.revokePreviousBoot();
     this.builds.recoverAfterBoot();
+    this.writeImageClaim();
     if (this.opts.driver) {
       try {
         const env = await this.opts.driver.checkEnvironment();

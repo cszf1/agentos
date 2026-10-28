@@ -69,4 +69,7 @@ export const SDK_ABI_VERSION = 1;
 declare global {
   // Minimal console for diagnostics (bounded by the host). Apps get no DOM and no Node APIs.
   var console: { log(...args: unknown[]): void; warn(...args: unknown[]): void; error(...args: unknown[]): void };
+  // Timers exist inside the sandbox but are not a reliable scheduler: nothing may depend on them outliving a call.
+  function setTimeout(fn: () => void, ms?: number): unknown;
+  function clearTimeout(handle: unknown): void;
 }

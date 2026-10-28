@@ -155,3 +155,15 @@ describe("A: Pi Durable generation loop (faux model, real Durable + SQLite + too
     expect(JSON.parse(r2.error_json!).code).toMatch(/MODEL_ERROR|NO_APPLICATION_PUBLISHED/);
   });
 });
+
+describe("app_stage argument decoding (real providers)", () => {
+  it("a bundle sent as a JSON-encoded string is the same bundle; anything else is left for schema validation", async () => {
+    const { decodeBundleArg } = await import("@agentos/agent-pi");
+    const b = { formatVersion: 1, manifest: { title: "x" } };
+    expect(decodeBundleArg(JSON.stringify(b))).toEqual(b);
+    expect(decodeBundleArg(b)).toBe(b);
+    expect(decodeBundleArg("not json")).toBe("not json");
+    expect(decodeBundleArg("[1,2]")).toBe("[1,2]");
+    expect(decodeBundleArg("null")).toBe("null");
+  });
+});

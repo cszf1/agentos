@@ -129,14 +129,32 @@ export async function prefetch(config: HostConfig): Promise<{ ok: boolean; locks
 }
 
 /** pnpm runtime:gc [-- --dry-run]: workspace-only, reference-checked cleanup (host stopped, lock held). */
-export async function gc(config: HostConfig, dryRun: boolean): Promise<unknown> {
+export async function gc(config: HostConfig, dryRun: boolean, includeImages = false): Promise<unknown> {
   const core = openCore(path.join(config.dataDir, "os.sqlite"));
   try {
     const catalog = loadCatalog(config);
     const driver = createDriver(config, catalog);
-    const svc = new GcService(core.store, new ArtifactStore(path.join(config.dataDir, "artifacts")), driver, () => catalog.locks().flatMap((l) => [l.builderImage.name, l.runtimeImage.name]));
-    const plan = dryRun ? await svc.plan() : await svc.run({ includeImages: true });
-    return { dryRun, ...plan };
+    const own = core.store.meta().store_uuid;
+    // Platform images are shared by every workspace of this user's engine: keep whatever another workspace claims.
+    const claimed = (): Set<string> => {
+      const dir = path.join(os.homedir(), ".local", "share", "agentos", "image-claims");
+      const out = new Set<string>();
+      if (!fs.existsSync(dir)) return out;
+      for (const n of fs.readdirSync(dir)) {
+        if (!n.endsWith(".json") || n === `${own}.json`) continue;
+        try {
+          const c = JSON.parse(fs.readFileSync(path.join(dir, n), "utf8")) as { images?: string[]; dataDir?: string };
+          if (c.dataDir && !fs.existsSync(path.join(c.dataDir, "os.sqlite"))) continue;
+          for (const i of c.images ?? []) out.add(i);
+        } catch {
+          return new Set(["*"]);
+        }
+      }
+      return out;
+    };
+    const svc = new GcService(core.store, new ArtifactStore(path.join(config.dataDir, "artifacts")), driver, () => catalog.locks().flatMap((l) => [l.builderImage.name, l.runtimeImage.name]), () => new Set(), claimed);
+    const plan = dryRun ? await svc.plan() : await svc.run({ includeImages });
+    return { dryRun, includeImages, ...plan };
   } finally {
     core.store.close();
   }

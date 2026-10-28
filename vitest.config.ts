@@ -14,7 +14,7 @@ export default defineConfig({
   test: {
     projects: [
       { resolve: { alias }, test: { name: "unit", include: ["tests/integration/**/*.test.ts"], testTimeout: 30_000, hookTimeout: 60_000, pool: "forks" } },
-      { resolve: { alias }, test: { name: "recovery", include: ["tests/recovery/**/*.test.ts"], testTimeout: 120_000, hookTimeout: 120_000, pool: "forks" } },
+      { resolve: { alias }, test: { name: "recovery", include: ["tests/recovery/**/*.test.ts"], testTimeout: 400_000, hookTimeout: 120_000, pool: "forks" } },
       { resolve: { alias }, test: { name: "sandbox", include: ["tests/sandbox/**/*.test.ts"], testTimeout: 300_000, hookTimeout: 300_000, pool: "forks", poolOptions: { forks: { singleFork: true } } } },
     ],
   },

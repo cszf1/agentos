@@ -7,7 +7,7 @@ import { artifacts, catalogService, makeDriver, sandboxDir } from "./env.js";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-const v1 = JSON.parse(readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../fixtures/todo-v1.json"), "utf8"));
+const v1 = JSON.parse(readFileSync(path.resolve(import.meta.dirname, "../../fixtures/todo-v1.json"), "utf8"));
 
 describe("M0/M1 real podman: build a code revision and run it", () => {
   const box = sandboxDir();

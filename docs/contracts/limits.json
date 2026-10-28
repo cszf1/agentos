@@ -1,0 +1,127 @@
+{
+  "run": {
+    "maxApps": 20,
+    "maxBundleBytes": 65536,
+    "maxFields": 32,
+    "maxEnumValues": 32,
+    "maxRecordBytes": 16384,
+    "maxRecordsPerApp": 1000,
+    "maxRevisionsPerApp": 100,
+    "maxIntentCodePoints": 8000,
+    "maxBodyBytes": 131072,
+    "maxSearchChars": 128,
+    "defaultLimit": 50,
+    "maxLimit": 100,
+    "runDeadlineMs": 900000,
+    "maxModelRequestsPerRun": 12,
+    "maxToolTasksPerRun": 50,
+    "maxStageAttemptsPerRun": 3,
+    "maxCandidatesPerRun": 3,
+    "maxOutputTokens": 16384,
+    "transcriptMaxItems": 50
+  },
+  "code": {
+    "maxSourceFiles": 16,
+    "maxSourceBytes": 262144,
+    "maxBundleBytes": 524288,
+    "maxHandlers": 32,
+    "maxExports": 16,
+    "maxImports": 16,
+    "maxBodyBytes": 1048576,
+    "maxCommandInputBytes": 131072,
+    "maxQueryOutputBytes": 262144,
+    "maxCommandResultBytes": 65536,
+    "maxMutations": 100,
+    "maxMutationPlanBytes": 262144,
+    "maxServiceOutputBytes": 65536
+  },
+  "ui": {
+    "maxNodes": 256,
+    "maxDepth": 12,
+    "maxChildren": 64,
+    "maxSeries": 8,
+    "maxPointsPerSeries": 500,
+    "minRefreshSeconds": 5,
+    "maxRefreshSeconds": 3600,
+    "maxDataSources": 8
+  },
+  "frames": {
+    "absoluteMax": 25165824,
+    "hostToRunner": 25165824,
+    "runnerToHost": 1048576,
+    "maxPendingFrames": 64,
+    "logBytesPerMinute": 65536
+  },
+  "runtime": {
+    "version": 1,
+    "app": {
+      "memoryBytes": 268435456,
+      "cpus": 1,
+      "pids": 64,
+      "tmpfsBytes": 67108864
+    },
+    "build": {
+      "memoryBytes": 1073741824,
+      "cpus": 1,
+      "pids": 128,
+      "tmpfsBytes": 268435456,
+      "compileTimeoutMs": 60000
+    },
+    "maxEnabledCodeApps": 4,
+    "maxCandidateSlots": 1,
+    "maxContainers": 6,
+    "maxBuildConcurrency": 1,
+    "queryTimeoutMs": 3000,
+    "commandTimeoutMs": 5000,
+    "commandLifetimeMs": 15000,
+    "commandMaxAttempts": 2,
+    "queueLimit": 16,
+    "handshakeTimeoutMs": 15000,
+    "probeTimeoutMs": 2000,
+    "activateProbeMaxAgeMs": 2000,
+    "prepareTimeoutMs": 180000,
+    "drainMs": 5000,
+    "reconcileIntervalMs": 5000,
+    "restartWindowMs": 300000,
+    "restartBackoffMs": [
+      1000,
+      5000
+    ],
+    "maxRestartsPerWindow": 2,
+    "snapshotMaxBytes": 20971520,
+    "snapshotMaxRecords": 1000,
+    "ipc": {
+      "maxCallsPerQuery": 4,
+      "callTimeoutMs": 1500,
+      "maxOutputBytes": 65536
+    },
+    "diagnosticsBytes": 8192,
+    "cacheBudgetBytes": 10737418240,
+    "shutdownMs": 30000
+  },
+  "abiVersion": 1,
+  "protocolVersion": 1,
+  "components": [
+    "Stack",
+    "Grid",
+    "Tabs",
+    "Text",
+    "Alert",
+    "Metric",
+    "Table",
+    "Kanban",
+    "Form",
+    "TextInput",
+    "TextArea",
+    "Select",
+    "Checkbox",
+    "Button",
+    "BarChart",
+    "LineChart"
+  ],
+  "slots": [
+    "main",
+    "toolbar",
+    "aside"
+  ]
+}

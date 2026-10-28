@@ -23,6 +23,10 @@ export interface LiveInstance {
   revoked: boolean;
   /** Intentional shutdown by the host (not a crash). */
   stopping: boolean;
+  /** The host SIGKILLed it (timeout, failed probe): an exit 137 is then not a memory kill. */
+  killedByHost: boolean;
+  /** Set by the lifecycle owner when the container's exit was inspected (before removal). */
+  exitInfo: { exitCode: number | null; oom: boolean } | null;
   dead: boolean;
   busy: boolean;
   queue: (() => void)[];
@@ -97,6 +101,8 @@ export class InstanceHost {
       bundle: spec.bundle,
       revoked: false,
       stopping: false,
+      killedByHost: false,
+      exitInfo: null,
       dead: false,
       busy: false,
       queue: [],
@@ -244,9 +250,15 @@ export class InstanceHost {
           await this.kill(inst, "call timeout");
           throw new AgentOsError("APP_TIMEOUT", `${kind} ${handlerId} exceeded ${timeoutMs} ms; the app was stopped`);
         }
-        const st = inst.containerId ? await this.driver.inspect(inst.containerId).catch(() => null) : null;
-        if (st?.oomKilled) throw new AgentOsError("APP_RESOURCE_LIMIT", "the app exceeded its memory limit and was stopped");
-        throw new AgentOsError("INSTANCE_STALE", `the app stopped during the call: ${(e as Error).message}`);
+        const until = Date.now() + 4000;
+        while (!inst.exitInfo && Date.now() < until) await new Promise((r) => setTimeout(r, 50));
+        let info = inst.exitInfo;
+        if (!info && inst.containerId) {
+          const st = await this.driver.wait(inst.containerId, 1000).catch(() => null);
+          if (st) info = { exitCode: st.exitCode, oom: st.oomKilled || (st.exitCode === 137 && !inst.killedByHost) };
+        }
+        if (info?.oom) throw new AgentOsError("APP_RESOURCE_LIMIT", `the app exceeded its memory limit and was stopped (exit ${info.exitCode})`);
+        throw new AgentOsError("INSTANCE_STALE", `the app stopped during the call: ${(e as Error).message}${info ? ` (exit ${info.exitCode})` : ""}`);
       }
       if (inst.revoked) throw new AgentOsError("INSTANCE_STALE", "the instance was revoked during the call");
       const r = reply.payload as ResultPayload;
@@ -280,6 +292,7 @@ export class InstanceHost {
 
   async kill(inst: LiveInstance, reason: string): Promise<void> {
     inst.revoked = true;
+    inst.killedByHost = true;
     try {
       await this.driver.kill(inst.containerId ?? inst.containerName);
     } catch (e) {

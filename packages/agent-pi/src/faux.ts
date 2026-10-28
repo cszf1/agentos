@@ -156,7 +156,8 @@ export async function fauxBuilderResponse(context: TranscriptContext, _options: 
   }
   const results = msgs.slice(userIdx + 1).filter((m) => m.role === "toolResult") as unknown as { toolName: string; isError?: boolean; content: unknown }[];
   const last = msgs[msgs.length - 1]!;
-  if (last.role === "user") return call("app_get", {});
+  // A new run starts with app_get, even when a platform note (for example a tool set upgrade) follows the user input.
+  if (last.role === "user" || (last.role !== "toolResult" && results.length === 0 && msgs.slice(userIdx + 1).every((m) => m.role !== "assistant"))) return call("app_get", {});
   if (last.role !== "toolResult") return fauxAssistantMessage("完成。");
   const lr = last as unknown as { toolName: string; isError?: boolean };
   const body = parse(textOf(last));
@@ -209,6 +210,15 @@ export async function fauxBuilderResponse(context: TranscriptContext, _options: 
       if (lr.isError || !g) return fauxAssistantMessage(`无法读取目标应用：${String(body.message ?? "")}`);
       if (marker(intent, "same") !== undefined && g.activeBundle) return call("app_stage", { bundle: g.activeBundle });
       if (marker(intent, "refuse") !== undefined) return fauxAssistantMessage("这个需求超出了 v0.1 的能力，没有发布应用。");
+      // A code app: read the runtime catalog (locks, approved modules) first.
+      if (codeBundleFor(g)) return call("runtime_catalog", {});
+      return call("app_stage", { bundle: nextBundle() });
+    case "runtime_catalog":
+      if (lr.isError || body.codeRuntimeAvailable === false) return fauxAssistantMessage(`代码运行环境不可用：${String(body.message ?? "")}`);
+      // An app that reads another app: look the service up instead of guessing its schema.
+      if ((codeBundleFor(g!)?.imports ?? []).length > 0) return call("service_catalog", {});
+      return call("app_stage", { bundle: nextBundle() });
+    case "service_catalog":
       return call("app_stage", { bundle: nextBundle() });
     case "app_stage":
       if (lr.isError) {
@@ -228,7 +238,14 @@ export async function fauxBuilderResponse(context: TranscriptContext, _options: 
       }
       return afterDeployment(body);
     case "app_activate":
-      if (lr.isError) return fauxAssistantMessage(`发布失败：${String(body.message ?? "")}`);
+      if (lr.isError) {
+        // After a restart the candidate is prepared again: poll its status and activate once it is ready.
+        const prep = results.filter((r) => (r.toolName === "app_prepare" || r.toolName === "app_prepare_status") && !r.isError).at(-1);
+        const depId = prep ? (parse(textOf(prep as never)).deploymentId as string | undefined) : undefined;
+        const retries = results.filter((r) => r.toolName === "app_activate" && r.isError).length;
+        if (body.error === "INSTANCE_NOT_READY" && depId && retries <= 3) return call("app_prepare_status", { deploymentId: depId });
+        return fauxAssistantMessage(`发布失败：${String(body.message ?? "")}`);
+      }
       return fauxAssistantMessage(body.changed === false ? "当前版本已经满足需求。" : "应用已发布。");
     default:
       return fauxAssistantMessage(fauxText("完成。").text);

@@ -1,6 +1,9 @@
-# systemd --user unit for AgentOS v0.1. Install with deploy/install.sh (it replaces %h paths if needed).
+# systemd --user unit for AgentOS v0.2. Install with deploy/install.sh (it replaces %h paths if needed).
 [Unit]
 Description=AgentOS local runtime
+# Code apps run in rootless Podman through the user API socket; the host works without it (declarative only).
+Wants=podman.socket
+After=podman.socket
 StartLimitIntervalSec=60
 StartLimitBurst=5
 
@@ -11,7 +14,8 @@ EnvironmentFile=%h/.config/agentos/agentos.env
 ExecStart=%h/agentos/bin/agentos-host
 Restart=on-failure
 RestartSec=2
-TimeoutStopSec=15
+# Spec §20.1: the host drains and stops app containers within 30 s.
+TimeoutStopSec=45
 UMask=0077
 NoNewPrivileges=yes
 

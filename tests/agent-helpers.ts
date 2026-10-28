@@ -7,7 +7,7 @@ import { PodmanDriver, recipeContext } from "@agentos/runtime-podman";
 import { RunCoordinator, RuntimeCatalogService, RuntimeSystem, openCore, requestHash, type Clock, type Core, type RunSettings } from "@agentos/core";
 import type { RuntimeCatalog } from "@agentos/contracts";
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const ROOT = path.resolve(import.meta.dirname, "..");
 const CATALOG = JSON.parse(readFileSync(path.join(ROOT, "runtime", "catalog", "catalog.json"), "utf8")) as RuntimeCatalog;
 
 /** The real Podman driver when this machine has the rootless engine socket, else null (code apps unavailable). */

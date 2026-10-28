@@ -61,6 +61,8 @@ export interface BuildContext {
   collect?: () => Promise<void>;
   /** Minimum free bytes on the data filesystem for a new build. */
   minFreeBytes?: number;
+  /** Test hook: shorter compile limit than the policy's 60 s. */
+  compileTimeoutMs?: number;
 }
 
 /** buildKey (spec §12.2 step 2): revision, runtime lock, platform, builder recipe, ABI and policy version. */
@@ -82,21 +84,22 @@ export class BuildService {
     return iso(this.ctx.store.clock.now());
   }
 
-  /** Artifact already linked to the revision and intact on disk, if any. */
-  linkedArtifact(appId: string, revisionId: string): string | null {
+  /** Artifact already linked to the revision: intact, or missing/damaged (then it must be rebuilt to the same id). */
+  linkedArtifact(appId: string, revisionId: string): { id: string; intact: boolean } | null {
     const row = this.ctx.store.get<{ artifact_id: string; gc_state: string }>(
       "SELECT ra.artifact_id, a.gc_state FROM revision_artifacts ra JOIN artifacts a ON a.id = ra.artifact_id WHERE ra.app_id = ? AND ra.revision_id = ?",
       appId,
       revisionId,
     );
     if (!row) return null;
-    if (row.gc_state === "unavailable") throw new BuildError("ARTIFACT_UNAVAILABLE", `artifact ${row.artifact_id} is marked unavailable`);
     const problem = this.ctx.artifacts.verify(row.artifact_id);
     if (problem !== null) {
-      this.ctx.store.tx(() => this.ctx.store.run("UPDATE artifacts SET gc_state = 'unavailable' WHERE id = ?", row.artifact_id));
-      throw new BuildError("ARTIFACT_UNAVAILABLE", `artifact ${row.artifact_id} failed verification: ${problem}`);
+      if (row.gc_state !== "unavailable") this.ctx.store.tx(() => this.ctx.store.run("UPDATE artifacts SET gc_state = 'unavailable' WHERE id = ?", row.artifact_id));
+      this.ctx.log?.("linked artifact unavailable; rebuilding from the fixed recipe", { artifactId: row.artifact_id, problem });
+      return { id: row.artifact_id, intact: false };
     }
-    return row.artifact_id;
+    if (row.gc_state === "unavailable") this.ctx.store.tx(() => this.ctx.store.run("UPDATE artifacts SET gc_state = 'live', verified_at = ? WHERE id = ?", this.now(), row.artifact_id));
+    return { id: row.artifact_id, intact: true };
   }
 
   /**
@@ -105,7 +108,7 @@ export class BuildService {
    */
   async ensureArtifact(appId: string, revisionId: string, deadlineMs: number, onStage?: (stage: string, buildJobId?: string) => void): Promise<{ artifactId: string; buildJobId: string | null; cacheHit: boolean }> {
     const linked = this.linkedArtifact(appId, revisionId);
-    if (linked) return { artifactId: linked, buildJobId: null, cacheHit: true };
+    if (linked?.intact) return { artifactId: linked.id, buildJobId: null, cacheHit: true };
     const s = this.ctx.store;
     const raw = s.get<{ bundle_json: string }>("SELECT bundle_json FROM revisions WHERE app_id = ? AND id = ?", appId, revisionId);
     if (!raw) throw new AgentOsError("NOT_FOUND", "revision not found", { revisionId });
@@ -114,8 +117,8 @@ export class BuildService {
     const lock = this.ctx.catalog.requireLock(bundle.runtimeLockId);
     const key = buildKey(revisionId, lock);
 
-    // Cache: a verified artifact for the same buildKey.
-    const cached = s.all<{ id: string }>("SELECT id FROM artifacts WHERE build_key = ? AND gc_state = 'live' ORDER BY created_at ASC", key);
+    // Cache: a verified artifact for the same buildKey (never for a revision whose linked artifact must be reproduced).
+    const cached = linked ? [] : s.all<{ id: string }>("SELECT id FROM artifacts WHERE build_key = ? AND gc_state = 'live' ORDER BY created_at ASC", key);
     for (const c of cached) {
       if (this.ctx.artifacts.verify(c.id) === null) {
         s.tx(() => this.link(appId, revisionId, lock.id, c.id));
@@ -145,7 +148,7 @@ export class BuildService {
       return s.get<BuildJobRow>("SELECT * FROM build_jobs WHERE id = ?", id)!;
     });
     onStage?.("building", job.id);
-    const p = this.runJob(job, bundle, lock, deadlineMs);
+    const p = this.runJob(job, bundle, lock, deadlineMs, linked?.id ?? null);
     this.#inflight.set(key, p);
     try {
       const artifactId = await p;
@@ -192,7 +195,7 @@ export class BuildService {
     s.event(`build.${status}`, { buildJobId: id, artifactId: fields.artifactId ?? null }, {});
   }
 
-  private async runJob(job: BuildJobRow, bundle: CodeBundle, lock: RuntimeLock, deadlineMs: number): Promise<string> {
+  private async runJob(job: BuildJobRow, bundle: CodeBundle, lock: RuntimeLock, deadlineMs: number, expectId: string | null = null): Promise<string> {
     const s = this.ctx.store;
     const driver = this.ctx.driver;
     const fail = (e: BuildError): never => {
@@ -256,7 +259,7 @@ export class BuildService {
       fault("build.after_container_create");
       s.tx(() => s.run("UPDATE build_jobs SET container_id = ?, updated_at = ? WHERE id = ?", containerId, this.now(), job.id));
       await driver!.start(containerId);
-      const budget = Math.min(RUNTIME_POLICY.build.compileTimeoutMs, deadlineMs - this.ctx.store.clock.now());
+      const budget = Math.min(this.ctx.compileTimeoutMs ?? RUNTIME_POLICY.build.compileTimeoutMs, deadlineMs - this.ctx.store.clock.now());
       if (budget <= 0) fail(new BuildError("BUILD_TIMEOUT", "the build deadline passed before compilation started"));
       const until = Date.now() + budget;
       while (output === null && failure === null && Date.now() < until) {
@@ -291,6 +294,8 @@ export class BuildService {
       }
       const bytes = Buffer.from(out.files["app.mjs"] as string, "base64");
       fault("build.before_artifact_write");
+      // A damaged copy of the artifact this revision is bound to is replaced only by byte-identical output.
+      if (expectId !== null && this.ctx.artifacts.verify(expectId) !== null) this.ctx.artifacts.remove(expectId);
       let put: ReturnType<ArtifactStore["put"]>;
       try {
         put = this.ctx.artifacts.put({ "app.mjs": bytes }, { runtimeLockId: lock.id, platform: lock.platform, abiVersion: RUNNER_ABI_VERSION });
@@ -301,8 +306,12 @@ export class BuildService {
       const artifactId = put!.artifactId;
       s.tx(() => {
         // Same recipe, different output: stop, never overwrite (spec §12.2).
+        if (expectId !== null && expectId !== artifactId) {
+          throw new BuildError("BUILD_NONDETERMINISTIC", `rebuild of ${job.build_key} produced ${artifactId}, the revision is bound to ${expectId}`);
+        }
         const other = s.get<{ id: string }>("SELECT id FROM artifacts WHERE build_key = ? AND id <> ? AND gc_state = 'live'", job.build_key, artifactId);
         if (other) throw new BuildError("BUILD_NONDETERMINISTIC", `rebuild of ${job.build_key} produced ${artifactId}, earlier ${other.id}`);
+        if (expectId !== null) s.run("UPDATE artifacts SET gc_state = 'live', verified_at = ? WHERE id = ?", this.now(), artifactId);
         if (!s.get("SELECT 1 FROM artifacts WHERE id = ?", artifactId)) {
           s.run(
             "INSERT INTO artifacts (id, build_key, runtime_lock_id, platform, manifest_json, relative_path, size_bytes, verified_at, gc_state, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'live', ?)",

@@ -6,7 +6,7 @@ import type { RuntimeCatalog } from "@agentos/contracts";
 import { ArtifactStore, RuntimeCatalogService } from "@agentos/core";
 import { PodmanDriver, recipeContext } from "@agentos/runtime-podman";
 
-export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+export const ROOT = path.resolve(import.meta.dirname, "..", "..");
 export const CATALOG = JSON.parse(readFileSync(path.join(ROOT, "runtime", "catalog", "catalog.json"), "utf8")) as RuntimeCatalog;
 
 export function podmanSocket(): string {

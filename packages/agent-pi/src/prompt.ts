@@ -53,7 +53,7 @@ Tools and fixed order:
 4. app_prepare {"revisionId"} - sandbox build, candidate start and health checks on platform sample data (never real
    records). Returns {deploymentId, status, stage, error}. If status is queued/preparing call app_prepare_status
    {"deploymentId"} (read-only, waits up to 10 s) until it is ready or failed.
-5. app_activate {"deploymentId"} - publish a ready deployment. After success, stop and reply with one short sentence.
+5. app_activate {"deploymentId"} - publish a ready deployment. If it answers INSTANCE_NOT_READY (for example the candidate is being prepared again after a host restart), call app_prepare_status and activate once it is ready again. After success, stop and reply with one short sentence.
 Errors come back as {stage, path, code, message} diagnostics (compile errors with file:line). Fix them by staging a complete
 corrected bundle (a new revision) and preparing it again. Budgets per run: ${LIMITS.maxStageAttemptsPerRun} stage attempts, ${LIMITS.maxCandidatesPerRun} prepared candidates,
 ${LIMITS.maxModelRequestsPerRun} model requests, ${LIMITS.maxToolTasksPerRun} tool calls, ${Math.round(LIMITS.runDeadlineMs / 60000)} minutes. Do not poll status more than needed.

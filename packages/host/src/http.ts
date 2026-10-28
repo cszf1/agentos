@@ -203,7 +203,7 @@ export function buildServer(rt: HostRuntime): FastifyInstance {
     const view: StateView = core.store.read((): StateView => {
       const active = core.runs.activeRun();
       const last = core.runs.lastRun();
-      return {
+      const v: StateView = {
         clientEpoch: clientEpoch(),
         eventSeq: core.store.eventSeq(),
         apps: core.apps.listApps(),
@@ -218,13 +218,14 @@ export function buildServer(rt: HostRuntime): FastifyInstance {
         runtimeReady: rt.sys?.runtimeReady ?? false,
         runtimeProblems: rt.sys ? rt.sys.environmentProblems.slice(0, 10) : ["the code runtime has not started"],
       };
-      for (const a of view.apps) {
+      for (const a of v.apps) {
         const row = core.apps.requireApp(a.appId);
         const b = core.apps.activeBundle(row);
         a.runtime = b?.manifest.runtime;
         a.dataEpoch = row.data_epoch;
         a.health = b?.formatVersion === 2 ? (rt.sys?.runtime.row(a.appId)?.health ?? "stopped") : null;
       }
+      return v;
     });
     return ok(reply, 200, view);
   });

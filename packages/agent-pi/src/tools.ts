@@ -139,7 +139,7 @@ export function createBuilderExtension(ops: AgentOps, toolLog?: ToolLog): Extens
       parameters: Type.Object({ bundle: Type.Unknown({ description: "The complete AppBundle JSON object" }) }),
       prepareArguments: (args: unknown) => parseBundleArg(args) as never,
       replay: "safe",
-      execute: async (a, api) => result(ops.appStage(id(api.taskId, "app_stage"), (a as { bundle: unknown }).bundle)),
+      execute: async (a, api) => result(ops.appStage(id(api.taskId, "app_stage"), decodeBundleArg((a as { bundle: unknown }).bundle))),
     }),
     defineTool({
       name: "app_validate",
@@ -175,4 +175,19 @@ export function createBuilderExtension(ops: AgentOps, toolLog?: ToolLog): Extens
     tools: tools.map((t) => withLog(t as never)) as typeof tools,
     sections: [section("agentos_rules", () => SYSTEM_RULES)],
   });
+}
+
+
+/**
+ * Some providers deliver a large nested tool argument as a JSON-encoded string. A string that parses to a JSON object is
+ * the same bundle, so it is decoded here; anything else is passed through and fails schema validation as before.
+ */
+export function decodeBundleArg(bundle: unknown): unknown {
+  if (typeof bundle !== "string") return bundle;
+  try {
+    const v = JSON.parse(bundle) as unknown;
+    return v !== null && typeof v === "object" && !Array.isArray(v) ? v : bundle;
+  } catch {
+    return bundle;
+  }
 }
