@@ -9,6 +9,7 @@ import {
   type ValidationIssue,
 } from "../bundle.js";
 import { checkCodeSemantics, checkCodeStructure, codeBundleHash, normalizeCodeBundle, type AnyBundle, type CodeBundle } from "./bundle-v2.js";
+import { checkCodeSemanticsV3, checkCodeStructureV3, codeBundleHashV3, normalizeCodeBundleV3 } from "../v3/bundle-v3.js";
 
 /**
  * Discriminated entry for both formats (spec §7.1): formatVersion 1 goes to the frozen v1 schema and hash, 2 to the
@@ -17,14 +18,17 @@ import { checkCodeSemantics, checkCodeStructure, codeBundleHash, normalizeCodeBu
 export function checkAnyStructure(input: unknown): { ok: true; bundle: AnyBundle } | { ok: false; issues: ValidationIssue[] } {
   const fv = input !== null && typeof input === "object" && !Array.isArray(input) ? (input as { formatVersion?: unknown }).formatVersion : undefined;
   if (fv === 2) return checkCodeStructure(input);
+  if (fv === 3) return checkCodeStructureV3(input);
   return checkStructure(input);
 }
 
 export function normalizeAny(b: AnyBundle): AnyBundle {
+  if (b.formatVersion === 3) return normalizeCodeBundleV3(b);
   return b.formatVersion === 2 ? normalizeCodeBundle(b) : normalizeBundle(b);
 }
 
 export function anyBundleHash(b: AnyBundle): string {
+  if (b.formatVersion === 3) return codeBundleHashV3(b);
   return b.formatVersion === 2 ? codeBundleHash(b) : bundleHash(b);
 }
 
@@ -33,6 +37,7 @@ export type ExtraBundleCheck = (b: CodeBundle) => ValidationIssue[];
 
 export function checkAnySemantics(b: AnyBundle, targetAppId: string, extra?: ExtraBundleCheck): ValidationIssue[] {
   if (b.formatVersion === 2) return [...checkCodeSemantics(b, targetAppId), ...(extra ? extra(b) : [])];
+  if (b.formatVersion === 3) return [...checkCodeSemanticsV3(b, targetAppId), ...(extra ? extra(b) : [])];
   return checkSemantics(b, targetAppId);
 }
 

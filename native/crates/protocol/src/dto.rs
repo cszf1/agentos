@@ -102,8 +102,14 @@ pub struct WriteEnvelope {
     pub preconditions: Value,
     pub deadline_ms: u64,
     pub params: Value,
+    /// Present as null when absent: both sides hash the same body (a missing key is refused, like the TS schema).
+    #[serde(deserialize_with = "required_nullable")]
     pub compensates_operation_id: Option<String>,
     pub request_hash: String,
+}
+
+fn required_nullable<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
+    <Option<String> as serde::Deserialize>::deserialize(d)
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

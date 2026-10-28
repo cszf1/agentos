@@ -70,7 +70,7 @@ describe("HTTP host (real process, faux model)", () => {
     expect(s.data.platform).toBe("linux");
     expect(s.data.memory.totalBytes).toBeGreaterThan(0);
     expect(typeof s.data.uptimeSeconds).toBe("number");
-    expect(s.data.hostVersion).toBe("0.2.0");
+    expect(s.data.hostVersion).toBe("0.3.0");
   });
 
   it("full HTTP CRUD with idempotency, CAS, unknown fields and stale epochs", async () => {

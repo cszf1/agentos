@@ -65,6 +65,79 @@ export interface GrantView {
   reason: string | null;
 }
 
+// ---- v0.3 system DTOs (spec §21.1)
+export interface SysResource {
+  resourceId: string;
+  kind: string;
+  displayName: string;
+  generation: number;
+  status: string;
+  source: string;
+  executionClass: string;
+  identity: Record<string, unknown> | null;
+  limits: Record<string, unknown> | null;
+  quarantineOperationId: string | null;
+  connectedApps?: { app_id: string; binding_alias: string; sync_state: string }[];
+  lastObservation?: { observedAt: string; quality: string; capabilityId: string; summary: unknown } | null;
+}
+export interface SysGrant {
+  grantId: string;
+  principal: { kind: string; appId?: string | null; revisionId?: string | null };
+  bindingAlias: string | null;
+  capabilityId: string;
+  resourceId: string;
+  resourceGeneration: number;
+  limits: Record<string, unknown>;
+  confirmationPolicy: string;
+  state: string;
+  revocationConfirmed: boolean;
+  expiresAt: string;
+  syncError: string | null;
+}
+export interface SysPreview {
+  title: string;
+  target: string;
+  resourceKind: string;
+  change: { label: string; from: string | null; to: string }[];
+  preconditions: string[];
+  reversible: string;
+  autoRetry: string;
+  risks: string[];
+  irreversible: boolean;
+}
+export interface SysAction {
+  actionId: string;
+  origin: string;
+  appId: string | null;
+  runId: string | null;
+  handlerId: string | null;
+  capabilityId: string;
+  resourceId: string;
+  planHash: string;
+  preview: SysPreview;
+  confirmationRequired: boolean;
+  confirmationPolicy: string;
+  state: string;
+  phase: "awaiting_confirmation" | "granting" | "executing" | "done" | "no_effect" | "unknown" | "rejected";
+  operationId: string | null;
+  expiresAt: string;
+  completionKind: string | null;
+  effectCertainty: string | null;
+  evidenceKind: string | null;
+  result: unknown;
+  evidence: unknown;
+  error: { code: string; message: string } | null;
+  resolution: unknown;
+  compensationAvailable: boolean;
+  retryAdvice: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+export interface SysBindings {
+  items: { alias: string; resourceKind: string; description: string; capabilities: { capabilityId: string }[]; grants: SysGrant[]; connected: boolean }[];
+  actions: { handlerId: string; description?: string; bindingAlias: string; capabilityId: string }[];
+}
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -156,6 +229,27 @@ export const api = {
   grants: () => call<{ items: GrantView[] }>("GET", "/api/service-grants"),
   createGrant: (body: Omit<GrantView, "grantId" | "createdAt" | "revokedAt" | "state" | "reason">, key: string) => call<GrantView>("POST", "/api/service-grants", body, key),
   revokeGrant: (grantId: string, key: string) => call<GrantView>("POST", `/api/service-grants/${grantId}/revoke`, {}, key),
+  // v0.3
+  providers: () => call<{ items: { capabilityId: string; mode: string; resourceKinds: string[]; available: boolean; standingAllowed: string }[] }>("GET", "/api/providers"),
+  sysResources: () => call<{ items: SysResource[]; broker: Record<string, unknown> }>("GET", "/api/system-resources"),
+  registerImportRoot: (body: { path: string; displayName?: string }, key: string) => call<SysResource>("POST", "/api/system-resources/import-roots", body, key),
+  readResource: (resourceId: string, capabilityId: string, params: unknown = {}) =>
+    call<{ observedAt: string; quality: string; data: unknown; resourceVersion: string | null; observationId: string }>("POST", `/api/system-resources/${resourceId}/read`, { capabilityId, params }),
+  providerGrants: () => call<{ items: SysGrant[] }>("GET", "/api/provider-grants"),
+  createProviderGrant: (body: { appId: string; bindingAlias: string; resourceId: string; confirmationPolicy: "per_plan" | "standing"; bounds?: Record<string, Record<string, unknown>> }, key: string) =>
+    call<{ items: SysGrant[] }>("POST", "/api/provider-grants", body, key),
+  revokeProviderGrant: (grantId: string, key: string) => call<{ items: SysGrant[] }>("POST", `/api/provider-grants/${grantId}/revoke`, {}, key),
+  systemBindings: (appId: string) => call<SysBindings>("GET", `/api/apps/${appId}/system-bindings`),
+  planSystemAction: (appId: string, handlerId: string, body: { expectedAppEpoch: number; input: unknown }, key: string) => call<SysAction>("POST", `/api/apps/${appId}/system-actions/${handlerId}`, body, key),
+  systemAction: (id: string) => call<SysAction>("GET", `/api/system-actions/${id}`),
+  confirmSystemAction: (id: string, planHash: string, key: string) => call<SysAction>("POST", `/api/system-actions/${id}/confirm`, { planHash }, key),
+  cancelSystemAction: (id: string, key: string) => call<SysAction>("POST", `/api/system-actions/${id}/cancel`, { reason: "用户取消" }, key),
+  resolveSystemAction: (id: string, body: { decision: string; note: string; releaseQuarantine?: boolean }, key: string) => call<SysAction>("POST", `/api/system-actions/${id}/resolve`, body, key),
+  compensateSystemAction: (id: string, key: string) => call<SysAction>("POST", `/api/system-actions/${id}/compensations`, {}, key),
+  systemOperations: (open = false) => call<{ items: SysAction[]; brokerOnly: { operationId: string; state: string; capabilityId: string; effectCertainty: string | null }[]; broker: Record<string, unknown> }>("GET", `/api/system-operations${open ? "?open=1" : ""}`),
+  observations: (sinceSeq = 0) => call<{ events: unknown[]; cursors: { source: string; quality: string; drop_count: number; last_refresh_at: string | null }[]; lastSeq: number; requiresFullReread: boolean; telemetry: Record<string, unknown> }>("GET", `/api/observations?sinceSeq=${sinceSeq}`),
+  submitSystemPlan: (body: { intent: string; targetAppId: null; mode: "system_plan"; resourceIds: string[]; capabilityScopes: string[] }, key: string) =>
+    call<{ runId: string; status: string }>("POST", "/api/runs", body, key),
   transcript: (runId: string) => call<{ final: boolean; items: { kind: string; role: string; text: string; toolName?: string; isError?: boolean }[] }>("GET", `/api/runs/${runId}/transcript`),
 };
 
@@ -182,6 +276,24 @@ export function describeError(e: unknown): string {
       GRANT_REQUIRED: "服务未连接",
       GRANT_REVOKED: "服务已断开",
       SERVICE_UNAVAILABLE: "服务暂不可用",
+      PROVIDER_UNAVAILABLE: "系统能力暂不可用",
+      PROVIDER_GRANT_REQUIRED: "需要先连接资源",
+      GRANT_PENDING: "授权尚未同步完成",
+      GRANT_REVOKING: "授权撤销待确认",
+      BROKER_UNAVAILABLE: "系统执行服务不可用，系统写入已暂停",
+      BROKER_IDENTITY_MISMATCH: "系统执行服务身份不匹配，系统写入已关闭",
+      WORKSPACE_FENCED: "工作区已恢复为新代次，旧计划不能执行",
+      PLAN_EXPIRED: "计划已过期，请重新生成",
+      PLAN_HASH_MISMATCH: "计划内容已变化，请重新确认",
+      RESOURCE_GENERATION_STALE: "资源已变化，请重新连接或重新生成计划",
+      RESOURCE_BUSY: "资源正忙或已被隔离",
+      SYSTEM_ACTION_PENDING: "有系统操作尚未结算，暂不能切换版本",
+      BROKER_POLICY_DENIED: "超出安装策略允许的范围",
+      INVALID_SYSTEM_PLAN: "计划不合法",
+      MIXED_EFFECTS_FORBIDDEN: "一个系统动作只能有一个效果",
+      COMPENSATION_CONFLICT: "当前状态已变化，不能补偿",
+      OBSERVATION_EXPIRED: "观察已过期，请重新读取",
+      OBSERVATION_GAP: "观察有缺口，请重新读取",
     };
     return map[e.code] ? `${map[e.code]}（${e.code}）` : `${e.message}（${e.code}）`;
   }

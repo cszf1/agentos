@@ -18,6 +18,7 @@ import {
 import { LIMITS } from "../limits.js";
 import { checkRpcSchema, schemaIdentity, type RpcSchema } from "./rpc-schema.js";
 import { checkSlotTree, IDENT_PATTERN, type SlotTreeView } from "./ui.js";
+import type { CodeBundleV3 } from "../v3/bundle-v3.js";
 
 /** Spec §7 / §20.2 limits for code bundles. */
 export const CODE_LIMITS = {
@@ -64,7 +65,7 @@ export interface ImportDecl {
   outputSchema: RpcSchema;
 }
 
-export interface CodeBundle {
+export interface CodeBundleV2 {
   formatVersion: 2;
   manifest: { appId: string; title: string; description?: string; runtime: "isolated-code-v1"; capabilities: Capability[] };
   data: { fields: Record<string, Field> };
@@ -77,8 +78,10 @@ export interface CodeBundle {
   view: SlotTreeView;
 }
 
+/** Code bundles: frozen v2 (ABI 1) and v3 (ABI 2, system bindings). */
+export type CodeBundle = CodeBundleV2 | CodeBundleV3;
 export type AnyBundle = AppBundle | CodeBundle;
-export const isCodeBundle = (b: AnyBundle): b is CodeBundle => b.formatVersion === 2;
+export const isCodeBundle = (b: { formatVersion: number }): b is CodeBundle => b.formatVersion === 2 || b.formatVersion === 3;
 
 const v1Defs = (v1Schema as { $defs: Record<string, unknown> }).$defs;
 const anyJson = {};
@@ -229,7 +232,7 @@ export function textIssue(s: string): string | undefined {
 }
 
 /** Byte limit, envelope schema, source paths and sizes, RPC schemas. Structural problems are not stored. */
-export function checkCodeStructure(input: unknown): { ok: true; bundle: CodeBundle } | { ok: false; issues: ValidationIssue[] } {
+export function checkCodeStructure(input: unknown): { ok: true; bundle: CodeBundleV2 } | { ok: false; issues: ValidationIssue[] } {
   let text: string | undefined;
   try {
     text = JSON.stringify(input);
@@ -241,7 +244,7 @@ export function checkCodeStructure(input: unknown): { ok: true; bundle: CodeBund
     return { ok: false, issues: [{ path: "/", code: "LIMIT_EXCEEDED", message: `bundle exceeds ${CODE_LIMITS.maxBundleBytes} bytes` }] };
   }
   if (!validateEnvelope(input)) return { ok: false, issues: ajvIssues(validateEnvelope.errors as never) };
-  const b = input as CodeBundle;
+  const b = input as CodeBundleV2;
   const issues: ValidationIssue[] = [];
   const add = (path: string, code: string, message: string) => issues.push({ path, code, message });
   let total = 0;
@@ -274,7 +277,7 @@ export function checkCodeStructure(input: unknown): { ok: true; bundle: CodeBund
 }
 
 /** Normalize omitted field constraints like v1 (source text stays byte-exact). */
-export function normalizeCodeBundle(b: CodeBundle): CodeBundle {
+export function normalizeCodeBundle(b: CodeBundleV2): CodeBundleV2 {
   const fields: Record<string, Field> = {};
   for (const [k, f] of Object.entries(b.data.fields)) fields[k] = { ...fieldSpec(f), label: f.label } as Field;
   return { ...b, data: { fields } };
@@ -284,7 +287,7 @@ export function normalizeCodeBundle(b: CodeBundle): CodeBundle {
  * v2 revisionId (spec §7.1): its own algorithm, domain-separated from v1. Covers the canonical bundle including the
  * raw source text, the runtimeLockId and every declaration. Never derived from build output, image tags or PIDs.
  */
-export function codeBundleHash(b: CodeBundle): string {
+export function codeBundleHash(b: CodeBundleV2): string {
   return `sha256:${sha256Hex(`agentos.code-bundle.v2\n${canonicalJson(normalizeCodeBundle(b))}`)}`;
 }
 
@@ -304,7 +307,7 @@ export function importMatchesExport(imp: { inputSchema: RpcSchema; outputSchema:
 }
 
 /** Semantic checks (spec §7, §8, §9): fields, handlers, view references, create path, exports, imports. */
-export function checkCodeSemantics(b: CodeBundle, targetAppId: string): ValidationIssue[] {
+export function checkCodeSemantics(b: CodeBundleV2, targetAppId: string, v3?: { systemActions: Record<string, unknown>; viewKind: "slot-tree-v2" }): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
   const add = (path: string, code: string, message: string) => issues.push({ path, code, message });
   if (b.manifest.appId !== targetAppId) add("/manifest/appId", "APP_ID_MISMATCH", "appId must equal the host-bound target app");
@@ -347,7 +350,7 @@ export function checkCodeSemantics(b: CodeBundle, targetAppId: string): Validati
     if (aliases.has(imp.alias)) add(`/imports/${i}/alias`, "DUPLICATE", "duplicate import alias");
     aliases.add(imp.alias);
   });
-  const { issues: viewIssues, facts } = checkSlotTree(b.view, { queries: b.queries, commands: b.commands });
+  const { issues: viewIssues, facts } = checkSlotTree(b.view, { queries: b.queries, commands: b.commands, systemActions: v3?.systemActions, viewKind: v3?.viewKind ?? "slot-tree-v1" });
   issues.push(...viewIssues);
   // A create path for every required field without a default (spec §8).
   const required = Object.entries(fields).filter(([, f]) => f.default === undefined).map(([k]) => k);
@@ -366,7 +369,7 @@ export function checkCodeSemantics(b: CodeBundle, targetAppId: string): Validati
 }
 
 /** Compatibility: same only-growing rules as v1, over the full contract (spec §8). */
-export function checkCodeCompatibility(b: CodeBundle, contract: DataContract | null, mode: "candidate" | "historical"): ValidationIssue[] {
+export function checkCodeCompatibility(b: CodeBundleV2, contract: DataContract | null, mode: "candidate" | "historical"): ValidationIssue[] {
   return checkCompatibilityV1({ data: b.data } as unknown as AppBundle, contract, mode);
 }
 

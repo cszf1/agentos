@@ -8,7 +8,7 @@ import { ApiError, NetworkError, api, describeError, newKey } from "./api";
  */
 const RESERVED = new Set(["__proto__", "prototype", "constructor"]);
 const POINTER = /^(\/[A-Za-z0-9_-]{1,64}){0,8}$/;
-const KNOWN = new Set(["Stack", "Grid", "Tabs", "Text", "Alert", "Metric", "Table", "Kanban", "Form", "TextInput", "TextArea", "Select", "Checkbox", "Button", "BarChart", "LineChart"]);
+const KNOWN = new Set(["Stack", "Grid", "Tabs", "Text", "Alert", "Metric", "Table", "Kanban", "Form", "TextInput", "TextArea", "Select", "Checkbox", "Button", "BarChart", "LineChart", "SystemActionButton"]);
 const MAX_NODES = 256;
 const MAX_DEPTH = 12;
 
@@ -53,6 +53,8 @@ interface SourceState {
 type FormValues = Record<string, unknown>;
 
 interface Ctx {
+  /** v0.3: ask the Shell to plan a system action; the confirmation UI is the Shell's, never the app's. */
+  runSystemAction: (p: Record<string, unknown>) => void;
   sources: Record<string, SourceState>;
   forms: Record<string, FormValues>;
   setField: (formId: string, name: string, value: unknown) => void;
@@ -336,6 +338,12 @@ function Node(props: { node: SlotNode; ctx: Ctx; formId: string | null; depth: n
           {asText(p.label)}
         </button>
       );
+    case "SystemActionButton":
+      return (
+        <button type="button" className={`system-action ${p.variant === "danger" ? "danger" : p.variant === "primary" ? "primary" : ""}`} disabled={ctx.busy || ctx.disabled} onClick={() => ctx.runSystemAction(p)} title="系统动作：先生成计划，由 AgentOS 确认后才执行">
+          ⚙ {asText(p.label)}
+        </button>
+      );
     case "BarChart":
     case "LineChart":
       return <Chart kind={node.type} p={p} ctx={ctx} />;
@@ -395,7 +403,7 @@ const INVOCATION_TEXT: Record<string, string> = {
 };
 
 /** A code app's page: data sources, forms, selections, commands with progress and conflict handling. */
-export function CodeAppView(props: { detail: AppDetail; dataEpoch: number | null; refreshToken: number; disabled: boolean; onChanged: () => void }) {
+export function CodeAppView(props: { detail: AppDetail; dataEpoch: number | null; refreshToken: number; disabled: boolean; onChanged: () => void; onSystemPlan?: (actionId: string) => void }) {
   const { detail } = props;
   const bundle = detail.bundle as CodeBundle;
   const [sources, setSources] = useState<Record<string, SourceState>>({});
@@ -474,10 +482,40 @@ export function CodeAppView(props: { detail: AppDetail; dataEpoch: number | null
         return { ...s, [sid]: [...cur] };
       }),
       runCommand: (p) => void runCommand(p),
+      runSystemAction: (p) => void runSystemAction(p),
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [sources, forms, selections, busy, props.disabled, staleInput],
   );
+
+  /** SystemActionButton: the app's handler only produces a plan; the Shell shows the trusted preview and confirms. */
+  async function runSystemAction(p: Record<string, unknown>) {
+    const action = p.action as string;
+    const spec = (p.input ?? {}) as { form?: string; selection?: { selectionId: string; as: string }; constant?: Record<string, unknown> };
+    const input: Record<string, unknown> = { ...(spec.constant ?? {}) };
+    if (spec.form) {
+      const err = validateForm(bundle, spec.form, forms[spec.form] ?? {});
+      if (err) return setNotice({ kind: "error", text: err });
+      for (const [k, v] of Object.entries(forms[spec.form] ?? {})) if (v !== undefined && v !== "") input[k] = v;
+    }
+    if (spec.selection) input[spec.selection.as] = selections[spec.selection.selectionId] ?? [];
+    const sig = JSON.stringify({ action, input, appEpoch });
+    const key = pendingKey.current?.sig === sig ? pendingKey.current.key : newKey();
+    pendingKey.current = { sig, key };
+    setBusy(true);
+    setNotice({ kind: "info", text: `${asText(p.label)}：正在生成计划（尚未执行）…` });
+    try {
+      const v = await api.planSystemAction(detail.appId, action, { expectedAppEpoch: appEpoch, input }, key);
+      pendingKey.current = null;
+      setNotice({ kind: "info", text: v.confirmationRequired ? `${asText(p.label)}：计划已生成，等待你在 AgentOS 确认框中确认（尚未执行）` : `${asText(p.label)}：已按持续授权提交，执行结果见操作中心` });
+      props.onSystemPlan?.(v.actionId);
+    } catch (e) {
+      if (!(e instanceof NetworkError)) pendingKey.current = null;
+      setNotice({ kind: "error", text: describeError(e) });
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function runCommand(p: Record<string, unknown>) {
     const command = p.command as string;

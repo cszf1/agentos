@@ -14,6 +14,11 @@ const queue = [];
 const waiting = new Map();
 const pollers = [];
 
+function dispatch(item) {
+  const p = pollers.shift();
+  if (p) p(item);
+  else queue.push(item);
+}
 const ok = (t) => typeof t === "string" && t.length === TOKEN.length && timingSafeEqual(Buffer.from(t), Buffer.from(TOKEN));
 
 http.createServer((req, res) => {
@@ -26,15 +31,13 @@ http.createServer((req, res) => {
     delete headers.host;
     const item = { id, method: req.method, path: req.url, headers, body: Buffer.concat(chunks).toString("base64") };
     waiting.set(id, res);
-    const p = pollers.shift();
-    if (p) p(item);
-    else queue.push(item);
+    dispatch(item);
     setTimeout(() => {
       if (waiting.has(id)) {
         waiting.delete(id);
         res.writeHead(504).end("relay timeout");
       }
-    }, 300_000).unref();
+    }, Number(process.env.RELAY_TIMEOUT_MS || 900_000)).unref();
   });
 }).listen(LOCAL, "127.0.0.1");
 
@@ -47,18 +50,25 @@ http.createServer((req, res) => {
     if (item) return send(item);
     let done = false;
     const cb = (it) => {
-      if (done) return queue.unshift(it);
+      // a poller whose connection was dropped (proxy idle timeout) must never swallow a request
+      if (done || res.destroyed || res.writableEnded) return dispatch(it);
       done = true;
       send(it);
     };
     pollers.push(cb);
+    res.on("close", () => {
+      if (done) return;
+      done = true;
+      const i = pollers.indexOf(cb);
+      if (i >= 0) pollers.splice(i, 1);
+    });
     setTimeout(() => {
       if (done) return;
       done = true;
       const i = pollers.indexOf(cb);
       if (i >= 0) pollers.splice(i, 1);
       res.writeHead(204).end();
-    }, 25_000);
+    }, Number(process.env.RELAY_POLL_MS || 15_000));
     return;
   }
   if (req.method === "POST" && url.pathname === "/respond") {

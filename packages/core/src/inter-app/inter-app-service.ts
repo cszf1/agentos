@@ -11,8 +11,7 @@ import {
   type CodeBundle,
   type Frame,
   type HandlerContext,
-  type RpcSchema,
-} from "@agentos/contracts";
+  type RpcSchema, isCodeBundle } from "@agentos/contracts";
 import { iso } from "../persistence/store.js";
 import type { RuntimeContext } from "../runtime/context.js";
 import type { AppRuntimeService } from "../runtime/app-runtime.js";
@@ -80,7 +79,7 @@ export class InterAppService {
       const out: ServiceEntry[] = [];
       for (const a of s.all<{ id: string; active_revision_id: string }>("SELECT id, active_revision_id FROM apps WHERE active_revision_id IS NOT NULL ORDER BY created_at")) {
         const b = this.ctx.apps.revisionBundle(a.id, a.active_revision_id) as AnyBundle;
-        if (b.formatVersion !== 2) continue;
+        if (!isCodeBundle(b)) continue;
         for (const e of b.exports) {
           const q = b.queries[e.queryId]!;
           out.push({
@@ -125,7 +124,7 @@ export class InterAppService {
       const a = s.get<{ active_revision_id: string | null }>("SELECT active_revision_id FROM apps WHERE id = ?", appId);
       if (!a?.active_revision_id) return [];
       const b = this.ctx.apps.revisionBundle(appId, a.active_revision_id) as AnyBundle;
-      if (b.formatVersion !== 2) return [];
+      if (!isCodeBundle(b)) return [];
       return b.imports.map((imp) => {
         const g = s.get<GrantRow>("SELECT * FROM service_grants WHERE source_app_id = ? AND alias = ? ORDER BY (revoked_at IS NULL) DESC, created_at DESC LIMIT 1", appId, imp.alias);
         return { alias: imp.alias, description: imp.description, grant: g ? this.dto(g) : null };
@@ -140,7 +139,7 @@ export class InterAppService {
     const src = this.ctx.apps.revisionBundle(req.sourceAppId, req.sourceRevisionId) as AnyBundle | null;
     const tgt = this.ctx.apps.revisionBundle(req.targetAppId, req.targetRevisionId) as AnyBundle | null;
     if (!src || !tgt) throw new AgentOsError("NOT_FOUND", "source or target revision not found");
-    if (src.formatVersion !== 2 || tgt.formatVersion !== 2) throw new AgentOsError("SERVICE_CONTRACT_MISMATCH", "both apps must be code versions");
+    if (!isCodeBundle(src) || !isCodeBundle(tgt)) throw new AgentOsError("SERVICE_CONTRACT_MISMATCH", "both apps must be code versions");
     const imp = src.imports.find((i) => i.alias === req.alias);
     if (!imp) throw new AgentOsError("NOT_FOUND", `the source revision has no import "${req.alias}"`);
     const exp = tgt.exports.find((e) => e.exportName === req.exportName);

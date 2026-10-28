@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import path from "node:path";
-import { AgentOsError, RUNNER_ABI_VERSION, type CallPayload, type CodeBundle, type Frame, type HandlerContext, type ReadyPayload, type ResultPayload, type RuntimeLock } from "@agentos/contracts";
+import { AgentOsError, RUNNER_ABI_VERSION, isV3, type CallPayload, type CodeBundle, type Frame, type HandlerContext, type ReadyPayload, type ResultPayload, type RuntimeLock } from "@agentos/contracts";
 import { InstanceBridge } from "./bridge.js";
 import type { RuntimeDriver } from "./driver.js";
 import { RUNTIME_POLICY } from "./policy.js";
@@ -32,8 +32,14 @@ export interface LiveInstance {
   queue: (() => void)[];
   lastProbeAt: number;
   currentCallId: string | null;
-  /** Kind of the current top-level call; only queries may call services (spec §17.2). */
-  callKind: "query" | "command" | "service" | null;
+  /** Kind of the current top-level call; only queries may call services (spec §17.2); provider reads only in
+   * queries and system-plan calls of ABI-2 apps (spec §10). */
+  callKind: "query" | "command" | "service" | "systemPlan" | null;
+  /** Handler id of the current top-level call (provider reads are checked against its declaration). */
+  currentHandler: string | null;
+  providerReads: number;
+  /** ABI the runner speaks (from the lock). */
+  abiVersion: number;
   serviceCalls: number;
   /** Grants used by the current query (re-checked before its result is returned). */
   usedGrants: string[];
@@ -58,6 +64,7 @@ export interface LaunchSpec {
 
 export type InstanceExitHandler = (inst: LiveInstance, reason: string) => void;
 export type ServiceCallHandler = (inst: LiveInstance, frame: Frame) => Promise<unknown>;
+export type ProviderReadHandler = (inst: LiveInstance, frame: Frame) => Promise<unknown>;
 
 export function leaseDigest(id: string, generation: number, bootId: string, challenge: string): string {
   return `sha256:${createHash("sha256").update(`${id}\n${generation}\n${bootId}\n${challenge}`).digest("hex")}`;
@@ -71,6 +78,7 @@ export class InstanceHost {
   readonly live = new Map<string, LiveInstance>();
   onExit: InstanceExitHandler | null = null;
   onServiceCall: ServiceCallHandler | null = null;
+  onProviderRead: ProviderReadHandler | null = null;
   onContainerId: ((instanceId: string, containerId: string) => void) | null = null;
 
   constructor(
@@ -109,6 +117,9 @@ export class InstanceHost {
       lastProbeAt: 0,
       currentCallId: null,
       callKind: null,
+      currentHandler: null,
+      providerReads: 0,
+      abiVersion: spec.lock.abiVersion,
       serviceCalls: 0,
       usedGrants: [],
       callDeadline: 0,
@@ -121,6 +132,7 @@ export class InstanceHost {
         if (inst.logs.length > 50) inst.logs.shift();
       },
       onServiceCall: (f) => void this.#serviceCall(inst, f),
+      onProviderRead: (f) => void this.#providerRead(inst, f),
       onClose: (reason) => this.#exited(inst, reason),
     });
     this.live.set(inst.id, inst);
@@ -150,7 +162,7 @@ export class InstanceHost {
           AGENTOS_SOCKET: "/run/agentos/host.sock",
           AGENTOS_INSTANCE_ID: spec.id,
           AGENTOS_REVISION_ID: spec.revisionId,
-          AGENTOS_ABI: String(RUNNER_ABI_VERSION),
+          AGENTOS_ABI: String(spec.lock.abiVersion),
           TZ: "UTC",
           NODE_OPTIONS: "--max-old-space-size=192",
         },
@@ -178,15 +190,22 @@ export class InstanceHost {
     const p = f.payload as Partial<ReadyPayload>;
     const manifest = this.artifacts.manifestOf(inst.artifactId);
     const problems: string[] = [];
-    if (p.abiVersion !== RUNNER_ABI_VERSION) problems.push(`abi ${String(p.abiVersion)} != ${RUNNER_ABI_VERSION}`);
+    // The runner must speak exactly the lock's ABI; a v3 bundle needs ABI 2 and a v2 bundle ABI 1 (spec §9, V3-C02).
+    const wantAbi = isV3(inst.bundle) ? 2 : RUNNER_ABI_VERSION;
+    if (inst.abiVersion !== wantAbi) problems.push(`lock ABI ${inst.abiVersion} does not fit bundle format ${inst.bundle.formatVersion}`);
+    if (p.abiVersion !== inst.abiVersion) problems.push(`abi ${String(p.abiVersion)} != ${inst.abiVersion}`);
     if (p.instanceId !== inst.id) problems.push("instance id mismatch");
     if (p.revisionId !== inst.revisionId) problems.push("revision id mismatch");
     if (p.artifactId !== inst.artifactId) problems.push("artifact id mismatch");
     if (p.appSha256 !== manifest.files["app.mjs"]) problems.push("app.mjs hash mismatch");
     if (p.challenge !== challenge) problems.push("challenge mismatch");
     if (problems.length > 0) throw new AgentOsError("ABI_MISMATCH", `runner handshake rejected: ${problems.join("; ")}`);
-    const want = { queries: Object.keys(inst.bundle.queries).sort(), commands: Object.keys(inst.bundle.commands).sort() };
-    const got = { queries: [...(p.handlers?.queries ?? [])].sort(), commands: [...(p.handlers?.commands ?? [])].sort() };
+    const want: Record<string, string[]> = { queries: Object.keys(inst.bundle.queries).sort(), commands: Object.keys(inst.bundle.commands).sort() };
+    const got: Record<string, string[]> = { queries: [...(p.handlers?.queries ?? [])].sort(), commands: [...(p.handlers?.commands ?? [])].sort() };
+    if (isV3(inst.bundle)) {
+      want.systemActions = Object.keys(inst.bundle.system.actions).sort();
+      got.systemActions = [...(p.handlers?.systemActions ?? [])].sort();
+    }
     if (JSON.stringify(want) !== JSON.stringify(got)) {
       throw new AgentOsError("UNKNOWN_HANDLER", `the module exports ${JSON.stringify(got)}, the bundle declares ${JSON.stringify(want)}`, { declared: want, exported: got });
     }
@@ -211,6 +230,25 @@ export class InstanceHost {
     }
   }
 
+  async #providerRead(inst: LiveInstance, f: Frame): Promise<void> {
+    const p = f.payload as { callId?: string };
+    let payload: unknown;
+    try {
+      if (!this.onProviderRead) throw new AgentOsError("PROVIDER_UNAVAILABLE", "providers are not available");
+      payload = await this.onProviderRead(inst, f);
+    } catch (e) {
+      const err = e instanceof AgentOsError ? { code: e.code, message: e.message } : { code: "PROVIDER_UNAVAILABLE", message: (e as Error).message };
+      payload = { callId: p?.callId ?? "", ok: false, error: err };
+    }
+    if (inst.bridge.connected && !inst.revoked) {
+      try {
+        inst.bridge.send("providerResult", payload, f.messageId);
+      } catch {
+        /* connection went away */
+      }
+    }
+  }
+
   #exited(inst: LiveInstance, reason: string): void {
     if (inst.dead) return;
     inst.dead = true;
@@ -223,7 +261,7 @@ export class InstanceHost {
    * Run one call. Admission: one in flight per instance, queue up to 16 (immediate=true refuses when busy).
    * On timeout the call loses its commit right first, then the container is killed (spec §11.3).
    */
-  async call(inst: LiveInstance, kind: "query" | "command", handlerId: string, input: unknown, context: HandlerContext, timeoutMs: number, opts: { immediate?: boolean; onTimeout?: () => void; asService?: boolean } = {}): Promise<unknown> {
+  async call(inst: LiveInstance, kind: "query" | "command" | "systemPlan", handlerId: string, input: unknown, context: HandlerContext, timeoutMs: number, opts: { immediate?: boolean; onTimeout?: () => void; asService?: boolean } = {}): Promise<unknown> {
     if (inst.revoked || inst.dead) throw new AgentOsError("INSTANCE_STALE", "this instance no longer serves calls");
     if (inst.busy) {
       if (opts.immediate) throw new AgentOsError("APP_BUSY", "the app is busy");
@@ -235,6 +273,8 @@ export class InstanceHost {
     inst.busy = true;
     inst.currentCallId = context.callId;
     inst.callKind = opts.asService ? "service" : kind;
+    inst.currentHandler = handlerId;
+    inst.providerReads = 0;
     inst.serviceCalls = 0;
     inst.usedGrants = [];
     inst.callDeadline = Date.parse(context.deadline);
@@ -272,6 +312,7 @@ export class InstanceHost {
       inst.busy = false;
       inst.currentCallId = null;
       inst.callKind = null;
+      inst.currentHandler = null;
       inst.queue.shift()?.();
     }
   }

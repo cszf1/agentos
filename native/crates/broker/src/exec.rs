@@ -287,6 +287,12 @@ where
     if !cap.kinds.contains(&res.kind) {
         return Err(BErr::new("BROKER_POLICY_DENIED", "capability does not apply to that resource kind"));
     }
+    // Early grant check (spec §8.3): a request under a revoked/expired/foreign grant is refused before acceptance.
+    // Admission re-checks under the same lock, so a revoke committed between the two still wins.
+    if !matches!(c.query_row("SELECT 1 FROM cancel_tombstones WHERE machine_install_id=?1 AND store_uuid=?2 AND incarnation=?3 AND operation_id=?4", params![b.install_id, env.store_uuid, inc, env.operation_id], |_| Ok(())).optional()?, Some(())) {
+        let gen: i64 = c.query_row("SELECT generation FROM resource_state WHERE resource_id=?1", params![env.resource_id], |r| r.get(0)).unwrap_or(-1);
+        grant_usable(&load_grant(c, &env.store_uuid, &env.grant_id, env.grant_version)?, &env.capability_id, &env.resource_id, gen)?;
+    }
     // Capacity: business terminal records and tombstones are never deleted; refuse new admissions first (spec §24.1).
     let total: i64 = c.query_row("SELECT count(*) FROM effect_operations WHERE store_uuid=?1", params![env.store_uuid], |r| r.get(0))?;
     if total >= 100_000 {
@@ -764,7 +770,12 @@ fn admission(b: &Broker, op: &OpRow) -> Admission {
         let _ = tx.commit();
         return Admission::Refused(no_effect("failed_no_effect", "admission_refused", json!({}), &e.code, e.message));
     }
-    if quarantine.is_some() || lock.as_deref().map_or(false, |l| l != op.op_id) {
+    // A quarantined resource refuses new writes at once (spec §12.4); only a held execution lock makes it wait.
+    if let Some(q) = quarantine.filter(|q| q != &op.op_id) {
+        let _ = tx.commit();
+        return Admission::Refused(no_effect("failed_no_effect", "admission_refused", json!({"quarantineOperationId": q}), "RESOURCE_BUSY", "the resource is quarantined until an unknown result is resolved"));
+    }
+    if lock.as_deref().map_or(false, |l| l != op.op_id) {
         let _ = tx.commit();
         return Admission::Wait;
     }
@@ -1057,10 +1068,27 @@ fn run_network(b: &Broker, op: &OpRow, res: &CatalogRes, nonce: &str, attempt: i
 
 fn reconcile_network(b: &Broker, op: &OpRow, res: &CatalogRes, why: &str) -> Outcome {
     let profile = op.env.params["profileId"].as_str().unwrap_or("");
-    let cur = match b.call_worker("lab-network", "observe", &res.target, json!({"probe": true}), None, None, 5000) {
-        Ok(v) => v,
-        Err(e) => return unknown("provider_unreachable", json!({"why": why}), "EXTERNAL_RESULT_INDETERMINATE", e.message),
-    };
+    // A crashed worker is restarted by systemd within seconds: read-only observation is retried inside a fixed
+    // budget (never the write itself) before the result is declared unknown.
+    let mut last = String::new();
+    let mut cur = Value::Null;
+    for i in 0..8 {
+        match b.call_worker("lab-network", "observe", &res.target, json!({"probe": true}), None, None, 5000) {
+            Ok(v) => {
+                cur = v;
+                break;
+            }
+            Err(e) => {
+                last = e.message;
+                if i < 7 {
+                    std::thread::sleep(Duration::from_millis(750));
+                }
+            }
+        }
+    }
+    if cur.is_null() {
+        return unknown("provider_unreachable", json!({"why": why}), "EXTERNAL_RESULT_INDETERMINATE", last);
+    }
     let g = b.db.lock().unwrap();
     let req = has_step(g.as_ref().unwrap(), op, "commit_requested");
     drop(g);

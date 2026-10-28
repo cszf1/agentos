@@ -46,7 +46,7 @@ describe("R10 cancel semantics", () => {
 
 describe("R12 compaction stays inside its run", () => {
   it("a long conversation compacts blocking only, and the summary request counts against the run", async () => {
-    rig = await startRig({ fauxContextWindow: 14000, compaction: { reserveTokens: 1000, keepRecentTokens: 600 } });
+    rig = await startRig({ fauxContextWindow: 16000, compaction: { reserveTokens: 1000, keepRecentTokens: 600 } });
     const counts: number[] = [];
     let appId: string | null = null;
     for (let i = 0; i < 12; i++) {

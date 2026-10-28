@@ -11,8 +11,7 @@ import {
   type CodeBundle,
   type FieldValue,
   type HandlerContext,
-  type RecordEnvelopeV2,
-} from "@agentos/contracts";
+  type RecordEnvelopeV2, isCodeBundle } from "@agentos/contracts";
 import { iso } from "../persistence/store.js";
 import { fault } from "../faults.js";
 import type { RuntimeContext } from "../runtime/context.js";
@@ -97,7 +96,7 @@ export class InvocationService {
     if (!app) throw new AgentOsError("NOT_FOUND", "app not found");
     if (!app.active_revision_id) throw new AgentOsError("NOT_FOUND", "app has no active version yet");
     const bundle = this.ctx.apps.revisionBundle(appId, app.active_revision_id) as AnyBundle;
-    if (bundle.formatVersion !== 2) throw new AgentOsError("INVALID_REQUEST", "this app version has no code queries or commands; use the records API");
+    if (!isCodeBundle(bundle)) throw new AgentOsError("INVALID_REQUEST", "this app version has no code queries or commands; use the records API");
     const rows = s.all<{ id: string; version: number; data_json: string; created_at: string; updated_at: string }>(
       "SELECT id, version, data_json, created_at, updated_at FROM records WHERE app_id = ? ORDER BY created_at ASC, id ASC LIMIT ?",
       appId, RUNTIME_POLICY.snapshotMaxRecords + 1,
@@ -148,6 +147,22 @@ export class InvocationService {
     return { output: out, revisionId: snap.revisionId, appEpoch: snap.appEpoch, dataEpoch: snap.dataEpoch, runtimeGeneration: generation };
   }
 
+  /** ABI 2 system-plan call setup (spec §11.2 step 2): the active instance and a read-only context. */
+  prepareSystemPlanCall(appId: string, timeoutMs: number): { inst: import("../runtime/instances.js").LiveInstance; generation: number; context: HandlerContext; revisionId: string; appEpoch: number; dataEpoch: number } {
+    const s = this.ctx.store;
+    const snap = s.read(() => this.snapshot(appId));
+    const { inst, generation } = this.runtime.route(appId, { revisionId: snap.revisionId });
+    const context: HandlerContext = {
+      callId: randomUUID(), appId, revisionId: snap.revisionId, appEpoch: snap.appEpoch, dataEpoch: snap.dataEpoch,
+      logicalTime: this.now(), deadline: iso(s.clock.now() + timeoutMs), records: snap.records,
+    };
+    return { inst, generation, context, revisionId: snap.revisionId, appEpoch: snap.appEpoch, dataEpoch: snap.dataEpoch };
+  }
+
+  stillActive(appId: string, instanceId: string, generation: number): boolean {
+    return this.runtime.stillActive(appId, instanceId, generation);
+  }
+
   get(id: string): InvocationRow | undefined {
     return this.ctx.store.get<InvocationRow>("SELECT * FROM invocations WHERE id = ?", id);
   }
@@ -180,7 +195,7 @@ export class InvocationService {
     if (!snapApp) throw new AgentOsError("NOT_FOUND", "app not found");
     if (snapApp.epoch !== expectedAppEpoch) throw new AgentOsError("APP_EPOCH_STALE", "the app version changed; reload before acting", { appEpoch: snapApp.epoch });
     const bundle = snapApp.active_revision_id ? (this.ctx.apps.revisionBundle(appId, snapApp.active_revision_id) as AnyBundle) : null;
-    if (!bundle || bundle.formatVersion !== 2) throw new AgentOsError("INVALID_REQUEST", "this app version has no commands");
+    if (!bundle || !isCodeBundle(bundle)) throw new AgentOsError("INVALID_REQUEST", "this app version has no commands");
     const decl = Object.hasOwn(bundle.commands, commandId) ? bundle.commands[commandId] : undefined;
     if (!decl) throw new AgentOsError("UNKNOWN_HANDLER", `command "${commandId}" is not declared by this version`);
     if (utf8Bytes(canonicalJson(input ?? null)) > CODE_LIMITS.maxCommandInputBytes) throw new AgentOsError("LIMIT_EXCEEDED", `command input exceeds ${CODE_LIMITS.maxCommandInputBytes} bytes`);

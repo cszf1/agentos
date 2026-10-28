@@ -166,4 +166,12 @@ describe("app_stage argument decoding (real providers)", () => {
     expect(decodeBundleArg("[1,2]")).toBe("[1,2]");
     expect(decodeBundleArg("null")).toBe("null");
   });
+  it("a malformed JSON string is answered with the parse position instead of a bare schema error (V3-E01 run 2)", async () => {
+    const { undecodableBundle } = await import("@agentos/agent-pi");
+    expect(undecodableBundle({ a: 1 })).toBeNull();
+    expect(undecodableBundle('{"a":1}')).toBeNull();
+    const m = undecodableBundle('{"a":{"b":1}}}, "view": {}}')!;
+    expect(m).toMatch(/not valid JSON/);
+    expect(m).toMatch(/⟨here⟩/);
+  });
 });

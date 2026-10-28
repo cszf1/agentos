@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { RUNNER_ABI_VERSION, type ApprovedModule, type RuntimeCatalog, type RuntimeLock } from "@agentos/contracts";
+import { RUNNER_ABI_V2, RUNNER_ABI_VERSION, type ApprovedModule, type RuntimeCatalog, type RuntimeLock } from "@agentos/contracts";
 import { imageName, lockfileHash, recipeContext } from "./recipes.js";
 
 /**
@@ -34,11 +34,15 @@ export function baseRef(platform: string): string {
   return `${b.reference}@${b.digest}`;
 }
 
-export function generateLock(platformRoot: string, profileId: "core-v1" | "data-v1", platform: "linux/amd64" | "linux/arm64", version: number): RuntimeLock {
+/** core-v1/data-v1 are ABI 1 (frozen runner); core-v2/data-v2 are ABI 2 for formatVersion 3 bundles (spec §9). */
+export const PROFILE_ABI: Record<string, number> = { "core-v1": RUNNER_ABI_VERSION, "data-v1": RUNNER_ABI_VERSION, "core-v2": RUNNER_ABI_V2, "data-v2": RUNNER_ABI_V2 };
+
+export function generateLock(platformRoot: string, profileId: "core-v1" | "data-v1" | "core-v2" | "data-v2", platform: "linux/amd64" | "linux/arm64", version: number): RuntimeLock {
   const id = `${profileId}@${version}`;
+  const abiVersion = PROFILE_ABI[profileId]!;
   const modules = approvedModules(platformRoot, profileId);
   const specifiers = modules.flatMap((m) => m.specifiers);
-  const rec = (role: "builder" | "runtime") => recipeContext({ platformRoot, profileId, role, baseDigestRef: baseRef(platform), approvedSpecifiers: specifiers, lockId: id });
+  const rec = (role: "builder" | "runtime") => recipeContext({ platformRoot, profileId, role, baseDigestRef: baseRef(platform), approvedSpecifiers: specifiers, lockId: id, abiVersion });
   const b = rec("builder");
   const r = rec("runtime");
   const builderPkg = JSON.parse(readFileSync(path.join(platformRoot, "runtime", "overlays", profileId, "builder", "package.json"), "utf8")) as { dependencies: Record<string, string> };
@@ -49,8 +53,8 @@ export function generateLock(platformRoot: string, profileId: "core-v1" | "data-
     baseImage: BASE_IMAGES[platform]!,
     builderImage: { name: imageName("builder", profileId, b.recipeHash), recipeHash: b.recipeHash },
     runtimeImage: { name: imageName("runtime", profileId, r.recipeHash), recipeHash: r.recipeHash },
-    sdkVersion: "1.0.0",
-    abiVersion: RUNNER_ABI_VERSION,
+    sdkVersion: abiVersion === 1 ? "1.0.0" : "2.0.0",
+    abiVersion,
     compiler: { typescript: builderPkg.dependencies.typescript!, esbuild: builderPkg.dependencies.esbuild! },
     modules,
     dependencyLockHash: lockfileHash(platformRoot, profileId),
@@ -63,7 +67,7 @@ export function verifyLockRecipe(platformRoot: string, lock: RuntimeLock): strin
   const problems: string[] = [];
   const specifiers = lock.modules.flatMap((m) => m.specifiers);
   for (const role of ["builder", "runtime"] as const) {
-    const c = recipeContext({ platformRoot, profileId: lock.profileId, role, baseDigestRef: `${lock.baseImage.reference}@${lock.baseImage.digest}`, approvedSpecifiers: specifiers, lockId: lock.id });
+    const c = recipeContext({ platformRoot, profileId: lock.profileId, role, baseDigestRef: `${lock.baseImage.reference}@${lock.baseImage.digest}`, approvedSpecifiers: specifiers, lockId: lock.id, abiVersion: lock.abiVersion });
     const want = role === "builder" ? lock.builderImage.recipeHash : lock.runtimeImage.recipeHash;
     if (c.recipeHash !== want) problems.push(`${lock.id} ${role} recipe ${c.recipeHash} does not match the catalog (${want})`);
   }

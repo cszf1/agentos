@@ -1,0 +1,33 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "bindingAlias",
+    "capabilityId",
+    "params",
+    "observationIds",
+    "preview"
+  ],
+  "properties": {
+    "bindingAlias": {
+      "type": "string",
+      "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+    },
+    "capabilityId": {
+      "type": "string",
+      "maxLength": 64
+    },
+    "params": {
+      "type": "object"
+    },
+    "observationIds": {
+      "type": "array",
+      "maxItems": 4,
+      "items": {
+        "type": "string",
+        "pattern": "^obs_[0-9a-f]{16,40}$"
+      }
+    },
+    "preview": {}
+  }
+}

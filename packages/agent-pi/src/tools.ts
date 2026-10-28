@@ -17,13 +17,18 @@ export const TOOL_CAPABILITY: Record<string, string> = {
   app_prepare: "apps.prepare.agent",
   app_prepare_status: "deployments.read",
   app_activate: "apps.activate.agent",
+  // v0.3 system_plan mode
+  system_resource_list: "system.read",
+  system_read: "system.read",
+  system_plan: "system.actions.plan",
 };
 
 /**
  * Tool-set version recorded in os.sqlite (meta.agent_toolset_version) and agent.sqlite (workspace doc).
  * 1 = v0.1 (activate by revisionId). 2 = v0.2 (prepare/status/activate by deploymentId, catalogs).
+ * 3 = v0.3 (formatVersion 3 / ABI 2 apps; system_plan mode tools system_resource_list, system_read, system_plan).
  */
-export const TOOLSET_VERSION = 2;
+export const TOOLSET_VERSION = 3;
 
 function result<T>(out: ToolOutcome<T>, terminateOnSuccess = false): ToolExecutionResult {
   if (out.ok) {
@@ -139,7 +144,14 @@ export function createBuilderExtension(ops: AgentOps, toolLog?: ToolLog): Extens
       parameters: Type.Object({ bundle: Type.Unknown({ description: "The complete AppBundle JSON object" }) }),
       prepareArguments: (args: unknown) => parseBundleArg(args) as never,
       replay: "safe",
-      execute: async (a, api) => result(ops.appStage(id(api.taskId, "app_stage"), decodeBundleArg((a as { bundle: unknown }).bundle))),
+      execute: async (a, api) => {
+        const raw = (a as { bundle: unknown }).bundle;
+        const bad = undecodableBundle(raw);
+        // A string argument that is not valid JSON never reaches validation (it is not a stage attempt); the model gets
+        // the exact parse position so it can resend the bundle as a JSON object.
+        if (bad) return result({ ok: false, code: "INVALID_BUNDLE", message: bad } as never);
+        return result(ops.appStage(id(api.taskId, "app_stage"), decodeBundleArg(raw)));
+      },
     }),
     defineTool({
       name: "app_validate",
@@ -169,6 +181,37 @@ export function createBuilderExtension(ops: AgentOps, toolLog?: ToolLog): Extens
       replay: "safe",
       execute: async (a, api) => result(await ops.appActivate(id(api.taskId, "app_activate"), a.deploymentId), true),
     }),
+    defineTool({
+      name: "system_resource_list",
+      description: "system_plan runs only: the resources the user chose for this run (id, kind, name, generation, status, install limits) and the capabilities you may read or propose.",
+      parameters: Type.Object({}),
+      replay: "safe",
+      execute: async (_a, api) => result(ops.systemResourceList(id(api.taskId, "system_resource_list"))),
+    }),
+    defineTool({
+      name: "system_read",
+      description: "system_plan runs only: read the current state of one chosen resource with one read capability (metadata/state, not file content unless the user allowed it). Returns {observationId, observedAt, resourceVersion, data, quality}.",
+      parameters: Type.Object({ resourceId: Type.String(), capabilityId: Type.String(), params: Type.Optional(Type.Unknown()) }),
+      replay: "safe",
+      execute: async (a, api) => {
+        const bad = undecodableBundle((a as { params?: unknown }).params);
+        if (bad) return result({ ok: false, code: "INVALID_REQUEST", message: bad.replace(/bundle/g, "params") } as never);
+        return result(await ops.systemRead(id(api.taskId, "system_read"), { ...(a as object), params: decodeBundleArg((a as { params?: unknown }).params) } as never));
+      },
+    }),
+    defineTool({
+      name: "system_plan",
+      description: "system_plan runs only: freeze ONE system action (one resource, one write capability, normalized params, the observationIds you based it on). It is NOT executed: the user reviews and confirms it in the Shell. Call once, then finish.",
+      parameters: Type.Object({ resourceId: Type.String(), capabilityId: Type.String(), params: Type.Unknown(), observationIds: Type.Array(Type.String()) }),
+      replay: "safe",
+      execute: async (a, api) => {
+        // Same provider quirk as app_stage: a JSON-encoded object string is that object; a broken one gets the position.
+        const bad = undecodableBundle((a as { params?: unknown }).params);
+        if (bad) return result({ ok: false, code: "INVALID_SYSTEM_PLAN", message: bad.replace(/bundle/g, "params") } as never);
+        const out = await ops.systemPlan(id(api.taskId, "system_plan"), { ...(a as object), params: decodeBundleArg((a as { params?: unknown }).params) } as never);
+        return result(out, out.ok);
+      },
+    }),
   ];
   return defineExtension({
     name: EXTENSION_NAME,
@@ -182,6 +225,19 @@ export function createBuilderExtension(ops: AgentOps, toolLog?: ToolLog): Extens
  * Some providers deliver a large nested tool argument as a JSON-encoded string. A string that parses to a JSON object is
  * the same bundle, so it is decoded here; anything else is passed through and fails schema validation as before.
  */
+export function undecodableBundle(bundle: unknown): string | null {
+  if (typeof bundle !== "string") return null;
+  try {
+    JSON.parse(bundle);
+    return null;
+  } catch (e) {
+    const msg = (e as Error).message;
+    const at = Number(/position (\d+)/.exec(msg)?.[1] ?? -1);
+    const near = at >= 0 ? ` near …${bundle.slice(Math.max(0, at - 80), at)}⟨here⟩${bundle.slice(at, at + 40)}…` : "";
+    return `bundle must be a JSON object, not a string; the string you sent is not valid JSON (${msg})${near}. Send "bundle" as an object (check the brackets).`;
+  }
+}
+
 export function decodeBundleArg(bundle: unknown): unknown {
   if (typeof bundle !== "string") return bundle;
   try {

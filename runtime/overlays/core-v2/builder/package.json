@@ -1,0 +1,1 @@
+{ "name": "agentos-overlay-core-v2-builder", "private": true, "version": "1.0.0", "dependencies": { "typescript": "5.9.3", "esbuild": "0.28.2" } }

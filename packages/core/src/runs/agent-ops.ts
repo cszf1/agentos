@@ -1,4 +1,4 @@
-import { AgentOsError, LIMITS, canonicalJson, sha256Hex, type AnyBundle, type DataContract, type ValidationIssue } from "@agentos/contracts";
+import { AgentOsError, LIMITS, canonicalJson, sha256Hex, type AnyBundle, type DataContract, type ValidationIssue, isCodeBundle } from "@agentos/contracts";
 import type { Store } from "../persistence/store.js";
 import type { AppService, ActivateResult } from "../apps/app-service.js";
 import { authorize, type CapabilityGateway, type Principal } from "../capabilities/gateway.js";
@@ -6,7 +6,12 @@ import type { RunService } from "./run-service.js";
 import { fault } from "../faults.js";
 import type { RuntimeSystem } from "../runtime/system.js";
 import type { DeploymentDto } from "../deployments/deployment-service.js";
-import { CODE_LIMITS, COMPONENT_TYPES, UI_LIMITS } from "@agentos/contracts";
+import type { SystemCapabilities } from "../system/system-capabilities.js";
+
+/** Spec §20.1: build runs never touch system resources; system_plan runs never stage, prepare or publish apps. */
+const BUILD_ONLY = new Set(["app_get", "app_stage", "app_validate", "runtime_catalog", "service_catalog", "app_prepare", "app_prepare_status", "app_activate"]);
+const PLAN_ONLY = new Set(["system_resource_list", "system_read", "system_plan"]);
+import { CODE_LIMITS, COMPONENT_TYPES, COMPONENT_TYPES_V2, UI_LIMITS } from "@agentos/contracts";
 
 /** Identity of one agent tool call, built by the Pi adapter (never by the model). */
 export interface ToolCallIdentity {
@@ -39,6 +44,8 @@ export type ToolOutcome<T> = { ok: true; value: T } | { ok: false; code: string;
 export class AgentOps {
   /** v0.2 runtime services (set by the host after the runtime system starts). */
   runtime: RuntimeSystem | null = null;
+  /** v0.3 system capabilities (set by the host). */
+  system: SystemCapabilities | null = null;
 
   constructor(
     private readonly store: Store,
@@ -72,6 +79,9 @@ export class AgentOps {
     } catch (e) {
       return { ok: false, code: "FORBIDDEN", message: (e as Error).message };
     }
+    const mode = run.mode ?? "build";
+    if (mode === "system_plan" && BUILD_ONLY.has(id.toolName)) return { ok: false, code: "FORBIDDEN", message: `${id.toolName} is not available in a system_plan run` };
+    if (mode !== "system_plan" && PLAN_ONLY.has(id.toolName)) return { ok: false, code: "FORBIDDEN", message: `${id.toolName} is only available in a system_plan run` };
     const budget = this.runs.enterTool(run.id, id.piTaskId, id.toolName, isStage);
     if (!budget.ok) return { ok: false, code: "BUDGET_EXCEEDED", message: budget.reason };
     return { runId: run.id };
@@ -105,7 +115,7 @@ export class AgentOps {
       value: {
         apps: this.apps.listApps().map((a) => {
           const b = this.apps.activeBundle(this.apps.requireApp(a.appId));
-          return { appId: a.appId, title: a.title, appEpoch: a.appEpoch, activeRevisionId: a.activeRevisionId, runtime: b?.manifest.runtime ?? null, health: b?.formatVersion === 2 ? (this.runtime?.runtime.row(a.appId)?.health ?? "stopped") : null };
+          return { appId: a.appId, title: a.title, appEpoch: a.appEpoch, activeRevisionId: a.activeRevisionId, runtime: b?.manifest.runtime ?? null, health: b && isCodeBundle(b) ? (this.runtime?.runtime.row(a.appId)?.health ?? "stopped") : null };
         }),
       },
     };
@@ -131,7 +141,7 @@ export class AgentOps {
           limits: { maxBundleBytes: LIMITS.maxBundleBytes, maxFields: LIMITS.maxFields, maxEnumValues: LIMITS.maxEnumValues, maxStageAttempts: this.runs.settings.maxStageAttempts },
           dataEpoch: (app as { data_epoch?: number }).data_epoch ?? 0,
           codeRuntimeAvailable: this.runtime?.runtimeReady ?? false,
-          codeLimits: { ...CODE_LIMITS, ui: UI_LIMITS, components: COMPONENT_TYPES },
+          codeLimits: { ...CODE_LIMITS, ui: UI_LIMITS, components: COMPONENT_TYPES, componentsV2: COMPONENT_TYPES_V2 },
           runtimeHealth: this.runtime?.runtime.row(app.id)?.health ?? null,
         };
       }),
@@ -253,7 +263,17 @@ export class AgentOps {
     if (!sys) return { ok: false, code: "SANDBOX_UNAVAILABLE", message: "the runtime services are not available" };
     const principal = this.principal(runId, id);
     const d0 = sys.deployments.get(deploymentId);
-    if (d0) await sys.deployments.freshProbe(d0);
+    // An expired candidate is terminated (and its slot released) in a committed transaction first.
+    if (d0 && d0.owner_run_id === runId) sys.deployments.expireIfDue(deploymentId);
+    if (d0) {
+      try {
+        await sys.beforeActivate?.(d0.app_id);
+      } catch (e) {
+        if (e instanceof AgentOsError) return { ok: false, code: e.code, message: e.message };
+        throw e;
+      }
+      await sys.deployments.freshProbe(sys.deployments.get(deploymentId) ?? d0);
+    }
     const out = this.wrap(() =>
       this.gateway.write("apps.activate.agent", { principal, operationKey: this.opKey(runId, id), requestHash: sha256Hex(canonicalJson({ deploymentId })) }, () => {
         this.runs.assertWritable(runId);
@@ -262,9 +282,57 @@ export class AgentOps {
         return { status: 200, body: { appId: r.appId, revisionId: r.revisionId, appEpoch: r.appEpoch, changed: r.changed, deploymentId, noOp: r.noOp } };
       }).body,
     );
-    if (!out.ok) return out;
+    if (!out.ok) {
+      // Expired between the check above and the activation: persist the failure now (the activate tx rolled it back).
+      if (out.code === "PREPARE_EXPIRED" && d0?.owner_run_id === runId) sys.deployments.expireIfDue(deploymentId);
+      return out;
+    }
     fault("activate.after_commit");
     void sys.deployments.afterCommit(deploymentId);
     return { ok: true, value: { ...out.value, health: sys.runtime.row(out.value.appId)?.health ?? null } };
+  }
+
+  // ---------------------------------------------------------------- v0.3 system_plan tools (spec §20.2)
+
+  private async wrapAsync<T>(fn: () => Promise<T>): Promise<ToolOutcome<T>> {
+    try {
+      return { ok: true, value: await fn() };
+    } catch (e) {
+      if (e instanceof AgentOsError) return { ok: false, code: e.code, message: e.message };
+      throw e;
+    }
+  }
+
+  systemResourceList(id: ToolCallIdentity): ToolOutcome<unknown> {
+    const entered = this.enter(id);
+    if ("ok" in entered) return entered;
+    return this.wrap(() => {
+      if (!this.system) throw new AgentOsError("PROVIDER_UNAVAILABLE", "system capabilities are not available");
+      const scope = this.system.runScope(entered.runId).scope;
+      return { resources: this.system.runResources(entered.runId), readCapabilities: scope?.readCapabilities ?? [], proposeCapabilities: scope?.proposeCapabilities ?? [], broker: { ready: this.system.broker.status.brokerReady } };
+    });
+  }
+
+  async systemRead(id: ToolCallIdentity, args: { resourceId: string; capabilityId: string; params?: unknown }): Promise<ToolOutcome<unknown>> {
+    const entered = this.enter(id);
+    if ("ok" in entered) return entered;
+    return this.wrapAsync(async () => {
+      if (!this.system) throw new AgentOsError("PROVIDER_UNAVAILABLE", "system capabilities are not available");
+      return this.system.runRead(entered.runId, id.piTaskId, String(args.resourceId), String(args.capabilityId), args.params ?? {});
+    });
+  }
+
+  /** Freezes at most one action for this run; never executes it (the user confirms in the Shell). */
+  async systemPlan(id: ToolCallIdentity, args: { resourceId: string; capabilityId: string; params?: unknown; observationIds?: unknown }): Promise<ToolOutcome<unknown>> {
+    const entered = this.enter(id, true);
+    if ("ok" in entered) return entered;
+    authorize("system.actions.plan", this.principal(entered.runId, id));
+    return this.wrapAsync(async () => {
+      if (!this.system) throw new AgentOsError("PROVIDER_UNAVAILABLE", "system capabilities are not available");
+      const obs = Array.isArray(args.observationIds) ? args.observationIds.map(String) : [];
+      const a = await this.system.runPlan(entered.runId, id.piTaskId, { resourceId: String(args.resourceId), capabilityId: String(args.capabilityId), params: args.params ?? {}, observationIds: obs });
+      const v = this.system.actions.view(a);
+      return { actionId: v.actionId, state: v.state, planHash: v.planHash, preview: v.preview, expiresAt: v.expiresAt, note: "The plan waits for the user's confirmation in the AgentOS Shell. It has NOT been executed. Finish now." };
+    });
   }
 }

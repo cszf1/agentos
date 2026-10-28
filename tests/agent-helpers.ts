@@ -4,7 +4,7 @@ import { PiAgentEngine } from "@agentos/agent-pi";
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { PodmanDriver, recipeContext } from "@agentos/runtime-podman";
-import { RunCoordinator, RuntimeCatalogService, RuntimeSystem, openCore, requestHash, type Clock, type Core, type RunSettings } from "@agentos/core";
+import { RunCoordinator, RuntimeCatalogService, RuntimeSystem, SystemCapabilities, openCore, requestHash, type Clock, type Core, type RunSettings } from "@agentos/core";
 import type { RuntimeCatalog } from "@agentos/contracts";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
@@ -20,7 +20,7 @@ export function rigDriver(): PodmanDriver | null {
       const lock = CATALOG.locks.find((l) => l.builderImage.name === img.name || l.runtimeImage.name === img.name);
       if (!lock) return null;
       const base = `${lock.baseImage.reference}@${lock.baseImage.digest}`;
-      const c = recipeContext({ platformRoot: ROOT, profileId: lock.profileId, role: img.role, baseDigestRef: base, approvedSpecifiers: lock.modules.flatMap((m) => m.specifiers), lockId: lock.id });
+      const c = recipeContext({ platformRoot: ROOT, profileId: lock.profileId, role: img.role, baseDigestRef: base, approvedSpecifiers: lock.modules.flatMap((m) => m.specifiers), lockId: lock.id, abiVersion: lock.abiVersion });
       return { entries: c.entries, recipeHash: c.recipeHash, baseDigestRef: base };
     },
   });
@@ -33,10 +33,12 @@ export interface AgentRig {
   engine: PiAgentEngine;
   coord: RunCoordinator;
   sys: RuntimeSystem;
+  /** v0.3 system capabilities (connected to the real broker when one is installed). */
+  caps: SystemCapabilities;
   close(): Promise<void>;
 }
 
-export async function startRig(opts: { dir?: string; clock?: Clock; runSettings?: Partial<RunSettings>; fauxContextWindow?: number; compaction?: { reserveTokens?: number; keepRecentTokens?: number } } = {}): Promise<AgentRig> {
+export async function startRig(opts: { dir?: string; clock?: Clock; runSettings?: Partial<RunSettings>; fauxContextWindow?: number; compaction?: { reserveTokens?: number; keepRecentTokens?: number }; systemAutoStart?: boolean; storeUuid?: string } = {}): Promise<AgentRig> {
   const dir = opts.dir ?? tmpDir();
   const core = openCore(path.join(dir, "os.sqlite"), { runSettings: opts.runSettings, ...(opts.clock ? { clock: opts.clock } : {}) });
   const engine = new PiAgentEngine({
@@ -47,9 +49,16 @@ export async function startRig(opts: { dir?: string; clock?: Clock; runSettings?
     fauxContextWindow: opts.fauxContextWindow,
     compaction: opts.compaction,
   });
+  // v0.3 tests against the installed broker use the store UUID registered in the root policy.
+  if (opts.storeUuid) core.store.tx(() => core.store.run("UPDATE meta SET store_uuid = ? WHERE id = 1", opts.storeUuid));
+  const caps = new SystemCapabilities(core, null, { dataDir: dir, log: () => {}, autoStart: opts.systemAutoStart ?? true });
+  core.runs.systemScope = (runId, ids, scopes, deadline) => caps.freezeRunScopeInTx(runId, ids, scopes, deadline);
+  core.agentOps.system = caps;
+  await caps.boot();
   const sys = new RuntimeSystem(core, { dataDir: dir, catalog: new RuntimeCatalogService(CATALOG, process.arch === "arm64" ? "linux/arm64" : "linux/amd64"), driver: rigDriver(), log: () => {}, autoReconcile: false });
   await sys.boot();
   core.agentOps.runtime = sys;
+  caps.attachRuntime(sys);
   await engine.open();
   const meta = core.store.meta();
   const b = await engine.bind(meta.store_uuid, meta.agent_binding_state);
@@ -65,11 +74,13 @@ export async function startRig(opts: { dir?: string; clock?: Clock; runSettings?
     engine,
     coord,
     sys,
+    caps,
     async close() {
       coord.stop();
       await coord.drain();
       await engine.close();
       await sys.shutdown();
+      await caps.shutdown();
       core.store.close();
     },
   };

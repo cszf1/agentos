@@ -29,6 +29,9 @@ export const DTO_SCHEMAS = {
       intent: { type: "string", minLength: 1, maxLength: LIMITS.maxIntentCodePoints },
       targetAppId: { oneOf: [{ type: "null" }, uuid] },
       expectedAppEpoch: epoch,
+      mode: { enum: ["build", "system_plan"] },
+      resourceIds: { type: "array", minItems: 1, maxItems: 8, uniqueItems: true, items: { type: "string", pattern: "^res_[a-z0-9_]{4,64}$" } },
+      capabilityScopes: { type: "array", maxItems: 17, uniqueItems: true, items: { type: "string", pattern: "^[a-z]+\\.[a-z_]+$" } },
     },
   },
   empty: { type: "object", additionalProperties: false, properties: {} },
@@ -74,6 +77,44 @@ export const DTO_SCHEMAS = {
       contractHash: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" },
     },
   },
+  // v0.3 (spec §21.1)
+  importRootCreate: {
+    type: "object", additionalProperties: false, required: ["path"],
+    properties: { path: { type: "string", minLength: 1, maxLength: 1024 }, displayName: { type: "string", minLength: 1, maxLength: 80 } },
+  },
+  providerGrantCreate: {
+    type: "object", additionalProperties: false, required: ["appId", "bindingAlias", "resourceId", "confirmationPolicy"],
+    properties: {
+      appId: uuid,
+      bindingAlias: { type: "string", pattern: "^[A-Za-z][A-Za-z0-9_]{0,63}$" },
+      resourceId: { type: "string", pattern: "^res_[a-z0-9_]{4,64}$" },
+      confirmationPolicy: { enum: ["per_plan", "standing"] },
+      expiresInDays: { type: "integer", minimum: 1, maximum: 365 },
+      bounds: {
+        type: "object", maxProperties: 8, propertyNames: { pattern: "^[a-z]+\\.[a-z_]+$" },
+        additionalProperties: { type: "object", maxProperties: 4 },
+      },
+    },
+  },
+  systemActionPlan: {
+    type: "object", additionalProperties: false, required: ["expectedAppEpoch", "input"],
+    properties: { expectedAppEpoch: epoch, input: {} },
+  },
+  systemActionConfirm: {
+    type: "object", additionalProperties: false, required: ["planHash"],
+    properties: { planHash: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" } },
+  },
+  systemActionCancel: {
+    type: "object", additionalProperties: false, properties: { reason: { type: "string", maxLength: 200 } },
+  },
+  systemActionResolve: {
+    type: "object", additionalProperties: false, required: ["decision", "note"],
+    properties: {
+      decision: { enum: ["confirmed_applied", "confirmed_not_applied", "accept_unknown"] },
+      note: { type: "string", minLength: 1, maxLength: 500 },
+      releaseQuarantine: { type: "boolean" },
+    },
+  },
 } as const;
 
 export type DtoName = keyof typeof DTO_SCHEMAS;
@@ -95,7 +136,7 @@ export function parseDto<T>(name: DtoName, body: unknown): T {
 
 export interface AuthSessionBody { token: string }
 export interface ActivateBody { revisionId: string; expectedAppEpoch: number }
-export interface RunCreateBody { intent: string; targetAppId: string | null; expectedAppEpoch?: number }
+export interface RunCreateBody { intent: string; targetAppId: string | null; expectedAppEpoch?: number; mode?: "build" | "system_plan"; resourceIds?: string[]; capabilityScopes?: string[] }
 export interface RecordCreateBody { expectedAppEpoch: number; data: Record<string, FieldValue> }
 export interface RecordPatchBody { expectedAppEpoch: number; expectedRecordVersion: number; changes: Record<string, FieldValue> }
 export interface RecordDeleteBody { expectedAppEpoch: number; expectedRecordVersion: number }
@@ -111,7 +152,7 @@ export interface AppSummary {
   activeRevisionId: string | null;
   draft: boolean;
   /** v0.2: runtime of the active revision, and the runtime health of code apps (spec §19.3). */
-  runtime?: "declarative-v1" | "isolated-code-v1";
+  runtime?: "declarative-v1" | "isolated-code-v1" | "isolated-code-v2";
   health?: "stopped" | "recovering" | "ready" | "degraded" | null;
   dataEpoch?: number;
 }
@@ -132,7 +173,7 @@ export interface RevisionSummary {
   createdAt: string;
   firstActivatedAt: string;
   isActive: boolean;
-  runtime?: "declarative-v1" | "isolated-code-v1";
+  runtime?: "declarative-v1" | "isolated-code-v1" | "isolated-code-v2";
 }
 
 export interface RecordEnvelope {
@@ -160,6 +201,10 @@ export interface RunView {
   dispatchState: DispatchState;
   intent: string;
   mode: "create" | "modify";
+  /** v0.3 run mode and, for system_plan, the frozen scope and the prepared action (not an executed one). */
+  runMode?: "build" | "system_plan";
+  preparedActionId?: string | null;
+  systemScope?: unknown;
   targetAppId: string;
   expectedAppEpoch: number;
   appliedRevisionId: string | null;
@@ -202,4 +247,9 @@ export interface StateView {
   /** v0.2: whether code apps can run on this host, and why not (spec §20.1). */
   runtimeReady?: boolean;
   runtimeProblems?: string[];
+  /** v0.3 (spec §22.1): separate component states, never one boolean hiding the reason. */
+  hostReady?: boolean;
+  brokerReady?: boolean;
+  telemetryAvailable?: boolean;
+  system?: Record<string, unknown>;
 }

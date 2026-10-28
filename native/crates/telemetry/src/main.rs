@@ -162,7 +162,9 @@ extern "C" fn on_event(ctx: *mut libc::c_void, data: *mut libc::c_void, size: li
     let ev = json!({
         "type": "event", "kind": if e.kind == 1 { "exec" } else { "exit" }, "workloadKey": w.key, "workloadKind": w.kind,
         "workloadGeneration": w.generation, "cgroupId": e.cgroup_id, "pid": e.pid, "tgid": e.tgid,
-        "procStartNs": e.start_time, "bootNs": e.boot_ns, "exitCode": if e.kind == 2 { json!(e.exit_code) } else { Value::Null },
+        "procStartNs": e.start_time, "bootNs": e.boot_ns, // task->exit_code is a wait status: code in bits 8..15, terminating signal in bits 0..6.
+        "exitCode": if e.kind == 2 { json!((e.exit_code >> 8) & 0xff) } else { Value::Null },
+        "exitSignal": if e.kind == 2 { json!(e.exit_code & 0x7f) } else { Value::Null },
     });
     push(&mut st, ev);
     sh.1.notify_all();

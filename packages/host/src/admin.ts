@@ -10,7 +10,7 @@ import { backupFull, restoreFull } from "./backup-v2.js";
 import { assertLockHeld } from "./lock.js";
 import { rotateSecrets } from "./auth.js";
 import { MIGRATIONS, openCore } from "@agentos/core";
-import { checkAnyStructure } from "@agentos/contracts";
+import { checkAnyStructure, isCodeBundle } from "@agentos/contracts";
 
 /**
  * Cold backup / restore (spec §15). Run through bin/agentos-admin, which holds the same host.lock with flock,
@@ -230,7 +230,7 @@ export function seedFixtures(dataDir: string, files: string[], config?: HostConf
       const s = checkAnyStructure(raw);
       if (!s.ok) throw new Error(`${f} is not a valid bundle: ${JSON.stringify(s.issues.slice(0, 3))}`);
       const r = core.apps.seedActivated(s.bundle);
-      if (s.bundle.formatVersion === 2) {
+      if (isCodeBundle(s.bundle)) {
         // Test-only: the host's reconciler builds the artifact and starts the instance at boot.
         core.store.tx(() => {
           const now = new Date().toISOString();
@@ -291,6 +291,25 @@ export function adminMain(): void {
     } else if (cmd === "gc") {
       const dryRun = process.argv.includes("--dry-run");
       void gc(config, dryRun, process.argv.includes("--include-images")).then((r) => process.stdout.write(`${JSON.stringify({ ok: true, ...(r as object) }, null, 2)}\n`)).catch((e) => {
+        process.stderr.write(`${JSON.stringify({ ok: false, error: (e as Error).message })}\n`);
+        process.exit(1);
+      });
+    } else if (cmd === "rebind-broker") {
+      // Spec §23.4: after `agentos-system-admin reinstall-log`, an administrator explicitly binds this workspace to
+      // the NEW machineInstallId. Every old grant, unsent plan and outbox entry becomes void; sent ones stay unknown.
+      if (!process.argv.includes("--confirm-new-install")) throw new Error("usage: agentos-admin rebind-broker --confirm-new-install");
+      void (async () => {
+        const core = openCore(path.join(config.dataDir, "os.sqlite"));
+        const { BrokerLink } = await import("@agentos/core");
+        const link = new BrokerLink(core.store, core.store.meta().store_uuid);
+        const st = await link.ensure();
+        const m = link.meta();
+        if (!st.machineInstallId || st.workspaceIncarnation === null || st.workspaceIncarnation === undefined) throw new Error(`broker unavailable: ${st.diagnostic ?? "no handshake"}`);
+        if (m.broker_install_id === st.machineInstallId) throw new Error("this workspace is already bound to the current broker install");
+        link.rebindToNewInstall(st.machineInstallId, st.workspaceIncarnation);
+        core.store.close();
+        process.stdout.write(`${JSON.stringify({ ok: true, previous: m.broker_install_id, machineInstallId: st.machineInstallId, workspaceIncarnation: st.workspaceIncarnation })}\n`);
+      })().catch((e) => {
         process.stderr.write(`${JSON.stringify({ ok: false, error: (e as Error).message })}\n`);
         process.exit(1);
       });

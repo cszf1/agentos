@@ -10,7 +10,8 @@ import { catalogHash } from "../packages/contracts/dist/index.js";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const file = path.join(root, "runtime", "catalog", "catalog.json");
 const platforms = ["linux/amd64"];
-const next = { catalogVersion: 1, locks: platforms.flatMap((p) => [generateLock(root, "core-v1", p, 1), generateLock(root, "data-v1", p, 1)]) };
+// v0.3 appends ABI-2 locks; the ABI-1 locks are regenerated from the frozen runner/SDK and must stay byte-identical.
+const next = { catalogVersion: 1, locks: platforms.flatMap((p) => [generateLock(root, "core-v1", p, 1), generateLock(root, "data-v1", p, 1), generateLock(root, "core-v2", p, 1), generateLock(root, "data-v2", p, 1)]) };
 if (existsSync(file) && !process.argv.includes("--allow-change")) {
   const prev = JSON.parse(readFileSync(file, "utf8"));
   const problems = checkCatalogStable(prev, next);

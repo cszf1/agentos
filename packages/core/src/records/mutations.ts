@@ -76,7 +76,6 @@ export function checkPlan(args: PlanArgs, getRecord: (id: string) => { version: 
       }
       if (utf8Bytes(JSON.stringify(full)) > LIMITS.maxRecordBytes) throw new AgentOsError("LIMIT_EXCEEDED", `a record is limited to ${LIMITS.maxRecordBytes} bytes`, { path: p });
       count++;
-      if (count > LIMITS.maxRecordsPerApp) throw new AgentOsError("LIMIT_EXCEEDED", `an app holds at most ${LIMITS.maxRecordsPerApp} records`, { path: p });
       creates[m.localKey] = full;
       return;
     }
@@ -90,8 +89,12 @@ export function checkPlan(args: PlanArgs, getRecord: (id: string) => { version: 
     if (m.kind === "update") {
       checkData(m.changes, `${p}/changes`);
       if (utf8Bytes(JSON.stringify({ ...row.data, ...m.changes })) > LIMITS.maxRecordBytes) throw new AgentOsError("LIMIT_EXCEEDED", `a record is limited to ${LIMITS.maxRecordBytes} bytes`, { path: p });
+    } else {
+      count--;
     }
   });
+  // The limit applies to the count after the whole atomic plan (a delete + create at the limit is allowed).
+  if (count > LIMITS.maxRecordsPerApp) throw new AgentOsError("LIMIT_EXCEEDED", `an app holds at most ${LIMITS.maxRecordsPerApp} records`, { path: "/mutations" });
   return { creates };
 }
 

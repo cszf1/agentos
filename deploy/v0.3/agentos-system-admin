@@ -24,6 +24,8 @@ write_units() {
   local host_uid=$1 serial_pty=$2
   cat > $UNITS/agentos-broker.service <<EOF
 [Unit]
+# Spec §22.1: the broker/workers restart after a crash; never give up after a burst of failures.
+StartLimitIntervalSec=0
 Description=AgentOS privileged broker (fixed capabilities, execution log)
 After=dbus.service agentos-labnet.service
 Wants=agentos-labnet.service
@@ -60,6 +62,8 @@ WantedBy=multi-user.target
 EOF
   cat > $UNITS/agentos-worker-file.service <<EOF
 [Unit]
+# Spec §22.1: the broker/workers restart after a crash; never give up after a burst of failures.
+StartLimitIntervalSec=0
 Description=AgentOS file worker (sole writer of managed directories)
 
 [Service]
@@ -86,6 +90,8 @@ Restart=on-failure
 EOF
   cat > $UNITS/agentos-worker-service.service <<EOF
 [Unit]
+# Spec §22.1: the broker/workers restart after a crash; never give up after a burst of failures.
+StartLimitIntervalSec=0
 Description=AgentOS service worker (fixed systemd D-Bus calls on catalog units)
 After=dbus.service polkit.service
 
@@ -110,6 +116,8 @@ Restart=on-failure
 EOF
   cat > $UNITS/agentos-worker-net.service <<EOF
 [Unit]
+# Spec §22.1: the broker/workers restart after a crash; never give up after a burst of failures.
+StartLimitIntervalSec=0
 Description=AgentOS network worker (inside the lab namespace, CAP_NET_ADMIN only)
 Requires=agentos-labnet.service
 After=agentos-labnet.service agentos-labpeer-echo.service
@@ -135,6 +143,8 @@ Restart=on-failure
 EOF
   cat > $UNITS/agentos-worker-serial.service <<EOF
 [Unit]
+# Spec §22.1: the broker/workers restart after a crash; never give up after a burst of failures.
+StartLimitIntervalSec=0
 Description=AgentOS serial worker (registered device sessions, fixed protocol profile)
 
 [Service]
@@ -158,6 +168,8 @@ Restart=on-failure
 EOF
   cat > $UNITS/agentos-telemetry.service <<EOF
 [Unit]
+# Spec §22.1: the broker/workers restart after a crash; never give up after a burst of failures.
+StartLimitIntervalSec=0
 Description=AgentOS telemetry collector (fixed BPF object, registered workloads only)
 
 [Service]
@@ -170,13 +182,15 @@ ProtectHome=yes
 PrivateTmp=yes
 PrivateNetwork=yes
 RestrictAddressFamilies=AF_UNIX
-CapabilityBoundingSet=CAP_BPF CAP_PERFMON CAP_SYS_RESOURCE CAP_DAC_READ_SEARCH CAP_SYS_ADMIN
+CapabilityBoundingSet=CAP_BPF CAP_PERFMON CAP_SYS_RESOURCE CAP_DAC_READ_SEARCH CAP_SYS_ADMIN CAP_CHOWN
 MemoryMax=256M
 Restart=on-failure
 RestartSec=2
 EOF
   cat > $UNITS/agentos-labnet.service <<EOF
 [Unit]
+# Spec §22.1: the broker/workers restart after a crash; never give up after a burst of failures.
+StartLimitIntervalSec=0
 Description=AgentOS lab network namespaces (isolated test path, no host bridge)
 
 [Service]
@@ -187,6 +201,8 @@ ExecStop=$LIB/labnet down
 EOF
   cat > $UNITS/agentos-labpeer-echo.service <<EOF
 [Unit]
+# Spec §22.1: the broker/workers restart after a crash; never give up after a burst of failures.
+StartLimitIntervalSec=0
 Description=AgentOS lab peer test server (10.231.0.2:8080 inside agentos-labpeer)
 Requires=agentos-labnet.service
 After=agentos-labnet.service
@@ -201,6 +217,8 @@ Restart=on-failure
 EOF
   cat > $UNITS/agentos-demo.service <<EOF
 [Unit]
+# Spec §22.1: the broker/workers restart after a crash; never give up after a burst of failures.
+StartLimitIntervalSec=0
 Description=AgentOS demo service (fixed program, managed working directory)
 
 [Service]
@@ -218,6 +236,8 @@ EOF
   if [ "$serial_pty" = 1 ]; then
     cat > $UNITS/agentos-serial-sim.service <<EOF
 [Unit]
+# Spec §22.1: the broker/workers restart after a crash; never give up after a burst of failures.
+StartLimitIntervalSec=0
 Description=AgentOS PTY serial fixture (software protocol tests only; not hardware)
 Before=agentos-worker-serial.service
 
@@ -390,8 +410,10 @@ do_inspect() {
 do_reinstall_log() {
   systemctl stop agentos-broker.service || true
   local ts; ts=$(date +%s)
-  [ -f /var/lib/agentos-broker/broker.sqlite ] && mv /var/lib/agentos-broker/broker.sqlite "/var/lib/agentos-broker/broker.sqlite.retired-$ts"
-  rm -f /var/lib/agentos-broker/broker.sqlite-wal /var/lib/agentos-broker/broker.sqlite-shm
+  # The retired log is kept whole (with its WAL) for the administrator; it is never reused.
+  for s in "" -wal -shm; do
+    [ -e /var/lib/agentos-broker/broker.sqlite$s ] && mv /var/lib/agentos-broker/broker.sqlite$s "/var/lib/agentos-broker/broker.sqlite.retired-$ts$s"
+  done
   local new="mi_$(head -c 12 /dev/urandom | od -An -tx1 | tr -d ' \n')"
   python3 - "$POL" "$new" <<'EOF'
 import json,sys

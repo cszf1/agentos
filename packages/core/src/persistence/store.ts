@@ -5,6 +5,14 @@ import { MIGRATIONS } from "./migrations.js";
 
 export type Row = Record<string, unknown>;
 
+/** A new workspace normally gets a random storeUUID; installers may fix it (AGENTOS_STORE_UUID) so the root broker
+ * registration names this workspace. Only read when os.sqlite is created. */
+function initialStoreUUID(): string {
+  const v = process.env.AGENTOS_STORE_UUID;
+  if (v && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(v)) return v;
+  return randomUUID();
+}
+
 export interface Clock {
   now(): number;
 }
@@ -66,7 +74,7 @@ export class Store {
         if (v === 1) {
           this.db
             .prepare("INSERT INTO meta (id, schema_version, store_uuid, client_epoch, agent_binding_state, created_at) VALUES (1, ?, ?, 1, 'pending', ?)")
-            .run(v, randomUUID(), iso(this.clock.now()));
+            .run(v, initialStoreUUID(), iso(this.clock.now()));
         } else {
           this.db.prepare("UPDATE meta SET schema_version = ? WHERE id = 1").run(v);
         }

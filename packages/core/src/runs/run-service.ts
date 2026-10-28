@@ -30,6 +30,9 @@ export interface RunRow {
   pi_submission_id: number | null;
   applied_revision_id: string | null;
   model_request_count: number;
+  mode: "build" | "system_plan";
+  system_resource_scope: string | null;
+  prepared_action_id: string | null;
   stop_reason: string | null;
   last_validation_json: string | null;
   error_json: string | null;
@@ -56,6 +59,11 @@ export const DEFAULT_RUN_SETTINGS: RunSettings = {
 };
 
 export type StopReason = "user" | "budget" | "deadline";
+
+/** system_plan budgets (spec §20.2): 180 s, 6 model requests, 20 tool tasks, 3 invalid plan attempts. */
+export const SYSTEM_PLAN_RUN_SETTINGS: RunSettings = { deadlineMs: 180_000, maxModelRequests: 6, maxToolTasks: 20, maxStageAttempts: 3 };
+/** Hidden placeholder that system_plan runs reference (runs.target_app_id is NOT NULL); never listed, never activated. */
+export const SYSTEM_PLAN_APP_ID = "00000000-0000-4000-8000-0000000005a5";
 
 export class RunService {
   constructor(
@@ -97,6 +105,9 @@ export class RunService {
       dispatchState: row.dispatch_state,
       intent: row.intent,
       mode: frozen.mode,
+      runMode: row.mode ?? "build",
+      preparedActionId: row.prepared_action_id ?? null,
+      systemScope: row.system_resource_scope ? JSON.parse(row.system_resource_scope) : null,
       targetAppId: row.target_app_id,
       expectedAppEpoch: row.expected_app_epoch,
       appliedRevisionId: row.applied_revision_id,
@@ -125,6 +136,16 @@ export class RunService {
   /** v0.2 hooks: refuse a run while a user version switch is open; cancel a run's deployments with it (spec §13, §15). */
   acceptGuard: (() => void) | null = null;
   onStopInTx: ((runId: string) => void) | null = null;
+  /** v0.3: freezes the user's resource scope for a system_plan run (set by the system-capabilities layer). */
+  systemScope: ((runId: string, resourceIds: string[], capabilityScopes: string[], deadlineMs: number) => unknown) | null = null;
+
+  settingsFor(row: { mode?: string } | undefined): RunSettings {
+    if (row?.mode === "system_plan") {
+      // Test hosts may shorten deadlines like build runs do.
+      return { ...SYSTEM_PLAN_RUN_SETTINGS, deadlineMs: Math.min(SYSTEM_PLAN_RUN_SETTINGS.deadlineMs, this.settings.deadlineMs) };
+    }
+    return this.settings;
+  }
 
   /** Accept a generation request (inside the gateway write tx). */
   accept(body: RunCreateBody, requestKey: string, requestHash: string, engineIdle: boolean): { runId: string; targetAppId: string; status: RunStatus } {
@@ -132,6 +153,9 @@ export class RunService {
       throw new AgentOsError("RUN_BUSY", "another generation is still running");
     }
     this.acceptGuard?.();
+    const runMode = body.mode ?? "build";
+    if (runMode === "system_plan") return this.#acceptSystemPlan(body, requestKey, requestHash);
+    if (body.resourceIds !== undefined || body.capabilityScopes !== undefined) throw new AgentOsError("INVALID_REQUEST", "resourceIds/capabilityScopes are only for mode=system_plan");
     let targetAppId: string;
     let expectedAppEpoch: number;
     let mode: "create" | "modify";
@@ -177,6 +201,43 @@ export class RunService {
     );
     this.store.event("run.accepted", { runId, targetAppId, mode }, { appId: targetAppId, runId });
     return { runId, targetAppId, status: "queued" };
+  }
+
+  /** mode=system_plan: no app target; the resource scope is frozen with the run (spec §8.4, §20.1). */
+  #acceptSystemPlan(body: RunCreateBody, requestKey: string, requestHash: string): { runId: string; targetAppId: string; status: RunStatus } {
+    if (body.targetAppId !== null) throw new AgentOsError("INVALID_REQUEST", "system_plan runs do not target an app");
+    if (!this.systemScope) throw new AgentOsError("PROVIDER_UNAVAILABLE", "system capabilities are not available on this host");
+    const runId = randomUUID();
+    const nowMs = this.nowMs();
+    const st = this.settingsFor({ mode: "system_plan" });
+    if (!this.store.get("SELECT 1 FROM apps WHERE id = ?", SYSTEM_PLAN_APP_ID)) {
+      this.store.run("INSERT INTO apps (id, active_revision_id, epoch, contract_json, created_at, updated_at) VALUES (?, NULL, 0, ?, ?, ?)", SYSTEM_PLAN_APP_ID, JSON.stringify({ fields: {} }), iso(nowMs), iso(nowMs));
+    }
+    const scope = this.systemScope(runId, body.resourceIds ?? [], body.capabilityScopes ?? [], nowMs + st.deadlineMs);
+    const frozen: FrozenRunInput = {
+      protocolVersion: 1,
+      runId,
+      storeUUID: this.store.meta().store_uuid,
+      mode: "create",
+      runMode: "system_plan",
+      systemScope: scope,
+      targetAppId: SYSTEM_PLAN_APP_ID,
+      expectedAppEpoch: 0,
+      intent: body.intent,
+      contractAtAccept: { fields: {} },
+      activeRevisionAtAccept: null,
+      system: { hostVersion: HOST_VERSION, platform: this.platform.platform, arch: this.platform.arch },
+      acceptedAt: iso(nowMs),
+    };
+    const frozenJson = canonicalJson(frozen);
+    this.store.run(
+      `INSERT INTO runs (id, request_key, request_hash, target_app_id, expected_app_epoch, intent, frozen_submit_json, submit_hash,
+        status, dispatch_state, deadline_at, created_at, updated_at, mode, system_resource_scope)
+       VALUES (?, ?, ?, ?, 0, ?, ?, ?, 'queued', 'pending', ?, ?, ?, 'system_plan', ?)`,
+      runId, requestKey, requestHash, SYSTEM_PLAN_APP_ID, body.intent, frozenJson, sha256Hex(frozenJson), iso(nowMs + st.deadlineMs), iso(nowMs), iso(nowMs), JSON.stringify(scope),
+    );
+    this.store.event("run.accepted", { runId, mode: "system_plan" }, { runId });
+    return { runId, targetAppId: SYSTEM_PLAN_APP_ID, status: "queued" };
   }
 
   frozen(row: RunRow): FrozenRunInput {
@@ -262,7 +323,11 @@ export class RunService {
       let status: RunStatus;
       let error: Record<string, unknown> | null = null;
       let warning: string | null = row.warning;
-      if (row.applied_revision_id !== null) {
+      if (row.mode === "system_plan" && row.prepared_action_id !== null) {
+        // Completion fact of a system_plan run: a prepared plan, not an executed action (spec §20.3).
+        status = "succeeded";
+        if (piOutcome.state !== "done" || row.stop_reason !== null) warning = `plan prepared, but the agent did not finish cleanly (${row.stop_reason ?? piOutcome.reason ?? piOutcome.state})`;
+      } else if (row.applied_revision_id !== null) {
         status = "succeeded";
         if (piOutcome.state !== "done" || row.stop_reason !== null) {
           warning = `published, but the agent did not finish cleanly (${row.stop_reason ?? piOutcome.reason ?? piOutcome.state})`;
@@ -272,13 +337,16 @@ export class RunService {
         error = { code: "CANCELLED", message: "cancelled by the user" };
       } else if (row.stop_reason === "budget") {
         status = "failed";
-        error = { code: "BUDGET_EXCEEDED", message: "the generation budget was used up before an app was published" };
+        error = { code: "BUDGET_EXCEEDED", message: row.mode === "system_plan" ? "the planning budget was used up before a plan was prepared" : "the generation budget was used up before an app was published" };
       } else if (row.stop_reason === "deadline") {
         status = "failed";
         error = { code: "DEADLINE_EXCEEDED", message: "the generation took longer than allowed" };
       } else if (piOutcome.state === "unanswered" && piOutcome.reason !== undefined && piOutcome.reason !== "aborted") {
         status = "failed";
         error = { code: "MODEL_ERROR", message: "the model request failed", details: { reason: piOutcome.reason, detail: (piOutcome.detail ?? "").slice(0, 500) } };
+      } else if (row.mode === "system_plan") {
+        status = "failed";
+        error = { code: "NO_SYSTEM_PLAN_PREPARED", message: "the agent finished without preparing a system plan" };
       } else {
         status = "failed";
         error = { code: "NO_APPLICATION_PUBLISHED", message: "the agent finished without publishing an app" };
@@ -321,8 +389,9 @@ export class RunService {
       if (isStage) this.store.run("INSERT OR IGNORE INTO run_steps (run_id, kind, durable_task_id, tool_name, created_at) VALUES (?, 'stage', ?, ?, ?)", runId, piTaskId, toolName, now);
       const tools = this.store.get<{ n: number }>("SELECT COUNT(*) AS n FROM run_steps WHERE run_id = ? AND kind = 'tool'", runId)!.n;
       const stages = this.store.get<{ n: number }>("SELECT COUNT(*) AS n FROM run_steps WHERE run_id = ? AND kind = 'stage'", runId)!.n;
-      if (tools > this.settings.maxToolTasks) return `tool task budget (${this.settings.maxToolTasks}) exhausted`;
-      if (stages > this.settings.maxStageAttempts) return `stage attempt budget (${this.settings.maxStageAttempts}) exhausted`;
+      const st = this.settingsFor(this.getRow(runId));
+      if (tools > st.maxToolTasks) return `tool task budget (${st.maxToolTasks}) exhausted`;
+      if (stages > st.maxStageAttempts) return `${this.getRow(runId)?.mode === "system_plan" ? "invalid plan" : "stage"} attempt budget (${st.maxStageAttempts}) exhausted`;
       return null;
     });
     if (over !== null) {
@@ -339,8 +408,9 @@ export class RunService {
       if (!row) return { ok: false as const, reason: "no active run", stop: null };
       if (row.status !== "running") return { ok: false as const, reason: `run is ${row.status}`, stop: null };
       if (Date.parse(row.deadline_at) <= this.nowMs()) return { ok: false as const, reason: "deadline passed", stop: { runId: row.id, why: "deadline" as const } };
-      if (row.model_request_count >= this.settings.maxModelRequests) {
-        return { ok: false as const, reason: `model request budget (${this.settings.maxModelRequests}) exhausted`, stop: { runId: row.id, why: "budget" as const } };
+      const st = this.settingsFor(row);
+      if (row.model_request_count >= st.maxModelRequests) {
+        return { ok: false as const, reason: `model request budget (${st.maxModelRequests}) exhausted`, stop: { runId: row.id, why: "budget" as const } };
       }
       this.store.run("UPDATE runs SET model_request_count = model_request_count + 1, updated_at = ? WHERE id = ?", this.now(), row.id);
       return { ok: true as const, runId: row.id, count: row.model_request_count + 1, stop: null };

@@ -5,6 +5,7 @@ import { AppView } from "./AppView";
 import { CodeAppView } from "./SlotRenderer";
 import { DeploymentLine, RuntimePanel, ServicesPanel, STAGE_TEXT, healthText } from "./Panels";
 import type { DeploymentView } from "./api";
+import { AppSystemPanel, ConfirmDialog, SystemCenter } from "./SystemCenter";
 
 class Boundary extends Component<{ children: ReactNode; resetKey: string }, { error: Error | null; key: string }> {
   state = { error: null as Error | null, key: this.props.resetKey };
@@ -78,7 +79,7 @@ const TOOL_TEXT: Record<string, string> = {
   app_list: "列出应用",
 };
 
-function RunPanel(props: { run: RunView; onCancel: () => void; onRetry: () => void; canRetry: boolean; cancelError: string | null }) {
+function RunPanel(props: { run: RunView; onCancel: () => void; onRetry: () => void; canRetry: boolean; cancelError: string | null; onOpenAction?: (id: string) => void }) {
   const r = props.run;
   const active = ["queued", "running", "cancel_requested", "blocked"].includes(r.status);
   const [transcript, setTranscript] = useState<{ role: string; text: string; toolName?: string; isError?: boolean }[] | null>(null);
@@ -92,7 +93,7 @@ function RunPanel(props: { run: RunView; onCancel: () => void; onRetry: () => vo
       <div className="run-head">
         <strong>{STATUS_TEXT[r.status] ?? r.status}</strong>
         <span className="muted">
-          {r.mode === "create" ? "新建应用" : "修改应用"} · 模型请求 {r.modelRequestCount} · 工具 {r.progress.toolTasks}
+          {r.runMode === "system_plan" ? "系统计划" : r.mode === "create" ? "新建应用" : "修改应用"} · 模型请求 {r.modelRequestCount} · 工具 {r.progress.toolTasks}
           {r.progress.lastTool ? ` · ${TOOL_TEXT[r.progress.lastTool] ?? r.progress.lastTool}` : ""}
         </span>
       </div>
@@ -101,6 +102,11 @@ function RunPanel(props: { run: RunView; onCancel: () => void; onRetry: () => vo
         <div className="small">
           发布：{r.deployment.stage ? STAGE_TEXT[r.deployment.stage] ?? r.deployment.stage : r.deployment.status}
           {r.deployment.error ? ` · ${r.deployment.error.code} ${r.deployment.error.message}` : ""}
+        </div>
+      )}
+      {r.runMode === "system_plan" && r.preparedActionId && (
+        <div className="banner info">
+          计划已生成，尚未执行。<button onClick={() => props.onOpenAction?.(r.preparedActionId!)}>查看并确认</button>
         </div>
       )}
       {r.appliedRevisionId && <div className="banner ok">已发布版本 {r.appliedRevisionId.slice(7, 19)}{noChange ? "" : ""}</div>}
@@ -166,6 +172,8 @@ export function App() {
   const [refreshToken, setRefreshToken] = useState(0);
   const [epochStale, setEpochStale] = useState(false);
   const [deploying, setDeploying] = useState<DeploymentView | null>(null);
+  const [showSystem, setShowSystem] = useState(false);
+  const [confirmAction, setConfirmAction] = useState<string | null>(null);
   const lastIntent = useRef<{ intent: string; targetAppId: string | null } | null>(null);
 
   const handle = useCallback((e: unknown) => {
@@ -192,15 +200,23 @@ export function App() {
     }
   }, [handle]);
 
+  // Only the newest load for the currently selected app may update the view (responses can arrive out of order).
+  const loadSeq = useRef(0);
+  const selectedRef = useRef<string | null>(null);
+  selectedRef.current = selected;
   const loadApp = useCallback(
     async (appId: string | null) => {
+      const my = ++loadSeq.current;
       if (!appId) {
         setDetail(null);
         setRevisions([]);
         return;
       }
+      // Never act on another app's detail while this one loads.
+      setDetail((cur) => (cur && cur.appId !== appId ? null : cur));
       try {
         const [d, r] = await Promise.all([api.app(appId), api.revisions(appId)]);
+        if (my !== loadSeq.current || selectedRef.current !== appId) return;
         setDetail(d);
         setRevisions(r.items);
       } catch (e) {
@@ -245,6 +261,8 @@ export function App() {
   const prevRun = useRef<RunView | null>(null);
   useEffect(() => {
     const p = prevRun.current;
+    // A system_plan run that prepared its plan opens the Shell confirmation (the plan is not executed yet).
+    if (watchedRun && p && p.runId === watchedRun.runId && !p.preparedActionId && watchedRun.preparedActionId) setConfirmAction(watchedRun.preparedActionId);
     if (watchedRun && p && p.runId === watchedRun.runId && !p.appliedRevisionId && watchedRun.appliedRevisionId) {
       setSelected(watchedRun.targetAppId);
       void loadApp(watchedRun.targetAppId);
@@ -346,12 +364,15 @@ export function App() {
         >
           ＋ 创建应用
         </button>
+        <button className={`nav-create ${showSystem ? "active" : ""}`} onClick={() => setShowSystem((v) => !v)}>
+          ⚙ 系统与操作中心
+        </button>
         <nav aria-label="应用">
           {state.apps.map((a) => (
             <button key={a.appId} className={`nav-app ${a.appId === selected ? "active" : ""}`} onClick={() => setSelected(a.appId)}>
               {a.title}
               <span className="muted small app-meta">
-                {a.runtime === "isolated-code-v1" ? `代码 · ${healthText(a.health)}` : "声明式"}
+                {a.runtime === "isolated-code-v1" || a.runtime === "isolated-code-v2" ? `代码${a.runtime === "isolated-code-v2" ? "+系统" : ""} · ${healthText(a.health)}` : "声明式"}
               </span>
             </button>
           ))}
@@ -363,6 +384,12 @@ export function App() {
           </div>
           <div title={(state.runtimeProblems ?? []).join("\n")}>
             <span className={`dot ${state.runtimeReady ? "ok" : "bad"}`} /> 代码运行环境 {state.runtimeReady ? "就绪" : "不可用"}
+          </div>
+          <div title={String((state.system as { broker?: { diagnostic?: string } } | undefined)?.broker?.diagnostic ?? "")}>
+            <span className={`dot ${state.brokerReady ? "ok" : "bad"}`} /> 系统执行服务 {state.brokerReady ? "就绪" : "不可用（系统写入暂停）"}
+          </div>
+          <div>
+            <span className={`dot ${state.telemetryAvailable ? "ok" : "bad"}`} /> 遥测 {state.telemetryAvailable ? "可用" : "不可用"}
           </div>
           <div>
             <span className={`dot ${modelOk ? "ok" : "bad"}`} /> 模型 {modelOk ? `${state.model?.provider}/${state.model?.modelId}${state.model?.mode === "faux" ? "（模拟）" : ""}` : "不可用"}
@@ -392,6 +419,10 @@ export function App() {
         )}
         {banner && <div className="banner error">{banner}</div>}
         {state.agentState === "blocked" && <div className="banner error">生成功能已阻塞：{state.agentDiagnostic}。已有应用仍可查看。</div>}
+        {confirmAction && <ConfirmDialog actionId={confirmAction} onClose={() => setConfirmAction(null)} />}
+        {showSystem && (
+          <SystemCenter tick={refreshToken} brokerReady={!!state.brokerReady} models={modelOk} runActive={runActive} onRunStarted={() => void loadState()} onOpenAction={setConfirmAction} />
+        )}
 
         <section className="request" aria-label="需求">
           <div className="request-target">
@@ -425,15 +456,16 @@ export function App() {
             {runActive && <span className="muted small">生成进行中，可以继续编辑记录；版本切换需等待结束。</span>}
           </div>
           {submitError && <div className="banner error">{submitError}</div>}
-          {watchedRun && <RunPanel run={watchedRun} onCancel={() => void cancel()} onRetry={retry} canRetry={modelOk && !runActive} cancelError={cancelError} />}
+          {watchedRun && <RunPanel run={watchedRun} onCancel={() => void cancel()} onRetry={retry} canRetry={modelOk && !runActive && watchedRun.runMode !== "system_plan"} cancelError={cancelError} onOpenAction={setConfirmAction} />}
         </section>
 
         <div className="workspace">
           <div className="app-area">
             {selected && detail?.bundle ? (
               <Boundary resetKey={`${detail.appId}:${detail.activeRevisionId}`}>
-                {detail.bundle.formatVersion === 2 ? (
+                {detail.bundle.formatVersion === 2 || detail.bundle.formatVersion === 3 ? (
                   <CodeAppView
+                    onSystemPlan={setConfirmAction}
                     detail={detail}
                     dataEpoch={selectedSummary?.dataEpoch ?? null}
                     refreshToken={refreshToken}
@@ -450,7 +482,8 @@ export function App() {
           </div>
           {selected && detail && (
             <aside className="versions" aria-label="版本">
-              {detail.bundle?.formatVersion === 2 && (
+              {detail.bundle?.formatVersion === 3 && <AppSystemPanel appId={detail.appId} tick={refreshToken} onOpenAction={setConfirmAction} />}
+              {(detail.bundle?.formatVersion === 2 || detail.bundle?.formatVersion === 3) && (
                 <Boundary resetKey={`rt:${detail.appId}`}>
                   <RuntimePanel detail={detail} tick={refreshToken} onChanged={() => void loadState()} />
                   <ServicesPanel detail={detail} tick={refreshToken} onChanged={() => setRefreshToken((n) => n + 1)} />
@@ -463,7 +496,7 @@ export function App() {
                 {revisions.map((r, n) => (
                   <li key={r.revisionId} className={r.isActive ? "active" : ""}>
                     <div>
-                      <strong>v{n + 1}</strong> {r.title} <span className="muted small">{r.runtime === "isolated-code-v1" ? "代码" : "声明式"}</span>
+                      <strong>v{n + 1}</strong> {r.title} <span className="muted small">{r.runtime === "isolated-code-v2" ? "代码+系统" : r.runtime === "isolated-code-v1" ? "代码" : "声明式"}</span>
                     </div>
                     <div className="muted small">
                       {new Date(r.firstActivatedAt).toLocaleString()} · {r.revisionId.slice(7, 15)}

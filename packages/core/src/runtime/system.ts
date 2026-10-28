@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { AgentOsError, type AnyBundle } from "@agentos/contracts";
+import { AgentOsError, type AnyBundle, isCodeBundle } from "@agentos/contracts";
 import type { Core } from "../index.js";
 import { ArtifactStore } from "../builds/artifact-store.js";
 import { BuildService } from "../builds/build-service.js";
@@ -39,6 +39,8 @@ export interface RuntimeSystemOptions {
  * with the startup sequence of spec §20.1 steps 3–5 and the shutdown of spec §20.1.
  */
 export class RuntimeSystem {
+  /** v0.3 hook (set by SystemCapabilities): revoke + confirm provider grants before any activation. */
+  beforeActivate: ((appId: string) => Promise<void>) | null = null;
   readonly ctx: RuntimeContext;
   readonly runtime: AppRuntimeService;
   readonly reconciler: Reconciler;
@@ -247,6 +249,8 @@ export class RuntimeSystem {
   async #autoActivate(d: DeploymentRow): Promise<void> {
     await this.deployments.freshProbe(d);
     try {
+      // v0.3: provider grants of the current version are revoked and confirmed by the broker first (spec §11.4).
+      await this.beforeActivate?.(d.app_id);
       this.core.gateway.write("apps.activate.history", { principal: { kind: "user" }, operationKey: `deployment:${d.id}:activate`, requestHash: d.request_hash }, () => ({
         status: 200,
         body: this.deployments.activateInTx(d.id, { runId: null }),
@@ -277,7 +281,7 @@ export class RuntimeSystem {
     const r = this.core.gateway.write("apps.activate.history", { principal: { kind: "user" }, ...meta }, () => {
       const b = this.core.apps.revisionBundle(appId, revisionId) as AnyBundle | null;
       if (!b) throw new AgentOsError("NOT_FOUND", "revision not found", { revisionId });
-      if (b.formatVersion === 2) throw new AgentOsError("DEPLOYMENT_REQUIRED", "code versions are switched through POST /api/apps/:appId/deployments");
+      if (isCodeBundle(b)) throw new AgentOsError("DEPLOYMENT_REQUIRED", "code versions are switched through POST /api/apps/:appId/deployments");
       if (this.core.runs.activeRun() !== undefined) throw new AgentOsError("RUN_BUSY", "wait for the running generation to finish before switching versions");
       const d = this.deployments.prepareInTx({ appId, revisionId, expectedAppEpoch, origin: "user_history", ownerRunId: null, requestKey: meta.operationKey, requestHash: meta.requestHash });
       const v = this.core.apps.validate(appId, revisionId);

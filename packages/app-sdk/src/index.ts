@@ -1,5 +1,8 @@
 /**
- * @agentos/app-sdk v1 (ABI 1). The only module a generated app needs. It gives handler types, the read-only call
+ * @agentos/app-sdk v2 (ABI 2). ABI-1 images keep the frozen v1 SDK (runtime/frozen/abi1/sdk); this version adds the
+ * provider read interface and system-action plans for formatVersion 3 apps.
+ *
+ * Original v1 text: @agentos/app-sdk v1 (ABI 1). The only module a generated app needs. It gives handler types, the read-only call
  * context and the services interface for authorized read-only queries of other apps. It has no publish, grant, Pi,
  * container or database API: a command returns a mutation plan and the host decides whether to commit it.
  */
@@ -36,8 +39,45 @@ export interface BaseContext {
   readonly records: readonly RecordEnvelope[];
 }
 
+/** ABI 2: the uniform envelope of a provider read (spec §10). quality "unavailable" + data.simulated in previews. */
+export interface ObservationEnvelope<T = unknown> {
+  readonly resourceId: string;
+  readonly resourceGeneration: number;
+  readonly observedAt: string;
+  readonly observationId: string;
+  readonly resourceVersion: string | null;
+  readonly data: T | null;
+  readonly quality: "fresh" | "stale" | "gap" | "unavailable";
+}
+
+/** Reads of the resources the user connected to this app's bindings; only declared reads, at most 4 per call. */
+export interface Providers {
+  read<T = unknown>(bindingAlias: string, capabilityId: string, params?: Record<string, unknown>): Promise<ObservationEnvelope<T>>;
+}
+
 export interface QueryContext extends BaseContext {
   readonly services: Services;
+  /** ABI 2 only (formatVersion 3 apps): declared provider reads. */
+  readonly providers: Providers;
+}
+
+/** System-action handlers read declared observations and return ONE plan; they never perform effects. */
+export interface SystemActionContext extends BaseContext {
+  readonly providers: Providers;
+}
+
+export interface SystemPlan<P = Record<string, unknown>> {
+  bindingAlias: string;
+  capabilityId: string;
+  params: P;
+  observationIds: string[];
+  preview: unknown;
+}
+
+export type SystemActionHandler<I = any> = (input: I, ctx: SystemActionContext) => SystemPlan | Promise<SystemPlan>;
+
+export function defineSystemActions<T extends Record<string, SystemActionHandler>>(a: T): T {
+  return a;
 }
 
 /** Commands cannot call other apps. */
@@ -64,7 +104,7 @@ export function defineCommands<T extends Record<string, CommandHandler>>(c: T): 
   return c;
 }
 
-export const SDK_ABI_VERSION = 1;
+export const SDK_ABI_VERSION = 2;
 
 declare global {
   // Minimal console for diagnostics (bounded by the host). Apps get no DOM and no Node APIs.

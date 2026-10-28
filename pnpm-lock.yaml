@@ -53,6 +53,12 @@ importers:
 
   packages/app-sdk: {}
 
+  packages/broker-client:
+    dependencies:
+      '@agentos/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+
   packages/contracts:
     dependencies:
       ajv:
@@ -61,6 +67,9 @@ importers:
 
   packages/core:
     dependencies:
+      '@agentos/broker-client':
+        specifier: workspace:*
+        version: link:../broker-client
       '@agentos/contracts':
         specifier: workspace:*
         version: link:../contracts
@@ -70,6 +79,9 @@ importers:
       '@agentos/agent-pi':
         specifier: workspace:*
         version: link:../agent-pi
+      '@agentos/broker-client':
+        specifier: workspace:*
+        version: link:../broker-client
       '@agentos/contracts':
         specifier: workspace:*
         version: link:../contracts

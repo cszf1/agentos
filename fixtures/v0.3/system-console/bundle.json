@@ -1,0 +1,660 @@
+{
+  "formatVersion": 3,
+  "manifest": {
+    "appId": "6b0c3d2e-1f4a-4b5c-8d9e-0a1b2c3d4e5f",
+    "title": "系统控制台",
+    "description": "查看演示服务、受管目录、测试网络和串口的真实状态，并生成需要确认的系统计划。",
+    "runtime": "isolated-code-v2",
+    "capabilities": [
+      "records.read"
+    ]
+  },
+  "data": {
+    "fields": {
+      "note": {
+        "type": "string",
+        "label": "备注",
+        "maxLength": 80,
+        "default": "系统控制台"
+      }
+    }
+  },
+  "code": {
+    "entry": "src/app.ts",
+    "files": {}
+  },
+  "runtimeLockId": "core-v2@1",
+  "queries": {
+    "main": {
+      "description": "系统概览",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "outputSchema": {
+        "type": "object",
+        "required": [
+          "svc",
+          "cpu",
+          "memory",
+          "exports",
+          "lab",
+          "serial",
+          "observedAt",
+          "quality"
+        ],
+        "properties": {
+          "svc": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "cpu": {
+            "type": "string",
+            "maxLength": 60
+          },
+          "memory": {
+            "type": "string",
+            "maxLength": 60
+          },
+          "exports": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "lab": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "serial": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "observedAt": {
+            "type": "string",
+            "maxLength": 40
+          },
+          "quality": {
+            "type": "string",
+            "maxLength": 20
+          }
+        }
+      },
+      "providerReads": [
+        {
+          "bindingAlias": "svc",
+          "capabilityId": "service.describe"
+        },
+        {
+          "bindingAlias": "exports",
+          "capabilityId": "file.list"
+        },
+        {
+          "bindingAlias": "lab",
+          "capabilityId": "network.policy_status"
+        },
+        {
+          "bindingAlias": "dev",
+          "capabilityId": "serial.status"
+        }
+      ]
+    },
+    "telemetry": {
+      "description": "演示服务的资源用量与遥测",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "outputSchema": {
+        "type": "object",
+        "required": [
+          "usage",
+          "telemetry"
+        ],
+        "properties": {
+          "usage": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "telemetry": {
+            "type": "string",
+            "maxLength": 200
+          }
+        }
+      },
+      "providerReads": [
+        {
+          "bindingAlias": "svc",
+          "capabilityId": "service.metrics"
+        },
+        {
+          "bindingAlias": "svc",
+          "capabilityId": "telemetry.summary"
+        }
+      ]
+    }
+  },
+  "commands": {},
+  "exports": [],
+  "imports": [],
+  "system": {
+    "bindings": [
+      {
+        "alias": "svc",
+        "resourceKind": "service",
+        "description": "要观察和控制的服务",
+        "capabilities": [
+          {
+            "capabilityId": "service.describe",
+            "contractVersion": 1
+          },
+          {
+            "capabilityId": "service.metrics",
+            "contractVersion": 1
+          },
+          {
+            "capabilityId": "service.ensure_state",
+            "contractVersion": 1
+          },
+          {
+            "capabilityId": "service.set_limit",
+            "contractVersion": 1
+          },
+          {
+            "capabilityId": "telemetry.summary",
+            "contractVersion": 1
+          }
+        ]
+      },
+      {
+        "alias": "exports",
+        "resourceKind": "managed-root",
+        "description": "写入报告的受管目录",
+        "capabilities": [
+          {
+            "capabilityId": "file.list",
+            "contractVersion": 1
+          },
+          {
+            "capabilityId": "file.read_text",
+            "contractVersion": 1
+          },
+          {
+            "capabilityId": "file.write_text_atomic",
+            "contractVersion": 1
+          }
+        ]
+      },
+      {
+        "alias": "lab",
+        "resourceKind": "lab-network",
+        "description": "测试网络",
+        "capabilities": [
+          {
+            "capabilityId": "network.policy_status",
+            "contractVersion": 1
+          },
+          {
+            "capabilityId": "network.apply_profile",
+            "contractVersion": 1
+          }
+        ]
+      },
+      {
+        "alias": "dev",
+        "resourceKind": "serial",
+        "description": "串口设备",
+        "capabilities": [
+          {
+            "capabilityId": "serial.status",
+            "contractVersion": 1
+          },
+          {
+            "capabilityId": "serial.exchange",
+            "contractVersion": 1
+          }
+        ]
+      }
+    ],
+    "actions": {
+      "setCpu": {
+        "description": "设置服务 CPU 上限",
+        "bindingAlias": "svc",
+        "capabilityId": "service.set_limit",
+        "contractVersion": 1,
+        "inputSchema": {
+          "type": "object",
+          "required": [
+            "percent"
+          ],
+          "properties": {
+            "percent": {
+              "type": "integer",
+              "minimum": 10,
+              "maximum": 200
+            }
+          }
+        },
+        "previewSchema": {
+          "type": "object",
+          "required": [
+            "text"
+          ],
+          "properties": {
+            "text": {
+              "type": "string",
+              "maxLength": 200
+            }
+          }
+        },
+        "observations": [
+          {
+            "bindingAlias": "svc",
+            "capabilityId": "service.describe"
+          }
+        ]
+      },
+      "startService": {
+        "description": "启动服务",
+        "bindingAlias": "svc",
+        "capabilityId": "service.ensure_state",
+        "contractVersion": 1,
+        "inputSchema": {
+          "type": "object",
+          "properties": {}
+        },
+        "previewSchema": {
+          "type": "object",
+          "required": [
+            "text"
+          ],
+          "properties": {
+            "text": {
+              "type": "string",
+              "maxLength": 200
+            }
+          }
+        },
+        "observations": [
+          {
+            "bindingAlias": "svc",
+            "capabilityId": "service.describe"
+          }
+        ]
+      },
+      "stopService": {
+        "description": "停止服务",
+        "bindingAlias": "svc",
+        "capabilityId": "service.ensure_state",
+        "contractVersion": 1,
+        "inputSchema": {
+          "type": "object",
+          "properties": {}
+        },
+        "previewSchema": {
+          "type": "object",
+          "required": [
+            "text"
+          ],
+          "properties": {
+            "text": {
+              "type": "string",
+              "maxLength": 200
+            }
+          }
+        },
+        "observations": [
+          {
+            "bindingAlias": "svc",
+            "capabilityId": "service.describe"
+          }
+        ]
+      },
+      "writeReport": {
+        "description": "把状态报告写入受管目录",
+        "bindingAlias": "exports",
+        "capabilityId": "file.write_text_atomic",
+        "contractVersion": 1,
+        "inputSchema": {
+          "type": "object",
+          "required": [
+            "name"
+          ],
+          "properties": {
+            "name": {
+              "type": "string",
+              "maxLength": 40
+            }
+          }
+        },
+        "previewSchema": {
+          "type": "object",
+          "required": [
+            "text"
+          ],
+          "properties": {
+            "text": {
+              "type": "string",
+              "maxLength": 200
+            }
+          }
+        },
+        "observations": [
+          {
+            "bindingAlias": "exports",
+            "capabilityId": "file.read_text"
+          }
+        ]
+      },
+      "applyProfile": {
+        "description": "切换测试网络策略",
+        "bindingAlias": "lab",
+        "capabilityId": "network.apply_profile",
+        "contractVersion": 1,
+        "inputSchema": {
+          "type": "object",
+          "required": [
+            "profileId"
+          ],
+          "properties": {
+            "profileId": {
+              "type": "string",
+              "enum": [
+                "local-allow",
+                "local-deny"
+              ]
+            }
+          }
+        },
+        "previewSchema": {
+          "type": "object",
+          "required": [
+            "text"
+          ],
+          "properties": {
+            "text": {
+              "type": "string",
+              "maxLength": 200
+            }
+          }
+        },
+        "observations": [
+          {
+            "bindingAlias": "lab",
+            "capabilityId": "network.policy_status"
+          }
+        ]
+      },
+      "sample": {
+        "description": "向串口设备请求 3 个采样",
+        "bindingAlias": "dev",
+        "capabilityId": "serial.exchange",
+        "contractVersion": 1,
+        "inputSchema": {
+          "type": "object",
+          "properties": {}
+        },
+        "previewSchema": {
+          "type": "object",
+          "required": [
+            "text"
+          ],
+          "properties": {
+            "text": {
+              "type": "string",
+              "maxLength": 200
+            }
+          }
+        },
+        "observations": [
+          {
+            "bindingAlias": "dev",
+            "capabilityId": "serial.status"
+          }
+        ]
+      }
+    }
+  },
+  "view": {
+    "kind": "slot-tree-v2",
+    "dataSources": {
+      "main": {
+        "queryId": "main",
+        "input": {}
+      },
+      "tele": {
+        "queryId": "telemetry",
+        "input": {}
+      }
+    },
+    "refresh": {
+      "intervalSeconds": 10
+    },
+    "slots": {
+      "main": {
+        "type": "Stack",
+        "children": [
+          {
+            "type": "Grid",
+            "props": {
+              "columns": 2
+            },
+            "children": [
+              {
+                "type": "Metric",
+                "props": {
+                  "label": "服务",
+                  "value": {
+                    "$bind": {
+                      "from": "query",
+                      "source": "main",
+                      "pointer": "/svc"
+                    }
+                  }
+                }
+              },
+              {
+                "type": "Metric",
+                "props": {
+                  "label": "CPU 上限",
+                  "value": {
+                    "$bind": {
+                      "from": "query",
+                      "source": "main",
+                      "pointer": "/cpu"
+                    }
+                  }
+                }
+              },
+              {
+                "type": "Metric",
+                "props": {
+                  "label": "内存上限",
+                  "value": {
+                    "$bind": {
+                      "from": "query",
+                      "source": "main",
+                      "pointer": "/memory"
+                    }
+                  }
+                }
+              },
+              {
+                "type": "Metric",
+                "props": {
+                  "label": "受管目录",
+                  "value": {
+                    "$bind": {
+                      "from": "query",
+                      "source": "main",
+                      "pointer": "/exports"
+                    }
+                  }
+                }
+              },
+              {
+                "type": "Metric",
+                "props": {
+                  "label": "测试网络",
+                  "value": {
+                    "$bind": {
+                      "from": "query",
+                      "source": "main",
+                      "pointer": "/lab"
+                    }
+                  }
+                }
+              },
+              {
+                "type": "Metric",
+                "props": {
+                  "label": "串口",
+                  "value": {
+                    "$bind": {
+                      "from": "query",
+                      "source": "main",
+                      "pointer": "/serial"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "type": "Text",
+            "props": {
+              "variant": "muted",
+              "text": {
+                "$bind": {
+                  "from": "query",
+                  "source": "main",
+                  "pointer": "/observedAt"
+                }
+              }
+            }
+          },
+          {
+            "type": "Text",
+            "props": {
+              "text": {
+                "$bind": {
+                  "from": "query",
+                  "source": "tele",
+                  "pointer": "/usage"
+                }
+              }
+            }
+          },
+          {
+            "type": "Text",
+            "props": {
+              "variant": "muted",
+              "text": {
+                "$bind": {
+                  "from": "query",
+                  "source": "tele",
+                  "pointer": "/telemetry"
+                }
+              }
+            }
+          },
+          {
+            "type": "Form",
+            "props": {
+              "formId": "cpu",
+              "title": "CPU 上限"
+            },
+            "children": [
+              {
+                "type": "TextInput",
+                "props": {
+                  "name": "percent",
+                  "label": "上限（单个逻辑 CPU 的百分比）",
+                  "mode": "integer",
+                  "required": true,
+                  "minimum": 10,
+                  "maximum": 200
+                }
+              },
+              {
+                "type": "SystemActionButton",
+                "props": {
+                  "label": "生成 CPU 上限计划",
+                  "action": "setCpu",
+                  "variant": "primary",
+                  "input": {
+                    "form": "cpu"
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "type": "Stack",
+            "props": {
+              "direction": "horizontal"
+            },
+            "children": [
+              {
+                "type": "SystemActionButton",
+                "props": {
+                  "label": "启动服务",
+                  "action": "startService"
+                }
+              },
+              {
+                "type": "SystemActionButton",
+                "props": {
+                  "label": "停止服务",
+                  "action": "stopService",
+                  "variant": "danger"
+                }
+              },
+              {
+                "type": "SystemActionButton",
+                "props": {
+                  "label": "写入状态报告",
+                  "action": "writeReport",
+                  "input": {
+                    "constant": {
+                      "name": "status-report"
+                    }
+                  }
+                }
+              },
+              {
+                "type": "SystemActionButton",
+                "props": {
+                  "label": "阻断测试流量",
+                  "action": "applyProfile",
+                  "input": {
+                    "constant": {
+                      "profileId": "local-deny"
+                    }
+                  }
+                }
+              },
+              {
+                "type": "SystemActionButton",
+                "props": {
+                  "label": "放行测试流量",
+                  "action": "applyProfile",
+                  "input": {
+                    "constant": {
+                      "profileId": "local-allow"
+                    }
+                  }
+                }
+              },
+              {
+                "type": "SystemActionButton",
+                "props": {
+                  "label": "串口采样",
+                  "action": "sample"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

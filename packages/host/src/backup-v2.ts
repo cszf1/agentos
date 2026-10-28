@@ -14,6 +14,8 @@ import { createDriver, loadCatalog } from "./runtime-setup.js";
  * referenced artifact, the OCI images those versions need (exported through the engine), and a manifest with integrity
  * hashes. A set missing an image or artifact is refused, never marked complete.
  */
+import { brokerRestore, quiesceForBackup, type V03BackupFacts } from "./backup-v3.js";
+
 export interface ManifestV2 {
   format: 2;
   complete: boolean;
@@ -31,6 +33,8 @@ export interface ManifestV2 {
   files: Record<string, string>;
   artifacts: { id: string; files: Record<string, string> }[];
   images: { name: string; id: string; platform: string; recipeHash: string; file: string; sha256: string }[];
+  /** v0.3 (spec §23.1): provider catalog/policy hash, resources, broker checkpoint, audit export, managed snapshot. */
+  v03?: V03BackupFacts;
 }
 
 const sha256File = (f: string) => createHash("sha256").update(fs.readFileSync(f)).digest("hex");
@@ -103,6 +107,14 @@ export async function backupFull(config: HostConfig, output: string, driverIn?: 
   } else if (facts.codeApps > 0) {
     throw new Error("the container engine is needed to export the images of the code versions");
   }
+  // v0.3 (spec §23.2 steps 2–3): broker quiesce, facts synced into the business copy, checkpoint recorded.
+  if (fs.existsSync(out) && fs.readdirSync(out).length > 0) throw new Error(`backup directory ${out} is not empty`);
+  const staging = `${out}.v03-staging`;
+  fs.rmSync(staging, { recursive: true, force: true });
+  fs.mkdirSync(staging, { recursive: true, mode: 0o700 });
+  const q = await quiesceForBackup(osFile, staging);
+  let v03: V03BackupFacts | null = q.facts;
+  try {
   // 1. databases (verified copies with hashes; refuses a non-empty output dir).
   const dbManifest = backupDatabases(dataDir, out);
   const files: Record<string, string> = { ...dbManifest.files };
@@ -146,6 +158,17 @@ export async function backupFull(config: HostConfig, output: string, driverIn?: 
       }
     }
   }
+  // v0.3 extras: audit export and managed-file snapshot (hashed like everything else).
+  if (v03) {
+    for (const e of fs.readdirSync(staging)) fs.cpSync(path.join(staging, e), path.join(out, e), { recursive: true });
+    const add = (rel: string) => {
+      const full = path.join(out, rel);
+      if (fs.statSync(full).isDirectory()) for (const n of fs.readdirSync(full)) add(`${rel}/${n}`);
+      else files[rel] = sha256File(full);
+    };
+    if (v03.auditFile) add("system");
+    if (v03.managed) add("managed");
+  }
   const manifest: ManifestV2 = {
     format: 2,
     complete: true,
@@ -163,12 +186,19 @@ export async function backupFull(config: HostConfig, output: string, driverIn?: 
     files,
     artifacts,
     images,
+    ...(v03 ? { v03 } : {}),
   };
   // The v1 manifest written by the database step is replaced by the complete v2 manifest, written last.
   fs.writeFileSync(path.join(out, "manifest.json"), JSON.stringify(manifest, null, 2), { mode: 0o600 });
   fsyncPath(path.join(out, "manifest.json"));
   fsyncPath(out);
+  v03 = null;
   return manifest;
+  } finally {
+    fs.rmSync(staging, { recursive: true, force: true });
+    // Step 5: the quiesce ends by an explicit resume after success or failure; failure was already reported.
+    await q.release().catch(() => undefined);
+  }
 }
 
 /** Verify a v2 set completely (hashes of every file, artifact and image archive). */
@@ -242,11 +272,14 @@ export async function restoreFull(config: HostConfig, backupDir: string, opts: {
     fs.renameSync(tmp, dst);
     if (store.verify(a.id) !== null) throw new Error(`restored artifact ${a.id} failed verification`);
   }
+  // v0.3 (spec §23.3 step 2): the broker fences the old incarnation before any database is replaced.
+  const br = await brokerRestore(config.dataDir, src, m.v03);
   // 3. databases with the v0.1 marker protocol (pre-restore backup, staging, replace, client epoch, token rotation);
   // 4. before the marker goes: old instance bindings are revoked, the next host boot recreates active instances.
   const r = restoreDatabases(config.dataDir, src, {
     failAfterFirstReplace: opts.failAfterFirstReplace,
     beforeMarkerRemoval: () => {
+      br.beforeMarkerRemoval();
       const db = new DatabaseSync(path.join(config.dataDir, "os.sqlite"));
       try {
         const hasV2 = !!db.prepare("SELECT 1 FROM sqlite_master WHERE name = 'runtime_instances'").get();
@@ -260,5 +293,6 @@ export async function restoreFull(config: HostConfig, backupDir: string, opts: {
       }
     },
   });
-  return { ...r, images: m.images.length, artifacts: m.artifacts.length };
+  await br.complete();
+  return { ...r, images: m.images.length, artifacts: m.artifacts.length, workspaceIncarnation: br.incarnation } as never;
 }

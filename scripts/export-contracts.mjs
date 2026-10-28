@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Writes the v0.2 machine-readable contracts into docs/contracts from the code that enforces them (single source).
+// Writes the v0.2/v0.3 machine-readable contracts into docs/contracts from the code that enforces them (single source).
 // `--check` exits 1 when the committed files differ (run by the contracts test).
 import fs from "node:fs";
 import path from "node:path";
@@ -15,6 +15,13 @@ const files = {
   "mutation-plan.schema.json": c.MUTATION_PLAN_SCHEMA,
   "limits.json": { run: c.LIMITS, code: c.CODE_LIMITS, ui: c.UI_LIMITS, frames: c.FRAME_LIMITS, runtime: RUNTIME_POLICY, abiVersion: c.RUNNER_ABI_VERSION, protocolVersion: c.RUNNER_PROTOCOL_VERSION, components: c.COMPONENT_TYPES, slots: c.SLOT_NAMES },
   "error-codes.json": c.ERROR_STATUS,
+  // v0.3
+  "code-bundle-v3.schema.json": c.CODE_BUNDLE_V3_SCHEMA,
+  "slot-tree-v2.schema.json": c.slotTreeSchemaDocument(2),
+  "system-plan.schema.json": c.SYSTEM_PLAN_SCHEMA,
+  "provider-catalog.json": { catalogVersion: c.CATALOG_VERSION, capabilities: c.CAPABILITIES },
+  "broker-protocol.json": { protocolVersion: c.BROKER_PROTOCOL_VERSION, socket: c.BROKER_SOCKET, maxFrameBytes: c.MAX_BROKER_FRAME, maxJsonDepth: c.MAX_JSON_DEPTH, methods: c.BROKER_METHODS, writeEnvelope: c.WRITE_ENVELOPE_SCHEMA, grantSync: c.GRANT_SYNC_SCHEMA, hashDomains: ["agentos.broker.write.v1", "agentos.broker.grant.v1", "agentos.system-plan.v1", "agentos.system-params.v1"] },
+  "system-limits.json": { system: c.SYSTEM_LIMITS, v3: c.V3_LIMITS, runnerAbis: c.SUPPORTED_RUNNER_ABIS, componentsV2: c.COMPONENT_TYPES_V2, v03ErrorCodes: c.V03_ERROR_CODES },
 };
 const check = process.argv.includes("--check");
 let bad = 0;

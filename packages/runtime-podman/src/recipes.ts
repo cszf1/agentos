@@ -32,6 +32,8 @@ COPY approved.json /opt/agentos/approved.json
 export interface RecipeInput {
   platformRoot: string;
   profileId: string;
+  /** Runner/SDK ABI of the lock. ABI-1 locks read the frozen copies so their recipe (and meaning) never changes. */
+  abiVersion?: number;
   role: ImageRole;
   baseDigestRef: string;
   approvedSpecifiers: string[];
@@ -49,23 +51,25 @@ function readDir(dir: string, prefix: string, filter: (name: string) => boolean)
 
 export function recipeContext(r: RecipeInput): { entries: TarEntry[]; recipeHash: string; containerfile: string } {
   const root = r.platformRoot;
+  const abi = r.abiVersion ?? 1;
   const overlay = path.join(root, "runtime", "overlays", r.profileId, r.role);
   const entries: TarEntry[] = [
     { path: "overlay/package.json", data: readFileSync(path.join(overlay, "package.json")) },
     { path: "overlay/package-lock.json", data: readFileSync(path.join(overlay, "package-lock.json")) },
-    { path: "sdk/package.json", data: Buffer.from(JSON.stringify({ name: "@agentos/app-sdk", version: "1.0.0", type: "module", main: "./index.js", types: "./index.d.ts" })) },
-    ...readDir(path.join(root, "packages", "app-sdk", "dist"), "sdk", (n) => n === "index.js" || n === "index.d.ts"),
+    { path: "sdk/package.json", data: Buffer.from(JSON.stringify({ name: "@agentos/app-sdk", version: abi === 1 ? "1.0.0" : "2.0.0", type: "module", main: "./index.js", types: "./index.d.ts" })) },
+    ...readDir(abi === 1 ? path.join(root, "runtime", "frozen", "abi1", "sdk") : path.join(root, "packages", "app-sdk", "dist"), "sdk", (n) => n === "index.js" || n === "index.d.ts"),
   ];
   const moduleDir = r.role === "runtime" ? "runner" : "builder";
   entries.push({ path: `${moduleDir}/package.json`, data: Buffer.from('{"type":"module"}') });
-  entries.push(...readDir(path.join(root, "packages", "app-runner", "dist"), moduleDir, (n) => n.endsWith(".js")));
+  entries.push(...readDir(abi === 1 ? path.join(root, "runtime", "frozen", "abi1", "runner") : path.join(root, "packages", "app-runner", "dist"), moduleDir, (n) => n.endsWith(".js")));
   if (r.role === "builder") {
     entries.push({ path: "approved.json", data: Buffer.from(canonicalJson({ lockId: r.lockId, specifiers: [...r.approvedSpecifiers].sort() })) });
   }
   const containerfile = r.role === "runtime" ? RUNTIME_CONTAINERFILE : BUILDER_CONTAINERFILE;
   entries.push({ path: "Containerfile", data: Buffer.from(containerfile) });
   const h = createHash("sha256");
-  h.update(`agentos.image-recipe.v1\n${r.role}\n${r.profileId}\n${r.baseDigestRef}\n`);
+  // ABI-1 recipes keep the exact v0.2 hash input; ABI-2 recipes add the ABI to the domain.
+  h.update(abi === 1 ? `agentos.image-recipe.v1\n${r.role}\n${r.profileId}\n${r.baseDigestRef}\n` : `agentos.image-recipe.v2\nabi=${abi}\n${r.role}\n${r.profileId}\n${r.baseDigestRef}\n`);
   for (const e of [...entries].sort((a, b) => (a.path < b.path ? -1 : 1))) {
     h.update(`${e.path}\n${createHash("sha256").update(e.data).digest("hex")}\n`);
   }

@@ -20,6 +20,7 @@ export class RunCoordinator {
   #again = false;
   #stopped = false;
   #abortIssued = new Set<string>();
+  #abortFailures = new Map<string, number>();
   #recoveryBlocked: string | null = null;
 
   constructor(
@@ -138,7 +139,15 @@ export class RunCoordinator {
     if (run.status === "cancel_requested" && !this.#abortIssued.has(run.id)) {
       this.#abortIssued.add(run.id);
       this.log.info("aborting agent conversation", { runId: run.id, reason: run.stop_reason });
-      engine.cancelConversation().catch((e) => this.log.warn("abort failed", { error: (e as Error).message }));
+      // A failed abort is retried on a later pass (with a backoff), never forgotten.
+      engine.cancelConversation().catch((e) => {
+        this.log.warn("abort failed; will retry", { runId: run.id, error: (e as Error).message });
+        setTimeout(() => {
+          this.#abortIssued.delete(run.id);
+          this.#again = true;
+        }, Math.min(30_000, 1000 * 2 ** Math.min(5, (this.#abortFailures.get(run.id) ?? 0))));
+        this.#abortFailures.set(run.id, (this.#abortFailures.get(run.id) ?? 0) + 1);
+      });
     }
     const sub: AgentSubmissionStatus = run.pi_submission_id === null ? { state: "missing" } : await engine.status(run.pi_submission_id);
     const insp: AgentInspection = await engine.inspect();

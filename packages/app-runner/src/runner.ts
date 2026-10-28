@@ -7,7 +7,9 @@ import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { connect, type Frame } from "./frames.js";
 
-const ABI_VERSION = 1;
+// ABI 2 (spec §9): queries, commands and systemActions; providers.read inside queries and system-plan calls only.
+// ABI-1 images keep their frozen runner (runtime/frozen/abi1), so this file only serves ABI-2 locks.
+const ABI_VERSION = 2;
 const SOCKET = process.env.AGENTOS_SOCKET ?? "/run/agentos/host.sock";
 const MAX_IN = 24 * 1024 * 1024;
 const MAX_OUT = 1024 * 1024;
@@ -54,6 +56,9 @@ globalThis.console.debug = () => {};
 
 let queries: Record<string, Handler> = {};
 let commands: Record<string, Handler> = {};
+let systemActions: Record<string, Handler> = {};
+const pendingProviders = new Map<string, { resolve: (v: unknown) => void; reject: (e: unknown) => void }>();
+let providerSeq = 0;
 let ready = false;
 let busy = false;
 const pendingServices = new Map<string, { resolve: (v: unknown) => void; reject: (e: unknown) => void }>();
@@ -61,7 +66,7 @@ let serviceSeq = 0;
 
 function handlersOf(mod: Record<string, unknown>, name: string): Record<string, Handler> {
   const v = mod[name];
-  if (v === undefined && name === "commands") return {};
+  if (v === undefined && (name === "commands" || name === "systemActions")) return {};
   if (v === null || typeof v !== "object") throw new Error(`module must export "${name}" as an object of functions`);
   const out: Record<string, Handler> = {};
   for (const [k, fn] of Object.entries(v as Record<string, unknown>)) {
@@ -99,6 +104,7 @@ async function onFrame(f: Frame): Promise<void> {
         mod = (await import(appModule)) as Record<string, unknown>;
         queries = handlersOf(mod, "queries");
         commands = handlersOf(mod, "commands");
+        systemActions = handlersOf(mod, "systemActions");
       } catch (e) {
         conn.send("log", { level: "error", text: `module failed to load: ${(e as Error).message}`.slice(0, 2048) });
         setTimeout(() => process.exit(71), 50);
@@ -115,7 +121,7 @@ async function onFrame(f: Frame): Promise<void> {
           artifactId: `sha256:${createHash("sha256").update(manifestBytes).digest("hex")}`,
           appSha256: createHash("sha256").update(appBytes).digest("hex"),
           challenge: p.challenge,
-          handlers: { queries: Object.keys(queries), commands: Object.keys(commands) },
+          handlers: { queries: Object.keys(queries), commands: Object.keys(commands), systemActions: Object.keys(systemActions) },
         },
         f.messageId,
       );
@@ -140,13 +146,26 @@ async function onFrame(f: Frame): Promise<void> {
       }
       return;
     }
+    case "providerResult": {
+      const p = f.payload as { callId: string; ok: boolean; envelope?: unknown; error?: { code: string; message: string } };
+      const w = pendingProviders.get(p.callId);
+      if (!w) return;
+      pendingProviders.delete(p.callId);
+      if (p.ok) w.resolve(deepFreeze(p.envelope));
+      else {
+        const err = new Error(p.error?.message ?? "provider read failed") as Error & { code?: string };
+        err.code = p.error?.code;
+        w.reject(err);
+      }
+      return;
+    }
     case "call": {
-      const p = f.payload as { callId: string; kind: "query" | "command"; handlerId: string; input: unknown; context: Record<string, unknown> };
+      const p = f.payload as { callId: string; kind: "query" | "command" | "systemPlan"; handlerId: string; input: unknown; context: Record<string, unknown> };
       if (!ready || busy) {
         conn.send("result", { callId: p.callId, ok: false, error: { code: "HANDLER_ERROR", message: "runner not ready or busy" } }, f.messageId);
         return;
       }
-      const table = p.kind === "query" ? queries : commands;
+      const table = p.kind === "query" ? queries : p.kind === "systemPlan" ? systemActions : commands;
       const fn = Object.hasOwn(table, p.handlerId) ? table[p.handlerId] : undefined;
       if (!fn) {
         conn.send("result", { callId: p.callId, ok: false, error: { code: "UNKNOWN_HANDLER", message: `no ${p.kind} handler "${p.handlerId}"` } }, f.messageId);
@@ -155,6 +174,20 @@ async function onFrame(f: Frame): Promise<void> {
       busy = true;
       const parentCallId = p.callId;
       const ctx: Record<string, unknown> = { ...p.context };
+      if (p.kind === "query" || p.kind === "systemPlan") {
+        // The host checks every read against this call's declaration, grant and quota; the runner only forwards.
+        ctx.providers = Object.freeze({
+          read: (bindingAlias: string, capabilityId: string, params: unknown = {}) =>
+            new Promise((resolve, reject) => {
+              const callId = `${parentCallId}:prv:${++providerSeq}`;
+              pendingProviders.set(callId, { resolve, reject });
+              if (!conn.send("providerRead", { callId, parentCallId, bindingAlias, capabilityId, params })) {
+                pendingProviders.delete(callId);
+                reject(new Error("provider read input too large"));
+              }
+            }),
+        });
+      }
       if (p.kind === "query") {
         ctx.services = Object.freeze({
           call: (alias: string, input: unknown) =>

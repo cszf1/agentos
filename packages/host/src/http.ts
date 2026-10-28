@@ -17,9 +17,9 @@ import {
   type RecordDeleteBody,
   type RecordPatchBody,
   type RunCreateBody,
-  type StateView,
-} from "@agentos/contracts";
-import { fault, readSystemInfo, type AgentEngine, type Core, type RunCoordinator, type RuntimeSystem, type UserWriteMeta } from "@agentos/core";
+  type StateView, isCodeBundle } from "@agentos/contracts";
+import { fault, readSystemInfo, type AgentEngine, type Core, type RunCoordinator, type RuntimeSystem, type SystemCapabilities, type UserWriteMeta } from "@agentos/core";
+import { registerSystemRoutes } from "./http-system.js";
 import { COOKIE, parseCookies, type SessionAuth } from "./auth.js";
 import type { HostConfig } from "./config.js";
 import type { Logger } from "./log.js";
@@ -52,6 +52,8 @@ export interface HostRuntime {
   inflight: { n: number };
   /** v0.2 code runtime (null until booted or when it failed to start). */
   sys: RuntimeSystem | null;
+  /** v0.3 system capabilities (resources, grants, actions, observations, broker link). */
+  caps: SystemCapabilities | null;
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -217,13 +219,17 @@ export function buildServer(rt: HostRuntime): FastifyInstance {
         ready: rt.status.phase === "ready" && rt.status.writable,
         runtimeReady: rt.sys?.runtimeReady ?? false,
         runtimeProblems: rt.sys ? rt.sys.environmentProblems.slice(0, 10) : ["the code runtime has not started"],
+        hostReady: rt.status.phase === "ready" && rt.status.writable,
+        brokerReady: rt.caps ? (rt.caps.state().brokerReady as boolean) : false,
+        telemetryAvailable: rt.caps ? rt.caps.observations.telemetry.available : false,
+        system: rt.caps ? rt.caps.state() : { brokerReady: false, providers: {}, diagnostic: "system capabilities not started" },
       };
       for (const a of v.apps) {
         const row = core.apps.requireApp(a.appId);
         const b = core.apps.activeBundle(row);
         a.runtime = b?.manifest.runtime;
         a.dataEpoch = row.data_epoch;
-        a.health = b?.formatVersion === 2 ? (rt.sys?.runtime.row(a.appId)?.health ?? "stopped") : null;
+        a.health = b && isCodeBundle(b) ? (rt.sys?.runtime.row(a.appId)?.health ?? "stopped") : null;
       }
       return v;
     });
@@ -493,6 +499,8 @@ export function buildServer(rt: HostRuntime): FastifyInstance {
       return ok(reply, r.status, r.body);
     }),
   );
+
+  registerSystemRoutes(app, rt, { requireSession, writeMeta, withWrite, ok });
 
   app.all("/api/*", async () => {
     throw new AgentOsError("NOT_FOUND", "no such endpoint");

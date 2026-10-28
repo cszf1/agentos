@@ -46,7 +46,7 @@ export interface DataSource {
 }
 
 export interface SlotTreeView {
-  kind: "slot-tree-v1";
+  kind: "slot-tree-v1" | "slot-tree-v2";
   dataSources: Record<string, DataSource>;
   slots: Partial<Record<SlotName, SlotNode>> & { main: SlotNode };
   refresh?: { intervalSeconds: number };
@@ -166,9 +166,32 @@ export const COMPONENT_PROPS: Record<string, object> = {
   },
   BarChart: { $ref: "#/$defs/chart" },
   LineChart: { $ref: "#/$defs/chart" },
+  // slot-tree-v2 only (spec §9): asks the Shell to plan a system action; the result and confirmation are Shell UI.
+  SystemActionButton: {
+    type: "object",
+    additionalProperties: false,
+    required: ["label", "action"],
+    properties: {
+      label: text(60),
+      action: ident,
+      variant: { enum: ["primary", "secondary", "danger"] },
+      input: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          form: ident,
+          selection: { type: "object", additionalProperties: false, required: ["selectionId", "as"], properties: { selectionId: ident, as: ident } },
+          constant: { type: "object", maxProperties: 16 },
+        },
+      },
+    },
+  },
 };
+const V2_ONLY = new Set<string>(["SystemActionButton"]);
 export type ComponentType = keyof typeof COMPONENT_PROPS;
-export const COMPONENT_TYPES = Object.keys(COMPONENT_PROPS) as ComponentType[];
+/** slot-tree-v1 components (frozen); v2 adds SystemActionButton. */
+export const COMPONENT_TYPES = Object.keys(COMPONENT_PROPS).filter((k) => k !== "SystemActionButton") as ComponentType[];
+export const COMPONENT_TYPES_V2 = Object.keys(COMPONENT_PROPS) as ComponentType[];
 const CONTAINERS = new Set<string>(["Stack", "Grid", "Tabs", "Form"]);
 const INPUTS = new Set<string>(["TextInput", "TextArea", "Select", "Checkbox"]);
 
@@ -192,12 +215,13 @@ for (const [name, schema] of Object.entries(COMPONENT_PROPS)) {
 const bindingValidator = ajv.compile(bindingSchema);
 
 /** JSON Schema documents for docs/contracts (one per component plus the binding). */
-export function slotTreeSchemaDocument(): object {
+export function slotTreeSchemaDocument(version: 1 | 2 = 1): object {
+  const props = Object.fromEntries(Object.entries(COMPONENT_PROPS).filter(([k]) => version === 2 || k !== "SystemActionButton"));
   return {
     $schema: "https://json-schema.org/draft/2020-12/schema",
-    $id: "urn:agentos:slot-tree:v1",
-    title: "AgentOS Slot Tree v1 component props",
-    $defs: { binding: bindingSchema, chart: chartSchema, ...COMPONENT_PROPS },
+    $id: `urn:agentos:slot-tree:v${version}`,
+    title: `AgentOS Slot Tree v${version} component props`,
+    $defs: { binding: bindingSchema, chart: chartSchema, ...props },
   };
 }
 
@@ -226,6 +250,9 @@ export function readPointer(root: unknown, ptr: string): unknown {
 export interface SlotTreeContext {
   queries: Record<string, { inputSchema: unknown }>;
   commands: Record<string, unknown>;
+  /** v2 only: system action handler ids. */
+  systemActions?: Record<string, unknown>;
+  viewKind?: "slot-tree-v1" | "slot-tree-v2";
 }
 
 export interface SlotTreeFacts {
@@ -249,7 +276,8 @@ export function checkSlotTree(view: unknown, ctx: SlotTreeContext, root = "/view
   }
   const v = view as Record<string, unknown>;
   for (const k of Object.keys(v)) if (!["kind", "dataSources", "slots", "refresh"].includes(k)) add(`${root}/${k}`, `unknown view field "${k}"`);
-  if (v.kind !== "slot-tree-v1") add(`${root}/kind`, 'view.kind must be "slot-tree-v1"');
+  const wantKind = ctx.viewKind ?? "slot-tree-v1";
+  if (v.kind !== wantKind) add(`${root}/kind`, `view.kind must be "${wantKind}"`);
   // data sources
   const sources = v.dataSources;
   const sourceNames = new Set<string>();
@@ -312,6 +340,7 @@ export function checkSlotTree(view: unknown, ctx: SlotTreeContext, root = "/view
     for (const k of Object.keys(n)) if (!["type", "props", "children", "visibleWhen"].includes(k)) add(`${path}/${k}`, `unknown node field "${k}"`);
     const type = n.type;
     if (typeof type !== "string" || !Object.hasOwn(COMPONENT_PROPS, type)) return add(`${path}/type`, `unknown component "${String(type)}"`);
+    if (V2_ONLY.has(type) && wantKind !== "slot-tree-v2") return add(`${path}/type`, `${type} needs slot-tree-v2 (formatVersion 3)`);
     const props = n.props ?? {};
     const validate = propValidators[type]!;
     if (!validate(props)) {
@@ -361,6 +390,13 @@ export function checkSlotTree(view: unknown, ctx: SlotTreeContext, root = "/view
       if (input.form !== undefined) formRefs.push({ id: input.form, path: `${path}/props/input/form` });
       if (input.selection !== undefined) selectionUses.push({ id: input.selection.selectionId, path: `${path}/props/input/selection` });
       facts.buttons.push({ command: cmd, form: input.form, path });
+    }
+    if (type === "SystemActionButton") {
+      const act = p.action as string;
+      if (!ctx.systemActions || !Object.hasOwn(ctx.systemActions, act)) add(`${path}/props/action`, `system action "${act}" is not declared`, "UNKNOWN_HANDLER");
+      const input = (p.input ?? {}) as { form?: string; selection?: { selectionId: string } };
+      if (input.form !== undefined) formRefs.push({ id: input.form, path: `${path}/props/input/form` });
+      if (input.selection !== undefined) selectionUses.push({ id: input.selection.selectionId, path: `${path}/props/input/selection` });
     }
     const children = n.children;
     if (children !== undefined) {

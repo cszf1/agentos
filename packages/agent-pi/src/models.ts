@@ -72,6 +72,9 @@ export const VALIDATED_REAL_PROVIDERS = ["openai-compatible"] as const;
 
 /** An OpenAI-compatible endpoint (base URL + AGENTOS_MODEL_API_KEY). */
 function openAiCompatibleProvider(baseUrl: string, modelId: string): Provider {
+  const raw = (process.env.AGENTOS_MODEL_REASONING_EFFORT ?? "").trim();
+  if (raw && !["none", "low", "medium", "high"].includes(raw)) throw new Error("AGENTOS_MODEL_REASONING_EFFORT must be none, low, medium or high");
+  const effort = raw || null;
   return createProvider({
     id: "openai-compatible",
     name: "OpenAI-compatible",
@@ -86,7 +89,9 @@ function openAiCompatibleProvider(baseUrl: string, modelId: string): Provider {
         provider: "openai-compatible",
         baseUrl,
         input: ["text"],
-        reasoning: false,
+        // AGENTOS_MODEL_REASONING_EFFORT (none|low|medium|high): sent as OpenAI-style reasoning_effort on every request,
+        // so a reasoning model cannot spend the whole 16384-token output budget thinking. Unset: the provider default.
+        ...(effort ? { reasoning: true, compat: { supportsReasoningEffort: true }, thinkingLevelMap: { off: effort } } : { reasoning: false }),
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
         contextWindow: 128000,
         maxTokens: LIMITS.maxOutputTokens,

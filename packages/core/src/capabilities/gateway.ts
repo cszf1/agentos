@@ -43,6 +43,12 @@ export const CAPABILITY_POLICY: Record<string, ReadonlyArray<Principal["kind"]>>
   "runtime.catalog": ["user", "run"],
   "deployments.read": ["user", "run"],
   "apps.prepare.agent": ["run"],
+  // v0.3
+  "system.resources.manage": ["user"],
+  "system.grants.manage": ["user"],
+  "system.actions.plan": ["user", "run"],
+  "system.actions.confirm": ["user"],
+  "system.actions.manage": ["user"],
 };
 
 export function authorize(capability: string, p: Principal): void {
@@ -84,6 +90,8 @@ const RECEIPT_ERRORS = new Set([
   "INVALID_BUNDLE", "SCHEMA_INCOMPATIBLE", "INVALID_RECORD", "LIMIT_EXCEEDED", "INVALID_REQUEST",
   "INVALID_CODE_BUNDLE", "SOURCE_PATH_INVALID", "UNKNOWN_HANDLER", "INVALID_SLOT_TREE", "DEPENDENCY_NOT_ALLOWED",
   "DEPLOYMENT_REQUIRED", "SERVICE_CONTRACT_MISMATCH", "PREPARE_FAILED", "PREPARE_EXPIRED", "DATA_EPOCH_STALE",
+  "PLAN_HASH_MISMATCH", "PLAN_EXPIRED", "RESOURCE_NOT_BOUND", "PROVIDER_GRANT_REQUIRED", "BROKER_POLICY_DENIED", "COMPENSATION_CONFLICT",
+  "INVALID_SYSTEM_PLAN", "MIXED_EFFECTS_FORBIDDEN", "REQUEST_CONFLICT",
 ]);
 
 /**

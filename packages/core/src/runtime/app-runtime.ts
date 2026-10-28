@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { AgentOsError, type AnyBundle, type CodeBundle } from "@agentos/contracts";
+import { AgentOsError, type AnyBundle, type CodeBundle, isCodeBundle } from "@agentos/contracts";
 import { iso } from "../persistence/store.js";
 import { fault } from "../faults.js";
 import type { RuntimeContext } from "./context.js";
@@ -40,7 +40,7 @@ export interface InstanceRow {
 
 export interface RuntimeView {
   appId: string;
-  runtime: "declarative-v1" | "isolated-code-v1" | null;
+  runtime: "declarative-v1" | "isolated-code-v1" | "isolated-code-v2" | null;
   revisionId: string | null;
   enabled: boolean;
   generation: number;
@@ -86,7 +86,7 @@ export class AppRuntimeService {
     const app = this.ctx.store.get<{ active_revision_id: string | null; epoch: number }>("SELECT active_revision_id, epoch FROM apps WHERE id = ?", appId);
     if (!app?.active_revision_id) return null;
     const b = this.ctx.apps.revisionBundle(appId, app.active_revision_id) as AnyBundle | null;
-    if (!b || b.formatVersion !== 2) return null;
+    if (!b || !isCodeBundle(b)) return null;
     return { revisionId: app.active_revision_id, bundle: b, appEpoch: app.epoch };
   }
 
@@ -149,7 +149,7 @@ export class AppRuntimeService {
         enabled: ar ? ar.enabled === 1 : false,
         generation: ar?.generation ?? 0,
         controlEpoch: ar?.control_epoch ?? 0,
-        health: bundle?.formatVersion === 2 ? (ar?.health ?? "stopped") : null,
+        health: bundle && isCodeBundle(bundle) ? (ar?.health ?? "stopped") : null,
         restartCount: ar?.restart_count ?? 0,
         lastError: ar?.last_error_json ? JSON.parse(ar.last_error_json) : null,
         instance: inst ? { id: inst.id, observedState: inst.observed_state, lastProbeAt: inst.last_probe_at, limits: RUNTIME_POLICY.app } : null,

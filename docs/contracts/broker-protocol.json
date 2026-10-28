@@ -1,0 +1,271 @@
+{
+  "protocolVersion": 1,
+  "socket": "/run/agentos-broker/broker.sock",
+  "maxFrameBytes": 524288,
+  "maxJsonDepth": 8,
+  "methods": [
+    "handshake",
+    "describe",
+    "read",
+    "grant-sync",
+    "grant-revoke",
+    "submit",
+    "operation-get",
+    "operation-cancel",
+    "operation-resolve",
+    "history-sync",
+    "workspace-quiesce",
+    "workspace-resume",
+    "restore-begin",
+    "restore-status",
+    "restore-complete"
+  ],
+  "writeEnvelope": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "protocolVersion",
+      "machineInstallId",
+      "storeUuid",
+      "workspaceIncarnation",
+      "operationId",
+      "actionId",
+      "planHash",
+      "capabilityId",
+      "contractVersion",
+      "resourceId",
+      "resourceGeneration",
+      "grantId",
+      "grantVersion",
+      "preconditions",
+      "deadlineMs",
+      "params",
+      "compensatesOperationId",
+      "requestHash"
+    ],
+    "properties": {
+      "protocolVersion": {
+        "const": 1
+      },
+      "machineInstallId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 64,
+        "pattern": "^[A-Za-z0-9_:.@-]+$"
+      },
+      "storeUuid": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 64,
+        "pattern": "^[A-Za-z0-9_:.@-]+$"
+      },
+      "workspaceIncarnation": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
+      },
+      "operationId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 64,
+        "pattern": "^[A-Za-z0-9_:.@-]+$"
+      },
+      "actionId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 64,
+        "pattern": "^[A-Za-z0-9_:.@-]+$"
+      },
+      "planHash": {
+        "type": "string",
+        "pattern": "^sha256:[0-9a-f]{64}$"
+      },
+      "capabilityId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 64,
+        "pattern": "^[A-Za-z0-9_:.@-]+$"
+      },
+      "contractVersion": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 4294967295
+      },
+      "resourceId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 96,
+        "pattern": "^[A-Za-z0-9_:.@-]+$"
+      },
+      "resourceGeneration": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
+      },
+      "grantId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 64,
+        "pattern": "^[A-Za-z0-9_:.@-]+$"
+      },
+      "grantVersion": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
+      },
+      "preconditions": {
+        "type": "object"
+      },
+      "deadlineMs": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
+      },
+      "params": {
+        "type": "object"
+      },
+      "compensatesOperationId": {
+        "anyOf": [
+          {
+            "type": "null"
+          },
+          {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[A-Za-z0-9_:.@-]+$"
+          }
+        ]
+      },
+      "requestHash": {
+        "type": "string",
+        "pattern": "^sha256:[0-9a-f]{64}$"
+      }
+    }
+  },
+  "grantSync": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "identity",
+      "grantId",
+      "grantVersion",
+      "principal",
+      "capabilityId",
+      "contractVersion",
+      "resourceId",
+      "resourceGeneration",
+      "limits",
+      "expiresAtMs",
+      "requestHash"
+    ],
+    "properties": {
+      "identity": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "machineInstallId",
+          "storeUuid",
+          "workspaceIncarnation"
+        ],
+        "properties": {
+          "machineInstallId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[A-Za-z0-9_:.@-]+$"
+          },
+          "storeUuid": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[A-Za-z0-9_:.@-]+$"
+          },
+          "workspaceIncarnation": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        }
+      },
+      "grantId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 64,
+        "pattern": "^[A-Za-z0-9_:.@-]+$"
+      },
+      "grantVersion": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
+      },
+      "principal": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "appId": {
+            "type": "string"
+          },
+          "revisionId": {
+            "type": "string"
+          },
+          "actionId": {
+            "type": "string"
+          },
+          "runId": {
+            "type": "string"
+          }
+        }
+      },
+      "capabilityId": {
+        "type": "string"
+      },
+      "contractVersion": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 4294967295
+      },
+      "resourceId": {
+        "type": "string"
+      },
+      "resourceGeneration": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
+      },
+      "limits": {
+        "type": "object"
+      },
+      "paramsHash": {
+        "anyOf": [
+          {
+            "type": "null"
+          },
+          {
+            "type": "string"
+          }
+        ]
+      },
+      "expiresAtMs": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
+      },
+      "requestHash": {
+        "type": "string"
+      }
+    }
+  },
+  "hashDomains": [
+    "agentos.broker.write.v1",
+    "agentos.broker.grant.v1",
+    "agentos.system-plan.v1",
+    "agentos.system-params.v1"
+  ]
+}

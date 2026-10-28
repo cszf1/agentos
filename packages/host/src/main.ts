@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { HOST_VERSION, checkAnyStructure } from "@agentos/contracts";
-import { RunCoordinator, RuntimeSystem, openCore, type Core } from "@agentos/core";
+import { RunCoordinator, RuntimeSystem, SystemCapabilities, openCore, type Core } from "@agentos/core";
 import { catalogProblems, createDriver, loadCatalog } from "./runtime-setup.js";
 import { PiAgentEngine, TOOLSET_VERSION, modelConfigFromEnv } from "@agentos/agent-pi";
 import { loadConfig } from "./config.js";
@@ -61,6 +61,7 @@ export async function main(): Promise<void> {
     status: { phase: "starting", writable: true, agentState: "unavailable", agentDiagnostic: null },
     inflight: { n: 0 },
     sys: null,
+    caps: null,
   };
 
   // reserve the port early; business endpoints answer 503 until ready
@@ -75,6 +76,8 @@ export async function main(): Promise<void> {
     log.info("shutting down", { signal });
     rt.status.phase = "stopping";
     rt.coord?.stop();
+    // Stop new system admissions and outbox deliveries first; accepted broker operations keep running (spec §22.2).
+    rt.caps?.actions.stop();
     const closing = rt.engine?.close().catch((e) => log.warn("harness close failed", { error: (e as Error).message }));
     // Spec §20.1: total shutdown budget 30 s; a timeout is handled as a crash by the next start.
     const hardStop = setTimeout(() => {
@@ -87,6 +90,7 @@ export async function main(): Promise<void> {
     await rt.coord?.drain();
     await closing;
     await rt.sys?.shutdown().catch((e) => log.warn("runtime shutdown incomplete; the next start reconciles", { error: (e as Error).message }));
+    await rt.caps?.shutdown().catch(() => undefined);
     await server.close().catch(() => undefined);
     core.store.close();
     log.info("stopped");
@@ -132,6 +136,23 @@ export async function main(): Promise<void> {
     log.info("workspace paired with agent store", { how: bind.bound });
   }
 
+  // 5a-0. v0.3 (spec §22.1 steps 2–3): broker read-only handshake and identity check, then reconcile grant syncs,
+  // cancels, the system outbox and unverified results before anything new is admitted. A missing broker leaves the
+  // Shell, data apps and version management working; system writes stay off and /api/state says why.
+  let caps: SystemCapabilities | null = null;
+  try {
+    caps = new SystemCapabilities(core, null, { dataDir: config.dataDir, log: (lvl, m, f) => log[lvl](m, f) });
+    core.runs.systemScope = (runId, resourceIds, capabilityScopes, deadlineMs) => caps!.freezeRunScopeInTx(runId, resourceIds, capabilityScopes, deadlineMs);
+    core.agentOps.system = caps;
+    await caps.boot();
+    rt.caps = caps;
+    const st = caps.state();
+    if (st.brokerReady) log.info("broker ready", { machineInstallId: caps.broker.status.machineInstallId, incarnation: caps.broker.status.workspaceIncarnation });
+    else log.warn("broker unavailable; system writes are off", { diagnostic: caps.broker.status.diagnostic });
+  } catch (e) {
+    log.error("system capabilities failed to start; system resources are unavailable", { error: (e as Error).message });
+  }
+
   // 5a. v0.2 runtime (spec §20.1 steps 3–5): boot id, catalog, artifacts, engine check, revoke old leases,
   // reconcile containers, recover builds/deployments/commands, restart active code apps. Runtime problems
   // leave the host up: declarative apps and the Shell keep working, code calls answer 503.
@@ -143,6 +164,7 @@ export async function main(): Promise<void> {
     sys.environmentProblems.push(...problems);
     rt.sys = sys;
     core.agentOps.runtime = sys;
+    caps?.attachRuntime(sys);
     if (!sys.runtimeReady) log.warn("code runtime unavailable", { problems: sys.environmentProblems });
     else log.info("code runtime ready", { bootId: sys.bootId, catalog: catalog.hash });
   } catch (e) {
@@ -166,7 +188,7 @@ export async function main(): Promise<void> {
         core.store.run(
           "INSERT OR IGNORE INTO agent_toolset_migrations (version, description, applied_at) VALUES (?, ?, ?)",
           TOOLSET_VERSION,
-          "v0.2 tools: runtime_catalog, service_catalog, app_prepare, app_prepare_status, app_activate(deploymentId); prompt for isolated-code-v1 and slot-tree-v1",
+          TOOLSET_VERSION === 3 ? "v0.3 tools: system_resource_list, system_read, system_plan (system_plan mode); formatVersion 3 / isolated-code-v2 / slot-tree-v2 rules" : "v0.2 tools",
           new Date().toISOString(),
         );
         core.store.run("UPDATE meta SET agent_toolset_version = ? WHERE id = 1", TOOLSET_VERSION);

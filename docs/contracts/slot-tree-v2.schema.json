@@ -1,0 +1,693 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:agentos:slot-tree:v2",
+  "title": "AgentOS Slot Tree v2 component props",
+  "$defs": {
+    "binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "$bind"
+      ],
+      "properties": {
+        "$bind": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "from",
+                "source",
+                "pointer"
+              ],
+              "properties": {
+                "from": {
+                  "const": "query"
+                },
+                "source": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+                },
+                "pointer": {
+                  "type": "string",
+                  "pattern": "^(/[A-Za-z0-9_-]{1,64}){0,8}$"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "from",
+                "formId",
+                "pointer"
+              ],
+              "properties": {
+                "from": {
+                  "const": "form"
+                },
+                "formId": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+                },
+                "pointer": {
+                  "type": "string",
+                  "pattern": "^(/[A-Za-z0-9_-]{1,64}){0,8}$"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "from",
+                "selectionId"
+              ],
+              "properties": {
+                "from": {
+                  "const": "selection"
+                },
+                "selectionId": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "from",
+                "pointer"
+              ],
+              "properties": {
+                "from": {
+                  "const": "item"
+                },
+                "pointer": {
+                  "type": "string",
+                  "pattern": "^(/[A-Za-z0-9_-]{1,64}){0,8}$"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "chart": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "data",
+        "xPointer",
+        "series"
+      ],
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/binding"
+        },
+        "xPointer": {
+          "type": "string",
+          "pattern": "^(/[A-Za-z0-9_-]{1,64}){0,8}$"
+        },
+        "series": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "pointer",
+              "label"
+            ],
+            "properties": {
+              "pointer": {
+                "type": "string",
+                "pattern": "^(/[A-Za-z0-9_-]{1,64}){0,8}$"
+              },
+              "label": {
+                "type": "string",
+                "maxLength": 80
+              }
+            }
+          }
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 80
+        }
+      }
+    },
+    "Stack": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "direction": {
+          "enum": [
+            "vertical",
+            "horizontal"
+          ]
+        },
+        "gap": {
+          "enum": [
+            "sm",
+            "md",
+            "lg"
+          ]
+        }
+      }
+    },
+    "Grid": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "columns"
+      ],
+      "properties": {
+        "columns": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4
+        },
+        "gap": {
+          "enum": [
+            "sm",
+            "md",
+            "lg"
+          ]
+        }
+      }
+    },
+    "Tabs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "labels"
+      ],
+      "properties": {
+        "labels": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": {
+            "type": "string",
+            "maxLength": 40
+          }
+        }
+      }
+    },
+    "Text": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "text"
+      ],
+      "properties": {
+        "text": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 1024
+            },
+            {
+              "$ref": "#/$defs/binding"
+            }
+          ]
+        },
+        "variant": {
+          "enum": [
+            "title",
+            "body",
+            "muted"
+          ]
+        }
+      }
+    },
+    "Alert": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "text"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "info",
+            "success",
+            "warning",
+            "error"
+          ]
+        },
+        "text": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 1024
+            },
+            {
+              "$ref": "#/$defs/binding"
+            }
+          ]
+        }
+      }
+    },
+    "Metric": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "label",
+        "value"
+      ],
+      "properties": {
+        "label": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "maxLength": 256
+            },
+            {
+              "$ref": "#/$defs/binding"
+            }
+          ]
+        },
+        "unit": {
+          "type": "string",
+          "maxLength": 16
+        }
+      }
+    },
+    "Table": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "items",
+        "columns"
+      ],
+      "properties": {
+        "items": {
+          "$ref": "#/$defs/binding"
+        },
+        "columns": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 12,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "pointer",
+              "label"
+            ],
+            "properties": {
+              "pointer": {
+                "type": "string",
+                "pattern": "^(/[A-Za-z0-9_-]{1,64}){0,8}$"
+              },
+              "label": {
+                "type": "string",
+                "maxLength": 80
+              }
+            }
+          }
+        },
+        "rowId": {
+          "type": "string",
+          "pattern": "^(/[A-Za-z0-9_-]{1,64}){0,8}$"
+        },
+        "pageSize": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "selectionId": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+        },
+        "emptyText": {
+          "type": "string",
+          "maxLength": 200
+        }
+      }
+    },
+    "Kanban": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "items",
+        "groupPointer",
+        "groups",
+        "cardTitlePointer"
+      ],
+      "properties": {
+        "items": {
+          "$ref": "#/$defs/binding"
+        },
+        "groupPointer": {
+          "type": "string",
+          "pattern": "^(/[A-Za-z0-9_-]{1,64}){0,8}$"
+        },
+        "groups": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 12,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "value",
+              "label"
+            ],
+            "properties": {
+              "value": {
+                "type": [
+                  "string",
+                  "number",
+                  "boolean"
+                ]
+              },
+              "label": {
+                "type": "string",
+                "maxLength": 80
+              }
+            }
+          }
+        },
+        "cardTitlePointer": {
+          "type": "string",
+          "pattern": "^(/[A-Za-z0-9_-]{1,64}){0,8}$"
+        },
+        "cardFields": {
+          "type": "array",
+          "maxItems": 6,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "pointer",
+              "label"
+            ],
+            "properties": {
+              "pointer": {
+                "type": "string",
+                "pattern": "^(/[A-Za-z0-9_-]{1,64}){0,8}$"
+              },
+              "label": {
+                "type": "string",
+                "maxLength": 80
+              }
+            }
+          }
+        },
+        "rowId": {
+          "type": "string",
+          "pattern": "^(/[A-Za-z0-9_-]{1,64}){0,8}$"
+        },
+        "selectionId": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+        }
+      }
+    },
+    "Form": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "formId"
+      ],
+      "properties": {
+        "formId": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 80
+        }
+      }
+    },
+    "TextInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "label"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "mode": {
+          "enum": [
+            "text",
+            "integer"
+          ]
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "maxLength": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4096
+        },
+        "minimum": {
+          "type": "integer"
+        },
+        "maximum": {
+          "type": "integer"
+        },
+        "placeholder": {
+          "type": "string",
+          "maxLength": 80
+        }
+      }
+    },
+    "TextArea": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "label"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "maxLength": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4096
+        }
+      }
+    },
+    "Select": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "label",
+        "options"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "options": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "value",
+              "label"
+            ],
+            "properties": {
+              "value": {
+                "type": "string",
+                "maxLength": 256
+              },
+              "label": {
+                "type": "string",
+                "maxLength": 80
+              }
+            }
+          }
+        }
+      }
+    },
+    "Checkbox": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "label"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 80
+        }
+      }
+    },
+    "Button": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "label",
+        "command"
+      ],
+      "properties": {
+        "label": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "command": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+        },
+        "variant": {
+          "enum": [
+            "primary",
+            "secondary",
+            "danger"
+          ]
+        },
+        "confirm": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "input": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "form": {
+              "type": "string",
+              "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+            },
+            "selection": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "selectionId",
+                "as"
+              ],
+              "properties": {
+                "selectionId": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+                },
+                "as": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+                }
+              }
+            },
+            "constant": {
+              "type": "object",
+              "maxProperties": 16
+            }
+          }
+        }
+      }
+    },
+    "BarChart": {
+      "$ref": "#/$defs/chart"
+    },
+    "LineChart": {
+      "$ref": "#/$defs/chart"
+    },
+    "SystemActionButton": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "label",
+        "action"
+      ],
+      "properties": {
+        "label": {
+          "type": "string",
+          "maxLength": 60
+        },
+        "action": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+        },
+        "variant": {
+          "enum": [
+            "primary",
+            "secondary",
+            "danger"
+          ]
+        },
+        "input": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "form": {
+              "type": "string",
+              "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+            },
+            "selection": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "selectionId",
+                "as"
+              ],
+              "properties": {
+                "selectionId": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+                },
+                "as": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+                }
+              }
+            },
+            "constant": {
+              "type": "object",
+              "maxProperties": 16
+            }
+          }
+        }
+      }
+    }
+  }
+}

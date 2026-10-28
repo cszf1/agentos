@@ -295,4 +295,188 @@ CREATE TABLE agent_toolset_migrations (
   applied_at TEXT NOT NULL
 );
 `,
+  `
+-- v0.3 (spec §19.1): Linux providers, system actions, observations. Append-only; v1/v2 tables keep their meaning.
+ALTER TABLE meta ADD COLUMN provider_protocol_version INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE meta ADD COLUMN broker_install_id TEXT;
+ALTER TABLE meta ADD COLUMN workspace_incarnation INTEGER;
+ALTER TABLE meta ADD COLUMN broker_binding_state TEXT NOT NULL DEFAULT 'unbound' CHECK (broker_binding_state IN ('unbound','bound','mismatch','fenced'));
+ALTER TABLE meta ADD COLUMN provider_policy_version TEXT;
+
+CREATE TABLE system_resources (
+  id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL CHECK (kind IN ('import-root','managed-root','service','lab-network','host-network','serial','telemetry')),
+  display_name TEXT NOT NULL,
+  execution_class TEXT NOT NULL CHECK (execution_class IN ('provider-user','broker')),
+  generation INTEGER NOT NULL CHECK (generation >= 1),
+  catalog_key TEXT,
+  identity_digest TEXT,
+  identity_json TEXT,
+  host_path TEXT,
+  status TEXT NOT NULL CHECK (status IN ('available','unavailable','gone','suspended','quarantined','unobserved')),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE provider_grants (
+  id TEXT PRIMARY KEY,
+  principal_kind TEXT NOT NULL CHECK (principal_kind IN ('app','system_action','run')),
+  app_id TEXT,
+  revision_id TEXT,
+  action_id TEXT,
+  run_id TEXT,
+  binding_alias TEXT,
+  capability_id TEXT NOT NULL,
+  capability_version INTEGER NOT NULL,
+  resource_id TEXT NOT NULL REFERENCES system_resources (id),
+  resource_generation INTEGER NOT NULL,
+  limits_json TEXT NOT NULL,
+  params_hash TEXT,
+  confirmation_policy TEXT NOT NULL CHECK (confirmation_policy IN ('per_plan','standing')),
+  grant_version INTEGER NOT NULL CHECK (grant_version >= 1),
+  expires_at TEXT NOT NULL,
+  sync_state TEXT NOT NULL CHECK (sync_state IN ('local','pending','active','revoking','revoked','failed')),
+  sync_error TEXT,
+  created_at TEXT NOT NULL,
+  revoked_at TEXT
+);
+CREATE INDEX provider_grants_app ON provider_grants (app_id, revision_id) WHERE revoked_at IS NULL;
+CREATE TRIGGER provider_grants_immutable BEFORE UPDATE OF principal_kind, app_id, revision_id, action_id, run_id, binding_alias, capability_id,
+  capability_version, resource_id, resource_generation, limits_json, params_hash, confirmation_policy, grant_version, expires_at, created_at ON provider_grants
+BEGIN SELECT RAISE(ABORT, 'a provider grant is immutable; create a new grant'); END;
+CREATE TRIGGER provider_grants_revoke_once BEFORE UPDATE OF revoked_at ON provider_grants
+WHEN OLD.revoked_at IS NOT NULL BEGIN SELECT RAISE(ABORT, 'revoked_at is set once'); END;
+
+CREATE TABLE provider_grant_outbox (
+  id TEXT PRIMARY KEY,
+  grant_id TEXT NOT NULL REFERENCES provider_grants (id),
+  kind TEXT NOT NULL CHECK (kind IN ('create','revoke')),
+  request_hash TEXT NOT NULL,
+  frozen_request TEXT NOT NULL,
+  dispatch_state TEXT NOT NULL CHECK (dispatch_state IN ('pending','sent','confirmed','failed')),
+  broker_result TEXT,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE (grant_id, kind)
+);
+CREATE TRIGGER provider_grant_outbox_frozen BEFORE UPDATE OF grant_id, kind, request_hash, frozen_request ON provider_grant_outbox
+BEGIN SELECT RAISE(ABORT, 'a frozen grant request cannot change'); END;
+
+CREATE TABLE system_actions (
+  id TEXT PRIMARY KEY,
+  origin TEXT NOT NULL CHECK (origin IN ('app','agent','compensation')),
+  app_id TEXT,
+  revision_id TEXT,
+  run_id TEXT,
+  tool_task_id TEXT,
+  source_app_epoch INTEGER,
+  data_epoch INTEGER,
+  handler_id TEXT,
+  capability_id TEXT NOT NULL,
+  plan_hash TEXT NOT NULL,
+  plan_json TEXT NOT NULL,
+  observation_refs TEXT NOT NULL,
+  grant_id TEXT,
+  grant_version INTEGER,
+  resource_id TEXT NOT NULL REFERENCES system_resources (id),
+  resource_generation INTEGER NOT NULL,
+  confirmation_policy TEXT NOT NULL CHECK (confirmation_policy IN ('per_plan','standing')),
+  state TEXT NOT NULL CHECK (state IN ('awaiting_approval','ready','dispatching','running','reconciling','succeeded','failed_no_effect','cancelled_no_effect','expired_no_effect','indeterminate','rejected')),
+  operation_id TEXT UNIQUE,
+  confirm_key TEXT,
+  expires_at TEXT NOT NULL,
+  approved_at TEXT,
+  completion_kind TEXT,
+  effect_certainty TEXT,
+  evidence_kind TEXT,
+  result_json TEXT,
+  evidence_json TEXT,
+  error_json TEXT,
+  resolution_json TEXT,
+  compensates_action_id TEXT,
+  workspace_incarnation INTEGER,
+  broker_seq INTEGER,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX system_actions_open ON system_actions (state) WHERE state NOT IN ('succeeded','failed_no_effect','cancelled_no_effect','expired_no_effect','rejected');
+CREATE INDEX system_actions_app ON system_actions (app_id, state);
+CREATE TRIGGER system_actions_plan_frozen BEFORE UPDATE OF id, origin, app_id, revision_id, run_id, handler_id, capability_id, plan_hash, plan_json,
+  observation_refs, resource_id, resource_generation, created_at ON system_actions
+BEGIN SELECT RAISE(ABORT, 'a frozen system plan is immutable'); END;
+CREATE TRIGGER system_actions_operation_once BEFORE UPDATE OF operation_id ON system_actions
+WHEN OLD.operation_id IS NOT NULL AND (NEW.operation_id IS NULL OR NEW.operation_id <> OLD.operation_id)
+BEGIN SELECT RAISE(ABORT, 'an action binds exactly one operation'); END;
+CREATE TRIGGER system_actions_outcome_sticky BEFORE UPDATE OF state ON system_actions
+WHEN OLD.state IN ('succeeded','failed_no_effect','cancelled_no_effect','expired_no_effect','rejected') AND NEW.state <> OLD.state
+BEGIN SELECT RAISE(ABORT, 'a final system action state is immutable'); END;
+CREATE TRIGGER system_actions_unknown_sticky BEFORE UPDATE OF state ON system_actions
+WHEN OLD.state = 'indeterminate' AND NEW.state <> 'indeterminate'
+BEGIN SELECT RAISE(ABORT, 'an indeterminate outcome is never rewritten; record a resolution instead'); END;
+
+CREATE TABLE system_outbox (
+  operation_id TEXT PRIMARY KEY,
+  action_id TEXT NOT NULL UNIQUE REFERENCES system_actions (id),
+  machine_install_id TEXT NOT NULL,
+  workspace_incarnation INTEGER NOT NULL,
+  frozen_envelope TEXT NOT NULL,
+  request_hash TEXT NOT NULL,
+  dispatch_state TEXT NOT NULL CHECK (dispatch_state IN ('pending','sent','accepted','final','fenced')),
+  last_broker_seq INTEGER,
+  attempt INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE TRIGGER system_outbox_frozen BEFORE UPDATE OF operation_id, action_id, machine_install_id, workspace_incarnation, frozen_envelope, request_hash ON system_outbox
+BEGIN SELECT RAISE(ABORT, 'a delivered envelope cannot change'); END;
+
+CREATE TABLE resource_observations (
+  id TEXT PRIMARY KEY,
+  scope_kind TEXT NOT NULL CHECK (scope_kind IN ('app_call','run','user')),
+  call_id TEXT,
+  run_id TEXT,
+  tool_task_id TEXT,
+  principal_key TEXT NOT NULL,
+  resource_id TEXT NOT NULL,
+  resource_generation INTEGER NOT NULL,
+  capability_id TEXT NOT NULL,
+  version TEXT,
+  observed_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  quality TEXT NOT NULL CHECK (quality IN ('fresh','stale','gap','unavailable')),
+  summary_json TEXT NOT NULL
+);
+CREATE INDEX resource_observations_scope ON resource_observations (scope_kind, call_id, run_id);
+
+CREATE TABLE provider_event_cursors (
+  source TEXT PRIMARY KEY,
+  source_epoch TEXT,
+  last_received_seq INTEGER NOT NULL DEFAULT 0,
+  drop_count INTEGER NOT NULL DEFAULT 0,
+  quality TEXT NOT NULL CHECK (quality IN ('fresh','stale','gap','unavailable')),
+  last_refresh_at TEXT
+);
+
+CREATE TABLE provider_events (
+  seq INTEGER PRIMARY KEY AUTOINCREMENT,
+  source TEXT NOT NULL,
+  source_epoch TEXT,
+  resource_id TEXT,
+  resource_generation INTEGER,
+  kind TEXT NOT NULL,
+  bounded_payload TEXT NOT NULL,
+  observed_at TEXT NOT NULL
+);
+CREATE INDEX provider_events_resource ON provider_events (resource_id, seq);
+
+ALTER TABLE runs ADD COLUMN mode TEXT NOT NULL DEFAULT 'build' CHECK (mode IN ('build','system_plan'));
+ALTER TABLE runs ADD COLUMN system_resource_scope TEXT;
+ALTER TABLE runs ADD COLUMN prepared_action_id TEXT;
+CREATE TRIGGER runs_prepared_sticky BEFORE UPDATE OF prepared_action_id ON runs
+WHEN OLD.prepared_action_id IS NOT NULL AND (NEW.prepared_action_id IS NULL OR NEW.prepared_action_id <> OLD.prepared_action_id)
+BEGIN SELECT RAISE(ABORT, 'prepared_action_id cannot change'); END;
+CREATE TRIGGER runs_mode_frozen BEFORE UPDATE OF mode, system_resource_scope ON runs
+BEGIN SELECT RAISE(ABORT, 'a run mode and its resource scope are frozen'); END;
+`,
 ];

@@ -4,6 +4,9 @@ import { CODE_LIMITS } from "./bundle-v2.js";
 
 /** Runner ABI between the host and the trusted runner inside an app container (spec §7.2, §11.2). */
 export const RUNNER_ABI_VERSION = 1;
+/** ABI 2 (spec §9): provider reads and system-plan handlers; only used by v3 bundles on ABI-2 locks. */
+export const RUNNER_ABI_V2 = 2;
+export const SUPPORTED_RUNNER_ABIS = [1, 2] as const;
 export const RUNNER_PROTOCOL_VERSION = 1;
 
 /** Frame limits: only host→runner snapshot frames may be large (spec §11.2). */
@@ -98,9 +101,9 @@ export interface Frame {
 }
 export type FrameType =
   // host → runner
-  | "hello" | "call" | "ping" | "serviceResult" | "shutdown"
+  | "hello" | "call" | "ping" | "serviceResult" | "providerResult" | "shutdown"
   // runner → host
-  | "ready" | "result" | "pong" | "serviceCall" | "log"
+  | "ready" | "result" | "pong" | "serviceCall" | "providerRead" | "log"
   // build bridge
   | "buildOutput" | "buildFailed";
 
@@ -120,11 +123,11 @@ export interface ReadyPayload {
   challenge: string;
   /** sha256 of the mounted app.mjs, computed by the runner. */
   appSha256: string;
-  handlers: { queries: string[]; commands: string[] };
+  handlers: { queries: string[]; commands: string[]; systemActions?: string[] };
 }
 export interface CallPayload {
   callId: string;
-  kind: "query" | "command";
+  kind: "query" | "command" | "systemPlan";
   handlerId: string;
   input: unknown;
   context: HandlerContext;
@@ -138,6 +141,17 @@ export interface ServiceCallPayload {
   alias: string;
   input: unknown;
 }
+/** ABI 2: a provider read requested by the app inside a query or system-plan call (spec §9, §10). */
+export interface ProviderReadPayload {
+  callId: string;
+  parentCallId: string;
+  bindingAlias: string;
+  capabilityId: string;
+  params: unknown;
+}
+export type ProviderResultPayload =
+  | { callId: string; ok: true; envelope: unknown }
+  | { callId: string; ok: false; error: { code: string; message: string } };
 export type ServiceResultPayload =
   | { callId: string; ok: true; output: unknown; target: { appId: string; revisionId: string; dataEpoch: number } }
   | { callId: string; ok: false; error: { code: string; message: string } };

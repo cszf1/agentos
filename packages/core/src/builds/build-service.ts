@@ -8,8 +8,7 @@ import {
   sha256Hex,
   type CodeBundle,
   type RuntimeLock,
-  type ValidationIssue,
-} from "@agentos/contracts";
+  type ValidationIssue, isCodeBundle } from "@agentos/contracts";
 import { iso, type Store } from "../persistence/store.js";
 import { fault } from "../faults.js";
 import { ArtifactStore } from "./artifact-store.js";
@@ -113,7 +112,7 @@ export class BuildService {
     const raw = s.get<{ bundle_json: string }>("SELECT bundle_json FROM revisions WHERE app_id = ? AND id = ?", appId, revisionId);
     if (!raw) throw new AgentOsError("NOT_FOUND", "revision not found", { revisionId });
     const bundle = JSON.parse(raw.bundle_json) as CodeBundle;
-    if (bundle.formatVersion !== 2) throw new AgentOsError("INVALID_REQUEST", "only code revisions are built");
+    if (!isCodeBundle(bundle)) throw new AgentOsError("INVALID_REQUEST", "only code revisions are built");
     const lock = this.ctx.catalog.requireLock(bundle.runtimeLockId);
     const key = buildKey(revisionId, lock);
 

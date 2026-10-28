@@ -17,7 +17,7 @@ export interface ApprovedModule {
 
 export interface RuntimeLock {
   id: string;
-  profileId: "core-v1" | "data-v1";
+  profileId: "core-v1" | "data-v1" | "core-v2" | "data-v2";
   platform: "linux/amd64" | "linux/arm64";
   /** Approved base image, pinned by its platform manifest digest. */
   baseImage: { reference: string; digest: string };
@@ -75,6 +75,11 @@ export function checkRuntimeLock(b: CodeBundle, catalog: RuntimeCatalog, platfor
   }
   if (lock.platform !== platform) {
     return [{ path: "/runtimeLockId", code: "IMAGE_UNAVAILABLE", message: `${lock.id} is built for ${lock.platform}, this host is ${platform}` }];
+  }
+  // A frozen v2 bundle keeps ABI 1; a v3 bundle needs an ABI-2 lock (spec §9: no silent ABI change of an old lock).
+  const wantAbi = b.formatVersion === 3 ? 2 : 1;
+  if (lock.abiVersion !== wantAbi) {
+    return [{ path: "/runtimeLockId", code: "DEPENDENCY_NOT_ALLOWED", message: `formatVersion ${b.formatVersion} needs an ABI-${wantAbi} runtime lock; ${lock.id} is ABI ${lock.abiVersion}` }];
   }
   return checkImports(b, lock);
 }

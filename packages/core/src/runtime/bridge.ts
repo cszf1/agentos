@@ -11,6 +11,7 @@ import { encodeFrame, FrameDecoder, FRAME_LIMITS, RUNNER_PROTOCOL_VERSION, type 
  */
 export interface BridgeEvents {
   onServiceCall?: (f: Frame) => void;
+  onProviderRead?: (f: Frame) => void;
   onLog?: (level: string, text: string) => void;
   onBuild?: (f: Frame) => void;
   onClose?: (reason: string) => void;
@@ -89,6 +90,9 @@ export class InstanceBridge {
       return;
     }
     switch (f.type) {
+      case "providerRead":
+        this.events.onProviderRead?.(f);
+        return;
       case "serviceCall":
         this.events.onServiceCall?.(f);
         return;

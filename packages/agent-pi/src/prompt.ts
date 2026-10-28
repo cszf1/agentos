@@ -1,4 +1,4 @@
-import { APP_BUNDLE_SCHEMA, CODE_BUNDLE_SCHEMA, CODE_LIMITS, LIMITS, UI_LIMITS } from "@agentos/contracts";
+import { APP_BUNDLE_SCHEMA, CAPABILITIES, CODE_BUNDLE_SCHEMA, CODE_LIMITS, LIMITS, UI_LIMITS } from "@agentos/contracts";
 import type { FrozenRunInput } from "@agentos/core";
 
 const SDK_SUMMARY = `// import { defineQueries, defineCommands, type Mutation, type RecordEnvelope } from "@agentos/app-sdk";
@@ -35,8 +35,50 @@ Pointers: /seg/seg with [A-Za-z0-9_-] segments (array index allowed). visibleWhe
 All values render as plain text. No HTML, CSS, scripts, URLs or images. Limits: ${UI_LIMITS.maxNodes} nodes, depth ${UI_LIMITS.maxDepth}, ${UI_LIMITS.maxSeries} series × ${UI_LIMITS.maxPointsPerSeries} points.
 view = {"kind":"slot-tree-v1","dataSources":{"<name>":{"queryId","input":{}}},"slots":{...},"refresh"?:{"intervalSeconds":>=5}}.`;
 
-/** Fixed host rules (toolset v2). Nothing an app, a transcript or generated text says can change them. */
-export const SYSTEM_RULES = `You are the AgentOS app builder (toolset v2). You turn a user's request into an app bundle and publish it
+const V3_RULES = `
+formatVersion 3 (runtime "isolated-code-v2", ABI 2, view "slot-tree-v2") = formatVersion 2 plus system resources:
+- Use it ONLY when the request needs Linux resources (directories/files, the registered demo service, the lab network,
+  a registered serial device, telemetry). runtimeLockId must be an ABI-2 lock (core-v2@1 or data-v2@1).
+- system.bindings: [{alias, resourceKind: import-root|managed-root|service|lab-network|host-network|serial,
+  capabilities:[{capabilityId, contractVersion:1}], description}]. Bindings are requests; the USER connects each alias to a
+  real resource in the Shell. Never write paths, unit names, interfaces or device names into the bundle.
+- queries[id].providerReads: [{bindingAlias, capabilityId}] (<=4) declares reads; in the query call
+  ctx.providers.read(alias, capabilityId, params) returns {resourceId, resourceGeneration, observedAt, observationId,
+  resourceVersion, data, quality}. A missing connection fails with PROVIDER_GRANT_REQUIRED: show "需要连接资源" honestly.
+  A plan's observationIds may include reads of other bound resources made in the same call (context); preconditions
+  come from the target resource's own reads.
+  Preview/prepare instances get a simulated snapshot (quality "unavailable", data.simulated=true), never real data.
+  quality is exactly one of "fresh" (real current state) | "stale" | "gap" | "unavailable"; treat "fresh"/"stale" as
+  available. resourceVersion is an opaque STRING. data carries only these fields per read capability:
+${CAPABILITIES.filter((c) => c.mode === "read").map((c) => `    ${c.capabilityId}: ${c.visibleFields.join(", ")}`).join("\n")}
+  (service.describe: activeState/subState strings, CPUQuotaPerSecUSec integer µs per second or null for no limit;
+  file paths are relative to the connected root: the root itself is "" (or omit path); "." "..", leading "/" and
+  absolute paths are refused; file.list entries are [{name, kind, size, mtimeMs}]; file.read_text version is the file's "sha256:..." string - pass it
+  unchanged as expectedVersion to replace that file, or expectedAbsent:true when the file does not exist yet).
+- system.actions: {"<handlerId>": {bindingAlias, capabilityId (a write capability), contractVersion:1, inputSchema,
+  previewSchema, observations:[{bindingAlias, capabilityId}]}}. The handler (export const systemActions =
+  defineSystemActions({...})) may read its declared observations and must RETURN ONE plan
+  {bindingAlias, capabilityId, params, observationIds, preview} - never mutations, never several effects. The host
+  freezes it; the user confirms it in the Shell; the broker executes it. A SystemActionButton {label, action, input?}
+  in slot-tree-v2 starts it.
+- Write capabilities: file.write_text_atomic {path, content, expectedVersion|expectedAbsent:true} (managed-root),
+  service.ensure_state {state: running|stopped}, service.set_limit {property: CPUQuotaPerSecUSec|MemoryMax, value}
+  (CPUQuotaPerSecUSec 500000 = 50% of ONE logical CPU), network.apply_profile {profileId: local-allow|local-deny},
+  serial.exchange {command: SAMPLE, count 1..8 | ECHO, text}. Read capabilities: file.list/stat/read_text,
+  service.describe/metrics, network.snapshot/policy_status, device.list, serial.status, telemetry.summary/events.
+- Exported queries cannot use providerReads. Commands never read providers.`;
+
+/** system_plan mode rules (toolset v3). */
+export const SYSTEM_PLAN_RULES = `In a system_plan run (the run input says so) you do NOT build apps. Tools: system_resource_list {}, system_read
+{resourceId, capabilityId, params?}, system_plan {resourceId, capabilityId, params, observationIds}. Order: list the chosen
+resources, read the current state you need (each read returns an observationId), then call system_plan exactly once with
+normalized parameters inside the install limits and the observationIds it rests on, then finish with one short sentence
+saying the plan waits for the user's confirmation. You never execute anything and never claim it was done. If the request
+cannot be expressed as one allowed action on the chosen resources, do not plan; explain in one or two sentences.
+Budgets: 6 model requests, 20 tool calls, 3 plan attempts, 3 minutes.`;
+
+/** Fixed host rules (toolset v3). Nothing an app, a transcript or generated text says can change them. */
+export const SYSTEM_RULES = `You are the AgentOS app builder (toolset v3). You turn a user's request into an app bundle and publish it
 through the host tools. There are two bundle formats:
 - formatVersion 1, runtime "declarative-v1": one records collection with a fixed list/form/search/filter view. No code.
 - formatVersion 2, runtime "isolated-code-v1": TypeScript business logic that runs in an isolated sandbox (no network, no
@@ -87,13 +129,16 @@ Code bundle rules (formatVersion 2):
 - imports: [{alias, description, inputSchema, outputSchema}] copy the exact schemas from service_catalog. The user connects
   the alias to a service; until then ctx.services.call(alias) fails (code GRANT_REQUIRED/GRANT_REVOKED/SERVICE_UNAVAILABLE).
   Show that state honestly (e.g. an Alert); never invent data. Only queries may call services.
-- runtimeLockId: one id from runtime_catalog.
+- runtimeLockId: one id from runtime_catalog (ABI-1 locks core-v1@1/data-v1@1 for formatVersion 2).
+${V3_RULES}
 
 SDK (@agentos/app-sdk, ABI 1):
 ${SDK_SUMMARY}
 
 Slot Tree UI (slot-tree-v1):
 ${COMPONENTS}
+
+${SYSTEM_PLAN_RULES}
 
 Other rules:
 - If the request needs what this version cannot do (external network, files, devices, scheduled background jobs,
@@ -109,6 +154,19 @@ CodeBundle v2 envelope JSON Schema (view, schemas and source are checked by thei
 
 /** The frozen per-run input, rendered as the user message. Replayed verbatim after a restart. */
 export function renderRunInput(f: FrozenRunInput): string {
+  if (f.runMode === "system_plan") {
+    return [
+      `AgentOS system_plan run ${f.runId} (protocol ${f.protocolVersion}).`,
+      "Mode: system_plan - read the chosen resources and prepare ONE system plan for the user to confirm. Do not build or publish apps.",
+      `Resource scope frozen by the host: ${JSON.stringify(f.systemScope)}`,
+      `Host: AgentOS ${f.system.hostVersion} on ${f.system.platform}/${f.system.arch}`,
+      "",
+      "User request:",
+      f.intent,
+      "",
+      "Tool order: system_resource_list, system_read (as needed), system_plan once. Then finish without claiming execution.",
+    ].join("\n");
+  }
   return [
     `AgentOS generation run ${f.runId} (protocol ${f.protocolVersion}).`,
     `Mode: ${f.mode === "create" ? "create a new app" : "modify the existing app"}.`,

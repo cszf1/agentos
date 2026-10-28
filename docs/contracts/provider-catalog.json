@@ -1,0 +1,880 @@
+{
+  "catalogVersion": 1,
+  "capabilities": [
+    {
+      "capabilityId": "file.list",
+      "contractVersion": 1,
+      "provider": "file",
+      "mode": "read",
+      "resourceKinds": [
+        "import-root",
+        "managed-root"
+      ],
+      "replayClass": "read-only",
+      "execution": {
+        "import-root": "provider-user",
+        "managed-root": "broker:file"
+      },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [],
+        "properties": {
+          "path": {
+            "type": "string",
+            "maxLength": 1024
+          },
+          "cursor": {
+            "type": "string",
+            "maxLength": 512
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200
+          }
+        }
+      },
+      "outputLimits": {
+        "entries": 200
+      },
+      "visibleFields": [
+        "path",
+        "entries",
+        "nextCursor"
+      ],
+      "standingAllowed": "always",
+      "crossAppService": false,
+      "autoExecutable": true,
+      "events": [
+        "file_changed",
+        "root_gone",
+        "overflow"
+      ],
+      "lifecycle": {
+        "prepareMs": 0,
+        "dispatchMs": 750,
+        "verifyMs": 0,
+        "cancel": "not applicable",
+        "reconcile": "re-read; returns a new observation"
+      },
+      "preconditions": "root identity (dev/inode) unchanged",
+      "evidence": "directory listing with dirVersion",
+      "compensation": null,
+      "diagnosticRedLines": [
+        "absolute root path is never shown to apps"
+      ]
+    },
+    {
+      "capabilityId": "file.stat",
+      "contractVersion": 1,
+      "provider": "file",
+      "mode": "read",
+      "resourceKinds": [
+        "import-root",
+        "managed-root"
+      ],
+      "replayClass": "read-only",
+      "execution": {
+        "import-root": "provider-user",
+        "managed-root": "broker:file"
+      },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [],
+        "properties": {
+          "path": {
+            "type": "string",
+            "maxLength": 1024
+          }
+        }
+      },
+      "outputLimits": {},
+      "visibleFields": [
+        "path",
+        "kind",
+        "size",
+        "mtimeMs",
+        "supported"
+      ],
+      "standingAllowed": "always",
+      "crossAppService": false,
+      "autoExecutable": true,
+      "events": [],
+      "lifecycle": {
+        "prepareMs": 0,
+        "dispatchMs": 750,
+        "verifyMs": 0,
+        "cancel": "not applicable",
+        "reconcile": "re-read; returns a new observation"
+      },
+      "preconditions": "root identity unchanged",
+      "evidence": "fstat of the opened entry",
+      "compensation": null,
+      "diagnosticRedLines": []
+    },
+    {
+      "capabilityId": "file.read_text",
+      "contractVersion": 1,
+      "provider": "file",
+      "mode": "read",
+      "resourceKinds": [
+        "import-root",
+        "managed-root"
+      ],
+      "replayClass": "read-only",
+      "execution": {
+        "import-root": "provider-user",
+        "managed-root": "broker:file"
+      },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "maxLength": 1024
+          },
+          "maxBytes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 262144
+          }
+        }
+      },
+      "outputLimits": {
+        "bytes": 262144
+      },
+      "visibleFields": [
+        "path",
+        "content",
+        "truncated",
+        "size",
+        "version"
+      ],
+      "standingAllowed": "always",
+      "crossAppService": false,
+      "autoExecutable": true,
+      "events": [],
+      "lifecycle": {
+        "prepareMs": 0,
+        "dispatchMs": 750,
+        "verifyMs": 0,
+        "cancel": "not applicable",
+        "reconcile": "re-read; returns a new observation"
+      },
+      "preconditions": "regular file, one link, strict UTF-8, unchanged during the read",
+      "evidence": "content hash of the whole file",
+      "compensation": null,
+      "diagnosticRedLines": [
+        "file content never enters the generic event log"
+      ]
+    },
+    {
+      "capabilityId": "file.changes",
+      "contractVersion": 1,
+      "provider": "file",
+      "mode": "read",
+      "resourceKinds": [
+        "import-root",
+        "managed-root"
+      ],
+      "replayClass": "read-only",
+      "execution": {
+        "import-root": "provider-user",
+        "managed-root": "provider-user"
+      },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [],
+        "properties": {
+          "sinceSeq": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "outputLimits": {
+        "events": 200
+      },
+      "visibleFields": [
+        "changes",
+        "gap",
+        "lastSeq"
+      ],
+      "standingAllowed": "always",
+      "crossAppService": false,
+      "autoExecutable": true,
+      "events": [
+        "file_changed"
+      ],
+      "lifecycle": {
+        "prepareMs": 0,
+        "dispatchMs": 750,
+        "verifyMs": 0,
+        "cancel": "not applicable",
+        "reconcile": "re-read; returns a new observation"
+      },
+      "preconditions": "none",
+      "evidence": "inotify cursor with gap flag",
+      "compensation": null,
+      "diagnosticRedLines": []
+    },
+    {
+      "capabilityId": "file.write_text_atomic",
+      "contractVersion": 1,
+      "provider": "file",
+      "mode": "write",
+      "resourceKinds": [
+        "managed-root"
+      ],
+      "replayClass": "owned-atomic",
+      "execution": {
+        "managed-root": "broker:file"
+      },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path",
+          "content"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "maxLength": 1024
+          },
+          "content": {
+            "type": "string",
+            "maxLength": 131072
+          },
+          "expectedVersion": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "expectedAbsent": {
+            "const": true
+          }
+        }
+      },
+      "outputLimits": {
+        "bytes": 131072
+      },
+      "visibleFields": [
+        "path",
+        "version"
+      ],
+      "standingAllowed": "always",
+      "crossAppService": false,
+      "autoExecutable": false,
+      "events": [
+        "file_changed"
+      ],
+      "lifecycle": {
+        "prepareMs": 0,
+        "dispatchMs": 5000,
+        "verifyMs": 5000,
+        "cancel": "wins before publication (temp removed, target unchanged)",
+        "reconcile": "compare old/new hash, temp and logged phase"
+      },
+      "preconditions": "expectedAbsent or expectedVersion (content hash); single writer (file worker UID owns the managed root)",
+      "evidence": "target content hash after rename + fsync of the directory",
+      "compensation": "new plan restoring the previous content when the current hash still equals this operation's result",
+      "diagnosticRedLines": [
+        "content is not logged"
+      ]
+    },
+    {
+      "capabilityId": "service.describe",
+      "contractVersion": 1,
+      "provider": "service",
+      "mode": "read",
+      "resourceKinds": [
+        "service"
+      ],
+      "replayClass": "read-only",
+      "execution": {
+        "service": "provider-user"
+      },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [],
+        "properties": {}
+      },
+      "outputLimits": {},
+      "visibleFields": [
+        "unit",
+        "activeState",
+        "subState",
+        "invocationId",
+        "CPUQuotaPerSecUSec",
+        "MemoryMax",
+        "activeEnterTimestampUs"
+      ],
+      "standingAllowed": "always",
+      "crossAppService": false,
+      "autoExecutable": true,
+      "events": [
+        "service_changed"
+      ],
+      "lifecycle": {
+        "prepareMs": 0,
+        "dispatchMs": 750,
+        "verifyMs": 0,
+        "cancel": "not applicable",
+        "reconcile": "re-read; returns a new observation"
+      },
+      "preconditions": "catalog unit",
+      "evidence": "systemd properties read now",
+      "compensation": null,
+      "diagnosticRedLines": []
+    },
+    {
+      "capabilityId": "service.metrics",
+      "contractVersion": 1,
+      "provider": "service",
+      "mode": "read",
+      "resourceKinds": [
+        "service"
+      ],
+      "replayClass": "read-only",
+      "execution": {
+        "service": "provider-user"
+      },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [],
+        "properties": {}
+      },
+      "outputLimits": {},
+      "visibleFields": [
+        "activeState",
+        "metrics"
+      ],
+      "standingAllowed": "always",
+      "crossAppService": false,
+      "autoExecutable": true,
+      "events": [],
+      "lifecycle": {
+        "prepareMs": 0,
+        "dispatchMs": 750,
+        "verifyMs": 0,
+        "cancel": "not applicable",
+        "reconcile": "re-read; returns a new observation"
+      },
+      "preconditions": "catalog unit",
+      "evidence": "cgroup v2 cpu.stat / memory.current / pids.current",
+      "compensation": null,
+      "diagnosticRedLines": [
+        "no command lines, environment or memory of other processes"
+      ]
+    },
+    {
+      "capabilityId": "service.ensure_state",
+      "contractVersion": 1,
+      "provider": "service",
+      "mode": "write",
+      "resourceKinds": [
+        "service"
+      ],
+      "replayClass": "convergent",
+      "execution": {
+        "service": "broker:service"
+      },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "state"
+        ],
+        "properties": {
+          "state": {
+            "enum": [
+              "running",
+              "stopped"
+            ]
+          }
+        }
+      },
+      "outputLimits": {},
+      "visibleFields": [
+        "activeState",
+        "subState",
+        "invocationId"
+      ],
+      "standingAllowed": "always",
+      "crossAppService": false,
+      "autoExecutable": false,
+      "events": [
+        "service_changed"
+      ],
+      "lifecycle": {
+        "prepareMs": 0,
+        "dispatchMs": 15000,
+        "verifyMs": 15000,
+        "cancel": "wins before the job request",
+        "reconcile": "read job/InvocationID/actual state; repeat only when the catalog marks the unit safe to restart"
+      },
+      "preconditions": "unit loaded from the catalog fragment; no restart verb exists",
+      "evidence": "JobRemoved result + ActiveState/SubState/InvocationID read after the job",
+      "compensation": "a new ensure_state plan with the opposite state (program side effects are not undone)",
+      "diagnosticRedLines": []
+    },
+    {
+      "capabilityId": "service.set_limit",
+      "contractVersion": 1,
+      "provider": "service",
+      "mode": "write",
+      "resourceKinds": [
+        "service"
+      ],
+      "replayClass": "convergent",
+      "execution": {
+        "service": "broker:service"
+      },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "property",
+          "value"
+        ],
+        "properties": {
+          "property": {
+            "enum": [
+              "CPUQuotaPerSecUSec",
+              "MemoryMax"
+            ]
+          },
+          "value": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "outputLimits": {},
+      "visibleFields": [
+        "property",
+        "value",
+        "previous",
+        "cgroup"
+      ],
+      "standingAllowed": "with-explicit-bounds",
+      "crossAppService": false,
+      "autoExecutable": false,
+      "events": [
+        "service_changed"
+      ],
+      "lifecycle": {
+        "prepareMs": 0,
+        "dispatchMs": 8000,
+        "verifyMs": 8000,
+        "cancel": "wins before SetUnitProperties",
+        "reconcile": "read the property and cgroup file; runtime values are not persisted across boots"
+      },
+      "preconditions": "one runtime property; value inside install caps ∩ grant bounds",
+      "evidence": "property read back + cgroup cpu.max/memory.max",
+      "compensation": "new plan restoring the previous value when the current value still equals this result",
+      "diagnosticRedLines": []
+    },
+    {
+      "capabilityId": "network.snapshot",
+      "contractVersion": 1,
+      "provider": "network",
+      "mode": "read",
+      "resourceKinds": [
+        "host-network",
+        "lab-network"
+      ],
+      "replayClass": "read-only",
+      "execution": {
+        "host-network": "provider-user",
+        "lab-network": "broker:network"
+      },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [],
+        "properties": {}
+      },
+      "outputLimits": {},
+      "visibleFields": [
+        "links",
+        "addresses",
+        "routes"
+      ],
+      "standingAllowed": "always",
+      "crossAppService": false,
+      "autoExecutable": true,
+      "events": [],
+      "lifecycle": {
+        "prepareMs": 0,
+        "dispatchMs": 750,
+        "verifyMs": 0,
+        "cancel": "not applicable",
+        "reconcile": "re-read; returns a new observation"
+      },
+      "preconditions": "none",
+      "evidence": "rtnetlink dump",
+      "compensation": null,
+      "diagnosticRedLines": [
+        "ifindex is only an observation"
+      ]
+    },
+    {
+      "capabilityId": "network.policy_status",
+      "contractVersion": 1,
+      "provider": "network",
+      "mode": "read",
+      "resourceKinds": [
+        "lab-network"
+      ],
+      "replayClass": "read-only",
+      "execution": {
+        "lab-network": "broker:network"
+      },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [],
+        "properties": {}
+      },
+      "outputLimits": {},
+      "visibleFields": [
+        "activeProfile",
+        "ruleHash",
+        "ruleCount",
+        "probe"
+      ],
+      "standingAllowed": "always",
+      "crossAppService": false,
+      "autoExecutable": true,
+      "events": [],
+      "lifecycle": {
+        "prepareMs": 0,
+        "dispatchMs": 750,
+        "verifyMs": 0,
+        "cancel": "not applicable",
+        "reconcile": "re-read; returns a new observation"
+      },
+      "preconditions": "lab namespace present",
+      "evidence": "own table rule hash (no counters) + traffic probe",
+      "compensation": null,
+      "diagnosticRedLines": []
+    },
+    {
+      "capabilityId": "network.apply_profile",
+      "contractVersion": 1,
+      "provider": "network",
+      "mode": "write",
+      "resourceKinds": [
+        "lab-network"
+      ],
+      "replayClass": "convergent",
+      "execution": {
+        "lab-network": "broker:network"
+      },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "profileId"
+        ],
+        "properties": {
+          "profileId": {
+            "enum": [
+              "local-allow",
+              "local-deny"
+            ]
+          }
+        }
+      },
+      "outputLimits": {},
+      "visibleFields": [
+        "profileId",
+        "ruleHash",
+        "probe"
+      ],
+      "standingAllowed": "with-explicit-bounds",
+      "crossAppService": false,
+      "autoExecutable": false,
+      "events": [],
+      "lifecycle": {
+        "prepareMs": 0,
+        "dispatchMs": 5000,
+        "verifyMs": 5000,
+        "cancel": "wins before the batch commit",
+        "reconcile": "compare own-table rule hash and probe traffic; never flush the global ruleset"
+      },
+      "preconditions": "namespace incarnation and catalog hash unchanged",
+      "evidence": "normalized rule hash + real TCP probe in the lab namespace",
+      "compensation": "new plan applying the previous profile when the current rule hash still equals this result",
+      "diagnosticRedLines": [
+        "no nft text or table names from requests"
+      ]
+    },
+    {
+      "capabilityId": "device.list",
+      "contractVersion": 1,
+      "provider": "device",
+      "mode": "read",
+      "resourceKinds": [
+        "serial"
+      ],
+      "replayClass": "read-only",
+      "execution": {
+        "serial": "provider-user"
+      },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [],
+        "properties": {}
+      },
+      "outputLimits": {
+        "devices": 32
+      },
+      "visibleFields": [
+        "devices"
+      ],
+      "standingAllowed": "always",
+      "crossAppService": false,
+      "autoExecutable": true,
+      "events": [
+        "device_add",
+        "device_remove"
+      ],
+      "lifecycle": {
+        "prepareMs": 0,
+        "dispatchMs": 750,
+        "verifyMs": 0,
+        "cancel": "not applicable",
+        "reconcile": "re-read; returns a new observation"
+      },
+      "preconditions": "none",
+      "evidence": "udev metadata",
+      "compensation": null,
+      "diagnosticRedLines": []
+    },
+    {
+      "capabilityId": "serial.status",
+      "contractVersion": 1,
+      "provider": "device",
+      "mode": "read",
+      "resourceKinds": [
+        "serial"
+      ],
+      "replayClass": "read-only",
+      "execution": {
+        "serial": "broker:serial"
+      },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [],
+        "properties": {}
+      },
+      "outputLimits": {
+        "samples": 20
+      },
+      "visibleFields": [
+        "connected",
+        "session",
+        "samples"
+      ],
+      "standingAllowed": "always",
+      "crossAppService": false,
+      "autoExecutable": true,
+      "events": [],
+      "lifecycle": {
+        "prepareMs": 0,
+        "dispatchMs": 750,
+        "verifyMs": 0,
+        "cancel": "not applicable",
+        "reconcile": "re-read; returns a new observation"
+      },
+      "preconditions": "never opens the port",
+      "evidence": "udev identity + cached session",
+      "compensation": null,
+      "diagnosticRedLines": []
+    },
+    {
+      "capabilityId": "serial.exchange",
+      "contractVersion": 1,
+      "provider": "device",
+      "mode": "write",
+      "resourceKinds": [
+        "serial"
+      ],
+      "replayClass": "non-replayable",
+      "execution": {
+        "serial": "broker:serial"
+      },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "command"
+        ],
+        "properties": {
+          "command": {
+            "enum": [
+              "SAMPLE",
+              "ECHO"
+            ]
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 8
+          },
+          "text": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9 _-]{1,64}$"
+          }
+        }
+      },
+      "outputLimits": {
+        "frameBytes": 256,
+        "responseBytes": 4096
+      },
+      "visibleFields": [
+        "reqId",
+        "response",
+        "fields"
+      ],
+      "standingAllowed": "with-explicit-bounds",
+      "crossAppService": false,
+      "autoExecutable": false,
+      "events": [],
+      "lifecycle": {
+        "prepareMs": 0,
+        "dispatchMs": 2000,
+        "verifyMs": 0,
+        "cancel": "wins before the port is opened",
+        "reconcile": "dispatch_started without a matching response stays indeterminate; never resent"
+      },
+      "preconditions": "device identity (devnum + connection generation) unchanged",
+      "evidence": "a response matching the request id",
+      "compensation": null,
+      "diagnosticRedLines": [
+        "raw frames are not logged"
+      ]
+    },
+    {
+      "capabilityId": "telemetry.summary",
+      "contractVersion": 1,
+      "provider": "telemetry",
+      "mode": "read",
+      "resourceKinds": [
+        "service",
+        "telemetry"
+      ],
+      "replayClass": "read-only",
+      "execution": {
+        "service": "telemetry",
+        "telemetry": "telemetry"
+      },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [],
+        "properties": {}
+      },
+      "outputLimits": {},
+      "visibleFields": [
+        "available",
+        "counts",
+        "gap",
+        "kernelDrops",
+        "userDrops"
+      ],
+      "standingAllowed": "always",
+      "crossAppService": false,
+      "autoExecutable": true,
+      "events": [
+        "exec",
+        "exit"
+      ],
+      "lifecycle": {
+        "prepareMs": 0,
+        "dispatchMs": 750,
+        "verifyMs": 0,
+        "cancel": "not applicable",
+        "reconcile": "re-read; returns a new observation"
+      },
+      "preconditions": "none",
+      "evidence": "collector status + cursor",
+      "compensation": null,
+      "diagnosticRedLines": [
+        "no argv/env/content"
+      ]
+    },
+    {
+      "capabilityId": "telemetry.events",
+      "contractVersion": 1,
+      "provider": "telemetry",
+      "mode": "read",
+      "resourceKinds": [
+        "service",
+        "telemetry"
+      ],
+      "replayClass": "read-only",
+      "execution": {
+        "service": "telemetry",
+        "telemetry": "telemetry"
+      },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [],
+        "properties": {
+          "sinceSeq": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 500
+          }
+        }
+      },
+      "outputLimits": {
+        "events": 500
+      },
+      "visibleFields": [
+        "events",
+        "gap",
+        "lastSeq"
+      ],
+      "standingAllowed": "always",
+      "crossAppService": false,
+      "autoExecutable": true,
+      "events": [
+        "exec",
+        "exit"
+      ],
+      "lifecycle": {
+        "prepareMs": 0,
+        "dispatchMs": 750,
+        "verifyMs": 0,
+        "cancel": "not applicable",
+        "reconcile": "re-read; returns a new observation"
+      },
+      "preconditions": "none",
+      "evidence": "events with sourceEpoch/sourceSeq; gaps explicit",
+      "compensation": null,
+      "diagnosticRedLines": [
+        "missing events never imply success"
+      ]
+    }
+  ]
+}

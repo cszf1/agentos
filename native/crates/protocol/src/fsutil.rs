@@ -179,7 +179,7 @@ fn same_meta(a: &libc::stat, b: &libc::stat) -> bool {
 
 /// Read a bounded UTF-8 text file; the version is the hash of the whole content. Metadata is compared before and after.
 pub fn read_text(root: RawFd, rel: &str, max: usize) -> Result<TextRead, FsError> {
-    let fd = openat2(root, rel, libc::O_RDONLY | libc::O_NOFOLLOW, 0)?;
+    let fd = openat2(root, rel, libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_NOCTTY, 0)?;
     let before = fstat(fd.as_raw_fd())?;
     if kind_of(&before) != "file" {
         return Err(FsError::new("UNSUPPORTED_FILE_TYPE", format!("{} is not a regular file", kind_of(&before))));
@@ -218,7 +218,7 @@ pub fn read_text(root: RawFd, rel: &str, max: usize) -> Result<TextRead, FsError
 
 /// Hash and identity of a target below the root; None when absent.
 pub fn target_version(root: RawFd, rel: &str) -> Result<Option<(String, Ident, u64)>, FsError> {
-    match openat2(root, rel, libc::O_RDONLY | libc::O_NOFOLLOW, 0) {
+    match openat2(root, rel, libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_NOCTTY, 0) {
         Ok(fd) => {
             let st = fstat(fd.as_raw_fd())?;
             if kind_of(&st) != "file" {
@@ -332,7 +332,7 @@ pub fn read_cap(root: i32, cap: &str, p: &Value) -> Result<serde_json::Value, Fs
         }
         "file.stat" => {
             let path = p["path"].as_str().unwrap_or("");
-            let fd = openat2(root, path, libc::O_RDONLY | libc::O_NOFOLLOW | if path.is_empty() { libc::O_DIRECTORY } else { 0 }, 0)?;
+            let fd = openat2(root, path, libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_NOCTTY | if path.is_empty() { libc::O_DIRECTORY } else { 0 }, 0)?;
             let st = fstat(fd.as_raw_fd())?;
             Ok(serde_json::json!({"path": path, "kind": kind_of(&st), "size": st.st_size, "nlink": st.st_nlink, "mtimeMs": st.st_mtime * 1000 + st.st_mtime_nsec / 1_000_000, "supported": check_supported(&st).is_ok()}))
         }

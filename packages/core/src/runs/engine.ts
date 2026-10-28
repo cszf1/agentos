@@ -5,6 +5,9 @@ export interface FrozenRunInput {
   runId: string;
   storeUUID: string;
   mode: "create" | "modify";
+  /** v0.3: build (default, absent on older runs) or system_plan; frozen by the host, never switchable by the model. */
+  runMode?: "build" | "system_plan";
+  systemScope?: unknown;
   targetAppId: string;
   expectedAppEpoch: number;
   intent: string;

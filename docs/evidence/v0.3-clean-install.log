@@ -1,0 +1,248 @@
+[agentos-system-admin] installed: machineInstallId=mi_1f8f510dc8911e13dd24983c store=447b3931-04ef-4fd1-9fc2-866a1159e8a3 host=sandbox(1000) testMode=false
++ sudo bash deploy/v0.3/agentos-system-admin inspect
+{
+  "counts": [],
+  "grants": [
+    {
+      "revoked": null,
+      "total": 0
+    }
+  ],
+  "log": {
+    "integrity": "ok",
+    "machineInstallId": "mi_1f8f510dc8911e13dd24983c",
+    "schemaVersion": "1",
+    "seq": "2"
+  },
+  "policy": {
+    "hosts": [
+      {
+        "storeUuid": "447b3931-04ef-4fd1-9fc2-866a1159e8a3",
+        "uid": 1000,
+        "workspacePathId": "ws-1ea9186c9c69"
+      }
+    ],
+    "labNetworks": [
+      {
+        "key": "lab-net",
+        "profiles": [
+          "local-allow",
+          "local-deny"
+        ]
+      }
+    ],
+    "machineInstallId": "mi_1f8f510dc8911e13dd24983c",
+    "managedRoots": [
+      {
+        "key": "exports",
+        "path": "/var/lib/agentos-managed/447b3931-04ef-4fd1-9fc2-866a1159e8a3/exports",
+        "quotaBytes": 268435456
+      }
+    ],
+    "serial": [
+      {
+        "key": "sim0",
+        "kind": "pty-fixture",
+        "profile": "telemetry-echo-v1"
+      }
+    ],
+    "testMode": false,
+    "units": [
+      {
+        "cpu": [
+          100000,
+          2000000
+        ],
+        "key": "demo",
+        "memory": [
+          67108864,
+          1073741824
+        ],
+        "unit": "agentos-demo.service"
+      }
+    ],
+    "version": "sha256:1a2baea5fdc639f3b8e56e9a5db0e047db93aebdf14e2fdfa3053afd899d4d0e"
+  },
+  "resources": [
+    {
+      "generation": 1,
+      "key": "exports",
+      "kind": "managed-root",
+      "lock": null,
+      "quarantine": null,
+      "resourceId": "res_managedroot_d447ef1488bbefe59193",
+      "status": "unobserved"
+    },
+    {
+      "generation": 1,
+      "key": "demo",
+      "kind": "service",
+      "lock": null,
+      "quarantine": null,
+      "resourceId": "res_service_305bcd9b9121f4539b0b",
+      "status": "unobserved"
+    },
+    {
+      "generation": 1,
+      "key": "lab-net",
+      "kind": "lab-network",
+      "lock": null,
+      "quarantine": null,
+      "resourceId": "res_labnetwork_308c696b5e1123bdd431",
+      "status": "unobserved"
+    },
+    {
+      "generation": 1,
+      "key": "sim0",
+      "kind": "serial",
+      "lock": null,
+      "quarantine": null,
+      "resourceId": "res_serial_74682e5bd349125792e7",
+      "status": "unobserved"
+    }
+  ],
+  "restores": [],
+  "unreconciled": [],
+  "workspaces": []
+}
+--- units
+agentos-broker               active
+agentos-worker-file          active
+agentos-worker-service       active
+agentos-worker-net           active
+agentos-worker-serial        active
+agentos-telemetry            active
+agentos-labnet               active
+agentos-labpeer-echo         active
+agentos-demo                 inactive
+agentos-serial-sim           active
+--- permissions
+root:root 755 /usr/lib/agentos/bin/agentos-broker
+root:root 755 /usr/lib/agentos/bin/agentos-serial-sim
+root:root 755 /usr/lib/agentos/bin/agentos-telemetry
+root:root 755 /usr/lib/agentos/bin/agentos-worker
+root:root 755 /etc/agentos/broker
+root:root 644 /etc/agentos/broker/policy.json
+root:root 700 /var/lib/agentos-broker
+agentos-file:agentos-file 755 /var/lib/agentos-managed/447b3931-04ef-4fd1-9fc2-866a1159e8a3/exports
++ pnpm native:doctor
+
+> agentos@0.3.0 native:doctor /data/home/agentos
+> node scripts/native-doctor.mjs
+
+{
+  "providerUser": {
+    "id": 1,
+    "ok": true,
+    "result": {
+      "bootId": "0a776829-c5e0-4666-8506-a61164ff2275",
+      "openat2": true,
+      "rtnetlink": true,
+      "systemBus": true,
+      "udev": true
+    }
+  },
+  "kernel": {
+    "release": "6.18.54-instabox",
+    "btf": false,
+    "tracefs": false,
+    "unprivilegedBpfDisabled": "2",
+    "lsm": "capability,landlock,selinux"
+  },
+  "cgroup": {
+    "v2": true,
+    "controllers": "cpuset cpu io memory hugetlb pids misc"
+  },
+  "systemd": {
+    "ok": true,
+    "version": "systemd 257 (257.13-1~deb13u1)"
+  },
+  "rootPolicy": {
+    "ok": true,
+    "ownerUid": 0,
+    "mode": "644",
+    "machineInstallId": "mi_1f8f510dc8911e13dd24983c",
+    "testMode": false,
+    "units": [
+      "agentos-demo.service"
+    ],
+    "labNetworks": [
+      "lab-net"
+    ],
+    "serial": [
+      "sim0:pty-fixture"
+    ]
+  },
+  "broker": {
+    "id": "1",
+    "ok": true,
+    "result": {
+      "bootId": "0a776829-c5e0-4666-8506-a61164ff2275",
+      "brokerInstanceId": "bi_4ff6db8568123114",
+      "brokerReady": true,
+      "identityMismatch": [],
+      "machineInstallId": "mi_1f8f510dc8911e13dd24983c",
+      "policyVersion": "sha256:1a2baea5fdc639f3b8e56e9a5db0e047db93aebdf14e2fdfa3053afd899d4d0e",
+      "protocolVersion": 1,
+      "testMode": false,
+      "workspaceIncarnation": 1,
+      "workspaceState": "active"
+    },
+    "v": 1
+  },
+  "network": {
+    "labNamespace": true,
+    "libnftables": true
+  },
+  "serial": {
+    "ttyACM": [],
+    "ptyFixture": true
+  },
+  "telemetry": {
+    "ok": true,
+    "result": {
+      "available": false,
+      "bootId": "0a776829-c5e0-4666-8506-a61164ff2275",
+      "kernelDrops": 0,
+      "lastSeq": 1,
+      "objectSha256": "67c032a05dbb6d16fb07835cfbb8ba3e1efaa4ba501abb070c04ed1b0389c25a",
+      "reason": "kernel has no BTF (/sys/kernel/btf/vmlinux); CO-RE probe cannot be relocated",
+      "ringBytes": 4194304,
+      "sourceEpoch": "t_0a776829_0",
+      "testMode": false,
+      "unattributed": 0,
+      "userDrops": 0,
+      "workloads": []
+    }
+  },
+  "units": {
+    "agentos-broker": "active",
+    "agentos-worker-file": "active",
+    "agentos-worker-service": "active",
+    "agentos-worker-net": "active",
+    "agentos-worker-serial": "active",
+    "agentos-telemetry": "active",
+    "agentos-labnet": "active",
+    "agentos-demo": "inactive"
+  }
+}
++ systemctl --user restart agentos-host
++ sleep 6
+++ cat /data/home/.local/share/agentos/auth-token
++ TOKEN=REDACTED
+++ curl -s -i -X POST -H 'content-type: application/json' -d '{"token":"REDACTED"}' http://127.0.0.1:4317/api/auth/session
+++ sed 's/.*: //;s/;.*//'
+++ grep -i set-cookie
++ C=agentos_session=REDACTED
++ curl -s -H 'cookie: agentos_session=REDACTED' http://127.0.0.1:4317/api/state
++ python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; print(json.dumps({k:d.get(k) for k in ["hostVersion","ready","runtimeReady","brokerReady","telemetryAvailable","modelAvailable"]}), json.dumps(d.get("system"))[:600])'
+{"hostVersion": "0.3.0", "ready": true, "runtimeReady": true, "brokerReady": true, "telemetryAvailable": false, "modelAvailable": false} {"brokerReady": true, "broker": {"policyVersion": "sha256:1a2baea5fdc639f3b8e56e9a5db0e047db93aebdf14e2fdfa3053afd899d4d0e", "testMode": false, "workspaceState": "active", "checkedAt": "2026-10-28T17:09:04.131Z", "brokerReady": true, "binding": "bound", "machineInstallId": "mi_1f8f510dc8911e13dd24983c", "workspaceIncarnation": 1, "diagnostic": null}, "telemetryAvailable": false, "telemetry": {"available": false, "reason": "kernel has no BTF (/sys/kernel/btf/vmlinux); CO-RE probe cannot be relocated", "sourceEpoch": "t_0a776829_0", "lastSeq": 0, "kernelDrops": 0, "userDrops": 0, "gap": true, "l
++ curl -s -H 'cookie: agentos_session=REDACTED' http://127.0.0.1:4317/api/system-resources
++ python3 -c 'import json,sys; print([ (r["kind"], r["displayName"], r["status"]) for r in json.load(sys.stdin)["data"]["items"]])'
+[('host-network', '本机网络（只读）', 'available'), ('lab-network', '测试网络 lab-net', 'available'), ('managed-root', '导出目录（平台管理）', 'available'), ('serial', 'PTY 串口样机（软件协议测试）', 'available'), ('service', '演示服务', 'available'), ('telemetry', '系统遥测（eBPF）', 'available')]
++ echo CLEAN-INSTALL-OK
+CLEAN-INSTALL-OK
+
+6.18.54-instabox
+podman version 5.4.2
+systemd 257 (257.13-1~deb13u1)

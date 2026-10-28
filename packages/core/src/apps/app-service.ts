@@ -17,8 +17,7 @@ import {
   type AppSummary,
   type DataContract,
   type RevisionSummary,
-  type ValidationIssue,
-} from "@agentos/contracts";
+  type ValidationIssue, isCodeBundle } from "@agentos/contracts";
 import { iso, type Store } from "../persistence/store.js";
 import { fault } from "../faults.js";
 
@@ -50,7 +49,7 @@ export interface ActivateResult {
 
 /** Error code for a structurally invalid bundle of either format (spec §19.2). */
 export function structuralErrorCode(input: unknown, issues: ValidationIssue[]): "INVALID_BUNDLE" | "INVALID_CODE_BUNDLE" | "SOURCE_PATH_INVALID" {
-  const v2 = input !== null && typeof input === "object" && (input as { formatVersion?: unknown }).formatVersion === 2;
+  const v2 = input !== null && typeof input === "object" && [2, 3].includes((input as { formatVersion?: unknown }).formatVersion as number);
   if (!v2) return "INVALID_BUNDLE";
   return issues.length > 0 && issues.every((i) => i.code === "SOURCE_PATH_INVALID") ? "SOURCE_PATH_INVALID" : "INVALID_CODE_BUNDLE";
 }
@@ -97,7 +96,8 @@ export class AppService {
 
   /** Placeholder created when a run starts building a new app (epoch 0, empty contract). Inside a tx. */
   createPlaceholder(): string {
-    const count = this.store.get<{ n: number }>("SELECT COUNT(*) AS n FROM apps")!.n;
+    // The hidden system_plan placeholder (runs.target_app_id) does not count as an app.
+    const count = this.store.get<{ n: number }>("SELECT COUNT(*) AS n FROM apps WHERE id <> '00000000-0000-4000-8000-0000000005a5'")!.n;
     if (count >= LIMITS.maxApps) throw new AgentOsError("LIMIT_EXCEEDED", `workspace holds at most ${LIMITS.maxApps} apps`);
     const id = randomUUID();
     const now = this.now();
@@ -164,7 +164,7 @@ export class AppService {
     if (!s.ok) throw new AgentOsError(structuralErrorCode(input, s.issues), "bundle failed schema validation", { issues: s.issues });
     const bundle = normalizeAny(s.bundle);
     if (bundle.manifest.appId !== appId) {
-      throw new AgentOsError(bundle.formatVersion === 2 ? "INVALID_CODE_BUNDLE" : "INVALID_BUNDLE", "manifest.appId must equal the bound target app", {
+      throw new AgentOsError(isCodeBundle(bundle) ? "INVALID_CODE_BUNDLE" : "INVALID_BUNDLE", "manifest.appId must equal the bound target app", {
         issues: [{ path: "/manifest/appId", code: "APP_ID_MISMATCH", message: `expected ${appId}` }],
       });
     }
@@ -207,6 +207,9 @@ export class AppService {
    * Activation body (spec §8). Must run inside the caller's transaction, after the caller checked
    * identity, receipt and fences. Throws on any failure so the whole transaction rolls back.
    */
+  /** Set by the system-capabilities layer; throws when the app may not change version right now. */
+  activationGate: ((appId: string) => void) | null = null;
+
   activateInTx(appId: string, revisionId: string, expectedAppEpoch: number, opts: { historicalOnly: boolean; runId: string | null }): ActivateResult {
     const s = this.store;
     const app = this.requireApp(appId);
@@ -222,13 +225,15 @@ export class AppService {
     if (app.active_revision_id === revisionId) {
       return { appId, revisionId, appEpoch: app.epoch, changed: false };
     }
+    // v0.3 (spec §8.3, §11.4): pending system operations and unconfirmed provider-grant revocations block a switch.
+    this.activationGate?.(appId);
     const mode = historical ? "historical" : "candidate";
     const raw = JSON.parse(rev.bundle_json) as unknown;
     const checked = validateAnyBundle(raw, appId, this.contractOrNull(app), mode, this.extraCheck);
     if (!checked.structural) throw new AgentOsError(structuralErrorCode(raw, checked.issues), "stored revision failed schema validation", { issues: checked.issues });
     if (checked.issues.length > 0) {
       const incompatible = checked.issues.some((i) => i.code === "SCHEMA_INCOMPATIBLE");
-      const code = incompatible ? "SCHEMA_INCOMPATIBLE" : checked.bundle?.formatVersion === 2 ? "INVALID_CODE_BUNDLE" : "INVALID_BUNDLE";
+      const code = incompatible ? "SCHEMA_INCOMPATIBLE" : (checked.bundle && isCodeBundle(checked.bundle)) ? "INVALID_CODE_BUNDLE" : "INVALID_BUNDLE";
       throw new AgentOsError(code, "revision is not valid for this app", { issues: checked.issues });
     }
     const bundle = checked.bundle!;

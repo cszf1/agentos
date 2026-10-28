@@ -1,4 +1,4 @@
-# AgentOS v0.2
+# AgentOS v0.3
 
 A single-user application runtime for Linux. You describe an app in natural language; a Pi Durable agent builds it
 through host tools; the host validates, prepares, health-checks and publishes it; a trusted React renderer shows it;
@@ -20,7 +20,17 @@ the user connects them, for an exact pair of versions. Publishing goes through *
 the candidate is built, started and checked with platform fixtures (never your real records) before one short
 transaction switches the version.
 
-Baseline: [docs/AGENTOS_MVP_V0.2.md](docs/AGENTOS_MVP_V0.2.md) (M0–M6). Acceptance report:
+v0.3 adds **Linux capabilities** without giving generated code any privilege. A `formatVersion: 3` app declares
+resource **bindings** (a managed directory, a demo systemd unit, a lab network namespace, a serial device) and
+**system actions**. It never touches Linux itself: its handler returns one frozen plan; the Shell shows a trusted
+preview built by the provider from real state; only the user's confirmation (or a standing grant inside explicit
+bounds) admits it. A small root broker (`native/`, Rust) executes fixed capabilities with a durable execution log,
+fences, quarantine of unknown outcomes and evidence-based reconciliation; unprivileged workers do the actual file,
+systemd, nftables and serial work; an eBPF collector reports exec/exit of registered workloads only. Pi gets a
+`system_plan` mode that can read the resources the user chose and prepare ONE plan — it can never execute it.
+
+Baseline: [docs/AGENTOS_MVP_V0.3.md](docs/AGENTOS_MVP_V0.3.md) (M0–M7, 80 checks). Acceptance report:
+[docs/ACCEPTANCE_V0.3.md](docs/ACCEPTANCE_V0.3.md). Earlier: v0.2 [docs/AGENTOS_MVP_V0.2.md](docs/AGENTOS_MVP_V0.2.md) (M0–M6). Acceptance report:
 [docs/ACCEPTANCE_V0.2.md](docs/ACCEPTANCE_V0.2.md). Contracts: [docs/contracts/](docs/contracts/).
 
 ## Layout
@@ -41,7 +51,12 @@ runtime/                 runtime catalog (catalog.json: locks core-v1@1, data-v1
 bin/                     agentos-host, agentos-admin (backup/restore/gc under host.lock), agentos-runtime
 deploy/                  systemd user unit and install script
 tests/                   integration, recovery (real processes, SIGKILL), sandbox (real Podman), e2e (Playwright)
-fixtures/                todo-v1/v2 (v0.1) and v0.2 code fixtures (kanban, hours, overview, CSV, fault lab, ...)
+fixtures/                todo-v1/v2 (v0.1) and v0.2 code fixtures (kanban, hours, overview, CSV, fault lab, ...),
+                         v0.3 system-console (formatVersion 3) and protocol vectors
+packages/broker-client   host ↔ broker protocol client (framing, canonical JSON, domain hashes, vectors)
+native/                  Rust 1.91.0 workspace: protocol, broker (root), provider-user, provider-workers
+                         (file/service/net/serial), telemetry (eBPF collector); bpf/exec_exit.bpf.c (fixed object)
+deploy/v0.3/             agentos-system-admin (install/inspect/reinstall-log/uninstall), unit templates
 ```
 
 ## Requirements
@@ -63,7 +78,7 @@ As an admin (once), then as the user who will run AgentOS (not root):
 
 ```bash
 # 0. system packages (admin)
-sudo apt-get install -y git curl xz-utils ca-certificates podman crun uidmap slirp4netns fuse-overlayfs
+sudo apt-get install -y git curl xz-utils ca-certificates podman crun uidmap passt slirp4netns fuse-overlayfs
 #    subuid/subgid range for the user (admin; most distros add it on useradd)
 grep "^$USER:" /etc/subuid /etc/subgid || sudo usermod --add-subuids 100000-165535 --add-subgids 100000-165535 "$USER"
 #    cgroup v2 delegation of cpu/memory/pids to user sessions (admin; systemd ≥ 244 delegates memory+pids by default)
@@ -92,8 +107,8 @@ pnpm install --frozen-lockfile
 pnpm build
 
 # 4. check the sandbox environment and prefetch the approved images (needs network once)
-pnpm runtime:doctor            # every line must say ok; it starts a probe container with the real limits
 pnpm runtime:prefetch          # pulls the pinned base image by digest and builds builder/runtime images per lock
+pnpm runtime:doctor            # then every line must say ok; it starts a probe container with the real limits
 
 # 5. user service
 deploy/install.sh              # writes ~/.config/agentos/agentos.env (0600) and enables the user unit
@@ -104,6 +119,34 @@ cat ~/.local/share/agentos/auth-token           # paste into the login page
 
 The shell shows "代码运行环境 就绪" when the sandbox is usable. After `runtime:prefetch` everything needed for builds and
 runs is local: builders and apps never use the network, so the machine can be offline (V2-B04).
+
+### v0.3 privileged side (administrator, once)
+
+The host itself still runs as your user. The privileged part is installed by root from a build you made:
+
+```bash
+# build prerequisites (Debian 13 / Ubuntu 24.04)
+sudo apt-get install -y build-essential pkg-config clang llvm libbpf-dev libelf-dev zlib1g-dev \
+  libnftables-dev libudev-dev libsystemd-dev nftables iproute2 polkitd python3
+curl -fsSL https://sh.rustup.rs | sh -s -- -y --default-toolchain none   # rust-toolchain.toml pins 1.91.0
+pnpm native:build              # cargo build --release --locked + the fixed BPF object; prints versions and sha256s
+# register this user and its workspace store with the broker (store UUID: meta.store_uuid of os.sqlite, printed by doctor)
+STORE=$(node -e 'console.log(new (require("node:sqlite").DatabaseSync)(process.argv[1],{readOnly:true}).prepare("SELECT store_uuid FROM meta").get().store_uuid)' ~/.local/share/agentos/os.sqlite)
+sudo bash deploy/v0.3/agentos-system-admin install --host-user "$USER" --store-uuid "$STORE" --serial-pty
+#   add --serial-udev /dev/ttyUSB0:VID:PID:SERIAL for a real serial device; --test-mode only on test machines
+sudo bash deploy/v0.3/agentos-system-admin inspect     # registration, caps, log version, quarantines, unknown ops
+pnpm native:doctor             # openat2/systemd/cgroup/broker identity/policy/network/serial/BPF, item by item
+systemctl --user restart agentos-host                  # the shell now shows "系统执行服务 就绪"
+```
+
+Installed: root-owned binaries in `/usr/lib/agentos`, `/etc/agentos/broker/policy.json` (the only source of caps),
+the broker log `/var/lib/agentos-broker/broker.sqlite` (0700/0600, never part of a workspace backup), the managed
+directory `/var/lib/agentos-managed/<store>/exports`, the demo unit `agentos-demo.service`, the lab namespace
+`agentos-lab` with its peer, and, with `--serial-pty`, a **software** PTY serial sample (labeled as such everywhere).
+Telemetry needs a kernel with BTF (`/sys/kernel/btf/vmlinux`) and tracepoints; without them it reports
+"不可用" and nothing else changes. If the broker log is ever lost: `sudo bash deploy/v0.3/agentos-system-admin
+reinstall-log` (new machineInstallId), then `bin/agentos-admin rebind-broker --confirm-new-install` with the host
+stopped; old plans, grants and outbox entries are void and never replayed.
 
 ### Approved runtime images
 
@@ -241,12 +284,27 @@ pnpm test:sandbox      # real rootless Podman: isolation, limits, builds, IPC, P
 pnpm test:e2e          # Playwright against the production build (Podman for the v0.2 specs)
 pnpm smoke:real        # v0.1 E01 with a real model
 pnpm smoke:v0.2-real   # V2-E01–E03 with a real model (writes test-results/smoke-v02-real.json)
+pnpm test:native       # v0.3: real broker/providers/workers on the installed privileged side
+pnpm test:broker-recovery   # SIGKILL of broker/workers/host around every fence; coordinated backup/restore
+pnpm test:telemetry    # host: unavailable path; QEMU guest with BTF: real eBPF (AGENTOS_TELEMETRY_GUEST=ssh target)
+pnpm smoke:v0.3-real   # V3-E01–E03 with a real model (AGENTOS_MODEL_REASONING_EFFORT=low recommended)
 node scripts/export-contracts.mjs   # regenerate docs/contracts from the validators
 ```
 
 Fault injection points exist only when `NODE_ENV=test` and `AGENTOS_FAULTS=1`. Opt-in tests: `AGENTOS_OFFLINE_TEST=1`
 (engine without network: V2-B04/O03, it changes the user podman service environment and restores it) and
 `AGENTOS_V01_ROOT=<v0.1 checkout>` (V2-O01 migration from a workspace written by the real v0.1 host).
+
+## Known scope (v0.3)
+
+- Fixed providers only: managed text files (atomic replace, one exclusive writer), the catalog's demo units
+  (start/stop/restart, CPU/memory limits), one lab network namespace with two fixed profiles, serial devices from the
+  catalog with fixed frames, exec/exit telemetry of registered workloads. No arbitrary path, unit, rule, device,
+  command or argv.
+- One plan per action; nothing is retried automatically when the outcome is unknown; the resource stays quarantined
+  until the user records a resolution.
+- The PTY serial sample is a software protocol test; real serial hardware (V3-E04) is not part of this acceptance.
+- Telemetry is never a source of facts or permissions; it is unavailable on kernels without BTF/tracepoints.
 
 ## Known scope (v0.2)
 

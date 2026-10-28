@@ -26,6 +26,7 @@ export async function publish(sys: RuntimeSystem, core: Core, bundle: unknown): 
     sys.deployments.prepareInTx({ appId, revisionId: staged.revisionId, expectedAppEpoch: app.epoch, origin: "agent_prepare", ownerRunId: null, requestKey: randomUUID(), requestHash: "t" }),
   );
   await sys.deployments.drive(d.id);
+  await sys.beforeActivate?.(appId);
   let row = sys.deployments.require(d.id);
   if (row.status !== "ready") return { status: row.status, deploymentId: d.id, revisionId: staged.revisionId, error: row.error_json ? JSON.parse(row.error_json) : null };
   await sys.deployments.freshProbe(row);

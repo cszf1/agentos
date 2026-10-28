@@ -121,7 +121,9 @@ impl Broker {
 
     pub fn call_worker(&self, kind: &str, op: &str, target: &Value, params: Value, op_id: Option<&str>, nonce: Option<&str>, timeout_ms: u64) -> Result<Value, CallError> {
         let w = self.worker_for(kind);
-        let faults = self.worker_faults();
+        // Worker fault points fire only on effectful dispatches of the matching worker (never on observe/read).
+        let role = match kind { "managed-root" => "file", "service" => "service", "lab-network" => "network", _ => "serial" };
+        let faults = if op_id.is_some() && !matches!(op, "observe" | "read" | "version" | "status" | "usage") { self.worker_faults(role) } else { vec![] };
         let req = WorkerRequest {
             v: 1,
             op: op.into(),
@@ -151,13 +153,14 @@ impl Broker {
         }
     }
 
-    pub fn worker_faults(&self) -> Vec<String> {
+    pub fn worker_faults(&self, role: &str) -> Vec<String> {
         if !self.policy.test_mode {
             return vec![];
         }
         let path = "/etc/agentos/broker/faultpoints";
         let Ok(text) = std::fs::read_to_string(path) else { return vec![] };
-        let (w, rest): (Vec<&str>, Vec<&str>) = text.lines().map(|l| l.trim()).filter(|l| !l.is_empty()).partition(|l| l.starts_with("worker."));
+        let prefix = format!("worker.{role}.");
+        let (w, rest): (Vec<&str>, Vec<&str>) = text.lines().map(|l| l.trim()).filter(|l| !l.is_empty()).partition(|l| l.starts_with(&prefix));
         if !w.is_empty() {
             let _ = std::fs::write(path, rest.join("\n") + if rest.is_empty() { "" } else { "\n" });
         }

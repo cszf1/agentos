@@ -7,7 +7,13 @@ const UPSTREAM = (process.env.AGENTOS_MODEL_BASE_URL || "https://tokenrhythm.stu
 const KEY = process.env.AGENTOS_MODEL_API_KEY;
 if (!RELAY || !TOKEN || !KEY) throw new Error("RELAY_URL, RELAY_TOKEN and AGENTOS_MODEL_API_KEY are required");
 let served = 0;
+let inflight = 0;
+// FORWARD_MAX_MS: stop polling after this long and exit once in-flight answers are posted (a supervisor restarts it),
+// so a forwarder is never killed while it holds a request.
+const MAX_MS = Number(process.env.FORWARD_MAX_MS || 0);
+const startedAt = Date.now();
 async function handle(item) {
+  inflight++;
   try {
     const headers = { ...item.headers, authorization: `Bearer ${KEY}` };
     delete headers["content-length"];
@@ -24,9 +30,16 @@ async function handle(item) {
     console.log(new Date().toISOString(), item.method, item.path, r.status, body.length, `served=${served}`);
   } catch (e) {
     await fetch(`${RELAY}/respond?token=${TOKEN}`, { method: "POST", body: JSON.stringify({ id: item.id, status: 502, headers: {}, body: Buffer.from(String(e.message)).toString("base64") }) }).catch(() => {});
+  } finally {
+    inflight--;
   }
 }
 for (;;) {
+  if (MAX_MS && Date.now() - startedAt > MAX_MS) {
+    while (inflight > 0) await new Promise((res) => setTimeout(res, 500));
+    console.log(new Date().toISOString(), `max runtime reached, served=${served}`);
+    process.exit(0);
+  }
   try {
     const r = await fetch(`${RELAY}/poll?token=${TOKEN}`);
     if (r.status === 200) void handle(await r.json());

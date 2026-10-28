@@ -2,5 +2,5 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": { "rootDir": "src", "outDir": "dist" },
   "include": ["src/**/*.ts", "src/**/*.json"],
-  "references": [ { "path": "../contracts" }, { "path": "../core" }, { "path": "../agent-pi" }, { "path": "../runtime-podman" } ]
+  "references": [ { "path": "../contracts" }, { "path": "../core" }, { "path": "../broker-client" }, { "path": "../agent-pi" }, { "path": "../runtime-podman" } ]
 }

@@ -32,7 +32,7 @@ export function createDriver(config: HostConfig, catalog: RuntimeCatalogService)
       const lock = catalog.locks().find((l) => l.builderImage.name === img.name || l.runtimeImage.name === img.name);
       if (!lock) return null;
       const base = `${lock.baseImage.reference}@${lock.baseImage.digest}`;
-      const c = recipeContext({ platformRoot: config.platformRoot, profileId: lock.profileId, role: img.role, baseDigestRef: base, approvedSpecifiers: lock.modules.flatMap((m) => m.specifiers), lockId: lock.id });
+      const c = recipeContext({ platformRoot: config.platformRoot, profileId: lock.profileId, role: img.role, baseDigestRef: base, approvedSpecifiers: lock.modules.flatMap((m) => m.specifiers), lockId: lock.id, abiVersion: lock.abiVersion });
       return { entries: c.entries, recipeHash: c.recipeHash, baseDigestRef: base };
     },
   });

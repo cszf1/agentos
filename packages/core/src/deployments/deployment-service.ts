@@ -9,8 +9,7 @@ import {
   type AnyBundle,
   type CodeBundle,
   type HandlerContext,
-  LIMITS,
-} from "@agentos/contracts";
+  LIMITS, isCodeBundle } from "@agentos/contracts";
 import { iso } from "../persistence/store.js";
 import { fault } from "../faults.js";
 import type { RuntimeContext } from "../runtime/context.js";
@@ -59,7 +58,7 @@ export interface DeploymentDto {
   status: DeploymentStatus;
   stage: DeploymentStage | null;
   noOp: boolean;
-  runtime: "declarative-v1" | "isolated-code-v1";
+  runtime: "declarative-v1" | "isolated-code-v1" | "isolated-code-v2";
   artifactId: string | null;
   deadlineAt: string;
   committedEpoch: number | null;
@@ -127,7 +126,7 @@ export class DeploymentService {
       committedAt: d.committed_at,
       cleanupState: d.cleanup_state,
       error: d.error_json ? (JSON.parse(d.error_json) as DeploymentDto["error"]) : null,
-      health: b?.formatVersion === 2 ? health : null,
+      health: b && isCodeBundle(b) ? health : null,
     };
   }
 
@@ -166,7 +165,7 @@ export class DeploymentService {
     }
     const bundle = JSON.parse(rev.bundle_json) as AnyBundle;
     const noOp = app.active_revision_id === req.revisionId;
-    if (bundle.formatVersion === 2 && !noOp) {
+    if (isCodeBundle(bundle) && !noOp) {
       const ar = this.runtime.row(req.appId);
       const enabledHere = ar?.enabled === 1 && this.runtime.activeCodeBundle(req.appId) !== null;
       if (!enabledHere && this.runtime.enabledCodeApps() >= RUNTIME_POLICY.maxEnabledCodeApps) {
@@ -420,6 +419,20 @@ export class DeploymentService {
    * Activation body (spec §14.2), inside the caller's write transaction after identity, receipt and (for agents)
    * run-fence checks. Throws to roll everything back.
    */
+  /**
+   * Persist the expiry of a ready deployment in its OWN transaction. Inside activateInTx the failed state would be
+   * rolled back together with the thrown PREPARE_EXPIRED (savepoint), leaving the slot "ready" and busy.
+   */
+  expireIfDue(id: string): boolean {
+    const s = this.ctx.store;
+    return s.tx(() => {
+      const d = this.get(id);
+      if (!d || d.status !== "ready" || Date.parse(d.deadline_at) > s.clock.now()) return false;
+      this.#terminateInTx(d, "failed", { stage: "activate", code: "PREPARE_EXPIRED", message: "the prepared candidate expired" });
+      return true;
+    });
+  }
+
   activateInTx(id: string, opts: { runId: string | null }): { appId: string; revisionId: string; appEpoch: number; changed: boolean; deploymentId: string; noOp: boolean } {
     const s = this.ctx.store;
     const d = this.require(id);
@@ -437,7 +450,7 @@ export class DeploymentService {
     if (app.epoch !== d.expected_app_epoch) throw new AgentOsError("APP_EPOCH_STALE", "the app changed since this deployment was prepared", { appEpoch: app.epoch });
     const bundle = this.ctx.apps.revisionBundle(d.app_id, d.target_revision_id)!;
     let candidate: InstanceRow | undefined;
-    if (bundle.formatVersion === 2 && d.no_op === 0) {
+    if (isCodeBundle(bundle) && d.no_op === 0) {
       candidate = d.candidate_instance_id ? s.get<InstanceRow>("SELECT * FROM runtime_instances WHERE id = ?", d.candidate_instance_id) : undefined;
       const live = candidate ? this.ctx.instances?.get(candidate.id) : undefined;
       const link = s.get<{ artifact_id: string }>("SELECT artifact_id FROM revision_artifacts WHERE app_id = ? AND revision_id = ?", d.app_id, d.target_revision_id);
@@ -457,7 +470,7 @@ export class DeploymentService {
       if (ar.active_instance_id) {
         s.run("UPDATE runtime_instances SET desired_state = 'removed', observed_state = 'draining', exit_reason = 'replaced by a new version', updated_at = ? WHERE id = ?", this.now(), ar.active_instance_id);
       }
-      if (bundle.formatVersion === 2) {
+      if (isCodeBundle(bundle)) {
         const generation = ar.generation + 1;
         s.run("UPDATE runtime_instances SET role = 'active', generation = ?, observed_state = 'serving', updated_at = ? WHERE id = ?", generation, this.now(), candidate!.id);
         s.run(

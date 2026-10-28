@@ -5,8 +5,9 @@ import type { AnyBundle, AppBundle, CodeBundle, DataContract, Field } from "@age
 
 /** Hand-written v0.2 fixtures (repository fixtures/v0.2), used only by the faux test model. */
 const FIXTURES = path.resolve(import.meta.dirname, "..", "..", "..", "fixtures", "v0.2");
-function fixture(name: string): CodeBundle {
-  const dir = path.join(FIXTURES, name);
+const FIXTURES_V3 = path.resolve(import.meta.dirname, "..", "..", "..", "fixtures", "v0.3");
+function fixture(name: string, root = FIXTURES): CodeBundle {
+  const dir = path.join(root, name);
   const b = JSON.parse(fs.readFileSync(path.join(dir, "bundle.json"), "utf8")) as CodeBundle;
   const files: Record<string, string> = {};
   const walk = (d: string, rel: string) => {
@@ -55,7 +56,11 @@ interface AppGet {
 export function codeBundleFor(g: AppGet): CodeBundle | null {
   const intent = cleanIntent(g.intent);
   let name: string | null = null;
-  if (/概览|overview/i.test(intent)) name = "work-overview";
+  let root = FIXTURES;
+  if (/系统控制台|系统监控|system console/i.test(intent)) {
+    name = "system-console";
+    root = FIXTURES_V3;
+  } else if (/概览|overview/i.test(intent)) name = "work-overview";
   else if (/csv/i.test(intent)) name = "csv-import";
   else if (/工时|estimate/i.test(intent)) name = "todo-kanban-hours";
   else if (/看板|kanban|批量/i.test(intent)) name = "todo-kanban";
@@ -65,7 +70,7 @@ export function codeBundleFor(g: AppGet): CodeBundle | null {
     return b;
   }
   if (!name) return null;
-  const b = fixture(name);
+  const b = fixture(name, root);
   b.manifest.appId = g.appId;
   // Carry every contract field (hidden ones too) with its exact spec.
   for (const [k, spec] of Object.entries(g.contract.fields)) {
@@ -148,7 +153,7 @@ export async function fauxBuilderResponse(context: TranscriptContext, _options: 
   if (sys.includes("context summarization assistant") || userText.includes("structured context checkpoint summary")) {
     return fauxAssistantMessage("## Goal\nBuild AgentOS apps.\n## Progress\nEarlier generation runs finished.");
   }
-  const intent = userText.split("User request:\n")[1]?.split("\n\nFollow the fixed tool order")[0] ?? userText;
+  const intent = userText.split("User request:\n")[1]?.split("\n\nFollow the fixed tool order")[0]?.split("\n\nTool order:")[0] ?? userText;
   const delay = marker(intent, "slow");
   if (delay !== undefined) await sleep(Number(delay) || 1000);
   if (marker(intent, "model-error") !== undefined) {
@@ -156,6 +161,7 @@ export async function fauxBuilderResponse(context: TranscriptContext, _options: 
   }
   const results = msgs.slice(userIdx + 1).filter((m) => m.role === "toolResult") as unknown as { toolName: string; isError?: boolean; content: unknown }[];
   const last = msgs[msgs.length - 1]!;
+  if (userText.includes("system_plan run ")) return fauxSystemPlan(intent, msgs.slice(userIdx + 1), results, last);
   // A new run starts with app_get, even when a platform note (for example a tool set upgrade) follows the user input.
   if (last.role === "user" || (last.role !== "toolResult" && results.length === 0 && msgs.slice(userIdx + 1).every((m) => m.role !== "assistant"))) return call("app_get", {});
   if (last.role !== "toolResult") return fauxAssistantMessage("完成。");
@@ -172,7 +178,7 @@ export async function fauxBuilderResponse(context: TranscriptContext, _options: 
 
   const nextBundle = (): AnyBundle => {
     const b = buildBundleFor(g!);
-    if (b.formatVersion === 2) {
+    if (b.formatVersion === 2 || b.formatVersion === 3) {
       const c = structuredClone(b);
       if (compileAlways || (compileOnce && stages === 0)) {
         // A type error the sandbox compiler reports with file:line.
@@ -185,6 +191,7 @@ export async function fauxBuilderResponse(context: TranscriptContext, _options: 
     }
     if (invalidAlways || (invalidOnce && stages === 0)) {
       // Structurally fine, semantically wrong: search on a boolean field.
+      if (b.formatVersion !== 1) return b;
       return { ...b, view: { ...b.view, searchField: Object.keys(b.data.fields).find((k) => b.data.fields[k]!.type === "boolean") ?? "nope" } };
     }
     return b;
@@ -249,5 +256,78 @@ export async function fauxBuilderResponse(context: TranscriptContext, _options: 
       return fauxAssistantMessage(body.changed === false ? "当前版本已经满足需求。" : "应用已发布。");
     default:
       return fauxAssistantMessage(fauxText("完成。").text);
+  }
+}
+
+
+/**
+ * system_plan faux script (spec §20): list → read → one plan → finish. The plan is derived from words in the request
+ * (the real model reasons itself). Markers: [faux:no-plan], [faux:plan-invalid-once], [faux:plan-twice],
+ * [faux:try-build] (calls a build tool, which the host refuses), [faux:claim-done] (final text must still not count).
+ */
+function fauxSystemPlan(intent: string, after: Msg[], results: { toolName: string; isError?: boolean; content: unknown }[], last: Msg): AssistantMessage {
+  const text = cleanIntent(intent);
+  if (results.length === 0 && after.every((m) => m.role !== "assistant")) {
+    if (marker(intent, "try-build") !== undefined) return call("app_stage", { bundle: {} });
+    return call("system_resource_list", {});
+  }
+  if (last.role !== "toolResult") return fauxAssistantMessage("完成。");
+  const lr = last as unknown as { toolName: string; isError?: boolean };
+  const body = parse(textOf(last));
+  const listMsg = results.find((r) => r.toolName === "system_resource_list" && !r.isError);
+  const list = listMsg ? (parse(textOf(listMsg as never)) as { resources?: { resourceId: string; kind: string; displayName: string; limits?: Record<string, unknown> }[]; proposeCapabilities?: string[] }) : {};
+  const res = list.resources ?? [];
+  const pick = (kinds: string[]) => res.find((r) => kinds.includes(r.kind));
+  const choose = (): { r: (typeof res)[number]; cap: string; params: Record<string, unknown>; readCap: string } | null => {
+    const pct = text.match(/(\d{1,3})\s*%/);
+    const svc = pick(["service"]);
+    if (svc && /cpu/i.test(text) && pct) return { r: svc, cap: "service.set_limit", params: { property: "CPUQuotaPerSecUSec", value: Number(pct[1]) * 10000 }, readCap: "service.describe" };
+    const mib = text.match(/(\d{2,5})\s*(MiB|MB|M)\b/i);
+    if (svc && /内存|memory/i.test(text) && mib) return { r: svc, cap: "service.set_limit", params: { property: "MemoryMax", value: Number(mib[1]) * 1048576 }, readCap: "service.describe" };
+    if (svc && /停止|stop/i.test(text)) return { r: svc, cap: "service.ensure_state", params: { state: "stopped" }, readCap: "service.describe" };
+    if (svc && /启动|start|运行/i.test(text)) return { r: svc, cap: "service.ensure_state", params: { state: "running" }, readCap: "service.describe" };
+    const net = pick(["lab-network"]);
+    if (net && /deny|阻断|禁止/i.test(text)) return { r: net, cap: "network.apply_profile", params: { profileId: "local-deny" }, readCap: "network.policy_status" };
+    if (net && /allow|放行|允许/i.test(text)) return { r: net, cap: "network.apply_profile", params: { profileId: "local-allow" }, readCap: "network.policy_status" };
+    const ser = pick(["serial"]);
+    if (ser && /sample|采样/i.test(text)) return { r: ser, cap: "serial.exchange", params: { command: "SAMPLE", count: 3 }, readCap: "serial.status" };
+    if (ser && /echo/i.test(text)) return { r: ser, cap: "serial.exchange", params: { command: "ECHO", text: "hello" }, readCap: "serial.status" };
+    const mr = pick(["managed-root"]);
+    const fm = text.match(/([A-Za-z0-9_-]+\.(?:txt|md|csv|json))/);
+    if (mr && fm) return { r: mr, cap: "file.write_text_atomic", params: { path: fm[1], content: `${text.replace(/\[.*?\]/g, "").trim()}\n`, expectedAbsent: true }, readCap: "file.list" };
+    return null;
+  };
+  const c = choose();
+  switch (lr.toolName) {
+    case "app_stage":
+      return call("system_resource_list", {});
+    case "system_resource_list":
+      if (lr.isError) return fauxAssistantMessage(`无法读取资源：${String(body.message ?? "")}`);
+      if (!c) return fauxAssistantMessage("这个请求不能表达为所选资源上的一个允许动作，没有生成计划。");
+      return call("system_read", { resourceId: c.r.resourceId, capabilityId: c.readCap, params: {} });
+    case "system_read": {
+      if (lr.isError) return fauxAssistantMessage(`读取失败：${String(body.message ?? "")}`);
+      if (marker(intent, "no-plan") !== undefined || !c) return fauxAssistantMessage("我查看了当前状态，但没有生成计划。");
+      const obsId = String(body.observationId ?? "");
+      const plans = results.filter((r) => r.toolName === "system_plan").length;
+      const params = marker(intent, "plan-invalid-once") !== undefined && plans === 0 && c.cap === "service.set_limit" ? { ...c.params, value: 99_000_000 } : c.params;
+      return call("system_plan", { resourceId: c.r.resourceId, capabilityId: c.cap, params, observationIds: [obsId] });
+    }
+    case "system_plan": {
+      if (lr.isError) {
+        const plans = results.filter((r) => r.toolName === "system_plan").length;
+        if (plans >= 3 || body.error === "BUDGET_EXCEEDED" || body.error === "FORBIDDEN" || !c) return fauxAssistantMessage(`计划未通过：${String(body.message ?? "")}`);
+        const readMsg = results.filter((r) => r.toolName === "system_read" && !r.isError).at(-1);
+        const obsId = readMsg ? String(parse(textOf(readMsg as never)).observationId ?? "") : "";
+        return call("system_plan", { resourceId: c.r.resourceId, capabilityId: c.cap, params: c.params, observationIds: [obsId] });
+      }
+      if (marker(intent, "plan-twice") !== undefined && results.filter((r) => r.toolName === "system_plan").length === 1 && c) {
+        return call("system_plan", { resourceId: c.r.resourceId, capabilityId: c.cap, params: { ...c.params }, observationIds: [] });
+      }
+      if (marker(intent, "claim-done") !== undefined) return fauxAssistantMessage("已经执行完成。");
+      return fauxAssistantMessage("计划已生成，等待你在 AgentOS 中确认后才会执行。");
+    }
+    default:
+      return fauxAssistantMessage("完成。");
   }
 }

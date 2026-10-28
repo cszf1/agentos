@@ -1,0 +1,149 @@
+{
+  "provider": "openai-compatible",
+  "model": "qwen3.8-flash",
+  "startedAt": "2026-10-28T17:30:24.888Z",
+  "store": "6b5577bd-7d22-4aae-a7d4-0d569f6979c3",
+  "unit": "agentos-demo.service",
+  "steps": [
+    {
+      "step": "E01",
+      "status": "succeeded",
+      "ms": 245796,
+      "modelRequests": 6,
+      "error": null,
+      "tools": [
+        "app_get",
+        "runtime_catalog",
+        "service_catalog",
+        "app_stage!",
+        "app_stage",
+        "app_validate",
+        "app_prepare",
+        "app_activate"
+      ],
+      "usage": {
+        "models": {
+          "openai-compatible/qwen3.8-flash": {
+            "input": 20424,
+            "output": 15239,
+            "cacheRead": 82944,
+            "cacheWrite": 0,
+            "reasoning": 8578,
+            "totalTokens": 118607,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          }
+        },
+        "tools": {}
+      },
+      "formatVersion": 3,
+      "runtime": "isolated-code-v2",
+      "health": "ready",
+      "beforeConnect": "{\"serviceAvailable\":false,\"serviceActiveState\":\"—\",\"cpuLimitText\":\"需要连接资源\",\"fileCount\":0,\"rootAvailable\":false,\"message\":\"尚未连接 Linux 资源\"}",
+      "bindings": [
+        "service:service",
+        "root:managed-root"
+      ],
+      "actions": [
+        "writeStatusReport:file.write_text_atomic",
+        "setCpuLimit:service.set_limit"
+      ],
+      "afterConnect": "{\"serviceAvailable\":true,\"serviceActiveState\":\"active\",\"cpuLimitText\":\"30%\",\"fileCount\":74,\"rootAvailable\":true,\"message\":\"资源连接正常\"}",
+      "mainQuery": 200,
+      "results": {
+        "report": {
+          "preview": "替换「导出目录（平台管理）」中的 status-report.txt | 导出目录（平台管理）/status-report.txt | [{\"label\":\"文件\",\"from\":\"sha256:e68795d45d9b\",\"to\":\"sha256:6685dd4a70aa…（138 字节，6 行）\"}]",
+          "confirm": 202,
+          "phase": "done",
+          "effectCertainty": "verified",
+          "evidenceKind": "target_hash",
+          "error": null
+        },
+        "cpu": {
+          "preview": "将「演示服务」的CPU 上限设为 50%（单个逻辑 CPU） | 演示服务（agentos-demo.service） | [{\"label\":\"CPU 上限\",\"from\":\"30%（单个逻辑 CPU）\",\"to\":\"50%（单个逻辑 CPU）\"}]",
+          "confirm": 202,
+          "phase": "done",
+          "effectCertainty": "verified",
+          "evidenceKind": "unit_property",
+          "error": null
+        }
+      },
+      "cpuMax": "50000 100000",
+      "managedFiles": [
+        "smoke-op0fd346a028a6.txt",
+        "status-report.txt",
+        "u02-1793201843152.txt",
+        "u02-1793202078525.txt",
+        "u02-1793202258909.txt",
+        "u02-1793202471874.txt",
+        "u02-1793202595583.txt",
+        "u02-1793203261535.txt",
+        "u02-1793203429273.txt",
+        "u02-1793208676168.txt"
+      ],
+      "queryShowsRealState": true
+    },
+    {
+      "step": "E02",
+      "status": "succeeded",
+      "ms": 16059,
+      "modelRequests": 2,
+      "preparedActionId": "sa_1476a3b8cfbd70fd7cffbfe7",
+      "error": null,
+      "tools": [
+        "system_resource_list",
+        "system_read",
+        "system_plan"
+      ],
+      "usage": {
+        "models": {
+          "openai-compatible/qwen3.8-flash": {
+            "input": 22765,
+            "output": 16056,
+            "cacheRead": 129792,
+            "cacheWrite": 0,
+            "reasoning": 9089,
+            "totalTokens": 168613,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          }
+        },
+        "tools": {}
+      },
+      "preview": "将「演示服务」的CPU 上限设为 40%（单个逻辑 CPU） | 演示服务（agentos-demo.service） | [{\"label\":\"CPU 上限\",\"from\":\"50%（单个逻辑 CPU）\",\"to\":\"40%（单个逻辑 CPU）\"}]",
+      "unchangedBeforeConfirm": true,
+      "phase": "done",
+      "effectCertainty": "verified",
+      "evidenceKind": "unit_property",
+      "cpuMax": "40000 100000"
+    },
+    {
+      "step": "E03",
+      "modelAvailable": false,
+      "health": "ready",
+      "query": 200,
+      "offlineAction": "done",
+      "cpuMax": "60000 100000",
+      "revoke": 202,
+      "afterRevoke": "{\"serviceAvailable\":false,\"serviceActiveState\":\"—\",\"cpuLimitText\":\"需要连接资源\",\"fileCount\":74,\"rootAvailable\":true,\"message\":\"演示服务未连接\"}",
+      "operations": 4
+    }
+  ],
+  "resolvedModel": {
+    "provider": "openai-compatible",
+    "modelId": "qwen3.8-flash",
+    "mode": "real"
+  },
+  "finishedAt": "2026-10-28T17:34:53.104Z",
+  "ok": true
+}
