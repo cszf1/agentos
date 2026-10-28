@@ -217,4 +217,6 @@ Usage (Pi session totals): after E01 input 20,424 / output 15,239 (reasoning 8,5
 
 ## Commit
 
-COMMIT_LINE
+Implementation, tests and evidence: `7b31947`. All final suites above ran on that tree on the development box (the box checkout
+was synced from it before the last pass). The clean box ran the README install on the same work before the last small fixes
+(telemetry resource status, timer shutdown, test-only changes). This report was finalized in the next commit.
