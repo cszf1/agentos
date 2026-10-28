@@ -1,0 +1,28 @@
+{
+  "name": "agentos",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.34.9",
+  "engines": {
+    "node": ">=24.22.1 <25"
+  },
+  "scripts": {
+    "typecheck": "tsc -b packages/host && tsc -p tests/tsconfig.json --noEmit && pnpm --filter @agentos/web typecheck",
+    "build": "tsc -b packages/host && pnpm --filter @agentos/web build",
+    "dev": "node scripts/dev.mjs",
+    "start": "bin/agentos-host",
+    "test": "pnpm build && vitest run --project unit",
+    "test:recovery": "pnpm build && vitest run --project recovery",
+    "test:e2e": "pnpm build && playwright test -c tests/e2e/playwright.config.ts",
+    "smoke:real": "pnpm build && node scripts/smoke-real.mjs",
+    "backup": "bin/agentos-admin backup",
+    "restore": "bin/agentos-admin restore"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.64.1",
+    "@types/node": "24.19.2",
+    "typescript": "5.9.3",
+    "vitest": "3.2.7"
+  }
+}

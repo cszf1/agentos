@@ -1,0 +1,232 @@
+import fs from "node:fs";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import { createRegistry, defineDoc, Harness, type Conversation, type HarnessSettings } from "@earendil-works/pi-durable";
+import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
+import { PROTOCOL_VERSION } from "@agentos/contracts";
+import { fault, type AgentEngine, type AgentInspection, type AgentOps, type AgentSubmissionStatus, type FrozenRunInput, type RunService, type TranscriptSummary } from "@agentos/core";
+import { createBuilderExtension } from "./tools.js";
+import { renderRunInput } from "./prompt.js";
+import { buildModels, type BuiltModels, type ModelConfig } from "./models.js";
+
+const ctx = BACKGROUND_CONTEXT;
+
+/** Pairing marker between os.sqlite and agent.sqlite, stored on the fixed root conversation. */
+export const WorkspaceDoc = defineDoc<{ storeUUID?: string; protocolVersion?: number }>({
+  kind: "agentos.workspace",
+  version: 1,
+  scope: "conversation",
+  history: "latest",
+  fork: "initial",
+  initial: () => ({}),
+  checkpointWhen: () => true,
+});
+
+/** Fixed Durable settings for v0.1 (spec §10). */
+export const HARNESS_SETTINGS = (extensions: HarnessSettings["extensions"]): HarnessSettings => ({
+  extensions,
+  stream: { maxRetries: 0, transport: "sse" },
+  retry: { enabled: true, maxRetries: 2, baseDelayMs: 500 },
+  compaction: { enabled: true, backgroundTokens: 0 },
+  toolExecution: "sequential",
+  afterFailedRun: "withdraw",
+});
+
+export type BindResult = { ok: true; bound: "already" | "completed" | "new" } | { ok: false; reason: string };
+
+export interface PiEngineOptions {
+  agentDbPath: string;
+  ops: AgentOps;
+  runs: RunService;
+  modelConfig: ModelConfig | null;
+  fauxContextWindow?: number;
+  compaction?: { reserveTokens?: number; keepRecentTokens?: number };
+  onFailure?: (error: unknown) => void;
+  log?: (msg: string, fields?: Record<string, unknown>) => void;
+}
+
+/** The only place that imports Pi Durable. */
+export class PiAgentEngine implements AgentEngine {
+  #harness: Harness | undefined;
+  #root: Conversation | undefined;
+  #built: BuiltModels | undefined;
+  readonly opts: PiEngineOptions;
+  #existedBeforeOpen = false;
+
+  constructor(opts: PiEngineOptions) {
+    this.opts = opts;
+  }
+
+  get modelAvailable(): boolean {
+    return this.#built?.available ?? false;
+  }
+  get modelDiagnostic(): string | null {
+    return this.#built?.diagnostic ?? null;
+  }
+  get modelRef(): { provider: string; modelId: string } | null {
+    return this.#built?.available ? this.#built.ref : null;
+  }
+  get agentFileExisted(): boolean {
+    return this.#existedBeforeOpen;
+  }
+
+  private get harness(): Harness {
+    if (!this.#harness) throw new Error("agent engine is not open");
+    return this.#harness;
+  }
+
+  async open(): Promise<void> {
+    this.#existedBeforeOpen = fs.existsSync(this.opts.agentDbPath);
+    this.#built = await buildModels(this.opts.modelConfig, () => this.opts.runs.admitModelRequest(), { contextWindow: this.opts.fauxContextWindow });
+    const registry = createRegistry();
+    const ext = createBuilderExtension(this.opts.ops);
+    registry.install(ext);
+    const storage = await openNodeSqliteStorage(this.opts.agentDbPath);
+    const settings = HARNESS_SETTINGS([ext]);
+    const harness = await Harness.open(
+      storage,
+      {
+        models: this.#built.models,
+        registry,
+        settings: { ...settings, compaction: { ...settings.compaction, ...(this.opts.compaction ?? {}) } },
+        identity: { attribution: null },
+        onReport: (error, info) => this.opts.log?.("pi report", { type: info.type, error: error instanceof Error ? error.message : String(error) }),
+      },
+      ctx,
+    );
+    this.#harness = harness;
+    harness.closed.then((end) => {
+      if (end.reason === "failed") this.opts.onFailure?.(end.error);
+    });
+  }
+
+  /** Root conversation; created (with the configured model) on first use only. */
+  private async root(): Promise<Conversation> {
+    if (this.#root) return this.#root;
+    const model = this.#built?.available ? this.#built.ref : undefined;
+    this.#root = await this.harness.root(ctx, model ? { agent: { model } } : undefined);
+    return this.#root;
+  }
+
+  /**
+   * Pair agent.sqlite with os.sqlite (spec §7). Called after open() and before resume().
+   * pending: write the marker only into a fresh Pi store; bound: require the matching marker.
+   */
+  async bind(storeUUID: string, state: "pending" | "bound"): Promise<BindResult> {
+    if (state === "bound" && !this.#existedBeforeOpen) {
+      return { ok: false, reason: "agent.sqlite was missing for a bound workspace; refusing to create a replacement" };
+    }
+    const root = await this.root();
+    const marker = await this.harness.snapshot(WorkspaceDoc, root.id, ctx);
+    if (marker?.storeUUID !== undefined) {
+      if (marker.storeUUID !== storeUUID) return { ok: false, reason: "agent.sqlite belongs to a different workspace (storeUUID mismatch)" };
+      return { ok: true, bound: state === "bound" ? "already" : "completed" };
+    }
+    if (state === "bound") return { ok: false, reason: "agent.sqlite has no workspace marker" };
+    const insp = await this.harness.inspect(ctx);
+    const entries = await root.entries({}, 1, undefined, ctx);
+    if (insp.tasks.length > 0 || insp.submissions.length > 0 || entries.items.some((e) => e.kind === "pi.user")) {
+      return { ok: false, reason: "agent.sqlite already carries work; it cannot be paired with a new workspace" };
+    }
+    await root.commit(async (tx) => {
+      const doc = await tx.doc(WorkspaceDoc, root.id);
+      doc.storeUUID = storeUUID;
+      doc.protocolVersion = PROTOCOL_VERSION;
+    }, ctx);
+    fault("bind.after_marker");
+    return { ok: true, bound: "new" };
+  }
+
+  resume(): void {
+    this.harness.resume();
+  }
+
+  async submit(run: FrozenRunInput): Promise<{ submissionId: number }> {
+    const root = await this.root();
+    const model = this.#built?.ref;
+    if (model && this.#built?.available) {
+      const agent = await root.agent(ctx);
+      const cur = agent.model;
+      if (!cur || cur.provider !== model.provider || cur.modelId !== model.modelId) {
+        // Explicit configuration path between runs; never during one.
+        if (await this.isIdle()) await root.configure({ model }, ctx);
+      }
+    }
+    const sub = await root.submit({ type: "input", content: renderRunInput(run), requestId: run.runId, whenBusy: "reject" }, ctx);
+    return { submissionId: Number(sub.id) };
+  }
+
+  async status(submissionId: number): Promise<AgentSubmissionStatus> {
+    const sub = await this.harness.submission(submissionId as never, ctx);
+    if (!sub) return { state: "missing" };
+    const rec = await sub.status(ctx);
+    if (rec.status === "done") return { state: "done" };
+    if (rec.status === "unanswered") {
+      const r = rec as { reason?: string; detail?: unknown };
+      return { state: "unanswered", reason: String(r.reason ?? "unknown"), detail: r.detail === undefined ? undefined : String(typeof r.detail === "string" ? r.detail : JSON.stringify(r.detail)) };
+    }
+    return { state: rec.status === "placed" ? "placed" : "queued" };
+  }
+
+  async cancelConversation(): Promise<void> {
+    const root = await this.root();
+    await root.abort(ctx, { background: true });
+  }
+
+  async inspect(): Promise<AgentInspection> {
+    const insp = await this.harness.inspect(ctx);
+    return {
+      scheduling: insp.scheduling,
+      tasks: insp.tasks.length,
+      submissions: insp.submissions.length,
+      blocked: insp.tasks
+        .filter((t) => t.state.kind === "blocked")
+        .map((t) => ({ taskId: String(t.record.id), kind: String(t.record.kind), reason: (t.state as { reason: string }).reason })),
+    };
+  }
+
+  async isIdle(): Promise<boolean> {
+    const i = await this.harness.inspect(ctx);
+    return i.tasks.length === 0 && i.submissions.length === 0;
+  }
+
+  async transcript(): Promise<TranscriptSummary> {
+    const root = await this.root();
+    const page = await root.entries({}, 50, undefined, ctx);
+    const items = page.items
+      .slice()
+      .reverse()
+      .map((e) => {
+        const data = (e as { data?: unknown }).data as Record<string, unknown> | undefined;
+        const model = (e as { model?: unknown }).model as { role?: string; content?: unknown; toolName?: string; isError?: boolean }[] | undefined;
+        const m = model?.[0];
+        let text = "";
+        const content = m?.content ?? data?.content;
+        if (typeof content === "string") text = content;
+        else if (Array.isArray(content)) {
+          text = content
+            .map((p: { type?: string; text?: string; name?: string; arguments?: unknown }) =>
+              p.type === "text" ? (p.text ?? "") : p.type === "toolCall" ? `→ ${p.name}(${JSON.stringify(p.arguments).slice(0, 200)})` : "",
+            )
+            .filter(Boolean)
+            .join("\n");
+        }
+        return { kind: e.kind, role: m?.role ?? e.kind, text: text.slice(0, 2000), toolName: m?.toolName, isError: m?.isError };
+      })
+      .filter((i) => i.kind !== "pi.system");
+    return { items };
+  }
+
+  /** Session-wide token/cost totals per provider/model (Pi usage documents). */
+  async usage(): Promise<unknown> {
+    return this.harness.usage(ctx);
+  }
+
+  async close(): Promise<void> {
+    if (this.#harness) await this.#harness.close(ctx);
+  }
+
+  /** For tests: the harness, to assert on Pi state. */
+  get rawHarness(): Harness | undefined {
+    return this.#harness;
+  }
+}

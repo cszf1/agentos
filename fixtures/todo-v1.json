@@ -1,0 +1,24 @@
+{
+  "formatVersion": 1,
+  "manifest": {
+    "appId": "9efaf674-4561-4c6b-9860-cf44e09fdd01",
+    "title": "待办清单",
+    "description": "记录任务并标记完成状态。",
+    "runtime": "declarative-v1",
+    "capabilities": ["records.read", "records.write"]
+  },
+  "data": {
+    "fields": {
+      "title": { "type": "string", "label": "任务", "minLength": 1, "maxLength": 200 },
+      "done": { "type": "boolean", "label": "已完成", "default": false }
+    }
+  },
+  "view": {
+    "kind": "records",
+    "titleField": "title",
+    "columns": ["title", "done"],
+    "formFields": ["title", "done"],
+    "searchField": "title",
+    "filters": ["done"]
+  }
+}

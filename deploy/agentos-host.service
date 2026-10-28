@@ -1,0 +1,19 @@
+# systemd --user unit for AgentOS v0.1. Install with deploy/install.sh (it replaces %h paths if needed).
+[Unit]
+Description=AgentOS local runtime
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=%h/agentos
+EnvironmentFile=%h/.config/agentos/agentos.env
+ExecStart=%h/agentos/bin/agentos-host
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=15
+UMask=0077
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=default.target

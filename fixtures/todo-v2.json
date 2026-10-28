@@ -1,0 +1,25 @@
+{
+  "formatVersion": 1,
+  "manifest": {
+    "appId": "9efaf674-4561-4c6b-9860-cf44e09fdd01",
+    "title": "待办清单 · 优先级",
+    "description": "记录任务、完成状态和优先级，并按优先级筛选。",
+    "runtime": "declarative-v1",
+    "capabilities": ["records.read", "records.write"]
+  },
+  "data": {
+    "fields": {
+      "title": { "type": "string", "label": "任务", "minLength": 1, "maxLength": 200 },
+      "done": { "type": "boolean", "label": "已完成", "default": false },
+      "priority": { "type": "enum", "label": "优先级", "values": ["low", "normal", "high"], "default": "normal" }
+    }
+  },
+  "view": {
+    "kind": "records",
+    "titleField": "title",
+    "columns": ["title", "done", "priority"],
+    "formFields": ["title", "done", "priority"],
+    "searchField": "title",
+    "filters": ["done", "priority"]
+  }
+}

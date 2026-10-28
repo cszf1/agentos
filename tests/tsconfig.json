@@ -1,0 +1,16 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false,
+    "noEmit": true,
+    "rootDir": "..",
+    "paths": {
+      "@agentos/contracts": ["../packages/contracts/src/index.ts"],
+      "@agentos/core": ["../packages/core/src/index.ts"],
+      "@agentos/agent-pi": ["../packages/agent-pi/src/index.ts"]
+    }
+  },
+  "include": ["**/*.ts", "../vitest.config.ts"]
+}

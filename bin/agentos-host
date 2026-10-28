@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# AgentOS host entry. Holds an exclusive flock on $AGENTOS_DATA_DIR/host.lock and execs Node with --no-fork,
+# so the lock lives exactly as long as the host process. Used by pnpm start, dev, tests and systemd.
+set -euo pipefail
+HERE="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+DATA_DIR="${AGENTOS_DATA_DIR:-$HOME/.local/share/agentos}"
+DATA_DIR="${DATA_DIR/#\~/$HOME}"
+NODE_BIN="${AGENTOS_NODE:-$(command -v node)}"
+REQUIRED="v$(cat "$HERE/.node-version")"
+ACTUAL="$("$NODE_BIN" --version)"
+if [[ "${ACTUAL%%.*}" != "${REQUIRED%%.*}" ]]; then
+  echo "agentos-host: Node $REQUIRED required, found $ACTUAL at $NODE_BIN (set AGENTOS_NODE)" >&2
+  exit 78
+fi
+mkdir -p "$DATA_DIR"
+chmod 700 "$DATA_DIR"
+export AGENTOS_DATA_DIR="$DATA_DIR"
+exec flock --nonblock --conflict-exit-code 75 --no-fork "$DATA_DIR/host.lock" \
+  "$NODE_BIN" --disable-warning=ExperimentalWarning "$HERE/packages/host/dist/main.js" "$@"

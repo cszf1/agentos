@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Cold backup/restore. Takes the same host.lock, so it refuses to run while the host is running.
+set -euo pipefail
+HERE="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+DATA_DIR="${AGENTOS_DATA_DIR:-$HOME/.local/share/agentos}"
+DATA_DIR="${DATA_DIR/#\~/$HOME}"
+NODE_BIN="${AGENTOS_NODE:-$(command -v node)}"
+export AGENTOS_DATA_DIR="$DATA_DIR"
+[[ "${1:-}" == "--" ]] && shift
+CMD="${1:?usage: agentos-admin backup --output DIR | restore --backup DIR}"; shift
+[[ "${1:-}" == "--" ]] && shift
+mkdir -p "$DATA_DIR"
+exec flock --nonblock --conflict-exit-code 75 --no-fork "$DATA_DIR/host.lock" \
+  "$NODE_BIN" --disable-warning=ExperimentalWarning "$HERE/packages/host/dist/admin-main.js" "$CMD" "$@"
