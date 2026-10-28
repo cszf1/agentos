@@ -39,6 +39,20 @@ importers:
         specifier: 1.4.0
         version: 1.4.0(@aws-sdk/credential-provider-node@3.972.89)(@smithy/signature-v4@5.7.4)(ws@8.22.0)
 
+  packages/app-runner:
+    devDependencies:
+      '@types/node':
+        specifier: 24.19.2
+        version: 24.19.2
+      esbuild:
+        specifier: 0.28.2
+        version: 0.28.2
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+
+  packages/app-sdk: {}
+
   packages/contracts:
     dependencies:
       ajv:
@@ -62,6 +76,9 @@ importers:
       '@agentos/core':
         specifier: workspace:*
         version: link:../core
+      '@agentos/runtime-podman':
+        specifier: workspace:*
+        version: link:../runtime-podman
       '@earendil-works/chord':
         specifier: 1.4.0
         version: 1.4.0
@@ -71,6 +88,15 @@ importers:
       fastify:
         specifier: 5.12.7
         version: 5.12.7
+
+  packages/runtime-podman:
+    dependencies:
+      '@agentos/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@agentos/core':
+        specifier: workspace:*
+        version: link:../core
 
   packages/web:
     dependencies:

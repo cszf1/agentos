@@ -80,7 +80,7 @@ interface FormState {
 
 export function AppView(props: { detail: AppDetail; onChanged: () => void; refreshToken: number }) {
   const { detail } = props;
-  const bundle = detail.bundle!;
+  const bundle = detail.bundle! as AppBundle;
   const fields = bundle.data.fields;
   const writable = bundle.manifest.capabilities.includes("records.write");
   const [q, setQ] = useState("");

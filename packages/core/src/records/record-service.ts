@@ -31,16 +31,29 @@ export interface ListQuery {
   limit?: number;
 }
 
+/** Spec §8: every successful write of the record collection bumps apps.data_epoch once, inside its transaction. */
+export function bumpDataEpoch(store: Store, appId: string): number {
+  store.run("UPDATE apps SET data_epoch = data_epoch + 1 WHERE id = ?", appId);
+  return store.get<{ e: number }>("SELECT data_epoch AS e FROM apps WHERE id = ?", appId)!.e;
+}
+
 export class RecordService {
   constructor(
     private readonly store: Store,
     private readonly apps: AppService,
   ) {}
 
-  private loadActive(appId: string): { app: AppRow; bundle: AppBundle; contract: DataContract } {
+  private loadActive(appId: string, opts: { expectedAppEpoch?: number } = {}): { app: AppRow; bundle: AppBundle; contract: DataContract } {
     const app = this.apps.requireApp(appId);
     const bundle = this.apps.activeBundle(app);
     if (!bundle) throw new AgentOsError("NOT_FOUND", "app has no active version yet", { appId });
+    if (opts.expectedAppEpoch !== undefined && app.epoch !== opts.expectedAppEpoch) {
+      throw new AgentOsError("APP_EPOCH_STALE", "the app version changed; reload before saving", { appEpoch: app.epoch });
+    }
+    // Spec §19.1: the records API serves declarative versions; a code version writes only through its commands.
+    if (bundle.formatVersion !== 1) {
+      throw new AgentOsError("FORBIDDEN", "this app version runs code; use its queries and commands", { appId, appEpoch: app.epoch });
+    }
     return { app, bundle, contract: this.apps.contractOf(app) };
   }
 
@@ -98,7 +111,7 @@ export class RecordService {
   }
 
   private checkWritable(principal: Principal, appId: string, expectedAppEpoch: number) {
-    const loaded = this.loadActive(appId);
+    const loaded = this.loadActive(appId, { expectedAppEpoch });
     grantRecords(principal, appId, loaded.bundle.manifest.capabilities, "records.write");
     if (loaded.app.epoch !== expectedAppEpoch) {
       throw new AgentOsError("APP_EPOCH_STALE", "the app version changed; reload before saving", { appEpoch: loaded.app.epoch });
@@ -138,6 +151,7 @@ export class RecordService {
     const id = randomUUID();
     const now = iso(this.store.clock.now());
     this.store.run("INSERT INTO records (app_id, id, version, data_json, created_at, updated_at) VALUES (?, ?, 1, ?, ?, ?)", appId, id, text, now, now);
+    bumpDataEpoch(this.store, appId);
     this.store.event("record.created", { appId, recordId: id }, { appId });
     return this.envelope(this.store.get<RecordRow>("SELECT * FROM records WHERE app_id = ? AND id = ?", appId, id)!, bundle);
   }
@@ -161,6 +175,7 @@ export class RecordService {
     if (utf8Bytes(text) > LIMITS.maxRecordBytes) throw new AgentOsError("LIMIT_EXCEEDED", `a record is limited to ${LIMITS.maxRecordBytes} bytes`);
     const now = iso(this.store.clock.now());
     this.store.run("UPDATE records SET data_json = ?, version = version + 1, updated_at = ? WHERE app_id = ? AND id = ?", text, now, appId, id);
+    bumpDataEpoch(this.store, appId);
     this.store.event("record.updated", { appId, recordId: id }, { appId });
     return this.envelope(this.store.get<RecordRow>("SELECT * FROM records WHERE app_id = ? AND id = ?", appId, id)!, bundle);
   }
@@ -169,6 +184,7 @@ export class RecordService {
     this.checkWritable(principal, appId, expectedAppEpoch);
     this.requireRecord(appId, id, expectedVersion);
     this.store.run("DELETE FROM records WHERE app_id = ? AND id = ?", appId, id);
+    bumpDataEpoch(this.store, appId);
     this.store.event("record.deleted", { appId, recordId: id }, { appId });
     return { deleted: true, id };
   }

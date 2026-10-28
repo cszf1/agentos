@@ -1,0 +1,5 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": { "rootDir": "src", "outDir": "dist", "types": [], "lib": ["ES2024"], "declarationMap": false, "sourceMap": false },
+  "include": ["src/**/*.ts"]
+}

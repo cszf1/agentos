@@ -1,6 +1,6 @@
 {
   "name": "agentos",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.34.9",
@@ -8,8 +8,8 @@
     "node": ">=24.22.1 <25"
   },
   "scripts": {
-    "typecheck": "tsc -b packages/host && tsc -p tests/tsconfig.json --noEmit && pnpm --filter @agentos/web typecheck",
-    "build": "tsc -b packages/host && pnpm --filter @agentos/web build",
+    "typecheck": "tsc -b packages/host && tsc -p packages/app-sdk && tsc -p packages/app-runner && tsc -p tests/tsconfig.json --noEmit && pnpm --filter @agentos/web typecheck",
+    "build": "tsc -b packages/host && tsc -p packages/app-sdk && tsc -p packages/app-runner && pnpm --filter @agentos/web build",
     "dev": "node scripts/dev.mjs",
     "start": "bin/agentos-host",
     "test": "pnpm build && vitest run --project unit",
@@ -17,7 +17,8 @@
     "test:e2e": "pnpm build && playwright test -c tests/e2e/playwright.config.ts",
     "smoke:real": "pnpm build && node scripts/smoke-real.mjs",
     "backup": "bin/agentos-admin backup",
-    "restore": "bin/agentos-admin restore"
+    "restore": "bin/agentos-admin restore",
+    "runtime:catalog": "pnpm build && node scripts/runtime-catalog.mjs"
   },
   "devDependencies": {
     "@playwright/test": "1.64.1",

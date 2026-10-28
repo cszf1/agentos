@@ -9,7 +9,9 @@
     "paths": {
       "@agentos/contracts": ["../packages/contracts/src/index.ts"],
       "@agentos/core": ["../packages/core/src/index.ts"],
-      "@agentos/agent-pi": ["../packages/agent-pi/src/index.ts"]
+      "@agentos/agent-pi": ["../packages/agent-pi/src/index.ts"],
+      "@agentos/host": ["../packages/host/src/index.ts"],
+      "@agentos/runtime-podman": ["../packages/runtime-podman/src/index.ts"]
     }
   },
   "include": ["**/*.ts", "../vitest.config.ts"]

@@ -1,4 +1,4 @@
-import { AgentOsError, LIMITS, canonicalJson, sha256Hex, type AppBundle, type DataContract, type ValidationIssue } from "@agentos/contracts";
+import { AgentOsError, LIMITS, canonicalJson, sha256Hex, type AnyBundle, type DataContract, type ValidationIssue } from "@agentos/contracts";
 import type { Store } from "../persistence/store.js";
 import type { AppService, ActivateResult } from "../apps/app-service.js";
 import { authorize, type CapabilityGateway, type Principal } from "../capabilities/gateway.js";
@@ -17,7 +17,7 @@ export interface AppGetResult {
   mode: "create" | "modify";
   intent: string;
   activeRevisionId: string | null;
-  activeBundle: AppBundle | null;
+  activeBundle: AnyBundle | null;
   contract: DataContract;
   limits: { maxBundleBytes: number; maxFields: number; maxEnumValues: number; maxStageAttempts: number };
 }

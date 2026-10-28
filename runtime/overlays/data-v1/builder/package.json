@@ -1,0 +1,1 @@
+{ "name": "agentos-overlay-data-v1-builder", "private": true, "version": "1.0.0", "dependencies": { "typescript": "5.9.3", "esbuild": "0.28.2", "papaparse": "5.7.0", "date-fns": "4.4.0", "@types/papaparse": "5.5.2" } }

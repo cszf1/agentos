@@ -1,6 +1,7 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { AgentOsError } from "./errors.js";
-import type { AppBundle, DataContract, FieldValue, ValidationIssue } from "./bundle.js";
+import type { DataContract, FieldValue, ValidationIssue } from "./bundle.js";
+import type { AnyBundle } from "./v2/bundle-v2.js";
 import { LIMITS } from "./limits.js";
 
 const uuid = { type: "string", pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" } as const;
@@ -79,6 +80,10 @@ export interface AppSummary {
   appEpoch: number;
   activeRevisionId: string | null;
   draft: boolean;
+  /** v0.2: runtime of the active revision, and the runtime health of code apps (spec §19.3). */
+  runtime?: "declarative-v1" | "isolated-code-v1";
+  health?: "stopped" | "recovering" | "ready" | "degraded" | null;
+  dataEpoch?: number;
 }
 
 export interface AppDetail {
@@ -86,8 +91,9 @@ export interface AppDetail {
   appEpoch: number;
   activeRevisionId: string | null;
   draft: boolean;
-  bundle: AppBundle | null;
+  bundle: AnyBundle | null;
   contract: DataContract;
+  dataEpoch?: number;
 }
 
 export interface RevisionSummary {
@@ -96,6 +102,7 @@ export interface RevisionSummary {
   createdAt: string;
   firstActivatedAt: string;
   isActive: boolean;
+  runtime?: "declarative-v1" | "isolated-code-v1";
 }
 
 export interface RecordEnvelope {

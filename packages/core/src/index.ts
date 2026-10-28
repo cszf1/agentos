@@ -39,3 +39,10 @@ export function openCore(file: string, opts: { clock?: Clock; runSettings?: Part
   const user = new UserActions(store, gateway, apps, records, runs);
   return { store, gateway, apps, records, runs, agentOps, user };
 }
+export * from "./runtime/driver.js";
+export * from "./runtime/policy.js";
+export * from "./runtime/bridge.js";
+export * from "./runtime/catalog-service.js";
+export * from "./builds/artifact-store.js";
+export * from "./builds/build-service.js";
+export * from "./runtime/instances.js";

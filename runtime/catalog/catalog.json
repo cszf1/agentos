@@ -1,0 +1,76 @@
+{
+  "catalogVersion": 1,
+  "locks": [
+    {
+      "id": "core-v1@1",
+      "profileId": "core-v1",
+      "platform": "linux/amd64",
+      "baseImage": {
+        "reference": "docker.io/library/node",
+        "digest": "sha256:e1582112fb9f152ed38eefcd712efc93fee1becb519fdfa57574d5e07eaa5e7d"
+      },
+      "builderImage": {
+        "name": "localhost/agentos-builder-core-v1:df81503aaa243ed9",
+        "recipeHash": "sha256:df81503aaa243ed9758be8b5ddb3f19fda1efd32dcb07ba14aa3c644510cd66a"
+      },
+      "runtimeImage": {
+        "name": "localhost/agentos-runtime-core-v1:52b5c081bed06db8",
+        "recipeHash": "sha256:52b5c081bed06db8e0abdd2bb204c994201db90a9402ee0c50a4dcd49b90431a"
+      },
+      "sdkVersion": "1.0.0",
+      "abiVersion": 1,
+      "compiler": {
+        "typescript": "5.9.3",
+        "esbuild": "0.28.2"
+      },
+      "modules": [],
+      "dependencyLockHash": "sha256:00ea58b2185c13677e2c1cb104e7e47b069e9b2172ad436a7e112292dec948c1",
+      "policyVersion": 1
+    },
+    {
+      "id": "data-v1@1",
+      "profileId": "data-v1",
+      "platform": "linux/amd64",
+      "baseImage": {
+        "reference": "docker.io/library/node",
+        "digest": "sha256:e1582112fb9f152ed38eefcd712efc93fee1becb519fdfa57574d5e07eaa5e7d"
+      },
+      "builderImage": {
+        "name": "localhost/agentos-builder-data-v1:c705ffc1210d346d",
+        "recipeHash": "sha256:c705ffc1210d346dd2359d09beba5ba04b0304da46c52e2bce5aa80ef9ca59b7"
+      },
+      "runtimeImage": {
+        "name": "localhost/agentos-runtime-data-v1:a5410d32d58fa1d8",
+        "recipeHash": "sha256:a5410d32d58fa1d8e81507f0ec7e28d4eca59cca5272b5bc466041baba9c7d7c"
+      },
+      "sdkVersion": "1.0.0",
+      "abiVersion": 1,
+      "compiler": {
+        "typescript": "5.9.3",
+        "esbuild": "0.28.2"
+      },
+      "modules": [
+        {
+          "name": "date-fns",
+          "version": "4.4.0",
+          "license": "MIT",
+          "integrity": "sha512-+1UMbeh68lH1SegH83CGWwpb6OHHbpSgr3+s5Eww5M4CAgswBpoWS0AjTOfEJ33HiYKz1hdj/KTFprzXHmq/6w==",
+          "specifiers": [
+            "date-fns"
+          ]
+        },
+        {
+          "name": "papaparse",
+          "version": "5.7.0",
+          "license": "MIT",
+          "integrity": "sha512-qBGxg/7Q3Kl9Wfhrz2Z74UnvnHTXLNG6jmKJFeBvP2+y4lV7So+7SR62+Zd47JvdrCkX+nDcnr0ObPzek/+6RA==",
+          "specifiers": [
+            "papaparse"
+          ]
+        }
+      ],
+      "dependencyLockHash": "sha256:92c779a6ef3aa8384edaf22d05ef79ec464a82b95e61c3981d2036e0f5b72a78",
+      "policyVersion": 1
+    }
+  ]
+}

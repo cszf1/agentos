@@ -2,15 +2,17 @@ import { randomUUID } from "node:crypto";
 import {
   AgentOsError,
   LIMITS,
-  bundleHash,
-  checkCompatibility,
-  checkSemantics,
-  checkStructure,
+  anyBundleHash,
+  checkAnyCompatibility,
+  checkAnySemantics,
+  checkAnyStructure,
   growContract,
-  normalizeBundle,
+  normalizeAny,
   utf8Bytes,
-  validateBundle,
+  validateAnyBundle,
+  type AnyBundle,
   type AppBundle,
+  type ExtraBundleCheck,
   type AppDetail,
   type AppSummary,
   type DataContract,
@@ -24,6 +26,7 @@ export interface AppRow {
   id: string;
   active_revision_id: string | null;
   epoch: number;
+  data_epoch: number;
   contract_json: string;
   created_at: string;
   updated_at: string;
@@ -45,8 +48,19 @@ export interface ActivateResult {
   changed: boolean;
 }
 
+/** Error code for a structurally invalid bundle of either format (spec §19.2). */
+export function structuralErrorCode(input: unknown, issues: ValidationIssue[]): "INVALID_BUNDLE" | "INVALID_CODE_BUNDLE" | "SOURCE_PATH_INVALID" {
+  const v2 = input !== null && typeof input === "object" && (input as { formatVersion?: unknown }).formatVersion === 2;
+  if (!v2) return "INVALID_BUNDLE";
+  return issues.length > 0 && issues.every((i) => i.code === "SOURCE_PATH_INVALID") ? "SOURCE_PATH_INVALID" : "INVALID_CODE_BUNDLE";
+}
+
 export class AppService {
-  constructor(private readonly store: Store) {}
+  /** Host-supplied checks for code bundles (runtime catalog and approved imports). */
+  extraCheck: ExtraBundleCheck | undefined;
+  constructor(private readonly store: Store, extraCheck?: ExtraBundleCheck) {
+    this.extraCheck = extraCheck;
+  }
 
   private now(): string {
     return iso(this.store.clock.now());
@@ -70,10 +84,15 @@ export class AppService {
     return JSON.parse(row.contract_json) as DataContract;
   }
 
-  activeBundle(row: AppRow): AppBundle | null {
+  activeBundle(row: AppRow): AnyBundle | null {
     if (row.active_revision_id === null) return null;
     const rev = this.getRevisionRow(row.id, row.active_revision_id);
-    return rev ? (JSON.parse(rev.bundle_json) as AppBundle) : null;
+    return rev ? (JSON.parse(rev.bundle_json) as AnyBundle) : null;
+  }
+
+  revisionBundle(appId: string, revisionId: string): AnyBundle | null {
+    const rev = this.getRevisionRow(appId, revisionId);
+    return rev ? (JSON.parse(rev.bundle_json) as AnyBundle) : null;
   }
 
   /** Placeholder created when a run starts building a new app (epoch 0, empty contract). Inside a tx. */
@@ -126,7 +145,8 @@ export class AppService {
       );
       return rows.map((r) => ({
         revisionId: r.id,
-        title: (JSON.parse(r.bundle_json) as AppBundle).manifest.title,
+        title: (JSON.parse(r.bundle_json) as AnyBundle).manifest.title,
+        runtime: (JSON.parse(r.bundle_json) as AnyBundle).manifest.runtime,
         createdAt: r.created_at,
         firstActivatedAt: r.first_activated_at!,
         isActive: app.active_revision_id === r.id,
@@ -140,15 +160,15 @@ export class AppService {
    */
   stage(appId: string, input: unknown, runId: string | null): { revisionId: string; issues: ValidationIssue[] } {
     const app = this.requireApp(appId);
-    const s = checkStructure(input);
-    if (!s.ok) throw new AgentOsError("INVALID_BUNDLE", "bundle failed schema validation", { issues: s.issues });
-    const bundle = normalizeBundle(s.bundle);
+    const s = checkAnyStructure(input);
+    if (!s.ok) throw new AgentOsError(structuralErrorCode(input, s.issues), "bundle failed schema validation", { issues: s.issues });
+    const bundle = normalizeAny(s.bundle);
     if (bundle.manifest.appId !== appId) {
-      throw new AgentOsError("INVALID_BUNDLE", "manifest.appId must equal the bound target app", {
+      throw new AgentOsError(bundle.formatVersion === 2 ? "INVALID_CODE_BUNDLE" : "INVALID_BUNDLE", "manifest.appId must equal the bound target app", {
         issues: [{ path: "/manifest/appId", code: "APP_ID_MISMATCH", message: `expected ${appId}` }],
       });
     }
-    const revisionId = bundleHash(bundle);
+    const revisionId = anyBundleHash(bundle);
     const existing = this.getRevisionRow(appId, revisionId);
     if (!existing) {
       const n = this.store.get<{ n: number }>("SELECT COUNT(*) AS n FROM revisions WHERE app_id = ?", appId)!.n;
@@ -164,7 +184,7 @@ export class AppService {
       this.store.event("revision.staged", { appId, revisionId }, { appId, runId });
     }
     const mode = existing?.first_activated_at ? "historical" : "candidate";
-    const issues = [...checkSemantics(bundle, appId), ...checkCompatibility(bundle, this.contractOrNull(app), mode)];
+    const issues = [...checkAnySemantics(bundle, appId, this.extraCheck), ...checkAnyCompatibility(bundle, this.contractOrNull(app), mode)];
     return { revisionId, issues };
   }
 
@@ -174,7 +194,7 @@ export class AppService {
     const rev = this.getRevisionRow(appId, revisionId);
     if (!rev) throw new AgentOsError("NOT_FOUND", "revision not found", { revisionId });
     const mode = rev.first_activated_at ? "historical" : "candidate";
-    const r = validateBundle(JSON.parse(rev.bundle_json), appId, this.contractOrNull(app), mode);
+    const r = validateAnyBundle(JSON.parse(rev.bundle_json), appId, this.contractOrNull(app), mode, this.extraCheck);
     return { valid: r.issues.length === 0, issues: r.issues, mode };
   }
 
@@ -203,18 +223,21 @@ export class AppService {
       return { appId, revisionId, appEpoch: app.epoch, changed: false };
     }
     const mode = historical ? "historical" : "candidate";
-    const checked = validateBundle(JSON.parse(rev.bundle_json), appId, this.contractOrNull(app), mode);
-    if (!checked.structural) throw new AgentOsError("INVALID_BUNDLE", "stored revision failed schema validation", { issues: checked.issues });
+    const raw = JSON.parse(rev.bundle_json) as unknown;
+    const checked = validateAnyBundle(raw, appId, this.contractOrNull(app), mode, this.extraCheck);
+    if (!checked.structural) throw new AgentOsError(structuralErrorCode(raw, checked.issues), "stored revision failed schema validation", { issues: checked.issues });
     if (checked.issues.length > 0) {
       const incompatible = checked.issues.some((i) => i.code === "SCHEMA_INCOMPATIBLE");
-      throw new AgentOsError(incompatible ? "SCHEMA_INCOMPATIBLE" : "INVALID_BUNDLE", "revision is not valid for this app", { issues: checked.issues });
+      const code = incompatible ? "SCHEMA_INCOMPATIBLE" : checked.bundle?.formatVersion === 2 ? "INVALID_CODE_BUNDLE" : "INVALID_BUNDLE";
+      throw new AgentOsError(code, "revision is not valid for this app", { issues: checked.issues });
     }
     const bundle = checked.bundle!;
     const now = this.now();
     let contract = this.contractOf(app);
     if (!historical) {
-      const grown = growContract(this.contractOrNull(app), bundle);
+      const grown = growContract(this.contractOrNull(app), bundle as AppBundle);
       contract = grown.contract;
+      let backfilled = false;
       if (grown.added.length > 0 && app.active_revision_id !== null) {
         const rows = s.all<{ id: string; version: number; data_json: string }>("SELECT id, version, data_json FROM records WHERE app_id = ?", appId);
         if (rows.length > LIMITS.maxRecordsPerApp) throw new AgentOsError("LIMIT_EXCEEDED", "too many records");
@@ -233,8 +256,11 @@ export class AppService {
             throw new AgentOsError("LIMIT_EXCEEDED", `record ${r.id} would exceed ${LIMITS.maxRecordBytes} bytes`, { recordId: r.id });
           }
           s.run("UPDATE records SET data_json = ?, version = version + 1, updated_at = ? WHERE app_id = ? AND id = ?", text, now, appId, r.id);
+          backfilled = true;
         }
       }
+      // Spec §8: a default-value backfill that really changed records bumps data_epoch once.
+      if (backfilled) s.run("UPDATE apps SET data_epoch = data_epoch + 1 WHERE id = ?", appId);
     }
     const newEpoch = app.epoch + 1;
     s.run(
@@ -252,7 +278,7 @@ export class AppService {
   }
 
   /** Test-only seeding entry (not exposed over HTTP in production). */
-  seedActivated(bundle: AppBundle): ActivateResult {
+  seedActivated(bundle: AnyBundle): ActivateResult {
     return this.store.tx(() => {
       const appId = bundle.manifest.appId;
       if (!this.getAppRow(appId)) {

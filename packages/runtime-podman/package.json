@@ -1,0 +1,10 @@
+{
+  "name": "@agentos/runtime-podman",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
+  "dependencies": { "@agentos/contracts": "workspace:*", "@agentos/core": "workspace:*" }
+}

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
-import { AgentOsError, LIMITS } from "@agentos/contracts";
+import { AgentOsError, LIMITS, type AppBundle } from "@agentos/contracts";
 import { requestHash } from "@agentos/core";
 import { ManualClock, startRig, submit, waitFor, waitRun, type AgentRig } from "../agent-helpers.js";
 import { createRecord, tmpDir } from "../helpers.js";
@@ -29,7 +29,7 @@ describe("A: Pi Durable generation loop (faux model, real Durable + SQLite + too
     const run2 = await waitRun(rig, r2.runId);
     expect(run2.status).toBe("succeeded");
     const app2 = rig.core.apps.getApp(r1.targetAppId);
-    expect(app2.bundle?.view.filters).toEqual(["done", "priority"]);
+    expect((app2.bundle as AppBundle | null)?.view.filters).toEqual(["done", "priority"]);
     const recs = rig.core.records.list({ kind: "app", appId: r1.targetAppId, viaUser: true }, r1.targetAppId, {});
     expect(recs.items[0]!.data).toEqual({ title: "买牛奶", done: false, priority: "normal" });
     expect(rig.core.apps.listRevisions(r1.targetAppId)).toHaveLength(2);
