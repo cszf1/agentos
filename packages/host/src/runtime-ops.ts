@@ -2,9 +2,28 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { GcService, ArtifactStore, RUNTIME_POLICY, openCore } from "@agentos/core";
 import type { HostConfig } from "./config.js";
 import { catalogProblems, createDriver, loadCatalog } from "./runtime-setup.js";
+import { engineHasEnvLeakCve } from "@agentos/runtime-podman";
+
+/** Variables the podman API service may carry when started through deploy/podman-clean-env (allowlist). */
+export const ENGINE_ENV_ALLOW = new Set([
+  "HOME", "USER", "LOGNAME", "PATH", "LANG", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS", "TMPDIR",
+  "CONTAINERS_CONF", "CONTAINERS_STORAGE_CONF", "CONTAINERS_REGISTRIES_CONF",
+]);
+
+/** Names of the environment variables of the running podman.service (null when it is not running or unreadable). */
+export function engineServiceEnvKeys(): string[] | null {
+  try {
+    const pid = execFileSync("systemctl", ["--user", "show", "-p", "MainPID", "--value", "podman.service"], { encoding: "utf8", timeout: 5000 }).trim();
+    if (!pid || pid === "0") return null;
+    return fs.readFileSync(`/proc/${pid}/environ`, "utf8").split("\0").filter(Boolean).map((kv) => kv.split("=")[0]!);
+  } catch {
+    return null;
+  }
+}
 
 export interface Check {
   name: string;
@@ -60,6 +79,25 @@ export async function doctor(config: HostConfig): Promise<{ ok: boolean; checks:
   add("cgroup v2 controllers", env.cgroupVersion === "v2" && ["cpu", "memory", "pids"].every((c) => env.cgroupControllers.includes(c)), `${env.cgroupVersion}: ${env.cgroupControllers.join(",")}`);
   add("seccomp", env.seccomp, `seccomp ${env.seccomp}; apparmor ${env.apparmor}; selinux ${env.selinux} (LSM policy applied when the host provides one)`);
   add("engine platform", env.platform === config.platform, `${env.platform} (catalog ${config.platform})`);
+  // CVE-2026-57231: an affected engine leaks its own environment into containers built from a malformed image.
+  // AgentOS refuses such images itself; on an affected engine the service must also run with an allowlisted env.
+  const keys = engineServiceEnvKeys();
+  const extra = keys ? keys.filter((k) => !ENGINE_ENV_ALLOW.has(k)) : null;
+  let wrapped = false;
+  try {
+    wrapped = execFileSync("systemctl", ["--user", "show", "-p", "ExecStart", "--value", "podman.service"], { encoding: "utf8", timeout: 5000 }).includes("podman-clean-env");
+  } catch {
+    /* no systemd user manager */
+  }
+  const affected = engineHasEnvLeakCve(env.podmanVersion);
+  const clean = extra !== null ? extra.length === 0 : wrapped;
+  add(
+    "engine env (CVE-2026-57231)",
+    !affected || clean,
+    `podman ${env.podmanVersion} ${affected ? "affected (fixed in 5.8.4)" : "not affected"}; image env validation on; podman.service ${wrapped ? "uses" : "does not use"} podman-clean-env; ` +
+      (extra === null ? "service not running" : extra.length === 0 ? "running service environment clean" : `running service carries ${extra.join(",")}`) +
+      (affected && !clean ? " (run deploy/install-engine-env.sh)" : ""),
+  );
   const lock = catalog.locks()[0];
   if (!lock) return { ok: false, checks };
   const img = await driver.inspectImage(lock.runtimeImage.name);

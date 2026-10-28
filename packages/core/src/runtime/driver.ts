@@ -55,6 +55,8 @@ export interface EnvironmentReport {
   kernel: string;
   platform: string;
   problems: string[];
+  /** Non-fatal findings (e.g. an engine version with a known CVE that AgentOS mitigates itself). */
+  warnings?: string[];
 }
 
 export interface ImageStatus {
@@ -63,6 +65,8 @@ export interface ImageStatus {
   id?: string;
   labels?: Record<string, string>;
   architecture?: string;
+  /** The image config's Env entries, exactly as stored (validated before any container is created). */
+  env?: string[];
 }
 
 export interface RuntimeDriver {

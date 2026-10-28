@@ -150,6 +150,7 @@ export class RuntimeSystem {
       try {
         const env = await this.opts.driver.checkEnvironment();
         this.environmentProblems = env.problems;
+        for (const w of env.warnings ?? []) this.opts.log("warn", w, {});
         if (env.platform !== this.opts.catalog.platform) this.environmentProblems.push(`engine platform ${env.platform} != catalog platform ${this.opts.catalog.platform}`);
       } catch (e) {
         this.environmentProblems = [(e as Error).message];

@@ -10,6 +10,28 @@ export interface PodmanDriverOptions {
   logSizeBytes?: number;
 }
 
+/**
+ * CVE-2026-57231 (Podman 1.8.1 – 5.8.3, incl. Debian 13's 5.4.2): an image config Env entry without "=" (e.g. "TOKEN"
+ * or "*") makes the engine copy the matching variables of the engine process's own environment into the container.
+ * The OCI image spec only allows KEY=VALUE, so like the upstream fix we refuse any image whose Env has another form,
+ * before create, after build and after import, independent of the engine version.
+ */
+export function invalidImageEnv(env: unknown): string[] {
+  if (env == null) return [];
+  if (!Array.isArray(env)) return [String(env)];
+  return env.filter((e) => typeof e !== "string" || e.indexOf("=") <= 0).map((e) => String(e));
+}
+
+/** True when the engine version still carries CVE-2026-57231 (fixed in 5.8.4 and 6.0.0). */
+export function engineHasEnvLeakCve(version: string): boolean {
+  const m = /^(\d+)\.(\d+)\.(\d+)/.exec(version);
+  if (!m) return true;
+  const [maj, min, pat] = m.slice(1).map(Number);
+  if (maj >= 6) return false;
+  if (maj < 1 || (maj === 1 && (min < 8 || (min === 8 && pat < 1)))) return false;
+  return maj < 5 || (maj === 5 && (min < 8 || (min === 8 && pat < 4)));
+}
+
 const enc = (o: unknown) => encodeURIComponent(JSON.stringify(o));
 
 function mapState(s: string | undefined): ObservedContainerState {
@@ -62,6 +84,11 @@ export class PodmanDriver implements RuntimeDriver {
     for (const c of ["cpu", "memory", "pids"]) if (!controllers.includes(c)) problems.push(`cgroup controller "${c}" is not delegated to this user`);
     if (sec.seccompEnabled !== true) problems.push("seccomp is not enabled");
     const arch = host.arch === "amd64" || host.arch === "arm64" ? host.arch : String(host.arch);
+    const podmanVersion = String(info.version?.Version ?? "");
+    const warnings: string[] = [];
+    if (engineHasEnvLeakCve(podmanVersion)) {
+      warnings.push(`podman ${podmanVersion || "unknown"} is affected by CVE-2026-57231 (fixed in 5.8.4); mitigated: AgentOS refuses images whose Env has entries without "=" and the engine service should run with deploy/podman-clean-env (see README)`);
+    }
     return {
       ok: problems.length === 0,
       rootless,
@@ -71,10 +98,11 @@ export class PodmanDriver implements RuntimeDriver {
       apparmor: sec.apparmorEnabled === true,
       selinux: sec.selinuxEnabled === true,
       ociRuntime: String(host.ociRuntime?.name ?? ""),
-      podmanVersion: String(info.version?.Version ?? ""),
+      podmanVersion,
       kernel: String(host.kernel ?? ""),
       platform: `linux/${arch}`,
       problems,
+      warnings,
     };
   }
 
@@ -82,7 +110,16 @@ export class PodmanDriver implements RuntimeDriver {
     const r = await this.api.json<Record<string, any>>("GET", `/libpod/images/${encodeURIComponent(name)}/json`);
     if (r.status === 404) return { name, present: false };
     if (r.status !== 200) throw new PodmanError(r.status, `image inspect ${name}: ${JSON.stringify(r.data).slice(0, 200)}`);
-    return { name, present: true, id: r.data.Id, labels: r.data.Labels ?? r.data.Config?.Labels ?? {}, architecture: r.data.Architecture };
+    const env = r.data.Config?.Env ?? r.data.Env ?? [];
+    return { name, present: true, id: r.data.Id, labels: r.data.Labels ?? r.data.Config?.Labels ?? {}, architecture: r.data.Architecture, env: Array.isArray(env) ? env : [String(env)] };
+  }
+
+  /** Refuse an image whose config Env could pull engine-process variables into a container (CVE-2026-57231). */
+  private assertSafeEnv(img: ImageStatus): void {
+    const bad = invalidImageEnv(img.env);
+    if (bad.length) {
+      throw new PodmanError(422, `image ${img.name} rejected: invalid image env entr${bad.length === 1 ? "y" : "ies"} ${JSON.stringify(bad.slice(0, 5))} (only KEY=VALUE is allowed; CVE-2026-57231)`);
+    }
   }
 
   async ensureImage(image: { name: string; recipeHash: string; role: "builder" | "runtime"; profileId: string }, opts: { allowBuild: boolean }): Promise<ImageStatus> {
@@ -91,6 +128,7 @@ export class PodmanDriver implements RuntimeDriver {
       if (cur.labels?.["agentos.recipe"] !== image.recipeHash) {
         throw new PodmanError(409, `image ${image.name} exists but carries recipe ${cur.labels?.["agentos.recipe"] ?? "none"}, expected ${image.recipeHash}`);
       }
+      this.assertSafeEnv(cur);
       return cur;
     }
     if (!opts.allowBuild || !this.opts.recipe) return cur;
@@ -107,10 +145,14 @@ export class PodmanDriver implements RuntimeDriver {
     if (r.status !== 200 || err) throw new PodmanError(r.status, `image build failed for ${image.name}: ${(err?.error ?? text).slice(-500)}`);
     const done = await this.inspectImage(image.name);
     if (!done.present || done.labels?.["agentos.recipe"] !== image.recipeHash) throw new PodmanError(500, `image ${image.name} missing after build`);
+    this.assertSafeEnv(done);
     return done;
   }
 
   async create(spec: ContainerSpec): Promise<{ id: string }> {
+    const img = await this.inspectImage(spec.image);
+    if (!img.present) throw new PodmanError(404, `container create ${spec.name}: image ${spec.image} not present`);
+    this.assertSafeEnv(img);
     const mountRo = { destination: spec.readOnlyMount.containerPath, type: "bind", source: spec.readOnlyMount.hostPath, options: ["ro", "rbind", "nosuid", "nodev"] };
     const bridge = { destination: "/run/agentos", type: "bind", source: spec.bridgeDir, options: ["rw", "rbind", "nosuid", "nodev", "noexec"] };
     const tmp = { destination: "/tmp", type: "tmpfs", source: "tmpfs", options: ["rw", `size=${spec.limits.tmpfsBytes}`, "mode=1777", "nosuid", "nodev", "noexec"] };
@@ -264,11 +306,23 @@ export class PodmanDriver implements RuntimeDriver {
       req.on("error", reject);
       createReadStream(file).pipe(req);
     });
+    let names: string[] = [];
     try {
-      return ((JSON.parse(body) as { Names?: string[] }).Names ?? []) as string[];
+      names = ((JSON.parse(body) as { Names?: string[] }).Names ?? []) as string[];
     } catch {
-      return [];
+      names = [];
     }
+    // A restored archive is untrusted input: drop any loaded image whose Env is not strictly KEY=VALUE.
+    const rejected: string[] = [];
+    for (const n of names) {
+      const img = await this.inspectImage(n).catch(() => null);
+      if (img?.present && invalidImageEnv(img.env).length) {
+        rejected.push(n);
+        await this.api.json<unknown>("DELETE", `/libpod/images/${encodeURIComponent(n)}?force=true`).catch(() => undefined);
+      }
+    }
+    if (rejected.length) throw new PodmanError(422, `image load: rejected ${rejected.join(", ")}: invalid image env entries (only KEY=VALUE is allowed; CVE-2026-57231)`);
+    return names;
   }
 
   async wait(idOrName: string, timeoutMs: number): Promise<ContainerStatus> {

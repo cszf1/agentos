@@ -75,6 +75,7 @@ sudo loginctl enable-linger "$USER"     # user services (podman.socket, agentos-
 
 # 1. rootless Podman API socket for this user
 systemctl --user enable --now podman.socket
+bash deploy/install-engine-env.sh                 # CVE-2026-57231 hardening: engine runs with an allowlisted env
 ls -l /run/user/$(id -u)/podman/podman.sock      # srw------- owned by you
 cat /sys/fs/cgroup/user.slice/user-$(id -u).slice/user@$(id -u).service/cgroup.controllers   # cpu ... memory pids
 
@@ -193,6 +194,28 @@ restore imports the image archives (works offline), rewinds the workspace to the
 rotates the auth token and invalidates every old instance lease. An interrupted restore leaves
 `restore-in-progress`; the host refuses to start until `pnpm restore` is re-run.
 
+### Podman CVE-2026-57231 (Debian 13 / Podman 5.4.2)
+
+Podman 1.8.1–5.8.3 copies variables of the engine process's own environment into a container when the image config
+has an `Env` entry without `=` (`"TOKEN"`, or `"*"` for everything). Debian 13 ships 5.4.2 with no fix yet (fixed
+upstream in 5.8.4 / 6.0.0). AgentOS mitigates it on any engine version:
+
+- The driver refuses any image whose `Env` is not strictly `KEY=VALUE` (HTTP 422, `CVE-2026-57231` in the message)
+  before every container create, on `ensureImage` (existing and freshly built images), and on `importImage` — a
+  backup restore deletes such an image and fails. AgentOS only runs its own locally built platform images, so this is
+  defence in depth against a tampered base image or backup archive.
+- `deploy/install-engine-env.sh` (run by `deploy/install.sh`) adds a `podman.service` drop-in that starts the API
+  service through `podman-clean-env`: the engine gets only `HOME USER LOGNAME PATH LANG XDG_RUNTIME_DIR
+  DBUS_SESSION_BUS_ADDRESS` (+ systemd socket-activation `LISTEN_*`), not the session/agent/proxy variables of the
+  systemd user manager. Undo: `rm -r ~/.config/systemd/user/podman.service.d/10-agentos-clean-env.conf
+  ~/.local/libexec/agentos && systemctl --user daemon-reload && systemctl --user stop podman.service`.
+- `pnpm runtime:doctor` reports `engine env (CVE-2026-57231)`: ok when the engine is fixed, or when it is affected and
+  the service runs (or is configured to run) with the clean environment. The host logs a warning at boot on an
+  affected engine. Never put secrets in the user manager environment (`systemctl --user set-environment`).
+- Tests: `tests/integration/image-env-cve.test.ts` (driver paths, fake engine) and
+  `tests/sandbox/cve-2026-57231.test.ts` (real engine: hand-built malicious OCI image, positive control, create and
+  import refused).
+
 ### Troubleshooting
 
 | Symptom | Cause / fix |
@@ -204,6 +227,8 @@ rotates the auth token and invalidates every old instance lease. An interrupted 
 | `IMAGE_UNAVAILABLE` offline | run `pnpm runtime:prefetch` while online; nothing substitutes another image |
 | code app `degraded` | it crashed more than twice in 5 minutes; read diagnostics in the app panel, fix or press 重启 |
 | `APP_RESOURCE_LIMIT` on prepare | at most 4 code apps run at once; stop one |
+| `invalid image env ... CVE-2026-57231` (422) | the image's config has an `Env` entry without `=`; it is refused on purpose. Rebuild the platform image (`pnpm runtime:prefetch`) or restore from a trusted backup |
+| doctor: `engine env (CVE-2026-57231)` FAIL | run `bash deploy/install-engine-env.sh`, then `pnpm runtime:doctor` again |
 
 ## Development and tests
 

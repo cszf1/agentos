@@ -25,6 +25,8 @@ if [[ ! -f "$HOME/.config/agentos/agentos.env" ]]; then
   } > "$HOME/.config/agentos/agentos.env"
 fi
 chmod 600 "$HOME/.config/agentos/agentos.env"
+# CVE-2026-57231 hardening: the rootless engine runs with an allowlisted environment.
+if command -v podman >/dev/null 2>&1; then bash deploy/install-engine-env.sh; fi
 sed "s#%h/agentos#$SRC#g" deploy/agentos-host.service > "$HOME/.config/systemd/user/agentos-host.service"
 systemctl --user daemon-reload
 systemctl --user enable --now agentos-host

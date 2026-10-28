@@ -1,0 +1,19 @@
+#!/bin/sh
+# Start the rootless podman API service with an allowlisted environment (CVE-2026-57231 hardening).
+# Podman 1.8.1-5.8.3 (Debian 13 ships 5.4.2) copies variables of its OWN process environment into a container
+# when the image config has an Env entry without "=" (or "*"). AgentOS refuses such images, and this wrapper makes
+# sure that, even if one slipped through, the engine has nothing worth leaking: no session, agent, proxy or token
+# variables inherited from the systemd user manager. Socket activation (LISTEN_*) is preserved; exec keeps the PID.
+set -eu
+PODMAN="${AGENTOS_PODMAN_BIN:-/usr/bin/podman}"
+set -- env -i \
+  HOME="${HOME:?}" USER="${USER:-$(id -un)}" LOGNAME="${LOGNAME:-$(id -un)}" \
+  PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+  LANG="C.UTF-8" XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:?}" \
+  DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=${XDG_RUNTIME_DIR}/bus}"
+if [ -n "${LISTEN_FDS:-}" ]; then
+  # systemd sets LISTEN_PID to this shell's PID; exec env -> exec podman keeps the same PID.
+  set -- "$@" LISTEN_FDS="$LISTEN_FDS" LISTEN_PID="$$"
+  [ -n "${LISTEN_FDNAMES:-}" ] && set -- "$@" LISTEN_FDNAMES="$LISTEN_FDNAMES"
+fi
+exec "$@" "$PODMAN" ${LOGGING:-"--log-level=info"} system service
