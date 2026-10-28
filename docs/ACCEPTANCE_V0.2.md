@@ -126,4 +126,7 @@ cache read 131,328 tokens; after E01 modify 58,160 / 44,223 / 395,776; after E03
 
 ## Commit
 
-RESULT_COMMIT
+Implementation and tests: `3c87ce5` ("complete AgentOS v0.2 implementation and acceptance"). The development-box final
+suites ran on that tree. The clean box first ran an earlier snapshot of the same work (results above), then was updated to
+`3c87ce5` itself: `pnpm install --frozen-lockfile`, `pnpm build`, `runtime:doctor` exit 0, service restarted and ready,
+`pnpm test` 62/62, `pnpm test:sandbox` 33/33 + 1 opt-in skipped, `pnpm test:e2e` 6/6. This report was finalized in the next commit.
