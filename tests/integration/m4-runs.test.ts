@@ -46,13 +46,13 @@ describe("R10 cancel semantics", () => {
 
 describe("R12 compaction stays inside its run", () => {
   it("a long conversation compacts blocking only, and the summary request counts against the run", async () => {
-    rig = await startRig({ fauxContextWindow: 5000, compaction: { reserveTokens: 1000, keepRecentTokens: 600 } });
+    rig = await startRig({ fauxContextWindow: 14000, compaction: { reserveTokens: 1000, keepRecentTokens: 600 } });
     const counts: number[] = [];
     let appId: string | null = null;
-    for (let i = 0; i < 8; i++) {
+    for (let i = 0; i < 12; i++) {
       const r = await submit(rig, i === 0 ? "做一个待办应用" : `修改说明第${i}次 [faux:same]`, appId);
       const run = await waitRun(rig, r.runId);
-      expect(run.status).toBe("succeeded");
+      expect(run.status, run.error_json ?? "").toBe("succeeded");
       appId = run.target_app_id;
       counts.push(run.model_request_count);
       // background compaction is disabled: nothing is left running between runs
@@ -61,10 +61,11 @@ describe("R12 compaction stays inside its run", () => {
     const t = await rig.engine.transcript();
     const compacted = t.items.some((i) => i.kind === "pi.compaction");
     expect(compacted).toBe(true);
-    // runs without compaction need 4 admitted requests; a run that compacted paid one more, inside its own budget
-    expect(counts).toContain(4);
+    // v0.2 runs without compaction need 5 admitted requests (get, stage, validate, prepare, activate); a run that
+    // compacted paid more, inside its own budget
     expect(counts).toContain(5);
-    expect(Math.max(...counts)).toBeLessThanOrEqual(6);
+    expect(Math.max(...counts)).toBeGreaterThan(5);
+    expect(Math.max(...counts)).toBeLessThanOrEqual(12);
 
     // Cancel a run on the compacted conversation, then start the next one: until Pi has fully converged the slot
     // stays taken (RUN_BUSY), and nothing from the cancelled run ever writes under the next run.

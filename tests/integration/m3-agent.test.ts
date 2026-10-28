@@ -22,7 +22,7 @@ describe("A: Pi Durable generation loop (faux model, real Durable + SQLite + too
     expect(app.bundle?.manifest.title).toBe("待办清单");
     expect(app.activeRevisionId).toBe(run1.applied_revision_id);
     expect(rig.core.runs.view(run1).progress.stageAttempts).toBe(1);
-    expect(run1.model_request_count).toBe(4);
+    expect(run1.model_request_count).toBe(5);
 
     createRecord(rig.core, r1.targetAppId, { title: "买牛奶" });
     const r2 = await submit(rig, "增加优先级和优先级筛选", r1.targetAppId);
@@ -54,8 +54,8 @@ describe("A: Pi Durable generation loop (faux model, real Durable + SQLite + too
     const run = await waitRun(rig, r.runId);
     expect(run.status).toBe("failed");
     expect(JSON.parse(run.error_json!).code).toBe("BUDGET_EXCEEDED");
-    expect(rig.core.runs.view(run).progress.stageAttempts).toBe(3);
-    expect(run.model_request_count).toBe(6);
+    expect(rig.core.runs.view(run).progress.stageAttempts).toBe(4);
+    expect(run.model_request_count).toBe(8);
     expect(rig.core.apps.getApp(appId)).toEqual(before);
     createRecord(rig.core, appId, { title: "still works" });
     expect(JSON.parse(run.last_validation_json!).issues.length).toBeGreaterThan(0);

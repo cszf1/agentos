@@ -11,10 +11,12 @@ export const LIMITS = {
   maxSearchChars: 128,
   defaultLimit: 50,
   maxLimit: 100,
-  runDeadlineMs: 300_000,
-  maxModelRequestsPerRun: 6,
-  maxToolTasksPerRun: 20,
+  // v0.2 frozen run budget (spec §18): 900 s, 12 model admissions, 50 tool tasks, 3 stages, 3 candidates, 16384 tokens.
+  runDeadlineMs: 900_000,
+  maxModelRequestsPerRun: 12,
+  maxToolTasksPerRun: 50,
   maxStageAttemptsPerRun: 3,
-  maxOutputTokens: 8192,
+  maxCandidatesPerRun: 3,
+  maxOutputTokens: 16384,
   transcriptMaxItems: 50,
 } as const;

@@ -11,7 +11,7 @@ import { buildModels, type BuiltModels, type ModelConfig } from "./models.js";
 const ctx = BACKGROUND_CONTEXT;
 
 /** Pairing marker between os.sqlite and agent.sqlite, stored on the fixed root conversation. */
-export const WorkspaceDoc = defineDoc<{ storeUUID?: string; protocolVersion?: number }>({
+export const WorkspaceDoc = defineDoc<{ storeUUID?: string; protocolVersion?: number; toolsetVersion?: number }>({
   kind: "agentos.workspace",
   version: 1,
   scope: "conversation",
@@ -135,6 +135,26 @@ export class PiAgentEngine implements AgentEngine {
     }, ctx);
     fault("bind.after_marker");
     return { ok: true, bound: "new" };
+  }
+
+  /**
+   * Tool-set upgrade (spec §3.2, V2-A05): only on an idle root (no tasks, no submissions). The new definitions are
+   * recorded in agent.sqlite's workspace doc; the host records the same migration in os.sqlite. Never clears data.
+   */
+  async upgradeToolset(target: number): Promise<{ ok: true; from: number } | { ok: false; reason: string }> {
+    const root = await this.root();
+    const marker = await this.harness.snapshot(WorkspaceDoc, root.id, ctx);
+    const from = marker?.toolsetVersion ?? 1;
+    if (from === target) return { ok: true, from };
+    if (from > target) return { ok: false, reason: `agent.sqlite uses tool set v${from}, newer than this host (v${target})` };
+    if (!(await this.isIdle())) {
+      return { ok: false, reason: `the Pi root still has unfinished tasks from tool set v${from}; finish or cancel them with the previous host version before upgrading to v${target}` };
+    }
+    await root.commit(async (tx) => {
+      const doc = await tx.doc(WorkspaceDoc, root.id);
+      doc.toolsetVersion = target;
+    }, ctx);
+    return { ok: true, from };
   }
 
   resume(): void {

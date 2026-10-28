@@ -161,10 +161,20 @@ export function buildServer(rt: HostRuntime): FastifyInstance {
 
   const ok = (reply: FastifyReply, status: number, data: unknown) => reply.code(status).send({ data });
 
+  const withDeployment = <T extends { runId: string } | null>(v: T): T => {
+    if (!v || !rt.sys) return v;
+    const d = core.store.get<{ id: string }>("SELECT id FROM deployments WHERE owner_run_id = ? ORDER BY created_at DESC LIMIT 1", v.runId);
+    const row = d ? rt.sys.deployments.get(d.id) : undefined;
+    (v as unknown as { deployment: unknown }).deployment = row
+      ? { deploymentId: row.id, status: row.status, stage: row.stage, error: row.error_json ? JSON.parse(row.error_json) : null }
+      : null;
+    return v;
+  };
+
   const runView = (runId: string | undefined) => {
     if (!runId) return null;
     const row = core.runs.getRow(runId);
-    return row ? core.runs.view(row) : null;
+    return row ? withDeployment(core.runs.view(row)) : null;
   };
 
   // ---- health & auth ----
@@ -197,8 +207,8 @@ export function buildServer(rt: HostRuntime): FastifyInstance {
         clientEpoch: clientEpoch(),
         eventSeq: core.store.eventSeq(),
         apps: core.apps.listApps(),
-        activeRun: active ? core.runs.view(active) : null,
-        lastRun: last ? core.runs.view(last) : null,
+        activeRun: active ? withDeployment(core.runs.view(active)) : null,
+        lastRun: last ? withDeployment(core.runs.view(last)) : null,
         modelAvailable: rt.model.available && rt.status.agentState === "ready",
         model: rt.model.ref ? { ...rt.model.ref, mode: rt.model.mode } : null,
         agentState: rt.status.agentState,

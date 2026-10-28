@@ -10,10 +10,20 @@ export const TOOL_CAPABILITY: Record<string, string> = {
   system_info: "system.info",
   app_list: "apps.list",
   app_get: "apps.get",
+  runtime_catalog: "runtime.catalog",
+  service_catalog: "services.read",
   app_stage: "apps.stage",
   app_validate: "apps.validate",
+  app_prepare: "apps.prepare.agent",
+  app_prepare_status: "deployments.read",
   app_activate: "apps.activate.agent",
 };
+
+/**
+ * Tool-set version recorded in os.sqlite (meta.agent_toolset_version) and agent.sqlite (workspace doc).
+ * 1 = v0.1 (activate by revisionId). 2 = v0.2 (prepare/status/activate by deploymentId, catalogs).
+ */
+export const TOOLSET_VERSION = 2;
 
 function result<T>(out: ToolOutcome<T>, terminateOnSuccess = false): ToolExecutionResult {
   if (out.ok) {
@@ -86,21 +96,22 @@ export function createBuilderExtension(ops: AgentOps, toolLog?: ToolLog): Extens
   const tools = [
     defineTool({
       name: "system_info",
-      description: "Read-only overview of the Linux host (platform, arch, uptime, memory, host version).",
+      description: "Read-only overview of the Linux host (platform, arch, uptime, memory, host version) and whether code apps can run.",
       parameters: Type.Object({}),
       replay: "safe",
-      execute: async (_a, api) => result(ops.systemInfo(id(api.taskId, "system_info"), readSystemInfo)),
+      execute: async (_a, api) =>
+        result(ops.systemInfo(id(api.taskId, "system_info"), () => ({ ...readSystemInfo(), codeRuntimeAvailable: ops.runtime?.runtimeReady ?? false, runtimeProblems: (ops.runtime?.environmentProblems ?? []).slice(0, 3) }))),
     }),
     defineTool({
       name: "app_list",
-      description: "List the workspace apps (id, title, epoch, active revision). Never returns records.",
+      description: "List the workspace apps (id, title, epoch, active revision, runtime, health). Never returns records.",
       parameters: Type.Object({}),
       replay: "safe",
       execute: async (_a, api) => result(ops.appList(id(api.taskId, "app_list"))),
     }),
     defineTool({
       name: "app_get",
-      description: "Read the host-bound target app: appId, expectedAppEpoch, active bundle, full data contract and limits.",
+      description: "Read the host-bound target app: appId, expectedAppEpoch, active bundle (with source code for code apps), full data contract, limits, allowed components.",
       parameters: Type.Object({}),
       replay: "safe",
       execute: async (_a, api) => {
@@ -109,8 +120,22 @@ export function createBuilderExtension(ops: AgentOps, toolLog?: ToolLog): Extens
       },
     }),
     defineTool({
+      name: "runtime_catalog",
+      description: "List the approved runtimeLockIds (profiles core-v1, data-v1), their SDK/ABI and approved modules. Code bundles must use one of them.",
+      parameters: Type.Object({}),
+      replay: "safe",
+      execute: async (_a, api) => result(ops.runtimeCatalog(id(api.taskId, "runtime_catalog"))),
+    }),
+    defineTool({
+      name: "service_catalog",
+      description: "List read-only services other apps export (names, descriptions, input/output schemas). No data, no grants: the user connects services.",
+      parameters: Type.Object({}),
+      replay: "safe",
+      execute: async (_a, api) => result(ops.serviceCatalog(id(api.taskId, "service_catalog"))),
+    }),
+    defineTool({
       name: "app_stage",
-      description: "Store a complete AppBundle as an immutable candidate revision of the target app. Returns revisionId, valid and errors.",
+      description: "Store a complete bundle (formatVersion 1 declarative or 2 code) as an immutable candidate revision of the target app. Returns revisionId, valid and errors.",
       parameters: Type.Object({ bundle: Type.Unknown({ description: "The complete AppBundle JSON object" }) }),
       prepareArguments: (args: unknown) => parseBundleArg(args) as never,
       replay: "safe",
@@ -124,11 +149,25 @@ export function createBuilderExtension(ops: AgentOps, toolLog?: ToolLog): Extens
       execute: async (a, api) => result(ops.appValidate(id(api.taskId, "app_validate"), a.revisionId)),
     }),
     defineTool({
-      name: "app_activate",
-      description: "Publish a validated revision as the target app's active version. Call once; then finish.",
+      name: "app_prepare",
+      description: "Prepare a validated revision for publication (build in the sandbox, start a candidate, health checks on sample data). Returns {deploymentId, status, stage, error}. Waits up to 30 s.",
       parameters: Type.Object({ revisionId: Type.String() }),
       replay: "safe",
-      execute: async (a, api) => result(ops.appActivate(id(api.taskId, "app_activate"), a.revisionId), true),
+      execute: async (a, api) => result(await ops.appPrepare(id(api.taskId, "app_prepare"), a.revisionId)),
+    }),
+    defineTool({
+      name: "app_prepare_status",
+      description: "Read the status of a deployment you prepared (may wait up to 10 s). Read-only.",
+      parameters: Type.Object({ deploymentId: Type.String() }),
+      replay: "safe",
+      execute: async (a, api) => result(await ops.appPrepareStatus(id(api.taskId, "app_prepare_status"), a.deploymentId)),
+    }),
+    defineTool({
+      name: "app_activate",
+      description: "Publish a ready deployment as the target app's active version. Call once; then finish.",
+      parameters: Type.Object({ deploymentId: Type.String() }),
+      replay: "safe",
+      execute: async (a, api) => result(await ops.appActivate(id(api.taskId, "app_activate"), a.deploymentId), true),
     }),
   ];
   return defineExtension({

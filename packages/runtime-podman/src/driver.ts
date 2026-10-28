@@ -217,6 +217,60 @@ export class PodmanDriver implements RuntimeDriver {
     return text.length > maxBytes ? text.slice(-maxBytes) : text;
   }
 
+  async listPlatformImages(): Promise<string[]> {
+    const r = await this.api.json<Record<string, any>[]>("GET", `/libpod/images/json?filters=${enc({ label: ["agentos.recipe"] })}`);
+    if (r.status !== 200 || !Array.isArray(r.data)) throw new PodmanError(r.status, "image list failed");
+    return r.data.flatMap((i) => (i.Names ?? i.RepoTags ?? []) as string[]).filter((n) => n.startsWith("localhost/agentos-"));
+  }
+
+  async removeImage(name: string): Promise<void> {
+    if (!name.startsWith("localhost/agentos-")) throw new PodmanError(400, "only agentos platform images are removed");
+    const r = await this.api.json<unknown>("DELETE", `/libpod/images/${encodeURIComponent(name)}`);
+    if (r.status !== 200 && r.status !== 404) throw new PodmanError(r.status, `image remove ${name}: ${r.status}`);
+  }
+
+  async exportImage(name: string, file: string): Promise<void> {
+    const { createWriteStream } = await import("node:fs");
+    const http = await import("node:http");
+    await new Promise<void>((resolve, reject) => {
+      const req = http.request({ socketPath: this.opts.socketPath, method: "GET", path: `/${this.api.version}/libpod/images/${encodeURIComponent(name)}/get?format=oci-archive`, headers: { host: "d" } }, (res) => {
+        if (res.statusCode !== 200) {
+          res.resume();
+          reject(new PodmanError(res.statusCode ?? 0, `image export ${name}: ${res.statusCode}`));
+          return;
+        }
+        const out = createWriteStream(file, { mode: 0o600 });
+        res.pipe(out);
+        out.on("finish", () => resolve());
+        out.on("error", reject);
+      });
+      req.on("error", reject);
+      req.end();
+    });
+  }
+
+  async importImage(file: string): Promise<string[]> {
+    const { createReadStream, statSync } = await import("node:fs");
+    const http = await import("node:http");
+    const body = await new Promise<string>((resolve, reject) => {
+      const req = http.request(
+        { socketPath: this.opts.socketPath, method: "POST", path: `/${this.api.version}/libpod/images/load`, headers: { host: "d", "content-type": "application/x-tar", "content-length": statSync(file).size }, timeout: 15 * 60_000 },
+        (res) => {
+          let t = "";
+          res.on("data", (c) => (t += String(c)));
+          res.on("end", () => (res.statusCode === 200 ? resolve(t) : reject(new PodmanError(res.statusCode ?? 0, `image load: ${t.slice(0, 300)}`))));
+        },
+      );
+      req.on("error", reject);
+      createReadStream(file).pipe(req);
+    });
+    try {
+      return ((JSON.parse(body) as { Names?: string[] }).Names ?? []) as string[];
+    } catch {
+      return [];
+    }
+  }
+
   async wait(idOrName: string, timeoutMs: number): Promise<ContainerStatus> {
     const until = Date.now() + timeoutMs;
     for (;;) {

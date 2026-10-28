@@ -1,7 +1,30 @@
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { PiAgentEngine } from "@agentos/agent-pi";
-import { RunCoordinator, openCore, requestHash, type Clock, type Core, type RunSettings } from "@agentos/core";
+import { existsSync, readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { PodmanDriver, recipeContext } from "@agentos/runtime-podman";
+import { RunCoordinator, RuntimeCatalogService, RuntimeSystem, openCore, requestHash, type Clock, type Core, type RunSettings } from "@agentos/core";
+import type { RuntimeCatalog } from "@agentos/contracts";
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const CATALOG = JSON.parse(readFileSync(path.join(ROOT, "runtime", "catalog", "catalog.json"), "utf8")) as RuntimeCatalog;
+
+/** The real Podman driver when this machine has the rootless engine socket, else null (code apps unavailable). */
+export function rigDriver(): PodmanDriver | null {
+  const sock = process.env.AGENTOS_PODMAN_SOCKET ?? `/run/user/${process.getuid!()}/podman/podman.sock`;
+  if (process.env.AGENTOS_RUNTIME === "off" || !existsSync(sock)) return null;
+  return new PodmanDriver({
+    socketPath: sock,
+    recipe: (img) => {
+      const lock = CATALOG.locks.find((l) => l.builderImage.name === img.name || l.runtimeImage.name === img.name);
+      if (!lock) return null;
+      const base = `${lock.baseImage.reference}@${lock.baseImage.digest}`;
+      const c = recipeContext({ platformRoot: ROOT, profileId: lock.profileId, role: img.role, baseDigestRef: base, approvedSpecifiers: lock.modules.flatMap((m) => m.specifiers), lockId: lock.id });
+      return { entries: c.entries, recipeHash: c.recipeHash, baseDigestRef: base };
+    },
+  });
+}
 import { tmpDir } from "./helpers.js";
 
 export interface AgentRig {
@@ -9,6 +32,7 @@ export interface AgentRig {
   core: Core;
   engine: PiAgentEngine;
   coord: RunCoordinator;
+  sys: RuntimeSystem;
   close(): Promise<void>;
 }
 
@@ -23,6 +47,9 @@ export async function startRig(opts: { dir?: string; clock?: Clock; runSettings?
     fauxContextWindow: opts.fauxContextWindow,
     compaction: opts.compaction,
   });
+  const sys = new RuntimeSystem(core, { dataDir: dir, catalog: new RuntimeCatalogService(CATALOG, process.arch === "arm64" ? "linux/arm64" : "linux/amd64"), driver: rigDriver(), log: () => {}, autoReconcile: false });
+  await sys.boot();
+  core.agentOps.runtime = sys;
   await engine.open();
   const meta = core.store.meta();
   const b = await engine.bind(meta.store_uuid, meta.agent_binding_state);
@@ -37,10 +64,12 @@ export async function startRig(opts: { dir?: string; clock?: Clock; runSettings?
     core,
     engine,
     coord,
+    sys,
     async close() {
       coord.stop();
       await coord.drain();
       await engine.close();
+      await sys.shutdown();
       core.store.close();
     },
   };

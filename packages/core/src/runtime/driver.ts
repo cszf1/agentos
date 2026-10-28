@@ -81,6 +81,12 @@ export interface RuntimeDriver {
   list(storeUUID: string): Promise<ContainerStatus[]>;
   /** Bounded tail of a container's log (diagnostics only). */
   diagnostics(idOrName: string, maxBytes: number): Promise<string>;
+  /** Platform images this host built (label agentos.recipe), by name. */
+  listPlatformImages(): Promise<string[]>;
+  removeImage(name: string): Promise<void>;
+  /** Save an image as an OCI archive file (cold backup) and load one back (restore). */
+  exportImage(name: string, file: string): Promise<void>;
+  importImage(file: string): Promise<string[]>;
   /** Wait until the container exits or timeout; returns the final status. */
   wait(idOrName: string, timeoutMs: number): Promise<ContainerStatus>;
 }

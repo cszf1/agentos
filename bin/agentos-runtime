@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Runtime environment checks and image warm-up. Read-only for the workspace; safe while the host runs.
+set -euo pipefail
+HERE="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+NODE_BIN="${AGENTOS_NODE:-$(command -v node)}"
+[[ "${1:-}" == "--" ]] && shift
+exec "$NODE_BIN" --disable-warning=ExperimentalWarning "$HERE/packages/host/dist/runtime-main.js" "$@"

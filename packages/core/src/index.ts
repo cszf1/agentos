@@ -55,3 +55,4 @@ export * from "./deployments/deployment-service.js";
 export * from "./invocations/invocation-service.js";
 export * from "./inter-app/inter-app-service.js";
 export * from "./runtime/system.js";
+export * from "./builds/gc.js";

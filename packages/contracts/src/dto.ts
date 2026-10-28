@@ -153,6 +153,8 @@ export interface RecordPage {
 }
 
 export interface RunView {
+  /** v0.2: the run's latest deployment and its real stage from the database (spec §19.3). */
+  deployment?: { deploymentId: string; status: string; stage: string | null; error: { stage?: string; code: string; message: string } | null } | null;
   runId: string;
   status: RunStatus;
   dispatchState: DispatchState;

@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { createRequire } from "node:module";
 import { loadConfig, expandHome, type HostConfig } from "./config.js";
 import { loadCatalog } from "./runtime-setup.js";
+import { gc } from "./runtime-ops.js";
 import { assertLockHeld } from "./lock.js";
 import { rotateSecrets } from "./auth.js";
 import { MIGRATIONS, openCore } from "@agentos/core";
@@ -272,6 +273,12 @@ export function adminMain(): void {
       if (!b) throw new Error("usage: pnpm restore -- --backup <dir>");
       const r = restore(config.dataDir, b, { failAfterFirstReplace: config.testMode && process.env.AGENTOS_FAULT_POINT === "restore.after_first_replace" && process.env.AGENTOS_FAULTS === "1" });
       process.stdout.write(`${JSON.stringify({ ok: true, ...r, note: "workspace restored to the backup time; sign in again with the new auth-token" })}\n`);
+    } else if (cmd === "gc") {
+      const dryRun = process.argv.includes("--dry-run");
+      void gc(config, dryRun).then((r) => process.stdout.write(`${JSON.stringify({ ok: true, ...(r as object) }, null, 2)}\n`)).catch((e) => {
+        process.stderr.write(`${JSON.stringify({ ok: false, error: (e as Error).message })}\n`);
+        process.exit(1);
+      });
     } else if (cmd === "seed") {
       if (!config.testMode) throw new Error("seed is a test-only entry (NODE_ENV=test)");
       const files = args("--fixture");

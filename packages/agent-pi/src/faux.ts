@@ -1,5 +1,25 @@
 import { fauxAssistantMessage, fauxText, fauxToolCall, type AssistantMessage, type Model, type TranscriptContext } from "@earendil-works/pi-ai";
-import type { AppBundle, DataContract, Field } from "@agentos/contracts";
+import fs from "node:fs";
+import path from "node:path";
+import type { AnyBundle, AppBundle, CodeBundle, DataContract, Field } from "@agentos/contracts";
+
+/** Hand-written v0.2 fixtures (repository fixtures/v0.2), used only by the faux test model. */
+const FIXTURES = path.resolve(import.meta.dirname, "..", "..", "..", "fixtures", "v0.2");
+function fixture(name: string): CodeBundle {
+  const dir = path.join(FIXTURES, name);
+  const b = JSON.parse(fs.readFileSync(path.join(dir, "bundle.json"), "utf8")) as CodeBundle;
+  const files: Record<string, string> = {};
+  const walk = (d: string, rel: string) => {
+    for (const n of fs.readdirSync(d).sort()) {
+      const p = path.join(d, n);
+      if (fs.statSync(p).isDirectory()) walk(p, `${rel}/${n}`);
+      else files[`${rel}/${n}`] = fs.readFileSync(p, "utf8");
+    }
+  };
+  walk(path.join(dir, "src"), "src");
+  b.code.files = files;
+  return b;
+}
 
 /**
  * Deterministic "model" for faux acceptance mode, built on pi-ai's official faux provider. It reads the real
@@ -27,15 +47,44 @@ interface AppGet {
   appId: string;
   mode: "create" | "modify";
   intent: string;
-  activeBundle: AppBundle | null;
+  activeBundle: AnyBundle | null;
   contract: DataContract;
+}
+
+/** Code bundles for the faux model: picked by words in the request (the real model writes its own). */
+export function codeBundleFor(g: AppGet): CodeBundle | null {
+  const intent = cleanIntent(g.intent);
+  let name: string | null = null;
+  if (/概览|overview/i.test(intent)) name = "work-overview";
+  else if (/csv/i.test(intent)) name = "csv-import";
+  else if (/工时|estimate/i.test(intent)) name = "todo-kanban-hours";
+  else if (/看板|kanban|批量/i.test(intent)) name = "todo-kanban";
+  else if (g.activeBundle?.formatVersion === 2 && marker(g.intent, "same") === undefined) {
+    const b = structuredClone(g.activeBundle);
+    b.manifest.description = intent.slice(0, 200) || b.manifest.description;
+    return b;
+  }
+  if (!name) return null;
+  const b = fixture(name);
+  b.manifest.appId = g.appId;
+  // Carry every contract field (hidden ones too) with its exact spec.
+  for (const [k, spec] of Object.entries(g.contract.fields)) {
+    if (!Object.hasOwn(b.data.fields, k)) b.data.fields[k] = { ...(spec as object), label: k } as Field;
+  }
+  return b;
 }
 
 function cleanIntent(intent: string): string {
   return intent.replace(/\[faux:[^\]]*\]/g, "").trim();
 }
 
-export function buildBundleFor(g: AppGet): AppBundle {
+export function buildBundleFor(g: AppGet): AnyBundle {
+  const code = codeBundleFor(g);
+  if (code) return code;
+  return buildDeclarative(g);
+}
+
+function buildDeclarative(g: AppGet): AppBundle {
   const intent = cleanIntent(g.intent);
   if (g.activeBundle === null) {
     const isTodo = /待办|todo|任务/i.test(intent) || intent.length === 0;
@@ -59,7 +108,7 @@ export function buildBundleFor(g: AppGet): AppBundle {
       view: { kind: "records", titleField: "title", columns: ["title", "note"], formFields: ["title", "note"], searchField: "title", filters: [] },
     };
   }
-  const b = structuredClone(g.activeBundle);
+  const b = structuredClone(g.activeBundle) as AppBundle;
   // Every contract field must be carried, even ones the active (older) version hides.
   for (const [k, spec] of Object.entries(g.contract.fields)) {
     if (!Object.hasOwn(b.data.fields, k)) b.data.fields[k] = { ...(spec as object), label: k } as Field;
@@ -116,14 +165,43 @@ export async function fauxBuilderResponse(context: TranscriptContext, _options: 
   const stages = results.filter((r) => r.toolName === "app_stage").length;
   const invalidAlways = marker(intent, "invalid") !== undefined;
   const invalidOnce = marker(intent, "invalid-once") !== undefined;
+  const compileOnce = marker(intent, "compile-error-once") !== undefined;
+  const compileAlways = marker(intent, "compile-error") !== undefined;
+  const healthOnce = marker(intent, "health-fail-once") !== undefined;
 
-  const nextBundle = (): AppBundle => {
+  const nextBundle = (): AnyBundle => {
     const b = buildBundleFor(g!);
+    if (b.formatVersion === 2) {
+      const c = structuredClone(b);
+      if (compileAlways || (compileOnce && stages === 0)) {
+        // A type error the sandbox compiler reports with file:line.
+        c.code.files["src/app.ts"] = `${c.code.files["src/app.ts"]}\nexport const broken: number = "not a number";\n`;
+      } else if (healthOnce && stages === 0) {
+        // main returns output that violates its outputSchema: the preview health check fails.
+        c.code.files["src/app.ts"] = c.code.files["src/app.ts"]!.replace("total: ", "total: -1 + 0 * ");
+      }
+      return c;
+    }
     if (invalidAlways || (invalidOnce && stages === 0)) {
       // Structurally fine, semantically wrong: search on a boolean field.
       return { ...b, view: { ...b.view, searchField: Object.keys(b.data.fields).find((k) => b.data.fields[k]!.type === "boolean") ?? "nope" } };
     }
     return b;
+  };
+  const lastStagedRevision = () => parse(textOf(results.filter((r) => r.toolName === "app_stage" && !r.isError).at(-1) as never)).revisionId as string;
+  const afterDeployment = (d: Record<string, unknown>): AssistantMessage => {
+    if (d.status === "ready") {
+      if (marker(intent, "post-write") !== undefined) {
+        // Activation plus a second write in the same round: the second must be refused by the publish fence.
+        const extra = structuredClone(buildBundleFor(g!));
+        extra.manifest.title = `${extra.manifest.title} (extra)`;
+        return fauxAssistantMessage([fauxToolCall("app_activate", { deploymentId: d.deploymentId as string }), fauxToolCall("app_stage", { bundle: extra } as never)], { stopReason: "toolUse" });
+      }
+      return call("app_activate", { deploymentId: d.deploymentId as string });
+    }
+    if (d.status === "queued" || d.status === "preparing") return call("app_prepare_status", { deploymentId: d.deploymentId as string });
+    if (stages >= 3) return fauxAssistantMessage(`准备失败，已用完暂存次数：${JSON.stringify(d.error ?? {})}`);
+    return call("app_stage", { bundle: nextBundle() });
   };
 
   switch (lr.toolName) {
@@ -140,17 +218,15 @@ export async function fauxBuilderResponse(context: TranscriptContext, _options: 
       if (results.some((r) => r.toolName === "app_activate" && !r.isError)) return fauxAssistantMessage("应用已发布。");
       return call("app_validate", { revisionId: body.revisionId });
     case "app_validate":
-      if (body.valid === true) {
-        const revisionId = parse(textOf(results.filter((r) => r.toolName === "app_stage").at(-1) as never)).revisionId as string;
-        if (marker(intent, "post-write") !== undefined) {
-          // Activation plus a second write in the same round: the second must be refused by the publish fence.
-          const extra = structuredClone(buildBundleFor(g!));
-          extra.manifest.title = `${extra.manifest.title} (extra)`;
-          return fauxAssistantMessage([fauxToolCall("app_activate", { revisionId }), fauxToolCall("app_stage", { bundle: extra } as never)], { stopReason: "toolUse" });
-        }
-        return call("app_activate", { revisionId });
-      }
+      if (body.valid === true) return call("app_prepare", { revisionId: (body.revisionId as string) ?? lastStagedRevision() });
       return call("app_stage", { bundle: nextBundle() });
+    case "app_prepare":
+    case "app_prepare_status":
+      if (lr.isError) {
+        if (stages >= 3 || body.error === "FORBIDDEN" || body.error === "BUDGET_EXCEEDED" || body.error === "SANDBOX_UNAVAILABLE") return fauxAssistantMessage(`准备失败：${String(body.message ?? body.error)}`);
+        return call("app_stage", { bundle: nextBundle() });
+      }
+      return afterDeployment(body);
     case "app_activate":
       if (lr.isError) return fauxAssistantMessage(`发布失败：${String(body.message ?? "")}`);
       return fauxAssistantMessage(body.changed === false ? "当前版本已经满足需求。" : "应用已发布。");

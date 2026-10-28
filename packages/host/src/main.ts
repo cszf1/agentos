@@ -3,7 +3,7 @@ import path from "node:path";
 import { HOST_VERSION, checkAnyStructure } from "@agentos/contracts";
 import { RunCoordinator, RuntimeSystem, openCore, type Core } from "@agentos/core";
 import { catalogProblems, createDriver, loadCatalog } from "./runtime-setup.js";
-import { PiAgentEngine, modelConfigFromEnv } from "@agentos/agent-pi";
+import { PiAgentEngine, TOOLSET_VERSION, modelConfigFromEnv } from "@agentos/agent-pi";
 import { loadConfig } from "./config.js";
 import { createLogger, type Logger } from "./log.js";
 import { assertLocalFs, assertLockHeld } from "./lock.js";
@@ -138,14 +138,41 @@ export async function main(): Promise<void> {
   try {
     const catalog = loadCatalog(config);
     const problems = catalogProblems(config, catalog);
-    const sys = new RuntimeSystem(core, { dataDir: config.dataDir, catalog, driver: problems.length === 0 ? createDriver(config, catalog) : null, log: (lvl, m, f) => log[lvl](m, f) });
+    const sys = new RuntimeSystem(core, { dataDir: config.dataDir, catalog, driver: problems.length === 0 ? createDriver(config, catalog) : null, log: (lvl, m, f) => log[lvl](m, f), cacheBudgetBytes: Number(process.env.AGENTOS_CACHE_BUDGET_BYTES) || undefined });
     await sys.boot();
     sys.environmentProblems.push(...problems);
     rt.sys = sys;
+    core.agentOps.runtime = sys;
     if (!sys.runtimeReady) log.warn("code runtime unavailable", { problems: sys.environmentProblems });
     else log.info("code runtime ready", { bootId: sys.bootId, catalog: catalog.hash });
   } catch (e) {
     log.error("code runtime failed to start; code apps are unavailable", { error: (e as Error).message });
+  }
+
+  // 5b. agent tool set upgrade (spec §3.2): only from an idle root and with no unfinished run; recorded in both stores.
+  {
+    const cur = core.store.get<{ v: number }>("SELECT agent_toolset_version AS v FROM meta WHERE id = 1")!.v;
+    if (cur !== TOOLSET_VERSION) {
+      const busyRun = core.runs.activeRun();
+      const up = busyRun ? { ok: false as const, reason: `run ${busyRun.id} from tool set v${cur} is unfinished; finish or cancel it with the previous host version first` } : await engine.upgradeToolset(TOOLSET_VERSION);
+      if (!up.ok) {
+        rt.status.agentState = "blocked";
+        rt.status.agentDiagnostic = `agent tool set upgrade v${cur}→v${TOOLSET_VERSION} refused: ${up.reason}`;
+        rt.status.phase = "ready";
+        log.error("agent tool set upgrade refused; generation is blocked, apps keep working", { reason: up.reason });
+        return;
+      }
+      core.store.tx(() => {
+        core.store.run(
+          "INSERT OR IGNORE INTO agent_toolset_migrations (version, description, applied_at) VALUES (?, ?, ?)",
+          TOOLSET_VERSION,
+          "v0.2 tools: runtime_catalog, service_catalog, app_prepare, app_prepare_status, app_activate(deploymentId); prompt for isolated-code-v1 and slot-tree-v1",
+          new Date().toISOString(),
+        );
+        core.store.run("UPDATE meta SET agent_toolset_version = ? WHERE id = 1", TOOLSET_VERSION);
+      });
+      log.info("agent tool set upgraded", { from: cur, to: TOOLSET_VERSION });
+    }
   }
 
   // 5. bind and reconcile the active run before anything can be scheduled

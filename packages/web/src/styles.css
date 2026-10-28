@@ -74,3 +74,38 @@ textarea { width: 100%; resize: vertical; }
 .versions li.active { border-color: var(--accent); background: #f3f7ff; }
 .badge { align-self: flex-start; font-size: 12px; color: var(--accent); }
 @media (max-width: 900px) { .shell { grid-template-columns: 1fr; } .workspace { grid-template-columns: 1fr; } }
+
+/* v0.2: code apps, slot tree, runtime and services */
+.app-meta { display: block; font-size: 11px; }
+.kanban { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(200px, 1fr); gap: 12px; align-items: start; }
+.kanban-col { background: #f4f5f7; border-radius: 8px; padding: 8px; min-height: 80px; }
+.kanban-col h4 { margin: 0 0 8px; }
+.card { display: flex; flex-direction: column; gap: 2px; background: #fff; border: 1px solid #dde; border-radius: 6px; padding: 8px; margin-bottom: 6px; cursor: pointer; }
+.card.picked { border-color: #3b6fd8; box-shadow: 0 0 0 1px #3b6fd8; }
+.card input { align-self: flex-start; }
+.card-title { font-weight: 600; }
+.metric { background: #f7f8fa; border-radius: 8px; padding: 10px 12px; }
+.metric-value { font-size: 22px; font-weight: 600; }
+.chart svg { width: 100%; max-width: 640px; height: auto; }
+.chart .legend { display: flex; gap: 12px; font-size: 12px; }
+.chart .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; }
+.slot-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; border-top: 1px solid #eee; padding-top: 8px; }
+.slot-form h4 { width: 100%; margin: 0; }
+.field { display: flex; flex-direction: column; font-size: 13px; gap: 2px; }
+.check { display: flex; align-items: center; gap: 4px; }
+.slot-body { display: flex; gap: 16px; }
+.slot-main { flex: 1; min-width: 0; }
+.slot-aside { width: 260px; }
+.toolbar { display: flex; gap: 8px; }
+.tabs [role="tablist"] button.active { font-weight: 600; border-bottom: 2px solid #3b6fd8; }
+.runtime-panel, .services-panel { border-bottom: 1px solid #eee; padding-bottom: 8px; margin-bottom: 8px; }
+.dot.warn { background: #d8a03b; }
+.banner.info { background: #eef3fb; color: #234; }
+.deploy { padding: 6px 8px; border-radius: 6px; background: #f4f5f7; margin-bottom: 8px; }
+.deploy-failed { background: #fbeeee; }
+.deploy-committed { background: #eef8f0; }
+.warn-text { color: #9a6a00; }
+.diag { font-family: monospace; font-size: 11px; max-height: 160px; overflow: auto; }
+.diag .err { color: #a33; }
+button.danger { color: #a33; }
+.pager { display: flex; gap: 8px; align-items: center; margin-top: 4px; }

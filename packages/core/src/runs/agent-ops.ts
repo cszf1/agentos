@@ -4,6 +4,9 @@ import type { AppService, ActivateResult } from "../apps/app-service.js";
 import { authorize, type CapabilityGateway, type Principal } from "../capabilities/gateway.js";
 import type { RunService } from "./run-service.js";
 import { fault } from "../faults.js";
+import type { RuntimeSystem } from "../runtime/system.js";
+import type { DeploymentDto } from "../deployments/deployment-service.js";
+import { CODE_LIMITS, COMPONENT_TYPES, UI_LIMITS } from "@agentos/contracts";
 
 /** Identity of one agent tool call, built by the Pi adapter (never by the model). */
 export interface ToolCallIdentity {
@@ -20,6 +23,10 @@ export interface AppGetResult {
   activeBundle: AnyBundle | null;
   contract: DataContract;
   limits: { maxBundleBytes: number; maxFields: number; maxEnumValues: number; maxStageAttempts: number };
+  dataEpoch?: number;
+  codeRuntimeAvailable?: boolean;
+  codeLimits?: unknown;
+  runtimeHealth?: string | null;
 }
 
 export type ToolOutcome<T> = { ok: true; value: T } | { ok: false; code: string; message: string; issues?: ValidationIssue[] };
@@ -30,6 +37,9 @@ export type ToolOutcome<T> = { ok: true; value: T } | { ok: false; code: string;
  * host-generated operation key (store_uuid/run_id/pi_task_id/tool_name).
  */
 export class AgentOps {
+  /** v0.2 runtime services (set by the host after the runtime system starts). */
+  runtime: RuntimeSystem | null = null;
+
   constructor(
     private readonly store: Store,
     private readonly gateway: CapabilityGateway,
@@ -90,7 +100,15 @@ export class AgentOps {
     const entered = this.enter(id);
     if ("ok" in entered) return entered;
     authorize("apps.list", this.principal(entered.runId, id));
-    return { ok: true, value: { apps: this.apps.listApps().map((a) => ({ appId: a.appId, title: a.title, appEpoch: a.appEpoch, activeRevisionId: a.activeRevisionId })) } };
+    return {
+      ok: true,
+      value: {
+        apps: this.apps.listApps().map((a) => {
+          const b = this.apps.activeBundle(this.apps.requireApp(a.appId));
+          return { appId: a.appId, title: a.title, appEpoch: a.appEpoch, activeRevisionId: a.activeRevisionId, runtime: b?.manifest.runtime ?? null, health: b?.formatVersion === 2 ? (this.runtime?.runtime.row(a.appId)?.health ?? "stopped") : null };
+        }),
+      },
+    };
   }
 
   appGet(id: ToolCallIdentity): ToolOutcome<AppGetResult> {
@@ -111,6 +129,10 @@ export class AgentOps {
           activeBundle: this.apps.activeBundle(app),
           contract: this.apps.contractOf(app),
           limits: { maxBundleBytes: LIMITS.maxBundleBytes, maxFields: LIMITS.maxFields, maxEnumValues: LIMITS.maxEnumValues, maxStageAttempts: this.runs.settings.maxStageAttempts },
+          dataEpoch: (app as { data_epoch?: number }).data_epoch ?? 0,
+          codeRuntimeAvailable: this.runtime?.runtimeReady ?? false,
+          codeLimits: { ...CODE_LIMITS, ui: UI_LIMITS, components: COMPONENT_TYPES },
+          runtimeHealth: this.runtime?.runtime.row(app.id)?.health ?? null,
         };
       }),
     );
@@ -133,7 +155,7 @@ export class AgentOps {
     return out;
   }
 
-  appValidate(id: ToolCallIdentity, revisionId: string): ToolOutcome<{ valid: boolean; errors: ValidationIssue[] }> {
+  appValidate(id: ToolCallIdentity, revisionId: string): ToolOutcome<{ revisionId: string; valid: boolean; errors: ValidationIssue[] }> {
     const entered = this.enter(id);
     if ("ok" in entered) return entered;
     const runId = entered.runId;
@@ -142,27 +164,107 @@ export class AgentOps {
       this.store.read(() => {
         const run = this.runs.requireRun(runId);
         const r = this.apps.validate(run.target_app_id, revisionId);
-        return { valid: r.valid, errors: r.issues };
+        return { revisionId, valid: r.valid, errors: r.issues };
       }),
     );
     if (out.ok) this.runs.recordValidation(runId, "validate", out.value.errors);
     return out;
   }
 
-  appActivate(id: ToolCallIdentity, revisionId: string): ToolOutcome<ActivateResult> {
+  runtimeCatalog(id: ToolCallIdentity): ToolOutcome<unknown> {
+    const entered = this.enter(id);
+    if ("ok" in entered) return entered;
+    authorize("runtime.catalog", this.principal(entered.runId, id));
+    const sys = this.runtime;
+    if (!sys) return { ok: true, value: { codeRuntimeAvailable: false, locks: [] } };
+    return {
+      ok: true,
+      value: {
+        codeRuntimeAvailable: sys.runtimeReady,
+        problems: sys.environmentProblems.slice(0, 5),
+        platform: sys.opts.catalog.platform,
+        locks: sys.opts.catalog.locks().map((l) => ({
+          runtimeLockId: l.id,
+          profileId: l.profileId,
+          sdk: { module: "@agentos/app-sdk", version: l.sdkVersion, abiVersion: l.abiVersion },
+          approvedModules: l.modules.map((m) => ({ name: m.name, version: m.version, import: m.specifiers })),
+          compiler: l.compiler,
+        })),
+      },
+    };
+  }
+
+  serviceCatalog(id: ToolCallIdentity): ToolOutcome<unknown> {
+    const entered = this.enter(id);
+    if ("ok" in entered) return entered;
+    authorize("services.read", this.principal(entered.runId, id));
+    const items = this.runtime?.interApp.catalog() ?? [];
+    // Names, descriptions and schemas only: never business data or grant secrets.
+    return { ok: true, value: { services: items.map((e) => ({ appId: e.appId, appTitle: e.appTitle, exportName: e.exportName, contractVersion: e.contractVersion, description: e.description, inputSchema: e.inputSchema, outputSchema: e.outputSchema })) } };
+  }
+
+  /** app_prepare: idempotent deployment registration, then a bounded wait (≤30 s) outside any transaction. */
+  async appPrepare(id: ToolCallIdentity, revisionId: string): Promise<ToolOutcome<DeploymentDto>> {
     const entered = this.enter(id);
     if ("ok" in entered) return entered;
     const runId = entered.runId;
+    const sys = this.runtime;
+    if (!sys) return { ok: false, code: "SANDBOX_UNAVAILABLE", message: "the code runtime is not available on this host" };
     const principal = this.principal(runId, id);
+    const opKey = this.opKey(runId, id);
     const out = this.wrap(() =>
-      this.gateway.write("apps.activate.agent", { principal, operationKey: this.opKey(runId, id), requestHash: sha256Hex(canonicalJson({ revisionId })) }, () => {
+      this.gateway.write("apps.prepare.agent", { principal, operationKey: opKey, requestHash: sha256Hex(canonicalJson({ revisionId })) }, () => {
         const run = this.runs.assertWritable(runId);
-        const r = this.apps.activateInTx(run.target_app_id, revisionId, run.expected_app_epoch, { historicalOnly: false, runId });
-        this.runs.setApplied(runId, revisionId);
-        return { status: 200, body: r };
+        const d = sys.deployments.prepareInTx({
+          appId: run.target_app_id, revisionId, expectedAppEpoch: run.expected_app_epoch, origin: "agent_prepare", ownerRunId: runId,
+          requestKey: opKey, requestHash: sha256Hex(canonicalJson({ revisionId })), deadlineMs: Date.parse(run.deadline_at),
+        });
+        return { status: 202, body: { deploymentId: d.id } };
       }).body,
     );
-    if (out.ok) fault("activate.after_commit");
-    return out;
+    if (!out.ok) return out;
+    fault("tool.app_prepare.after_accept");
+    // Replays find the same deployment; a finished one is never restarted by its old acceptance receipt.
+    void sys.deployments.drive(out.value.deploymentId);
+    const d = await sys.deployments.waitSettled(out.value.deploymentId, 30_000);
+    return { ok: true, value: sys.deployments.dto(d) };
+  }
+
+  /** app_prepare_status: read-only projection, may wait up to 10 s; never advances or rebuilds anything. */
+  async appPrepareStatus(id: ToolCallIdentity, deploymentId: string): Promise<ToolOutcome<DeploymentDto>> {
+    const entered = this.enter(id);
+    if ("ok" in entered) return entered;
+    const runId = entered.runId;
+    authorize("deployments.read", this.principal(runId, id));
+    const sys = this.runtime;
+    if (!sys) return { ok: false, code: "SANDBOX_UNAVAILABLE", message: "the code runtime is not available on this host" };
+    const d = sys.deployments.get(deploymentId);
+    if (!d || d.owner_run_id !== runId) return { ok: false, code: "NOT_FOUND", message: "deployment not found for this run" };
+    const settled = await sys.deployments.waitSettled(deploymentId, 10_000);
+    return { ok: true, value: sys.deployments.dto(settled) };
+  }
+
+  /** app_activate: consume a ready deployment of this run (spec §14.2). */
+  async appActivate(id: ToolCallIdentity, deploymentId: string): Promise<ToolOutcome<ActivateResult & { deploymentId: string; noOp: boolean; health: string | null }>> {
+    const entered = this.enter(id);
+    if ("ok" in entered) return entered;
+    const runId = entered.runId;
+    const sys = this.runtime;
+    if (!sys) return { ok: false, code: "SANDBOX_UNAVAILABLE", message: "the runtime services are not available" };
+    const principal = this.principal(runId, id);
+    const d0 = sys.deployments.get(deploymentId);
+    if (d0) await sys.deployments.freshProbe(d0);
+    const out = this.wrap(() =>
+      this.gateway.write("apps.activate.agent", { principal, operationKey: this.opKey(runId, id), requestHash: sha256Hex(canonicalJson({ deploymentId })) }, () => {
+        this.runs.assertWritable(runId);
+        const r = sys.deployments.activateInTx(deploymentId, { runId });
+        this.runs.setApplied(runId, r.revisionId);
+        return { status: 200, body: { appId: r.appId, revisionId: r.revisionId, appEpoch: r.appEpoch, changed: r.changed, deploymentId, noOp: r.noOp } };
+      }).body,
+    );
+    if (!out.ok) return out;
+    fault("activate.after_commit");
+    void sys.deployments.afterCommit(deploymentId);
+    return { ok: true, value: { ...out.value, health: sys.runtime.row(out.value.appId)?.health ?? null } };
   }
 }

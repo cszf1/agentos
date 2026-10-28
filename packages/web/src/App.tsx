@@ -2,6 +2,9 @@ import { Component, useCallback, useEffect, useRef, useState, type ReactNode } f
 import type { AppDetail, RevisionSummary, RunView, StateView, SystemInfo } from "@agentos/contracts";
 import { ApiError, NetworkError, api, describeError, newKey, setClientEpoch } from "./api";
 import { AppView } from "./AppView";
+import { CodeAppView } from "./SlotRenderer";
+import { DeploymentLine, RuntimePanel, ServicesPanel, STAGE_TEXT, healthText } from "./Panels";
+import type { DeploymentView } from "./api";
 
 class Boundary extends Component<{ children: ReactNode; resetKey: string }, { error: Error | null; key: string }> {
   state = { error: null as Error | null, key: this.props.resetKey };
@@ -66,7 +69,11 @@ const TOOL_TEXT: Record<string, string> = {
   app_get: "读取应用",
   app_stage: "暂存候选版本",
   app_validate: "校验",
-  app_activate: "发布",
+  app_activate: "激活",
+  app_prepare: "准备发布",
+  app_prepare_status: "查询准备状态",
+  runtime_catalog: "读取运行时目录",
+  service_catalog: "读取服务目录",
   system_info: "读取系统信息",
   app_list: "列出应用",
 };
@@ -90,6 +97,12 @@ function RunPanel(props: { run: RunView; onCancel: () => void; onRetry: () => vo
         </span>
       </div>
       <div className="run-intent">“{r.intent}”</div>
+      {r.deployment && (
+        <div className="small">
+          发布：{r.deployment.stage ? STAGE_TEXT[r.deployment.stage] ?? r.deployment.stage : r.deployment.status}
+          {r.deployment.error ? ` · ${r.deployment.error.code} ${r.deployment.error.message}` : ""}
+        </div>
+      )}
       {r.appliedRevisionId && <div className="banner ok">已发布版本 {r.appliedRevisionId.slice(7, 19)}{noChange ? "" : ""}</div>}
       {r.warning && <div className="banner warn">已发布，但生成收尾有问题：{r.warning}</div>}
       {r.error && (
@@ -152,6 +165,7 @@ export function App() {
   const [cancelError, setCancelError] = useState<string | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
   const [epochStale, setEpochStale] = useState(false);
+  const [deploying, setDeploying] = useState<DeploymentView | null>(null);
   const lastIntent = useRef<{ intent: string; targetAppId: string | null } | null>(null);
 
   const handle = useCallback((e: unknown) => {
@@ -289,13 +303,22 @@ export function App() {
     void submitRun({ intent: watchedRun.intent, targetAppId: target });
   };
 
+  // Both declarative and code history versions switch through the asynchronous deployment API (spec §19.1).
   const switchTo = async (rev: RevisionSummary) => {
     if (!detail) return;
     try {
-      await api.activate(detail.appId, { revisionId: rev.revisionId, expectedAppEpoch: detail.appEpoch }, newKey());
+      let d = await api.deploy(detail.appId, { revisionId: rev.revisionId, expectedAppEpoch: detail.appEpoch }, newKey());
+      setDeploying(d);
+      const until = Date.now() + 240_000;
+      while (!["committed", "failed", "cancelled", "superseded"].includes(d.status) && Date.now() < until) {
+        await new Promise((r) => setTimeout(r, 500));
+        d = await api.deployment(d.deploymentId);
+        setDeploying(d);
+      }
       await loadState();
       await loadApp(detail.appId);
       setRefreshToken((n) => n + 1);
+      if (d.status === "committed") setTimeout(() => setDeploying((cur) => (cur?.deploymentId === d.deploymentId ? null : cur)), 4000);
     } catch (e) {
       handle(e);
       void loadApp(detail.appId);
@@ -327,6 +350,9 @@ export function App() {
           {state.apps.map((a) => (
             <button key={a.appId} className={`nav-app ${a.appId === selected ? "active" : ""}`} onClick={() => setSelected(a.appId)}>
               {a.title}
+              <span className="muted small app-meta">
+                {a.runtime === "isolated-code-v1" ? `代码 · ${healthText(a.health)}` : "声明式"}
+              </span>
             </button>
           ))}
           {state.apps.length === 0 && <p className="muted small">还没有应用</p>}
@@ -334,6 +360,9 @@ export function App() {
         <div className="status-box">
           <div>
             <span className={`dot ${state.ready ? "ok" : "bad"}`} /> 宿主 {state.ready ? "就绪" : "恢复中"}
+          </div>
+          <div title={(state.runtimeProblems ?? []).join("\n")}>
+            <span className={`dot ${state.runtimeReady ? "ok" : "bad"}`} /> 代码运行环境 {state.runtimeReady ? "就绪" : "不可用"}
           </div>
           <div>
             <span className={`dot ${modelOk ? "ok" : "bad"}`} /> 模型 {modelOk ? `${state.model?.provider}/${state.model?.modelId}${state.model?.mode === "faux" ? "（模拟）" : ""}` : "不可用"}
@@ -403,7 +432,17 @@ export function App() {
           <div className="app-area">
             {selected && detail?.bundle ? (
               <Boundary resetKey={`${detail.appId}:${detail.activeRevisionId}`}>
-                <AppView detail={detail} refreshToken={refreshToken} onChanged={() => void loadState().then(() => loadApp(detail.appId))} />
+                {detail.bundle.formatVersion === 2 ? (
+                  <CodeAppView
+                    detail={detail}
+                    dataEpoch={selectedSummary?.dataEpoch ?? null}
+                    refreshToken={refreshToken}
+                    disabled={!state.runtimeReady}
+                    onChanged={() => void loadState().then(() => loadApp(detail.appId))}
+                  />
+                ) : (
+                  <AppView detail={detail} refreshToken={refreshToken} onChanged={() => void loadState().then(() => loadApp(detail.appId))} />
+                )}
               </Boundary>
             ) : (
               <div className="placeholder muted">{selected ? "加载中…" : "描述你想要的应用，AgentOS 会生成它。"}</div>
@@ -411,13 +450,20 @@ export function App() {
           </div>
           {selected && detail && (
             <aside className="versions" aria-label="版本">
+              {detail.bundle?.formatVersion === 2 && (
+                <Boundary resetKey={`rt:${detail.appId}`}>
+                  <RuntimePanel detail={detail} tick={refreshToken} onChanged={() => void loadState()} />
+                  <ServicesPanel detail={detail} tick={refreshToken} onChanged={() => setRefreshToken((n) => n + 1)} />
+                </Boundary>
+              )}
               <h3>版本</h3>
+              {deploying && deploying.appId === detail.appId && <DeploymentLine d={deploying} />}
               <p className="muted small">切换版本只换界面和规则，记录保留。删除的记录不会因切换恢复。</p>
               <ol>
                 {revisions.map((r, n) => (
                   <li key={r.revisionId} className={r.isActive ? "active" : ""}>
                     <div>
-                      <strong>v{n + 1}</strong> {r.title}
+                      <strong>v{n + 1}</strong> {r.title} <span className="muted small">{r.runtime === "isolated-code-v1" ? "代码" : "声明式"}</span>
                     </div>
                     <div className="muted small">
                       {new Date(r.firstActivatedAt).toLocaleString()} · {r.revisionId.slice(7, 15)}
@@ -425,7 +471,7 @@ export function App() {
                     {r.isActive ? (
                       <span className="badge">当前</span>
                     ) : (
-                      <button disabled={runActive} onClick={() => void switchTo(r)} title={runActive ? "生成进行中，稍后再切换" : ""}>
+                      <button disabled={runActive || (deploying !== null && !["committed", "failed", "cancelled", "superseded"].includes(deploying.status))} onClick={() => void switchTo(r)} title={runActive ? "生成进行中，稍后再切换" : ""}>
                         切换到此版本
                       </button>
                     )}

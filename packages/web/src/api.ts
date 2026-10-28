@@ -10,6 +10,61 @@ import type {
   SystemInfo,
 } from "@agentos/contracts";
 
+export interface InvocationView {
+  invocationId: string;
+  status: "accepted" | "executing" | "succeeded" | "failed";
+  result: unknown;
+  commit: { created: Record<string, string>; updated: string[]; deleted: string[]; dataEpoch: number } | null;
+  error: { code: string; message: string } | null;
+}
+export interface RuntimeView {
+  appId: string;
+  runtime: string | null;
+  revisionId: string | null;
+  enabled: boolean;
+  generation: number;
+  controlEpoch: number;
+  health: "stopped" | "recovering" | "ready" | "degraded" | null;
+  restartCount: number;
+  lastError: { code: string; message: string; at?: string } | null;
+  instance: { id: string; observedState: string; lastProbeAt: string | null; limits: { memoryBytes: number; cpus: number; pids: number } } | null;
+  diagnostics: { level: string; text: string; at: string }[];
+}
+export interface DeploymentView {
+  deploymentId: string;
+  appId: string;
+  targetRevisionId: string;
+  status: "queued" | "preparing" | "ready" | "committed" | "failed" | "cancelled" | "superseded";
+  stage: string | null;
+  runtime: string;
+  cleanupState: string;
+  error: { stage?: string; code: string; message: string; diagnostics?: unknown[] } | null;
+  health: string | null;
+}
+export interface ServiceView {
+  appId: string;
+  appTitle: string;
+  revisionId: string;
+  exportName: string;
+  description: string;
+  contractHash: string;
+  contractVersion: number;
+}
+export interface GrantView {
+  grantId: string;
+  sourceAppId: string;
+  sourceRevisionId: string;
+  alias: string;
+  targetAppId: string;
+  targetRevisionId: string;
+  exportName: string;
+  contractHash: string;
+  createdAt: string;
+  revokedAt: string | null;
+  state: "active" | "inactive" | "revoked";
+  reason: string | null;
+}
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -85,6 +140,22 @@ export const api = {
     call<{ runId: string; targetAppId: string; status: string }>("POST", "/api/runs", body, key),
   run: (runId: string) => call<RunView>("GET", `/api/runs/${runId}`),
   cancelRun: (runId: string, key: string) => call<RunView>("POST", `/api/runs/${runId}/cancel`, {}, key),
+  // v0.2
+  query: (appId: string, queryId: string, body: { expectedAppEpoch: number; input: unknown }) =>
+    call<{ output: unknown; revisionId: string; appEpoch: number; dataEpoch: number; runtimeGeneration: number }>("POST", `/api/apps/${appId}/queries/${queryId}`, body),
+  command: (appId: string, commandId: string, body: { expectedAppEpoch: number; input: unknown }, key: string) =>
+    call<{ invocationId: string; status: string }>("POST", `/api/apps/${appId}/commands/${commandId}`, body, key),
+  invocation: (id: string) => call<InvocationView>("GET", `/api/invocations/${id}`),
+  runtime: (appId: string) => call<RuntimeView>("GET", `/api/apps/${appId}/runtime`),
+  runtimeControl: (appId: string, action: "start" | "stop" | "restart", body: { expectedAppEpoch: number }, key: string) =>
+    call<{ controlEpoch: number }>("POST", `/api/apps/${appId}/runtime/${action}`, body, key),
+  deploy: (appId: string, body: { revisionId: string; expectedAppEpoch: number }, key: string) => call<DeploymentView>("POST", `/api/apps/${appId}/deployments`, body, key),
+  deployment: (id: string) => call<DeploymentView>("GET", `/api/deployments/${id}`),
+  services: () => call<{ items: ServiceView[] }>("GET", "/api/services"),
+  imports: (appId: string) => call<{ items: { alias: string; description?: string; grant: GrantView | null }[] }>("GET", `/api/apps/${appId}/imports`),
+  grants: () => call<{ items: GrantView[] }>("GET", "/api/service-grants"),
+  createGrant: (body: Omit<GrantView, "grantId" | "createdAt" | "revokedAt" | "state" | "reason">, key: string) => call<GrantView>("POST", "/api/service-grants", body, key),
+  revokeGrant: (grantId: string, key: string) => call<GrantView>("POST", `/api/service-grants/${grantId}/revoke`, {}, key),
   transcript: (runId: string) => call<{ final: boolean; items: { kind: string; role: string; text: string; toolName?: string; isError?: boolean }[] }>("GET", `/api/runs/${runId}/transcript`),
 };
 
@@ -100,6 +171,17 @@ export function describeError(e: unknown): string {
       MODEL_UNAVAILABLE: "模型不可用，无法创建或修改应用",
       RECOVERY_BLOCKED: "工作区需要恢复，写入已暂停",
       STORE_UNAVAILABLE: "本地存储暂不可用，请稍后重试",
+      SANDBOX_UNAVAILABLE: "代码应用运行环境不可用",
+      RUNTIME_STOPPED: "应用已停止，请先启动",
+      INSTANCE_NOT_READY: "应用正在启动或恢复，请稍后再试",
+      APP_TIMEOUT: "应用执行超时，已被停止",
+      APP_BUSY: "应用正忙，请稍后再试",
+      DEPLOYMENT_BUSY: "另一个版本切换正在进行",
+      DEPLOYMENT_REQUIRED: "代码版本需要通过发布流程切换",
+      DATA_EPOCH_STALE: "数据已变化，请刷新后重试（输入已保留）",
+      GRANT_REQUIRED: "服务未连接",
+      GRANT_REVOKED: "服务已断开",
+      SERVICE_UNAVAILABLE: "服务暂不可用",
     };
     return map[e.code] ? `${map[e.code]}（${e.code}）` : `${e.message}（${e.code}）`;
   }

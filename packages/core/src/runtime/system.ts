@@ -4,6 +4,7 @@ import { AgentOsError, type AnyBundle } from "@agentos/contracts";
 import type { Core } from "../index.js";
 import { ArtifactStore } from "../builds/artifact-store.js";
 import { BuildService } from "../builds/build-service.js";
+import { GcService } from "../builds/gc.js";
 import { iso } from "../persistence/store.js";
 import type { RuntimeCatalogService } from "./catalog-service.js";
 import type { RuntimeDriver } from "./driver.js";
@@ -26,6 +27,7 @@ export interface RuntimeSystemOptions {
   log: Logger;
   /** Start the periodic reconciler (tests may drive it by hand). */
   autoReconcile?: boolean;
+  cacheBudgetBytes?: number;
 }
 
 /**
@@ -41,6 +43,7 @@ export class RuntimeSystem {
   readonly interApp: InterAppService;
   readonly builds: BuildService;
   readonly artifacts: ArtifactStore;
+  readonly gc: GcService;
   readonly bootId = randomUUID();
   environmentProblems: string[] = [];
   closed = false;
@@ -56,8 +59,13 @@ export class RuntimeSystem {
     this.builds = new BuildService({
       store: core.store, artifacts: this.artifacts, driver: opts.driver, catalog: opts.catalog, storeUUID: () => storeUUID, bootId: () => this.bootId,
       workDir: path.join(opts.dataDir, "work"), log: (m, f) => opts.log("warn", m, f),
+      cacheBudgetBytes: opts.cacheBudgetBytes,
+      collect: async () => {
+        await this.gc.run();
+      },
     });
     this.ctx = { ...ctxPartial, builds: this.builds };
+    this.gc = new GcService(core.store, this.artifacts, opts.driver, () => opts.catalog.locks().flatMap((l) => [l.builderImage.name, l.runtimeImage.name]));
     core.apps.extraCheck = opts.catalog.check;
     this.runtime = new AppRuntimeService(this.ctx);
     this.reconciler = new Reconciler(this.ctx, this.runtime);

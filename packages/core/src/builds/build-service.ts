@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, statfsSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import {
   AgentOsError,
@@ -56,6 +56,11 @@ export interface BuildContext {
   bootId: () => string;
   workDir: string;
   log?: (msg: string, fields?: Record<string, unknown>) => void;
+  /** Cache budget (spec §12.3, default 10 GiB) and the collector run before refusing a build for space. */
+  cacheBudgetBytes?: number;
+  collect?: () => Promise<void>;
+  /** Minimum free bytes on the data filesystem for a new build. */
+  minFreeBytes?: number;
 }
 
 /** buildKey (spec §12.2 step 2): revision, runtime lock, platform, builder recipe, ABI and policy version. */
@@ -120,6 +125,7 @@ export class BuildService {
     }
 
     const existing = this.#inflight.get(key);
+    if (!existing) await this.#ensureSpace();
     if (existing) {
       const artifactId = await existing;
       return { artifactId, buildJobId: null, cacheHit: false };
@@ -147,6 +153,24 @@ export class BuildService {
     } finally {
       this.#inflight.delete(key);
     }
+  }
+
+  /** Space admission (spec §12.3): collect unreferenced content first; still short → refuse with the reason. */
+  async #ensureSpace(): Promise<void> {
+    const budget = this.ctx.cacheBudgetBytes ?? RUNTIME_POLICY.cacheBudgetBytes;
+    const minFree = this.ctx.minFreeBytes ?? 256 * 1024 * 1024;
+    const free = () => {
+      try {
+        const st = statfsSync(this.ctx.artifacts.root);
+        return Number(st.bavail) * Number(st.bsize);
+      } catch {
+        return Number.POSITIVE_INFINITY;
+      }
+    };
+    if (this.ctx.artifacts.sizeOnDisk() <= budget && free() >= minFree) return;
+    await this.ctx.collect?.();
+    if (this.ctx.artifacts.sizeOnDisk() > budget) throw new AgentOsError("APP_RESOURCE_LIMIT", `the build cache is over its ${Math.round(budget / 2 ** 20)} MiB budget even after cleanup; history is kept, so free space or raise the budget`);
+    if (free() < minFree) throw new AgentOsError("APP_RESOURCE_LIMIT", `less than ${Math.round(minFree / 2 ** 20)} MiB free on the data disk; new builds are refused`);
   }
 
   private link(appId: string, revisionId: string, lockId: string, artifactId: string): void {

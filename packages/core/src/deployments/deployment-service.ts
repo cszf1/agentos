@@ -472,7 +472,6 @@ export class DeploymentService {
       }
     }
     s.run("UPDATE deployments SET status = 'committed', stage = 'cleanup', committed_epoch = ?, committed_at = ?, updated_at = ? WHERE id = ?", r.appEpoch, this.now(), this.now(), id);
-    if (opts.runId !== null) s.run("UPDATE runs SET applied_revision_id = ?, updated_at = ? WHERE id = ? AND applied_revision_id IS NULL", d.target_revision_id, this.now(), opts.runId);
     s.event("deployment.committed", { deploymentId: id, revisionId: d.target_revision_id, appEpoch: r.appEpoch, changed: r.changed }, { appId: d.app_id, runId: opts.runId });
     fault("deploy.activate_before_commit");
     return { ...r, deploymentId: id, noOp: !r.changed };

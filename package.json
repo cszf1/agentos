@@ -18,7 +18,12 @@
     "smoke:real": "pnpm build && node scripts/smoke-real.mjs",
     "backup": "bin/agentos-admin backup",
     "restore": "bin/agentos-admin restore",
-    "runtime:catalog": "pnpm build && node scripts/runtime-catalog.mjs"
+    "runtime:catalog": "pnpm build && node scripts/runtime-catalog.mjs",
+    "runtime:doctor": "bin/agentos-runtime doctor",
+    "runtime:prefetch": "bin/agentos-runtime prefetch",
+    "runtime:gc": "bin/agentos-admin gc",
+    "test:sandbox": "pnpm build && vitest run --project sandbox",
+    "smoke:v0.2-real": "pnpm build && node scripts/smoke-v02-real.mjs"
   },
   "devDependencies": {
     "@playwright/test": "1.64.1",
