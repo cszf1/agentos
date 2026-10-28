@@ -122,11 +122,16 @@ export class RunService {
     return row;
   }
 
+  /** v0.2 hooks: refuse a run while a user version switch is open; cancel a run's deployments with it (spec §13, §15). */
+  acceptGuard: (() => void) | null = null;
+  onStopInTx: ((runId: string) => void) | null = null;
+
   /** Accept a generation request (inside the gateway write tx). */
   accept(body: RunCreateBody, requestKey: string, requestHash: string, engineIdle: boolean): { runId: string; targetAppId: string; status: RunStatus } {
     if (this.activeRun() !== undefined || !engineIdle) {
       throw new AgentOsError("RUN_BUSY", "another generation is still running");
     }
+    this.acceptGuard?.();
     let targetAppId: string;
     let expectedAppEpoch: number;
     let mode: "create" | "modify";
@@ -197,6 +202,7 @@ export class RunService {
       runId,
     );
     this.store.event("run.cancel_requested", { runId, reason: "user" }, { runId, appId: row.target_app_id });
+    this.onStopInTx?.(runId);
     return { status: 202, body: this.view(this.requireRun(runId)) };
   }
 
@@ -208,6 +214,7 @@ export class RunService {
       if (row.status !== "queued" && row.status !== "running" && row.status !== "blocked") return;
       this.store.run("UPDATE runs SET status = 'cancel_requested', stop_reason = ?, updated_at = ? WHERE id = ?", reason, this.now(), runId);
       this.store.event("run.cancel_requested", { runId, reason }, { runId, appId: row.target_app_id });
+      this.onStopInTx?.(runId);
     });
   }
 

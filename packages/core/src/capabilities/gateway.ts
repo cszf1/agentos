@@ -34,6 +34,15 @@ export const CAPABILITY_POLICY: Record<string, ReadonlyArray<Principal["kind"]>>
   "runs.cancel": ["user"],
   "records.read": ["app"],
   "records.write": ["app"],
+  // v0.2
+  "apps.runtime.control": ["user"],
+  "apps.command": ["user"],
+  "apps.query": ["user"],
+  "grants.manage": ["user"],
+  "services.read": ["user", "run"],
+  "runtime.catalog": ["user", "run"],
+  "deployments.read": ["user", "run"],
+  "apps.prepare.agent": ["run"],
 };
 
 export function authorize(capability: string, p: Principal): void {
@@ -73,6 +82,8 @@ export function requestHash(parts: Record<string, unknown>): string {
 const RECEIPT_ERRORS = new Set([
   "FORBIDDEN", "NOT_FOUND", "RUN_BUSY", "APP_EPOCH_STALE", "RECORD_VERSION_STALE", "ALREADY_APPLIED",
   "INVALID_BUNDLE", "SCHEMA_INCOMPATIBLE", "INVALID_RECORD", "LIMIT_EXCEEDED", "INVALID_REQUEST",
+  "INVALID_CODE_BUNDLE", "SOURCE_PATH_INVALID", "UNKNOWN_HANDLER", "INVALID_SLOT_TREE", "DEPENDENCY_NOT_ALLOWED",
+  "DEPLOYMENT_REQUIRED", "SERVICE_CONTRACT_MISMATCH", "PREPARE_FAILED", "PREPARE_EXPIRED", "DATA_EPOCH_STALE",
 ]);
 
 /**

@@ -28,6 +28,12 @@ export interface LiveInstance {
   queue: (() => void)[];
   lastProbeAt: number;
   currentCallId: string | null;
+  /** Kind of the current top-level call; only queries may call services (spec §17.2). */
+  callKind: "query" | "command" | "service" | null;
+  serviceCalls: number;
+  /** Grants used by the current query (re-checked before its result is returned). */
+  usedGrants: string[];
+  callDeadline: number;
   exitReason: string | null;
   logs: { level: string; text: string; at: string }[];
 }
@@ -96,6 +102,10 @@ export class InstanceHost {
       queue: [],
       lastProbeAt: 0,
       currentCallId: null,
+      callKind: null,
+      serviceCalls: 0,
+      usedGrants: [],
+      callDeadline: 0,
       exitReason: null,
       logs: [],
     };
@@ -207,7 +217,7 @@ export class InstanceHost {
    * Run one call. Admission: one in flight per instance, queue up to 16 (immediate=true refuses when busy).
    * On timeout the call loses its commit right first, then the container is killed (spec §11.3).
    */
-  async call(inst: LiveInstance, kind: "query" | "command", handlerId: string, input: unknown, context: HandlerContext, timeoutMs: number, opts: { immediate?: boolean; onTimeout?: () => void } = {}): Promise<unknown> {
+  async call(inst: LiveInstance, kind: "query" | "command", handlerId: string, input: unknown, context: HandlerContext, timeoutMs: number, opts: { immediate?: boolean; onTimeout?: () => void; asService?: boolean } = {}): Promise<unknown> {
     if (inst.revoked || inst.dead) throw new AgentOsError("INSTANCE_STALE", "this instance no longer serves calls");
     if (inst.busy) {
       if (opts.immediate) throw new AgentOsError("APP_BUSY", "the app is busy");
@@ -218,6 +228,10 @@ export class InstanceHost {
     }
     inst.busy = true;
     inst.currentCallId = context.callId;
+    inst.callKind = opts.asService ? "service" : kind;
+    inst.serviceCalls = 0;
+    inst.usedGrants = [];
+    inst.callDeadline = Date.parse(context.deadline);
     try {
       const payload: CallPayload = { callId: context.callId, kind, handlerId, input, context };
       let reply: Frame;
@@ -245,6 +259,7 @@ export class InstanceHost {
     } finally {
       inst.busy = false;
       inst.currentCallId = null;
+      inst.callKind = null;
       inst.queue.shift()?.();
     }
   }
