@@ -386,7 +386,7 @@ export function App() {
             value={intent}
             disabled={!modelOk || runActive}
             onChange={(e) => setIntent(e.target.value)}
-            aria-label="需求"
+            aria-label="需求描述"
           />
           <div className="actions">
             <button className="primary" disabled={!modelOk || runActive || intent.trim() === ""} onClick={() => void submitRun()}>

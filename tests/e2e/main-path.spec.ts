@@ -22,7 +22,7 @@ async function login(page: Page) {
 
 async function addTask(page: Page, title: string) {
   await page.getByRole("button", { name: "新建", exact: true }).click();
-  await page.getByLabel("任务").fill(title);
+  await page.locator(".record-form").getByLabel("任务").fill(title);
   await page.getByRole("button", { name: "保存" }).click();
   await expect(page.locator("table.records")).toContainText(title);
 }
@@ -40,7 +40,7 @@ test("main path: create, persist, upgrade, switch back and forth, restart, model
   await login(page);
 
   // 1. create the app
-  await page.getByLabel("需求").fill("做一个待办应用");
+  await page.getByRole("textbox", { name: "需求描述" }).fill("做一个待办应用");
   await page.getByRole("button", { name: "生成应用" }).click();
   await expect(page.locator(".app-view h2")).toHaveText("待办清单", { timeout: 30_000 });
   await expect(page.locator(".run")).toContainText("已完成");
@@ -49,7 +49,7 @@ test("main path: create, persist, upgrade, switch back and forth, restart, model
   await addTask(page, "买牛奶");
   await addTask(page, "写周报");
   await row(page, "写周报").getByRole("button", { name: "编辑" }).click();
-  await page.getByLabel("已完成").check();
+  await page.locator(".record-form").getByLabel("已完成").check();
   await page.getByRole("button", { name: "保存" }).click();
   await expect(row(page, "写周报")).toContainText("✓");
   await page.getByPlaceholder("搜索任务").fill("牛奶");
@@ -67,21 +67,21 @@ test("main path: create, persist, upgrade, switch back and forth, restart, model
 
   // 3. upgrade with priority; old rows default to normal
   await page.getByRole("button", { name: /修改“待办清单”/ }).click();
-  await page.getByLabel("需求").fill("增加优先级和优先级筛选");
+  await page.getByRole("textbox", { name: "需求描述" }).fill("增加优先级和优先级筛选");
   await page.getByRole("button", { name: "修改应用" }).click();
   await expect(page.locator(".app-view h2")).toHaveText("待办清单 · 优先级", { timeout: 30_000 });
   await expect(row(page, "买牛奶")).toContainText("normal");
 
   // 4. set one to high, switch to v1, rename it and add a row
   await row(page, "买牛奶").getByRole("button", { name: "编辑" }).click();
-  await page.getByLabel("优先级", { exact: true }).selectOption("high");
+  await page.locator(".record-form").getByLabel("优先级").selectOption("high");
   await page.getByRole("button", { name: "保存" }).click();
   await expect(row(page, "买牛奶")).toContainText("high");
   await page.locator(".versions li", { hasText: "v1" }).getByRole("button", { name: "切换到此版本" }).click();
   await expect(page.locator(".app-view h2")).toHaveText("待办清单");
   await expect(page.locator("table.records thead")).not.toContainText("优先级");
   await row(page, "买牛奶").getByRole("button", { name: "编辑" }).click();
-  await page.getByLabel("任务").fill("买牛奶和面包");
+  await page.locator(".record-form").getByLabel("任务").fill("买牛奶和面包");
   await page.getByRole("button", { name: "保存" }).click();
   await addTask(page, "旧版新增");
 
