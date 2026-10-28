@@ -45,6 +45,16 @@ export class AgentOps {
     return `${this.store.meta().store_uuid}/${runId}/${id.piTaskId}/${id.toolName}`;
   }
 
+  /** For logs only: the active run and the host operation key this call maps to (null when no run is active). */
+  describeCall(id: ToolCallIdentity): { runId: string; operationKey: string } | null {
+    try {
+      const run = this.runs.currentToolRun();
+      return { runId: run.id, operationKey: this.opKey(run.id, id) };
+    } catch {
+      return null;
+    }
+  }
+
   private enter(id: ToolCallIdentity, isStage = false): { runId: string } | ToolOutcome<never> {
     let run;
     try {
@@ -106,7 +116,7 @@ export class AgentOps {
     );
   }
 
-  appStage(id: ToolCallIdentity, bundle: unknown): ToolOutcome<{ revisionId: string; valid: boolean; issues: ValidationIssue[] }> {
+  appStage(id: ToolCallIdentity, bundle: unknown): ToolOutcome<{ revisionId: string; valid: boolean; errors: ValidationIssue[] }> {
     const entered = this.enter(id, true);
     if ("ok" in entered) return entered;
     const runId = entered.runId;
@@ -115,15 +125,15 @@ export class AgentOps {
       this.gateway.write("apps.stage", { principal, operationKey: this.opKey(runId, id), requestHash: sha256Hex(canonicalJson({ bundle: bundle ?? null })) }, () => {
         const run = this.runs.assertWritable(runId);
         const r = this.apps.stage(run.target_app_id, bundle, runId);
-        return { status: 200, body: { revisionId: r.revisionId, valid: r.issues.length === 0, issues: r.issues } };
+        return { status: 200, body: { revisionId: r.revisionId, valid: r.issues.length === 0, errors: r.issues } };
       }).body,
     );
-    if (out.ok) this.runs.recordValidation(runId, "stage", out.value.issues);
+    if (out.ok) this.runs.recordValidation(runId, "stage", out.value.errors);
     else if (out.issues) this.runs.recordValidation(runId, "stage", out.issues);
     return out;
   }
 
-  appValidate(id: ToolCallIdentity, revisionId: string): ToolOutcome<{ valid: boolean; issues: ValidationIssue[] }> {
+  appValidate(id: ToolCallIdentity, revisionId: string): ToolOutcome<{ valid: boolean; errors: ValidationIssue[] }> {
     const entered = this.enter(id);
     if ("ok" in entered) return entered;
     const runId = entered.runId;
@@ -132,10 +142,10 @@ export class AgentOps {
       this.store.read(() => {
         const run = this.runs.requireRun(runId);
         const r = this.apps.validate(run.target_app_id, revisionId);
-        return { valid: r.valid, issues: r.issues };
+        return { valid: r.valid, errors: r.issues };
       }),
     );
-    if (out.ok) this.runs.recordValidation(runId, "validate", out.value.issues);
+    if (out.ok) this.runs.recordValidation(runId, "validate", out.value.errors);
     return out;
   }
 

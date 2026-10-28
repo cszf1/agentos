@@ -212,6 +212,39 @@ describe("R: crash recovery across os.sqlite and agent.sqlite", () => {
     await stopHost(h);
   }, 120_000);
 
+  it("R09b a Pi task whose definition is missing after restart is blocked and visible, then cancellable", async () => {
+    const dir = tmpDir();
+    let h = await startHost(dir, FAULT("tool.app_get"));
+    const c = await login(h);
+    const r = await c.req("POST", "/api/runs", { intent: "做一个待办应用", targetAppId: null });
+    await h.exit; // killed inside app_get
+    // Simulate a Pi task whose definition is gone after an upgrade: rename the in-flight tool task's kind.
+    const adb = new DatabaseSync(path.join(dir, "agent.sqlite"));
+    const changed = adb
+      .prepare(`UPDATE tasks SET kind = '"agentos.removed"', record = json_set(record, '$.kind', 'agentos.removed') WHERE kind = '"pi.tool"' AND status <> 'terminal'`)
+      .run().changes;
+    adb.close();
+    expect(changed).toBe(1);
+    h = await startHost(dir, {}, { waitReady: false });
+    let status = "";
+    for (let i = 0; i < 100 && status !== "blocked"; i++) {
+      await new Promise((x) => setTimeout(x, 200));
+      status = q<{ status: string }>(os(dir), "SELECT status FROM runs")[0]!.status;
+    }
+    expect(status).toBe("blocked");
+    await waitHttp(h);
+    const c2 = await login(h);
+    const view = await c2.get(`/api/runs/${r.data.runId}`);
+    expect(view.data.error.code).toBe("RECOVERY_BLOCKED");
+    expect((await c2.req("POST", "/api/runs", { intent: "x", targetAppId: null })).error?.code).toBe("RUN_BUSY");
+    // no business writes happened while blocked
+    expect(q<{ n: number }>(os(dir), "SELECT COUNT(*) AS n FROM revisions")[0]!.n).toBe(0);
+    expect((await c2.req("POST", `/api/runs/${r.data.runId}/cancel`, {})).status).toBe(202);
+    const done = await c2.waitRun(r.data.runId);
+    expect(done.status).toBe("cancelled");
+    await stopHost(h);
+  }, 120_000);
+
   it("R11 interrupted first pairing completes; a foreign or missing agent.sqlite blocks scheduling", async () => {
     const dir = tmpDir();
     const h = await startHost(dir, FAULT("bind.after_marker"), { waitReady: false });
@@ -296,6 +329,31 @@ describe("O: operations", () => {
     const again = await fresh.req("POST", "/api/runs", { intent: "增加优先级", targetAppId: appId, expectedAppEpoch: app.data.appEpoch });
     expect((await fresh.waitRun(again.data.runId)).status).toBe("succeeded");
     await stopHost(h);
+  });
+
+  it("O06 restore refuses a set whose schema or pi-durable version this host cannot open, touching nothing", async () => {
+    const dir = tmpDir();
+    const h = await startHost(dir);
+    const c = await login(h);
+    await createApp(c);
+    await stopHost(h);
+    const env = { ...process.env, AGENTOS_DATA_DIR: dir };
+    const admin = (...a: string[]) => spawnSync(path.join(ROOT, "bin", "agentos-admin"), a, { env, encoding: "utf8" });
+    for (const [key, value, msg] of [
+      ["schemaVersion", 99, /schema 99 cannot be opened/],
+      ["piDurableVersion", "0.0.1", /pi-durable 0\.0\.1/],
+    ] as const) {
+      const backupDir = path.join(tmpDir(), "b");
+      expect(admin("backup", "--output", backupDir).status).toBe(0);
+      const before = fs.readFileSync(path.join(dir, "os.sqlite"));
+      const mf = path.join(backupDir, "manifest.json");
+      fs.writeFileSync(mf, JSON.stringify({ ...JSON.parse(fs.readFileSync(mf, "utf8")), [key]: value }));
+      const r = admin("restore", "--backup", backupDir);
+      expect(r.status).toBe(1);
+      expect(r.stderr).toMatch(msg);
+      expect(fs.existsSync(path.join(dir, "restore-in-progress"))).toBe(false);
+      expect(fs.readFileSync(path.join(dir, "os.sqlite")).equals(before)).toBe(true);
+    }
   });
 
   it("O04 a broken os.sqlite stops startup without deleting anything or leaking the token", async () => {

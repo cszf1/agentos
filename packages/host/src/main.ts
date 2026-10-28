@@ -44,6 +44,7 @@ export async function main(): Promise<void> {
   } catch (e) {
     fail(log, "os.sqlite could not be opened or migrated; not deleting anything", { error: (e as Error).message });
   }
+  core.store.onSlowTransaction = (info) => log.warn("slow transaction", info);
   ensureSecrets(config.dataDir);
   const auth = new SessionAuth(config.dataDir, config.sessionTtlMs);
 
@@ -98,6 +99,7 @@ export async function main(): Promise<void> {
       process.exit(1);
     },
     log: (msg, f) => log.warn(msg, f),
+    toolLog: (msg, f) => log.info(msg, f),
   });
   try {
     await engine.open();

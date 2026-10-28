@@ -7,6 +7,7 @@ import { AgentOps } from "./runs/agent-ops.js";
 import { UserActions } from "./user-actions.js";
 
 export * from "./persistence/store.js";
+export { MIGRATIONS } from "./persistence/migrations.js";
 export * from "./apps/app-service.js";
 export * from "./records/record-service.js";
 export * from "./runs/run-service.js";

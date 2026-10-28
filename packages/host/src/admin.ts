@@ -6,6 +6,8 @@ import { createRequire } from "node:module";
 import { loadConfig, expandHome } from "./config.js";
 import { assertLockHeld } from "./lock.js";
 import { rotateSecrets } from "./auth.js";
+import { MIGRATIONS, openCore } from "@agentos/core";
+import { checkStructure } from "@agentos/contracts";
 
 /**
  * Cold backup / restore (spec §15). Run through bin/agentos-admin, which holds the same host.lock with flock,
@@ -110,10 +112,22 @@ function verifySet(dir: string): Manifest {
   return manifest;
 }
 
+/** Spec §15 version check: this host must be able to open the set without a downgrade or a Pi format change. */
+function checkVersions(manifest: Manifest): void {
+  if (!Number.isInteger(manifest.schemaVersion) || manifest.schemaVersion < 1 || manifest.schemaVersion > MIGRATIONS.length) {
+    throw new Error(`backup os.sqlite schema ${manifest.schemaVersion} cannot be opened by this host (supports 1..${MIGRATIONS.length})`);
+  }
+  const pi = piVersion();
+  if (manifest.piDurableVersion !== pi) {
+    throw new Error(`backup was taken with pi-durable ${manifest.piDurableVersion}; this host runs ${pi}`);
+  }
+}
+
 /** Restore a whole workspace set. Re-running after an interruption completes the same restore. */
 export function restore(dataDir: string, backupDir: string, opts: { failAfterFirstReplace?: boolean } = {}): { storeUUID: string; clientEpoch: number; preRestoreBackup: string } {
   const src = path.resolve(expandHome(backupDir));
   const manifest = verifySet(src);
+  checkVersions(manifest);
   const markerFile = path.join(dataDir, RESTORE_MARKER);
   let marker: { backup: string; preRestore: string; clientEpoch: number } | undefined;
   if (fs.existsSync(markerFile)) {
@@ -172,11 +186,39 @@ export function restore(dataDir: string, backupDir: string, opts: { failAfterFir
   integrity(path.join(dataDir, "agent.sqlite"));
   const after = readMeta(path.join(dataDir, "os.sqlite"));
   if (after.store_uuid !== manifest.storeUUID) throw new Error("restored store_uuid does not match the manifest");
+  if (after.schema_version !== manifest.schemaVersion) throw new Error("restored os.sqlite schema does not match the manifest");
   fs.rmSync(staging, { recursive: true, force: true });
   // 6. remove and flush the marker
   fs.rmSync(markerFile);
   fsyncPath(dataDir);
   return { storeUUID: after.store_uuid, clientEpoch: after.client_epoch, preRestoreBackup: marker!.preRestore };
+}
+
+/**
+ * Spec §17 M2: internal test entry that seeds hand-written fixtures (in order) into a stopped test workspace.
+ * Refused unless NODE_ENV=test; production has no fixture import over HTTP or CLI.
+ */
+export function seedFixtures(dataDir: string, files: string[]): { appId: string; revisionId: string; appEpoch: number }[] {
+  const core = openCore(path.join(dataDir, "os.sqlite"));
+  try {
+    return files.map((f) => {
+      const raw = JSON.parse(fs.readFileSync(path.resolve(f), "utf8")) as unknown;
+      const s = checkStructure(raw);
+      if (!s.ok) throw new Error(`${f} is not a valid AppBundle: ${JSON.stringify(s.issues.slice(0, 3))}`);
+      const r = core.apps.seedActivated(s.bundle);
+      return { appId: r.appId, revisionId: r.revisionId, appEpoch: r.appEpoch };
+    });
+  } finally {
+    core.store.close();
+  }
+}
+
+function args(name: string): string[] {
+  const out: string[] = [];
+  process.argv.forEach((a, i) => {
+    if (a === name && process.argv[i + 1]) out.push(process.argv[i + 1]!);
+  });
+  return out;
 }
 
 function arg(name: string): string | undefined {
@@ -200,6 +242,12 @@ export function adminMain(): void {
       if (!b) throw new Error("usage: pnpm restore -- --backup <dir>");
       const r = restore(config.dataDir, b, { failAfterFirstReplace: config.testMode && process.env.AGENTOS_FAULT_POINT === "restore.after_first_replace" && process.env.AGENTOS_FAULTS === "1" });
       process.stdout.write(`${JSON.stringify({ ok: true, ...r, note: "workspace restored to the backup time; sign in again with the new auth-token" })}\n`);
+    } else if (cmd === "seed") {
+      if (!config.testMode) throw new Error("seed is a test-only entry (NODE_ENV=test)");
+      const files = args("--fixture");
+      if (files.length === 0) throw new Error("usage: agentos-admin seed --fixture <bundle.json> [--fixture <bundle.json> ...]");
+      fs.mkdirSync(config.dataDir, { recursive: true, mode: 0o700 });
+      process.stdout.write(`${JSON.stringify({ ok: true, seeded: seedFixtures(config.dataDir, files) })}\n`);
     } else {
       throw new Error("usage: agentos-admin backup --output <dir> | restore --backup <dir>");
     }

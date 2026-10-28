@@ -11,7 +11,14 @@ function spawnSync(cmd, args) {
   return new Promise((resolve) => run(cmd, args).on("exit", resolve));
 }
 await tsc;
-const host = run(path.join(ROOT, "bin", "agentos-host"), [], { env: { ...process.env, AGENTOS_DATA_DIR: process.env.AGENTOS_DATA_DIR ?? path.join(ROOT, ".data", "dev") } });
+// Vite (127.0.0.1:5173) forwards /api with its own Host/Origin, so the dev host also accepts that loopback origin.
+const host = run(path.join(ROOT, "bin", "agentos-host"), [], {
+  env: {
+    ...process.env,
+    AGENTOS_DATA_DIR: process.env.AGENTOS_DATA_DIR ?? path.join(ROOT, ".data", "dev"),
+    AGENTOS_ALLOWED_HOSTS: [process.env.AGENTOS_ALLOWED_HOSTS, "127.0.0.1:5173", "localhost:5173"].filter(Boolean).join(","),
+  },
+});
 const web = run("pnpm", ["--filter", "@agentos/web", "dev"]);
 const stop = () => {
   host.kill("SIGTERM");

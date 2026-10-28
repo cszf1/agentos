@@ -111,3 +111,18 @@ export class Client {
     }
   }
 }
+
+/** Spec §17 M2 internal test entry: seed hand-written fixtures into a stopped test workspace (NODE_ENV=test only). */
+export async function seedFixtures(dataDir: string, fixtures: string[]): Promise<{ appId: string; revisionId: string; appEpoch: number }[]> {
+  const args = ["seed", ...fixtures.flatMap((f) => ["--fixture", path.join(ROOT, "fixtures", f)])];
+  const proc = spawn(path.join(ROOT, "bin", "agentos-admin"), args, {
+    env: { ...process.env, NODE_ENV: "test", AGENTOS_DATA_DIR: dataDir },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let out = "";
+  proc.stdout!.on("data", (d) => (out += String(d)));
+  proc.stderr!.on("data", (d) => (out += String(d)));
+  const code = await new Promise<number | null>((r) => proc.on("exit", (c) => r(c)));
+  if (code !== 0) throw new Error(`seed failed (${code}): ${out}`);
+  return (JSON.parse(out.trim().split("\n").pop()!) as { seeded: { appId: string; revisionId: string; appEpoch: number }[] }).seeded;
+}

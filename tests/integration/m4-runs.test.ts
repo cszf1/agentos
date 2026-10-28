@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import path from "node:path";
 import { requestHash } from "@agentos/core";
-import { startRig, submit, waitRun, type AgentRig } from "../agent-helpers.js";
+import { startRig, submit, waitFor, waitRun, type AgentRig } from "../agent-helpers.js";
 
 let rig: AgentRig | undefined;
 afterEach(async () => {
@@ -65,5 +65,26 @@ describe("R12 compaction stays inside its run", () => {
     expect(counts).toContain(4);
     expect(counts).toContain(5);
     expect(Math.max(...counts)).toBeLessThanOrEqual(6);
+
+    // Cancel a run on the compacted conversation, then start the next one: until Pi has fully converged the slot
+    // stays taken (RUN_BUSY), and nothing from the cancelled run ever writes under the next run.
+    const slow = await submit(rig, "修改说明取消 [faux:slow:1500]", appId);
+    await waitFor(() => rig!.core.runs.requireRun(slow.runId).dispatch_state === "submitted");
+    rig.core.user.cancelRun(meta(), slow.runId);
+    let busy = "";
+    try {
+      await submit(rig, "下一次修改 [faux:same]", appId);
+    } catch (e) {
+      busy = (e as { code?: string }).code ?? "";
+    }
+    expect(busy).toBe("RUN_BUSY");
+    const cancelled = await waitRun(rig, slow.runId);
+    expect(cancelled.status).toBe("cancelled");
+    expect(cancelled.applied_revision_id).toBeNull();
+    expect(await rig.engine.isIdle()).toBe(true);
+    const next = await waitRun(rig, (await submit(rig, "下一次修改 [faux:same]", appId)).runId);
+    expect(next.status).toBe("succeeded");
+    expect(next.model_request_count).toBeLessThanOrEqual(6);
+    expect(rig.core.store.all("SELECT id FROM revisions WHERE created_by_run_id = ?", slow.runId)).toHaveLength(0);
   });
 });

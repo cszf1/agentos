@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
-import { AgentOsError } from "@agentos/contracts";
+import { AgentOsError, LIMITS } from "@agentos/contracts";
 import { requestHash } from "@agentos/core";
-import { startRig, submit, waitFor, waitRun, type AgentRig } from "../agent-helpers.js";
-import { createRecord } from "../helpers.js";
+import { ManualClock, startRig, submit, waitFor, waitRun, type AgentRig } from "../agent-helpers.js";
+import { createRecord, tmpDir } from "../helpers.js";
 
 let rig: AgentRig | undefined;
 afterEach(async () => {
@@ -67,12 +67,37 @@ describe("A: Pi Durable generation loop (faux model, real Durable + SQLite + too
     expect(run.status).toBe("failed");
     expect(JSON.parse(run.error_json!).code).toBe("BUDGET_EXCEEDED");
     expect(run.model_request_count).toBe(2);
+  });
+
+  it("A02c the 300 s wall-clock deadline (controllable clock) ends the run without publishing", async () => {
+    const clock = new ManualClock();
+    rig = await startRig({ clock });
+    const { runId } = await submit(rig, "做一个待办应用 [faux:slow:3000]");
+    await waitFor(() => rig!.core.runs.requireRun(runId).dispatch_state === "submitted");
+    clock.advance(LIMITS.runDeadlineMs - 1000);
+    await new Promise((r) => setTimeout(r, 200));
+    expect(rig.core.runs.requireRun(runId).status).toBe("running");
+    clock.advance(2000);
+    const run = await waitRun(rig, runId);
+    expect(run.status).toBe("failed");
+    expect(JSON.parse(run.error_json!).code).toBe("DEADLINE_EXCEEDED");
+    expect(run.stop_reason).toBe("deadline");
+    expect(run.applied_revision_id).toBeNull();
+  });
+
+  it("A02d host downtime counts toward the deadline", async () => {
+    const clock = new ManualClock();
+    const dir = tmpDir();
+    rig = await startRig({ dir, clock });
+    const { runId } = await submit(rig, "做一个待办应用 [faux:slow:3000]");
+    await waitFor(() => rig!.core.runs.requireRun(runId).dispatch_state === "submitted");
     await rig.close();
-    rig = await startRig({ runSettings: { deadlineMs: 300 } });
-    const run2 = await waitRun(rig, (await submit(rig, "做一个待办应用 [faux:slow:600]")).runId);
-    expect(run2.status).toBe("failed");
-    expect(JSON.parse(run2.error_json!).code).toBe("DEADLINE_EXCEEDED");
-    expect(run2.applied_revision_id).toBeNull();
+    clock.advance(LIMITS.runDeadlineMs + 1000);
+    rig = await startRig({ dir, clock });
+    const run = await waitRun(rig, runId);
+    expect(run.status).toBe("failed");
+    expect(JSON.parse(run.error_json!).code).toBe("DEADLINE_EXCEEDED");
+    expect(run.applied_revision_id).toBeNull();
   });
 
   it("A03 a second generation request is RUN_BUSY", async () => {

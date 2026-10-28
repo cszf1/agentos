@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
@@ -59,7 +60,7 @@ function sendError(reply: FastifyReply, e: AgentOsError): FastifyReply {
 
 export function buildServer(rt: HostRuntime): FastifyInstance {
   const { config, core, log } = rt;
-  const app = Fastify({ logger: false, bodyLimit: LIMITS.maxBodyBytes, trustProxy: false, return503OnClosing: true });
+  const app = Fastify({ logger: false, genReqId: () => randomUUID(), bodyLimit: LIMITS.maxBodyBytes, trustProxy: false, return503OnClosing: true });
 
   // Every request: exact Host allow-list (DNS rebinding), security headers.
   app.addHook("onRequest", async (req, reply) => {
@@ -82,6 +83,26 @@ export function buildServer(rt: HostRuntime): FastifyInstance {
       const ct = String(req.headers["content-type"] ?? "").split(";")[0]!.trim().toLowerCase();
       if (ct !== "application/json") return sendError(reply, new AgentOsError("UNSUPPORTED_MEDIA_TYPE", "writes must be application/json"));
     }
+  });
+
+  // Spec §15 request log: ids, status and duration; never tokens, cookies, bodies or record contents.
+  app.addHook("onResponse", async (req, reply) => {
+    const params = (req.params ?? {}) as Record<string, string | undefined>;
+    const fields: Record<string, unknown> = {
+      requestId: req.id,
+      method: req.method,
+      route: req.routeOptions?.url ?? null,
+      status: reply.statusCode,
+      durationMs: Math.round(reply.elapsedTime),
+    };
+    if (params.appId) fields.appId = params.appId;
+    if (params.runId) fields.runId = params.runId;
+    if (params.recordId) fields.recordId = params.recordId;
+    const key = req.headers["idempotency-key"];
+    if (typeof key === "string") fields.operationKey = key;
+    const routine = (req.method === "GET" || req.method === "HEAD") && reply.statusCode < 400;
+    if (routine) log.debug("request", fields);
+    else log.info("request", fields);
   });
 
   app.setErrorHandler((err, req, reply) => {

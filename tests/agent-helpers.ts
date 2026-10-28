@@ -1,7 +1,7 @@
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { PiAgentEngine } from "@agentos/agent-pi";
-import { RunCoordinator, openCore, requestHash, type Core, type RunSettings } from "@agentos/core";
+import { RunCoordinator, openCore, requestHash, type Clock, type Core, type RunSettings } from "@agentos/core";
 import { tmpDir } from "./helpers.js";
 
 export interface AgentRig {
@@ -12,9 +12,9 @@ export interface AgentRig {
   close(): Promise<void>;
 }
 
-export async function startRig(opts: { dir?: string; runSettings?: Partial<RunSettings>; fauxContextWindow?: number; compaction?: { reserveTokens?: number; keepRecentTokens?: number } } = {}): Promise<AgentRig> {
+export async function startRig(opts: { dir?: string; clock?: Clock; runSettings?: Partial<RunSettings>; fauxContextWindow?: number; compaction?: { reserveTokens?: number; keepRecentTokens?: number } } = {}): Promise<AgentRig> {
   const dir = opts.dir ?? tmpDir();
-  const core = openCore(path.join(dir, "os.sqlite"), { runSettings: opts.runSettings });
+  const core = openCore(path.join(dir, "os.sqlite"), { runSettings: opts.runSettings, ...(opts.clock ? { clock: opts.clock } : {}) });
   const engine = new PiAgentEngine({
     agentDbPath: path.join(dir, "agent.sqlite"),
     ops: core.agentOps,
@@ -69,5 +69,16 @@ export async function waitFor(pred: () => boolean | Promise<boolean>, timeoutMs 
   while (!(await pred())) {
     if (Date.now() > until) throw new Error("timeout");
     await new Promise((r) => setTimeout(r, 20));
+  }
+}
+
+/** Controllable clock for deadline/budget tests (spec §18): starts at real time, moves only when told. */
+export class ManualClock implements Clock {
+  #t = Date.now();
+  now(): number {
+    return this.#t;
+  }
+  advance(ms: number): void {
+    this.#t += ms;
   }
 }

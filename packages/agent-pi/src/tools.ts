@@ -23,7 +23,7 @@ function result<T>(out: ToolOutcome<T>, terminateOnSuccess = false): ToolExecuti
     };
   }
   const body: Record<string, unknown> = { error: out.code, message: out.message };
-  if (out.issues) body.issues = out.issues;
+  if (out.issues) body.errors = out.issues;
   return { output: [{ type: "text", text: JSON.stringify(body) }], isError: true };
 }
 
@@ -47,8 +47,42 @@ function parseBundleArg(args: unknown): { bundle: unknown } {
  * The only extension the root conversation runs with. Tools are replay-safe because every write is keyed by a
  * host-generated operation key and answered from the os.sqlite receipt on replay.
  */
-export function createBuilderExtension(ops: AgentOps): Extension {
+export type ToolLog = (msg: string, fields: Record<string, unknown>) => void;
+
+export function createBuilderExtension(ops: AgentOps, toolLog?: ToolLog): Extension {
   const id = (taskId: unknown, toolName: string) => ({ piTaskId: String(taskId), toolName });
+  /** Spec §15: one log line per tool execution (ids, status, duration; never bundle bodies). */
+  const withLog = <T extends { name: string; execute: (...args: never[]) => Promise<ToolExecutionResult> }>(tool: T): T => {
+    if (!toolLog) return tool;
+    const inner = tool.execute as unknown as (a: unknown, api: { taskId: unknown }, ...rest: unknown[]) => Promise<ToolExecutionResult>;
+    const execute = async (a: unknown, api: { taskId: unknown }, ...rest: unknown[]): Promise<ToolExecutionResult> => {
+      const started = performance.now();
+      const call = ops.describeCall(id(api.taskId, tool.name));
+      const out = await inner(a, api, ...rest);
+      let revisionId: unknown = (a as { revisionId?: unknown } | undefined)?.revisionId ?? null;
+      let code: unknown = null;
+      try {
+        const first = out.output?.[0] as { type: string; text?: string } | undefined;
+        const body = first?.type === "text" && first.text ? (JSON.parse(first.text) as Record<string, unknown>) : {};
+        revisionId = body.revisionId ?? revisionId;
+        if (out.isError) code = body.error ?? null;
+      } catch {
+        /* non-JSON output */
+      }
+      toolLog("tool", {
+        tool: tool.name,
+        piTaskId: String(api.taskId),
+        runId: call?.runId ?? null,
+        operationKey: call?.operationKey ?? null,
+        revisionId,
+        status: out.isError ? "error" : "ok",
+        code,
+        durationMs: Math.round(performance.now() - started),
+      });
+      return out;
+    };
+    return { ...tool, execute } as T;
+  };
   const tools = [
     defineTool({
       name: "system_info",
@@ -76,7 +110,7 @@ export function createBuilderExtension(ops: AgentOps): Extension {
     }),
     defineTool({
       name: "app_stage",
-      description: "Store a complete AppBundle as an immutable candidate revision of the target app. Returns revisionId and issues.",
+      description: "Store a complete AppBundle as an immutable candidate revision of the target app. Returns revisionId, valid and errors.",
       parameters: Type.Object({ bundle: Type.Unknown({ description: "The complete AppBundle JSON object" }) }),
       prepareArguments: (args: unknown) => parseBundleArg(args) as never,
       replay: "safe",
@@ -84,7 +118,7 @@ export function createBuilderExtension(ops: AgentOps): Extension {
     }),
     defineTool({
       name: "app_validate",
-      description: "Validate a staged revision against the schema rules and the current data contract.",
+      description: "Validate a staged revision against the schema rules and the current data contract. Returns {valid, errors:[{path,code,message}]}.",
       parameters: Type.Object({ revisionId: Type.String() }),
       replay: "safe",
       execute: async (a, api) => result(ops.appValidate(id(api.taskId, "app_validate"), a.revisionId)),
@@ -99,7 +133,7 @@ export function createBuilderExtension(ops: AgentOps): Extension {
   ];
   return defineExtension({
     name: EXTENSION_NAME,
-    tools,
+    tools: tools.map((t) => withLog(t as never)) as typeof tools,
     sections: [section("agentos_rules", () => SYSTEM_RULES)],
   });
 }

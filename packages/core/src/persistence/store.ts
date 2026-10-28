@@ -28,6 +28,9 @@ export class Store {
   readonly clock: Clock;
   #depth = 0;
   #sp = 0;
+  /** Spec §15: slow business transactions are logged with their duration. */
+  slowTransactionMs = 100;
+  onSlowTransaction: ((info: { kind: "write" | "read"; durationMs: number }) => void) | null = null;
 
   private constructor(db: DatabaseSync, clock: Clock) {
     this.db = db;
@@ -84,6 +87,7 @@ export class Store {
   /** Synchronous write transaction (BEGIN IMMEDIATE). Nested calls run inline. */
   tx<T>(fn: () => T): T {
     if (this.#depth > 0) return fn();
+    const started = performance.now();
     this.db.exec("BEGIN IMMEDIATE");
     this.#depth++;
     try {
@@ -96,12 +100,14 @@ export class Store {
       throw e;
     } finally {
       this.#depth--;
+      this.#timed("write", started);
     }
   }
 
   /** Consistent read snapshot (deferred transaction). */
   read<T>(fn: () => T): T {
     if (this.#depth > 0) return fn();
+    const started = performance.now();
     this.db.exec("BEGIN DEFERRED");
     this.#depth++;
     try {
@@ -113,6 +119,18 @@ export class Store {
       throw e;
     } finally {
       this.#depth--;
+      this.#timed("read", started);
+    }
+  }
+
+  #timed(kind: "write" | "read", started: number): void {
+    const durationMs = Math.round(performance.now() - started);
+    if (durationMs >= this.slowTransactionMs && this.onSlowTransaction) {
+      try {
+        this.onSlowTransaction({ kind, durationMs });
+      } catch {
+        /* logging must never affect a transaction */
+      }
     }
   }
 

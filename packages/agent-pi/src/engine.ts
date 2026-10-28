@@ -25,10 +25,9 @@ export const WorkspaceDoc = defineDoc<{ storeUUID?: string; protocolVersion?: nu
 export const HARNESS_SETTINGS = (extensions: HarnessSettings["extensions"]): HarnessSettings => ({
   extensions,
   stream: { maxRetries: 0, transport: "sse" },
-  retry: { enabled: true, maxRetries: 2, baseDelayMs: 500 },
+  retry: { enabled: true, maxRetries: 2 },
   compaction: { enabled: true, backgroundTokens: 0 },
   toolExecution: "sequential",
-  afterFailedRun: "withdraw",
 });
 
 export type BindResult = { ok: true; bound: "already" | "completed" | "new" } | { ok: false; reason: string };
@@ -42,6 +41,8 @@ export interface PiEngineOptions {
   compaction?: { reserveTokens?: number; keepRecentTokens?: number };
   onFailure?: (error: unknown) => void;
   log?: (msg: string, fields?: Record<string, unknown>) => void;
+  /** Per-tool execution log (spec §15). */
+  toolLog?: (msg: string, fields: Record<string, unknown>) => void;
 }
 
 /** The only place that imports Pi Durable. */
@@ -78,7 +79,7 @@ export class PiAgentEngine implements AgentEngine {
     this.#existedBeforeOpen = fs.existsSync(this.opts.agentDbPath);
     this.#built = await buildModels(this.opts.modelConfig, () => this.opts.runs.admitModelRequest(), { contextWindow: this.opts.fauxContextWindow });
     const registry = createRegistry();
-    const ext = createBuilderExtension(this.opts.ops);
+    const ext = createBuilderExtension(this.opts.ops, this.opts.toolLog);
     registry.install(ext);
     const storage = await openNodeSqliteStorage(this.opts.agentDbPath);
     const settings = HARNESS_SETTINGS([ext]);

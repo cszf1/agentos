@@ -64,17 +64,11 @@ export function budgetedProvider(inner: Provider, admit: Admission, maxTokens: n
   return wrapped;
 }
 
-async function builtinProvider(id: string): Promise<Provider | undefined> {
-  const safe = /^[a-z0-9-]+$/.test(id) ? id : null;
-  if (!safe) return undefined;
-  try {
-    const mod = (await import(`@earendil-works/pi-ai/providers/${safe}`)) as Record<string, unknown>;
-    const factory = Object.values(mod).find((v) => typeof v === "function" && /Provider$/.test((v as { name: string }).name)) as (() => Provider) | undefined;
-    return factory?.();
-  } catch {
-    return undefined;
-  }
-}
+/**
+ * Real providers enabled in v0.1. Spec §10/§14: only providers whose behaviour (SSE transport, internal retries off
+ * via stream.maxRetries=0, maxTokens cap, budget gate) has passed acceptance are enabled. Others report unavailable.
+ */
+export const VALIDATED_REAL_PROVIDERS = ["openai-compatible"] as const;
 
 /** An OpenAI-compatible endpoint (base URL + AGENTOS_MODEL_API_KEY). */
 function openAiCompatibleProvider(baseUrl: string, modelId: string): Provider {
@@ -82,7 +76,8 @@ function openAiCompatibleProvider(baseUrl: string, modelId: string): Provider {
     id: "openai-compatible",
     name: "OpenAI-compatible",
     baseUrl,
-    auth: { apiKey: envApiKeyAuth("AgentOS model API key", ["AGENTOS_MODEL_API_KEY"]) },
+    // pi-ai openai-completions: the official OPENAI_API_KEY is accepted; AGENTOS_MODEL_API_KEY wins when both are set.
+    auth: { apiKey: envApiKeyAuth("AgentOS model API key", ["AGENTOS_MODEL_API_KEY", "OPENAI_API_KEY"]) },
     models: [
       {
         id: modelId,
@@ -126,8 +121,12 @@ export async function buildModels(cfg: ModelConfig | null, admit: Admission, fau
     if (!cfg.baseUrl) return { models, ref: cfg, available: false, diagnostic: "AGENTOS_MODEL_BASE_URL is required for openai-compatible" };
     inner = openAiCompatibleProvider(cfg.baseUrl, cfg.modelId);
   } else {
-    inner = await builtinProvider(cfg.provider);
-    if (!inner) return { models, ref: cfg, available: false, diagnostic: `unknown pi-ai provider "${cfg.provider}"` };
+    return {
+      models,
+      ref: cfg,
+      available: false,
+      diagnostic: `provider "${cfg.provider}" is not enabled in v0.1 (validated: ${VALIDATED_REAL_PROVIDERS.join(", ")})`,
+    };
   }
   models.setProvider(budgetedProvider(inner, admit));
   const model = models.getModel(cfg.provider === "openai-compatible" ? "openai-compatible" : cfg.provider, cfg.modelId);

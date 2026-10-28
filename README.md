@@ -31,13 +31,45 @@ fixtures/ docs/      todo-v1/v2 bundles, schema, spec
 
 ## Install from a clean machine
 
+Verified on a clean Ubuntu 24.04 LTS (systemd) and on Debian 13. As the user who will run AgentOS (not root):
+
 ```bash
+# 0. system packages (once, as an admin): git, curl, xz, flock (util-linux is preinstalled)
+sudo apt-get install -y git curl xz-utils ca-certificates
+
+# 1. Node 24.22.1 at a fixed absolute path (the service uses this path, not whatever `node` is on PATH)
+mkdir -p ~/.local && cd ~/.local
+curl -fsSLO https://nodejs.org/dist/v24.22.1/node-v24.22.1-linux-x64.tar.xz   # -arm64 on ARM
+tar -xJf node-v24.22.1-linux-x64.tar.xz && mv node-v24.22.1-linux-x64 node24
+export PATH="$HOME/.local/node24/bin:$PATH"     # add this line to ~/.profile
+node --version                                  # v24.22.1
+corepack enable --install-directory ~/.local/node24/bin   # pnpm 10 from packageManager
+
+# 2. source, dependencies, build, user service
 git clone https://github.com/cszf1/agentos.git ~/agentos && cd ~/agentos
 pnpm install --frozen-lockfile
 pnpm build
-deploy/install.sh              # writes ~/.config/agentos/agentos.env (0600), enables the user unit
+deploy/install.sh              # writes ~/.config/agentos/agentos.env (0600, records AGENTOS_NODE), enables the user unit
 loginctl enable-linger "$USER" # only if it must run without an open login session
+
+# 3. check
+systemctl --user status agentos-host
+curl -s http://127.0.0.1:4317/health/ready     # {"status":"ready"}
+cat ~/.local/share/agentos/auth-token           # paste into the login page
 ```
+
+To use a real model, edit `~/.config/agentos/agentos.env` (it stays 0600):
+
+```bash
+AGENTOS_MODEL_MODE=real
+AGENTOS_MODEL_PROVIDER=openai-compatible
+AGENTOS_MODEL_BASE_URL=https://your-endpoint.example/v1
+AGENTOS_MODEL_ID=your-model-id
+AGENTOS_MODEL_API_KEY=...
+```
+
+then `systemctl --user restart agentos-host`. Behind an HTTP proxy also set `NODE_USE_ENV_PROXY=1`,
+`HTTPS_PROXY=...` and `NO_PROXY=127.0.0.1,localhost`.
 
 Configuration (`~/.config/agentos/agentos.env`, see `.env.example`):
 
@@ -46,9 +78,9 @@ Configuration (`~/.config/agentos/agentos.env`, see `.env.example`):
 | `AGENTOS_DATA_DIR` | `~/.local/share/agentos` | os.sqlite, agent.sqlite, auth-token, logs (dir 0700) |
 | `AGENTOS_HOST` / `AGENTOS_PORT` | `127.0.0.1` / `4317` | loopback only |
 | `AGENTOS_MODEL_MODE` | `real` | `faux` = deterministic acceptance model (no network) |
-| `AGENTOS_MODEL_PROVIDER` / `AGENTOS_MODEL_ID` | unset | a pi-ai provider id (`openai`, `anthropic`, `deepseek`, …) or `openai-compatible` |
+| `AGENTOS_MODEL_PROVIDER` / `AGENTOS_MODEL_ID` | unset | `openai-compatible` (the only real provider validated in v0.1; others are reported unavailable) |
 | `AGENTOS_MODEL_BASE_URL` | – | only for `openai-compatible` |
-| key | – | the provider's own variable (`OPENAI_API_KEY`, …) or `AGENTOS_MODEL_API_KEY` for `openai-compatible` |
+| key | – | `AGENTOS_MODEL_API_KEY` (or pi-ai's official `OPENAI_API_KEY` for the openai-completions API) |
 
 Without provider/model the host still starts; apps work, generation shows "model unavailable". Nothing picks a
 paid model for you.
