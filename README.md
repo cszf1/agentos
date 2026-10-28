@@ -119,7 +119,7 @@ interrupted restore leaves `restore-in-progress`; the host refuses to start unti
 ## Development and tests
 
 ```bash
-pnpm dev               # tsc + host (through the lock script, data in .data/dev) + Vite on :5173
+pnpm dev               # tsc + dev host on 127.0.0.1:4318 (lock script, data in .data/dev) + Vite on :5173
 pnpm typecheck
 pnpm test              # build + contracts/services/Pi adapter (faux, real Durable+SQLite)/HTTP integration
 pnpm test:recovery     # real child processes, SIGKILL fault points, two-store reconciliation, backup/restore
