@@ -1,0 +1,19 @@
+[package]
+name = "agentos-broker"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "agentos-broker"
+path = "src/main.rs"
+
+[dependencies]
+agentos-protocol = { path = "../protocol", features = ["dbus"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+libc = { workspace = true }
+rusqlite = { workspace = true }
