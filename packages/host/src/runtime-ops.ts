@@ -12,6 +12,7 @@ import { engineHasEnvLeakCve } from "@agentos/runtime-podman";
 export const ENGINE_ENV_ALLOW = new Set([
   "HOME", "USER", "LOGNAME", "PATH", "LANG", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS", "TMPDIR",
   "CONTAINERS_CONF", "CONTAINERS_STORAGE_CONF", "CONTAINERS_REGISTRIES_CONF",
+  "LISTEN_FDS", "LISTEN_PID", "LISTEN_FDNAMES",
 ]);
 
 /** Names of the environment variables of the running podman.service (null when it is not running or unreadable). */
