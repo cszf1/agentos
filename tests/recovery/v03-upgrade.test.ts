@@ -47,7 +47,8 @@ run("V3-O01 a real v0.2 workspace opens on v0.3 unchanged", () => {
     const c = new Client(host);
     await c.login(dir);
     const st = (await c.get("/api/state")).data;
-    expect(st.hostVersion).toBe("0.3.0");
+    // the current host (v0.4) opens the real v0.2 workspace directly: v0.2 → v0.4 migrations in one start
+    expect(st.hostVersion).toBe("0.4.0");
     expect(st.ready).toBe(true);
     const after = facts(dir);
     expect(after.schema).toBeGreaterThan(before.schema);
