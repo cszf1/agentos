@@ -248,6 +248,25 @@ describe("J: durable triggers, clocks, cancel and pause", () => {
   });
 });
 
+describe("J08: the local epoch never stays below the root's", () => {
+  it("adoptRootEpoch jumps above a newer broker epoch, keeps the local state, re-sends it and expires queued effects", async () => {
+    const { core } = rig();
+    const controls: [string, number][] = [];
+    core.maintenance.jobs.onControl = (s, e) => controls.push([s, e]);
+    const st0 = core.maintenance.jobs.pause();
+    expect(core.maintenance.jobs.adoptRootEpoch(st0.epoch - 1)).toBeNull(); // not behind: nothing changes
+    const to = core.maintenance.jobs.adoptRootEpoch(1_793_250_192_229)!;
+    expect(to).toBe(1_793_250_192_230);
+    const st = core.maintenance.jobs.state();
+    expect(st).toMatchObject({ state: "paused", epoch: to, root: "pending" });
+    expect(controls.at(-1)).toEqual(["paused", to]);
+    core.maintenance.jobs.rootConfirmed(to - 1);
+    expect(core.maintenance.jobs.state().root).toBe("pending"); // a confirmation of another epoch never counts
+    core.maintenance.jobs.rootConfirmed(to);
+    expect(core.maintenance.jobs.state().root).toBe("synced");
+  });
+});
+
 describe("H: app recovery through the one runtime controller", () => {
   function recovery(core: Core, kicks: { n: number }) {
     const fakeRuntime = { row: () => undefined } as never;

@@ -250,6 +250,20 @@ export const api = {
   observations: (sinceSeq = 0) => call<{ events: unknown[]; cursors: { source: string; quality: string; drop_count: number; last_refresh_at: string | null }[]; lastSeq: number; requiresFullReread: boolean; telemetry: Record<string, unknown> }>("GET", `/api/observations?sinceSeq=${sinceSeq}`),
   submitSystemPlan: (body: { intent: string; targetAppId: null; mode: "system_plan"; resourceIds: string[]; capabilityScopes: string[] }, key: string) =>
     call<{ runId: string; status: string }>("POST", "/api/runs", body, key),
+  // v0.4 task center / maintenance center (spec §22)
+  runs: (limit = 30) => call<{ items: RunView[]; foregroundSlots: number }>("GET", `/api/runs?limit=${limit}`),
+  maintState: () => call<MaintState>("GET", "/api/maintenance/state"),
+  maintPolicies: () => call<{ items: MaintPolicy[] }>("GET", "/api/maintenance/policies"),
+  maintTemplates: () => call<{ items: { id: string; title: string; targetKind: string; risk: string; usesModel: boolean; defaults: Record<string, number>; bounds: Record<string, [number, number]> }[] }>("GET", "/api/maintenance/templates"),
+  maintJobs: (open = false) => call<{ items: MaintJob[] }>("GET", `/api/maintenance/jobs?limit=30${open ? "&open=1" : ""}`),
+  maintControl: (action: "pause" | "resume", key: string) => call<MaintState>("POST", "/api/maintenance/control", { action }, key),
+  maintPolicyPause: (id: string, key: string) => call<MaintPolicy>("POST", `/api/maintenance/policies/${id}/pause`, {}, key),
+  maintCheck: (templateId: string, target: { kind: string; id: string }, key: string) => call<{ jobId: string }>("POST", "/api/maintenance/checks", { templateId, target }, key),
+  maintCancelJob: (id: string, key: string) => call<MaintJob>("POST", `/api/maintenance/jobs/${id}/cancel`, {}, key),
+  maintResetCircuit: (body: { targetKind: string; targetId: string }, key: string) => call<unknown>("POST", "/api/maintenance/circuits/reset", body, key),
+  incidents: () => call<{ items: { incidentId: string; target: { kind: string; id: string }; condition: string; state: string; evidenceCount: number; quality: string; circuit?: string | null; lastSeenAt: string; jobId: string | null }[] }>("GET", "/api/health/incidents?open=1"),
+  notifications: () => call<{ items: { id: string; kind: string; severity: string; title: string; detail: string | null; count: number; state: string; updatedAt: string }[] }>("GET", "/api/notifications"),
+  readNotification: (id: string, key: string) => call<unknown>("POST", `/api/notifications/${id}/read`, {}, key),
   transcript: (runId: string) => call<{ final: boolean; items: { kind: string; role: string; text: string; toolName?: string; isError?: boolean }[] }>("GET", `/api/runs/${runId}/transcript`),
 };
 
@@ -299,4 +313,46 @@ export function describeError(e: unknown): string {
   }
   if (e instanceof NetworkError) return "连接中断，可以点“重试”（不会重复提交）";
   return (e as Error)?.message ?? String(e);
+}
+
+export interface MaintState {
+  state: "running" | "paused";
+  epoch: number;
+  root: string;
+  clock?: string;
+  budgets?: { limits: Record<string, number>; usage: Record<string, number> };
+  circuits?: { targetKind: string; targetId: string; actionFamily: string; state: string; consecutiveFailures: number; openedAt: string | null; reason: string | null }[];
+  metrics?: Record<string, unknown> | null;
+  lastSampleAt?: string | null;
+  foreground?: { slots: number; queued: number };
+  [k: string]: unknown;
+}
+export interface MaintPolicy {
+  policyId: string;
+  version: number;
+  templateId: string;
+  target: { kind: string; id: string };
+  trigger: { kind: string; intervalSeconds?: number };
+  bounds: Record<string, number>;
+  mode: string;
+  state: string;
+  policyHash: string;
+  approval: { approvedAt: string | null; expiresAt: string | null };
+  rootSync: { state: string | null; local: string; root: string };
+  risk: string;
+}
+export interface MaintJob {
+  jobId: string;
+  templateId: string;
+  state: string;
+  target?: { kind: string; id: string };
+  mode?: string;
+  outcomeReason?: string | null;
+  waitReason?: string | null;
+  effectCertainty?: string | null;
+  completedSteps?: number;
+  createdAt?: string;
+  updatedAt?: string;
+  steps?: { stepId: string; state: string; kind?: string }[];
+  [k: string]: unknown;
 }

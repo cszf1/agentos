@@ -5,6 +5,8 @@ import { AppView } from "./AppView";
 import { CodeAppView } from "./SlotRenderer";
 import { DeploymentLine, RuntimePanel, ServicesPanel, STAGE_TEXT, healthText } from "./Panels";
 import type { DeploymentView } from "./api";
+import { TaskCenter } from "./TaskCenter";
+import { MaintenanceCenter } from "./MaintenanceCenter";
 import { AppSystemPanel, ConfirmDialog, SystemCenter } from "./SystemCenter";
 
 class Boundary extends Component<{ children: ReactNode; resetKey: string }, { error: Error | null; key: string }> {
@@ -173,6 +175,7 @@ export function App() {
   const [epochStale, setEpochStale] = useState(false);
   const [deploying, setDeploying] = useState<DeploymentView | null>(null);
   const [showSystem, setShowSystem] = useState(false);
+  const [center, setCenter] = useState<"tasks" | "maint" | null>(null);
   const [confirmAction, setConfirmAction] = useState<string | null>(null);
   const lastIntent = useRef<{ intent: string; targetAppId: string | null } | null>(null);
 
@@ -367,6 +370,12 @@ export function App() {
         <button className={`nav-create ${showSystem ? "active" : ""}`} onClick={() => setShowSystem((v) => !v)}>
           ⚙ 系统与操作中心
         </button>
+        <button className={`nav-create ${center === "tasks" ? "active" : ""}`} onClick={() => setCenter((v) => (v === "tasks" ? null : "tasks"))}>
+          ☰ 任务中心{(state.runs?.length ?? 0) > 0 ? `（${state.runs!.length}）` : ""}
+        </button>
+        <button className={`nav-create ${center === "maint" ? "active" : ""}`} onClick={() => setCenter((v) => (v === "maint" ? null : "maint"))}>
+          ⛑ 维护中心
+        </button>
         <nav aria-label="应用">
           {state.apps.map((a) => (
             <button key={a.appId} className={`nav-app ${a.appId === selected ? "active" : ""}`} onClick={() => setSelected(a.appId)}>
@@ -420,6 +429,8 @@ export function App() {
         {banner && <div className="banner error">{banner}</div>}
         {state.agentState === "blocked" && <div className="banner error">生成功能已阻塞：{state.agentDiagnostic}。已有应用仍可查看。</div>}
         {confirmAction && <ConfirmDialog actionId={confirmAction} onClose={() => setConfirmAction(null)} />}
+        {center === "tasks" && <TaskCenter runs={state.runs ?? []} slots={state.foregroundSlots ?? 2} apps={state.apps} onChanged={() => void loadState()} />}
+        {center === "maint" && <MaintenanceCenter />}
         {showSystem && (
           <SystemCenter tick={refreshToken} brokerReady={!!state.brokerReady} models={modelOk} runActive={runActive} onRunStarted={() => void loadState()} onOpenAction={setConfirmAction} />
         )}

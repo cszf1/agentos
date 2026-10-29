@@ -190,6 +190,24 @@ export class MaintenanceService {
     this.store.tx(() => this.store.run("UPDATE meta SET maintenance_root_state = 'synced' WHERE id = 1 AND maintenance_epoch = ?", epoch));
   }
 
+  /**
+   * The broker holds a newer maintenance epoch for this incarnation than os.sqlite (a host database reset, or a
+   * control the host never recorded). Broker epochs only move forward, so a lower local epoch could never take effect
+   * (not even a pause): the local epoch jumps above the root's and the current local state is sent again. Queued
+   * effects of the old epoch expire as with any epoch change. Returns the new local epoch, or null when not behind.
+   */
+  adoptRootEpoch(rootEpoch: number): number | null {
+    const moved = this.store.tx(() => {
+      const cur = this.state();
+      if (cur.epoch > rootEpoch) return null;
+      this.store.run("UPDATE meta SET maintenance_epoch = ?, maintenance_root_state = 'pending' WHERE id = 1", rootEpoch + 1);
+      this.store.event("maintenance.epoch_adopted", { from: cur.epoch, root: rootEpoch, to: rootEpoch + 1 });
+      return rootEpoch + 1;
+    });
+    if (moved !== null) this.onControl?.(this.state().state, moved);
+    return moved;
+  }
+
   rootUnavailable(): void {
     this.store.tx(() => this.store.run("UPDATE meta SET maintenance_root_state = 'unavailable' WHERE id = 1 AND maintenance_root_state = 'pending'"));
   }

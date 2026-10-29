@@ -90,6 +90,7 @@ export class ServiceMaintenance {
     this.#brokerCaps = s.installCaps;
     const st = this.jobs.state();
     if (s.state === st.state && s.maintenanceEpoch === st.epoch) this.jobs.rootConfirmed(st.epoch);
+    else if (s.maintenanceEpoch >= st.epoch) this.jobs.adoptRootEpoch(s.maintenanceEpoch); // re-sends the local state above the root's epoch
     else this.enqueueControl(st.state, st.epoch);
   }
 
@@ -255,13 +256,22 @@ export class ServiceMaintenance {
   }
 
   #confirmed(o: OutboxRow, result: unknown): void {
+    // A control is confirmed only when the broker now holds exactly that state and epoch; "applied: false" with a newer
+    // root epoch means it did NOT take effect (spec §13.3: local pause vs executor-confirmed pause).
+    const ctl = o.kind === "control" ? (result as { state?: string; maintenanceEpoch?: number } | null) : null;
+    const want = o.kind === "control" ? (JSON.parse(o.frozen_request) as { state: string }).state : null;
+    const ctlOk = ctl !== null && ctl.maintenanceEpoch === o.version && ctl.state === want;
     this.store.tx(() => {
       this.store.run("UPDATE root_sync_outbox SET dispatch_state = 'confirmed', broker_result = ?, updated_at = ? WHERE id = ?", JSON.stringify(result ?? null).slice(0, 4000), this.now(), o.id);
       if (o.kind === "policy-sync") this.policies.rootSynced(o.subject, o.version, o.version);
       if (o.kind === "policy-revoke") this.store.run("UPDATE maintenance_policies SET root_sync_state = 'revoked', updated_at = ? WHERE id = ? AND version <= ? AND root_sync_state IN ('revoking','synced','pending','unavailable')", this.now(), o.subject, o.version);
-      if (o.kind === "control") this.jobs.rootConfirmed(o.version);
+      if (o.kind === "control" && ctlOk) this.jobs.rootConfirmed(o.version);
       if (o.kind === "target-epoch") this.store.run("UPDATE target_controls SET root_state = 'synced' WHERE target_kind = 'service' AND target_id = ? AND control_epoch = ?", o.subject, o.version);
     });
+    if (o.kind === "control" && !ctlOk && typeof ctl?.maintenanceEpoch === "number" && ctl.maintenanceEpoch >= o.version) {
+      this.log("warn", "broker holds a newer maintenance epoch; adopting it", { local: o.version, root: ctl.maintenanceEpoch });
+      if (this.jobs.adoptRootEpoch(ctl.maintenanceEpoch) !== null) this.kick();
+    }
   }
 
   // ------------------------------------------------------------------ probe (fresh state through the unprivileged reader)
