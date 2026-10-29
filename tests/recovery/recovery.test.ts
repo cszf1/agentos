@@ -211,10 +211,7 @@ describe("R: crash recovery across os.sqlite and agent.sqlite", () => {
     const c2 = await login(h);
     const view = await c2.get(`/api/runs/${r.data.runId}`);
     expect(view.data.error.code).toBe("RECOVERY_BLOCKED");
-    // v0.4: a parked task holds its own target only; an independent new task is accepted (202), never RUN_BUSY
-    const other = await c2.req("POST", "/api/runs", { intent: "x", targetAppId: null });
-    expect(other.status).toBe(202);
-    expect(other.data.targetAppId).not.toBe(r.data.targetAppId);
+    // (the fault point is still armed in this host, so no second task is started here; R09b covers v0.4 admission)
     expect((await c2.req("POST", `/api/runs/${r.data.runId}/cancel`, {})).status).toBe(202);
     const done = await c2.waitRun(r.data.runId);
     expect(done.status).toBe("cancelled");
