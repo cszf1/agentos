@@ -162,6 +162,8 @@ export async function fauxBuilderResponse(context: TranscriptContext, _options: 
   const results = msgs.slice(userIdx + 1).filter((m) => m.role === "toolResult") as unknown as { toolName: string; isError?: boolean; content: unknown }[];
   const last = msgs[msgs.length - 1]!;
   if (userText.includes("system_plan run ")) return fauxSystemPlan(intent, msgs.slice(userIdx + 1), results, last);
+  if (userText.includes("Mode: maintenance_diagnose")) return fauxDiagnose(results, last);
+  if (userText.includes("Mode: maintenance_refactor")) return fauxRefactor(userText, results, last);
   // A new run starts with app_get, even when a platform note (for example a tool set upgrade) follows the user input.
   if (last.role === "user" || (last.role !== "toolResult" && results.length === 0 && msgs.slice(userIdx + 1).every((m) => m.role !== "assistant"))) return call("app_get", {});
   if (last.role !== "toolResult") return fauxAssistantMessage("完成。");
@@ -330,4 +332,60 @@ function fauxSystemPlan(intent: string, after: Msg[], results: { toolName: strin
     default:
       return fauxAssistantMessage("完成。");
   }
+}
+
+/**
+ * Formal faux maintenance analyst: read the frozen evidence, submit ONE hypothesis report, finish. Never a write tool.
+ */
+function fauxDiagnose(results: { toolName: string; isError?: boolean; content: unknown }[], last: Msg): AssistantMessage {
+  const done = (n: string) => results.some((r) => r.toolName === n);
+  // one request reads both (the analysis budget is 3 model requests)
+  if (!done("maintenance_context")) return fauxAssistantMessage([fauxToolCall("maintenance_context", {}), fauxToolCall("incident_get", {})], { stopReason: "toolUse" });
+  if (!done("maintenance_report")) {
+    return call("maintenance_report", { summary: "faux: the evidence is consistent with a transient failure", hypotheses: [{ text: "the process exited once and recovered", confidence: "low" }], missingEvidence: ["a second occurrence"] });
+  }
+  void last;
+  return fauxAssistantMessage("报告已提交。");
+}
+
+/**
+ * Formal faux optimiser: read the target app, stage ONE candidate that only changes code text (inside the boundary;
+ * with the [faux:refactor-schema] marker in the approved goal it changes the schema instead, to exercise the refusal),
+ * validate, run the platform check, poll it, submit the proposal.
+ */
+function fauxRefactor(userText: string, results: { toolName: string; isError?: boolean; content: unknown }[], last: Msg): AssistantMessage {
+  const ok = (n: string) => results.filter((r) => r.toolName === n && !r.isError);
+  const bodyOf = (r: { content: unknown } | undefined) => (r ? parse(textOf(r as never)) : {});
+  const target = bodyOf(ok("target_app_get").at(-1));
+  if (!ok("target_app_get").length) return call("target_app_get", {});
+  const lr = last as unknown as { toolName?: string; isError?: boolean };
+  if (lr.isError && lr.toolName !== "candidate_check_status") return fauxAssistantMessage(`候选失败：${textOf(last).slice(0, 300)}`);
+  const staged = ok("candidate_stage").at(-1);
+  if (!staged) {
+    const base = JSON.parse(JSON.stringify(target.activeBundle ?? {})) as { code?: { files?: Record<string, string>; entry?: string }; data?: { fields?: Record<string, unknown> } };
+    if (userText.includes("[faux:refactor-schema]") && base.data?.fields) {
+      base.data.fields["extraFaux"] = { type: "string", label: "extra" };
+    } else if (base.code?.files) {
+      const f = base.code.entry && base.code.files[base.code.entry] !== undefined ? base.code.entry : Object.keys(base.code.files).sort()[0]!;
+      base.code.files[f] = `${base.code.files[f]}\n// optimised by the faux candidate\n`;
+    }
+    return call("candidate_stage", { bundle: base });
+  }
+  const revisionId = String(bodyOf(staged).revisionId ?? "");
+  if (bodyOf(staged).valid === false) return fauxAssistantMessage(`候选无效：${JSON.stringify(bodyOf(staged).errors ?? []).slice(0, 300)}`);
+  const started = ok("candidate_check").at(-1);
+  // validate and start the check in one request (the optimisation budget is 6 model requests)
+  if (!started && !results.some((r) => r.toolName === "candidate_check")) return fauxAssistantMessage([fauxToolCall("candidate_validate", { revisionId }), fauxToolCall("candidate_check", { revisionId })], { stopReason: "toolUse" });
+  if (!started) return fauxAssistantMessage(`平台检查无法开始：${textOf(last).slice(0, 300)}`);
+  const checkId = String(bodyOf(started).checkId ?? "");
+  const st = ok("candidate_check_status").at(-1);
+  const state = st ? String(bodyOf(st).state ?? "") : "";
+  if (!st || ["queued", "running", "preparing", "checking"].includes(state) || lr.toolName === "candidate_check_status" && lr.isError) {
+    return call("candidate_check_status", { checkId });
+  }
+  if (state !== "passed") return fauxAssistantMessage(`平台检查未通过：${state}`);
+  if (!results.some((r) => r.toolName === "proposal_submit")) {
+    return call("proposal_submit", { revisionId, checkId, reasons: "faux: remove a repeated computation", expectedBenefit: "fewer recomputations", knownLimits: "faux candidate" });
+  }
+  return fauxAssistantMessage("候选已提交，等待用户决定。");
 }

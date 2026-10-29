@@ -282,8 +282,13 @@ function allTools(ops: AgentOps, toolLog?: ToolLog) {
       parameters: Type.Object({ checkId: Type.String() }),
       replay: "safe",
       execute: async (a, api) => {
-        const out = ops.candidateCheckStatus(id(api, "candidate_check_status"), (a as { checkId: string }).checkId);
-        if (out.ok && ["queued", "running"].includes((out.value as { state: string }).state)) await new Promise((r) => setTimeout(r, 2000));
+        // Waiting is not a model loop (spec V4-S09): the tool itself waits up to 90 s for the check to end.
+        const until = Date.now() + 90_000;
+        let out = ops.candidateCheckStatus(id(api, "candidate_check_status"), (a as { checkId: string }).checkId);
+        while (out.ok && ["queued", "running"].includes((out.value as { state: string }).state) && Date.now() < until && !(api as { signal?: AbortSignal }).signal?.aborted) {
+          await new Promise((r) => setTimeout(r, 1000));
+          out = ops.candidateCheckStatus(id(api, "candidate_check_status"), (a as { checkId: string }).checkId);
+        }
         return result(out);
       },
     }),
