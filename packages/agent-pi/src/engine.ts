@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { CompactionTask, LiveDoc, ROOT_CONVERSATION_ID, createRegistry, defineDoc, defineDocFamily, Harness, type Conversation, type HarnessSettings } from "@earendil-works/pi-durable";
+import { ROOT_CONVERSATION_ID, createRegistry, defineDoc, defineDocFamily, Harness, type Conversation, type HarnessSettings } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { PROTOCOL_VERSION, type AgentProfileId } from "@agentos/contracts";
 import {
@@ -21,6 +21,8 @@ import { renderRunInput } from "./prompt.js";
 import { buildModels, type BuiltModels, type ModelConfig } from "./models.js";
 import { RouteTable, type RouteGate } from "./routes.js";
 import { ensureConversation, listDirectory } from "./conversations.js";
+import { CompactionMap, abortCompaction, compactionState, startCompaction } from "./compaction.js";
+export { CompactionMap };
 
 const ctx = BACKGROUND_CONTEXT;
 
@@ -35,15 +37,6 @@ export const WorkspaceDoc = defineDoc<{ storeUUID?: string; protocolVersion?: nu
   checkpointWhen: () => true,
 });
 
-/** compactionKey → Pi task id, written in the same commit that creates the compaction task (spec §20.3). */
-export const CompactionMap = defineDocFamily<{ taskId?: string; conversationId?: string }, null>({
-  kind: "agentos.compaction-map",
-  version: 1,
-  scope: "session",
-  family: true,
-  initial: () => ({}),
-  checkpointWhen: () => true,
-} as never);
 
 /**
  * Fixed Durable settings (spec §10 v0.1, §20.1 v0.4): provider-internal retries off, background compaction off for
@@ -318,42 +311,15 @@ export class PiAgentEngine implements AgentEngine {
    * created in ONE conversation commit, read-before-create by compactionKey; a retry finds the same task.
    */
   async startCompaction(start: CompactionStart): Promise<string> {
-    const conv = await this.harness.conversation(start.conversationId as never, ctx);
-    if (!conv) throw new Error(`conversation ${start.conversationId} not found`);
-    const id = await conv.commit(async (tx) => {
-      const map = await tx.doc(CompactionMap, start.compactionKey, null);
-      if (map.taskId) return String(map.taskId);
-      const taskId = await tx.createTask(CompactionTask, { reason: "manual" as const, ...(start.instructions ? { instructions: start.instructions } : {}) }, { ownership: { kind: "conversation" }, conversationId: conv.id, background: false } as never);
-      const live = (await tx.doc(LiveDoc, conv.id as never)) as unknown as { compactions?: unknown[] };
-      live.compactions ??= [];
-      live.compactions.push({ taskId, reason: "manual", blocking: false, attempt: 1 });
-      map.taskId = String(taskId);
-      map.conversationId = start.conversationId;
-      return String(taskId);
-    }, ctx);
-    this.harness.resume();
-    return id;
+    return startCompaction(this.harness, start);
   }
 
   async compactionState(compactionKey: string): Promise<CompactionState> {
-    const map = await this.harness.snapshot(CompactionMap, compactionKey, ctx);
-    if (!map?.taskId) return { taskId: null, state: "missing" };
-    const rec = await this.harness.getTask(Number(map.taskId) as never, ctx);
-    if (!rec) return { taskId: String(map.taskId), state: "missing" };
-    if (rec.state.status !== "terminal") return { taskId: String(map.taskId), state: "running" };
-    const outcome = (rec.state as { outcome: { status: string; result?: { entryId?: unknown; submissionId?: unknown }; error?: { message?: string } } }).outcome;
-    if (outcome.status === "completed") {
-      const placedId = outcome.result?.entryId ?? outcome.result?.submissionId;
-      return { taskId: String(map.taskId), state: placedId !== undefined ? "done" : "done_unplaced", entryId: placedId !== undefined ? String(placedId) : undefined };
-    }
-    if (outcome.status === "aborted" || outcome.status === "cancelled") return { taskId: String(map.taskId), state: "cancelled" };
-    return { taskId: String(map.taskId), state: "failed", error: outcome.error?.message ?? outcome.status };
+    return compactionState(this.harness, compactionKey);
   }
 
   async abortCompaction(compactionKey: string): Promise<void> {
-    const map = await this.harness.snapshot(CompactionMap, compactionKey, ctx);
-    if (!map?.taskId) return;
-    await this.harness.abortTask(Number(map.taskId) as never, ctx);
+    return abortCompaction(this.harness, compactionKey);
   }
 
   /** Per-conversation (or session-wide) token/cost totals (Pi usage documents). */
