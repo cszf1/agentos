@@ -25,6 +25,16 @@ function inside(root, name) {
   return { rootReal, p, rootDev: fs.lstatSync(rootReal).dev };
 }
 function ident(st) { return st.dev + ":" + st.ino; }
+function mountPoints() {
+  try {
+    return new Set(fs.readFileSync("/proc/self/mountinfo", "utf8").split("\n").filter(Boolean).map((l) => l.split(" ")[4].replace(/\\040/g, " ")));
+  } catch { return new Set(); }
+}
+/** a bind mount or another filesystem under the root: refused (directories also by device; overlayfs gives files the lower device) */
+function foreign(p, st, rootDev) {
+  if (mountPoints().has(p)) return true;
+  return st.isDirectory() && st.dev !== rootDev;
+}
 function size(p) {
   let total = 0;
   const st = fs.lstatSync(p);
@@ -41,7 +51,7 @@ parentPort.on("message", (m) => {
       let st;
       try { st = fs.lstatSync(p); } catch (e) { if (e.code === "ENOENT") return reply({ ok: true, exists: false }); throw e; }
       if (st.isSymbolicLink()) return reply({ ok: false, error: "PATH_REFUSED: symlink" });
-      if (st.dev !== rootDev) return reply({ ok: false, error: "PATH_REFUSED: another filesystem (mount)" });
+      if (foreign(p, st, rootDev)) return reply({ ok: false, error: "PATH_REFUSED: another filesystem (mount)" });
       return reply({ ok: true, exists: true, identity: ident(st), dir: st.isDirectory(), bytes: size(p), mtimeMs: st.mtimeMs });
     }
     if (m.op === "move") {
@@ -51,7 +61,7 @@ parentPort.on("message", (m) => {
       const dst = inside(trashRoot, m.trashName);
       let st;
       try { st = fs.lstatSync(src.p); } catch (e) { if (e.code === "ENOENT") return reply({ ok: true, moved: false, missing: true }); throw e; }
-      if (st.isSymbolicLink() || st.dev !== src.rootDev) return reply({ ok: false, error: "PATH_REFUSED: symlink or mount" });
+      if (st.isSymbolicLink() || foreign(src.p, st, src.rootDev)) return reply({ ok: false, error: "PATH_REFUSED: symlink or mount" });
       if (m.expectIdentity && ident(st) !== m.expectIdentity) return reply({ ok: false, error: "IDENTITY_CHANGED: the object is not the one that was marked" });
       fs.renameSync(src.p, dst.p);
       return reply({ ok: true, moved: true, trash: dst.p });
@@ -70,7 +80,7 @@ parentPort.on("message", (m) => {
       const { p, rootDev } = inside(m.root, m.name);
       let st;
       try { st = fs.lstatSync(p); } catch (e) { if (e.code === "ENOENT") return reply({ ok: true, removed: false, bytes: 0 }); throw e; }
-      if (!st.isFile() || st.dev !== rootDev) return reply({ ok: false, error: "PATH_REFUSED: not a regular file on this filesystem" });
+      if (!st.isFile() || foreign(p, st, rootDev)) return reply({ ok: false, error: "PATH_REFUSED: not a regular file on this filesystem" });
       if (m.expectIdentity && ident(st) !== m.expectIdentity) return reply({ ok: false, error: "IDENTITY_CHANGED" });
       fs.unlinkSync(p);
       return reply({ ok: true, removed: true, bytes: st.size });

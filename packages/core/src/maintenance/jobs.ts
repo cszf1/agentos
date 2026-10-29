@@ -420,13 +420,13 @@ export class MaintenanceService {
   }
 
   /** One pass: clock, expiry, schedules, then every open job one step forward. */
-  async pass(): Promise<void> {
+  async pass(force = false): Promise<void> {
     this.clock.sample();
     this.policies.expireDue();
     this.tickSchedules();
     const jobs = this.store.all<JobRow>(`SELECT * FROM maintenance_jobs WHERE state NOT IN (${JOB_TERMINAL.map(() => "?").join(",")}) ORDER BY created_at ASC`, ...JOB_TERMINAL);
     for (const j of jobs) {
-      if (this.#stopped) return;
+      if (this.#stopped && !force) return;
       const p = this.#advance(j.id);
       this.#inflight.add(p);
       try {
