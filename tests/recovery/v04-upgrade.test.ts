@@ -75,18 +75,23 @@ d("V4-B02 real v0.3 workspace upgrade", () => {
     expect(fin.status).toBe("succeeded");
     const tr = await c.get(`/api/runs/${r.data.runId}/transcript`);
     expect(tr.data.conversationId).toBeTruthy();
-    // every code app's runtime comes back ready
-    for (const a of before.apps as { id: string }[]) {
-      const rt = await c.get(`/api/apps/${a.id}/runtime`);
-      if (rt.status === 200 && rt.data?.health !== undefined && rt.data.health !== "none") {
-        const until = Date.now() + 120_000;
-        let h = rt.data.health;
-        while (h !== "ready" && Date.now() < until) {
-          await new Promise((res) => setTimeout(res, 1000));
-          h = (await c.get(`/api/apps/${a.id}/runtime`)).data?.health;
-        }
-        expect(h).toBe("ready");
+    // every code app (AppBundle v2/v3) comes back ready on its runtime
+    const revs = before.revisions as { app_id: string; id: string; bundle_json: string }[];
+    const codeApps = (before.apps as { id: string; active_revision_id: string }[]).filter((a) => {
+      const r = revs.find((x) => x.app_id === a.id && x.id === a.active_revision_id);
+      return r && (JSON.parse(r.bundle_json) as { formatVersion: number }).formatVersion >= 2;
+    });
+    expect(codeApps.length).toBeGreaterThanOrEqual(1);
+    for (const a of codeApps) {
+      const until = Date.now() + 180_000;
+      let h: string | null = null;
+      while (h !== "ready" && Date.now() < until) {
+        h = (await c.get(`/api/apps/${a.id}/runtime`)).data?.health ?? null;
+        if (h !== "ready") await new Promise((res) => setTimeout(res, 1000));
       }
+      expect(h).toBe("ready");
+      const q = await c.req("POST", `/api/apps/${a.id}/queries/main`, { expectedAppEpoch: (await c.get(`/api/apps/${a.id}`)).data.appEpoch, input: {} });
+      expect(q.status, JSON.stringify(q)).toBe(200);
     }
   }, 600_000);
 });
