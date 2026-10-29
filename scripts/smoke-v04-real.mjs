@@ -18,7 +18,9 @@ if (!process.env.AGENTOS_MODEL_PROVIDER || !process.env.AGENTOS_MODEL_ID) {
   console.error("smoke:v0.4-real needs AGENTOS_MODEL_PROVIDER and AGENTOS_MODEL_ID");
   process.exit(2);
 }
-const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "aos-real4-"));
+const dataRoot = process.env.SMOKE_DATA_ROOT ?? os.tmpdir();
+fs.mkdirSync(dataRoot, { recursive: true });
+const dataDir = fs.mkdtempSync(path.join(dataRoot, "aos-real4-"));
 const port = 4700 + Math.floor(Math.random() * 200);
 const base = `http://127.0.0.1:${port}`;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -26,7 +28,7 @@ let host = null;
 let logs = [];
 let cookie = "";
 let epoch = 1;
-const report = { model: { provider: process.env.AGENTOS_MODEL_PROVIDER, id: process.env.AGENTOS_MODEL_ID, baseUrl: (process.env.AGENTOS_MODEL_BASE_URL ?? "").replace(/\/\/[^@/]*@/, "//") }, startedAt: new Date().toISOString(), steps: {} };
+const report = { dataDir, model: { provider: process.env.AGENTOS_MODEL_PROVIDER, id: process.env.AGENTOS_MODEL_ID, baseUrl: (process.env.AGENTOS_MODEL_BASE_URL ?? "").replace(/\/\/[^@/]*@/, "//") }, startedAt: new Date().toISOString(), steps: {} };
 const q = (sql, ...a) => {
   const db = new DatabaseSync(path.join(dataDir, "os.sqlite"), { readOnly: true });
   try {
@@ -79,7 +81,8 @@ const waitRun = (id) => until(() => req("GET", `/api/runs/${id}`).then((r) => r.
 async function runFacts(runId) {
   const t = await req("GET", `/api/runs/${runId}/transcript`);
   const attempts = q("SELECT purpose, background, state, output_tokens, route_id FROM model_attempts WHERE run_id = ?", runId);
-  return { conversationId: t.data?.conversationId ?? null, tools: (t.data?.items ?? []).filter((i) => i.toolName).map((i) => `${i.toolName}${i.isError ? "!" : ""}`), usage: t.data?.usage ?? null, model: process.env.AGENTOS_MODEL_ID, attempts: attempts.length, background: attempts.some((a) => a.background === 1), outputTokens: attempts.reduce((n, a) => n + (a.output_tokens ?? 0), 0) };
+  const errors = (t.data?.items ?? []).filter((i) => i.toolName && i.isError).map((i) => `${i.toolName}: ${JSON.stringify(i.content ?? i.text ?? i.result ?? "").slice(0, 400)}`);
+  return { conversationId: t.data?.conversationId ?? null, errors, tools: (t.data?.items ?? []).filter((i) => i.toolName).map((i) => `${i.toolName}${i.isError ? "!" : ""}`), usage: t.data?.usage ?? null, model: process.env.AGENTOS_MODEL_ID, attempts: attempts.length, background: attempts.some((a) => a.background === 1), outputTokens: attempts.reduce((n, a) => n + (a.output_tokens ?? 0), 0) };
 }
 
 let ok = false;
