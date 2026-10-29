@@ -38,6 +38,7 @@ const app = (id: string) => q<{ epoch: number; active_revision_id: string }>("SE
 type Prop = { proposalId: string; appId: string; state: string; proposalHash: string; baseAppEpoch: number; candidateRevisionId: string; appliedRevisionId: string | null; deploymentId: string | null; check: { baselineHash: string | null; candidateHash: string | null; fixtureSetVersion: string; result: unknown } };
 
 async function boot(env: Record<string, string> = {}) {
+  if (host) await stopHost(host).catch(() => undefined); // a failed earlier test never leaves its host holding the lock
   host = await startHost(dir, { AGENTOS_MODEL_MODE: "faux", ...env });
   const c = new Client(host);
   await c.login(dir);
@@ -81,9 +82,10 @@ describe("v0.4 proposals through the formal deployment", () => {
     // E04: a wrong hash or a wrong epoch is refused; the exact pair publishes through a formal deployment
     const bad = await c.req("POST", `/api/proposals/${p.proposalId}/accept`, { proposalHash: "sha256:00", expectedAppEpoch: before.epoch });
     expect(bad.status).toBe(409);
-    expect(bad.data.error ?? bad.data.code).toBe("PROPOSAL_STALE");
+    expect(bad.error?.code).toBe("PROPOSAL_STALE");
     const badEpoch = await c.req("POST", `/api/proposals/${p.proposalId}/accept`, { proposalHash: p.proposalHash, expectedAppEpoch: before.epoch + 7 });
     expect(badEpoch.status).toBe(409);
+    expect(badEpoch.error?.code).toBe("PROPOSAL_STALE");
     expect((await c.get("/api/proposals")).data.items.find((x: Prop) => x.proposalId === p.proposalId).state).toBe("stale");
     // the failed epoch marked it stale: it needs a new candidate, never the old confirmation
     const p2 = await optimise(c, appId, seen);
