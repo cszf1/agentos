@@ -106,7 +106,7 @@ test("v0.3: connect, confirm, unknown, revoke, operation center, system_plan, ol
   // 6. system_plan run: resources and allowed actions chosen by the user; the plan waits for the Shell
   await page.getByRole("button", { name: "⚙ 系统与操作中心" }).click();
   await center.getByRole("tab", { name: "系统计划" }).click();
-  await center.locator("fieldset", { hasText: "资源" }).getByLabel("演示服务").check();
+  await center.locator("fieldset", { hasText: "资源" }).getByLabel("演示服务", { exact: true }).check();
   await center.locator("fieldset", { hasText: "允许提议的动作" }).getByLabel("service.set_limit").check();
   await center.getByLabel("系统计划需求").fill("将演示服务 CPU 上限设为 30%");
   await center.getByRole("button", { name: "生成系统计划" }).click();

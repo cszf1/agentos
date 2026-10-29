@@ -41,7 +41,10 @@ d("V4-B02 real v0.3 workspace upgrade", () => {
     before = facts(dir);
   });
   afterAll(async () => {
-    if (host) await stopHost(host);
+    if (host) {
+      if (host.proc.exitCode !== null || host.proc.signalCode !== null) console.log("HOST EXITED", host.proc.exitCode, host.proc.signalCode, host.logs.join("").slice(-4000));
+      await stopHost(host).catch(() => undefined);
+    }
   });
 
   it("opens unchanged, migrates once, keeps the pair, and runs v0.4 work", async () => {
