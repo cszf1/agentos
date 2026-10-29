@@ -193,4 +193,3 @@ pub fn metrics(d: &Value) -> Value {
         "sampledAtMs": crate::now_ms(),
     })
 }
-

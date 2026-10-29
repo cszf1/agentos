@@ -190,8 +190,20 @@ pub struct RestoreParams {
 }
 
 pub const METHODS: &[&str] = &[
-    "handshake", "describe", "read", "grant-sync", "grant-revoke", "submit", "operation-get", "operation-cancel",
-    "operation-resolve", "history-sync", "workspace-quiesce", "workspace-resume", "restore-begin", "restore-status",
+    "handshake",
+    "describe",
+    "read",
+    "grant-sync",
+    "grant-revoke",
+    "submit",
+    "operation-get",
+    "operation-cancel",
+    "operation-resolve",
+    "history-sync",
+    "workspace-quiesce",
+    "workspace-resume",
+    "restore-begin",
+    "restore-status",
     "restore-complete",
 ];
 
@@ -401,7 +413,9 @@ impl MaintenanceWriteEnvelope {
         if !hash_ok(&self.plan_hash) || !hash_ok(&self.request_hash) {
             return Err("hashes must be sha256:<64 lowercase hex>".into());
         }
-        for n in [self.workspace_incarnation, self.resource_generation, self.policy_version, self.maintenance_epoch, self.target_control_epoch, self.deadline_ms] {
+        for n in
+            [self.workspace_incarnation, self.resource_generation, self.policy_version, self.maintenance_epoch, self.target_control_epoch, self.deadline_ms]
+        {
             if !safe_u64(n) {
                 return Err("integer outside the safe range".into());
             }

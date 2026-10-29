@@ -141,14 +141,18 @@ pub fn handle(req: &WorkerRequest, st: &Arc<Mutex<State>>) -> Res {
         "observe" => {
             let id = identity(t)?;
             let g = st.lock().unwrap();
-            Ok(json!({"identity": id, "version": agentos_protocol::domain_hash("agentos.serial-identity.v1", &id).unwrap_or_default(), "details": {"session": g.session.as_ref().map(|s| json!({"sessionId": s.id, "openedAtMs": s.opened_at_ms}))}}))
+            Ok(
+                json!({"identity": id, "version": agentos_protocol::domain_hash("agentos.serial-identity.v1", &id).unwrap_or_default(), "details": {"session": g.session.as_ref().map(|s| json!({"sessionId": s.id, "openedAtMs": s.opened_at_ms}))}}),
+            )
         }
         "read" => match req.params["capabilityId"].as_str() {
             // Status never opens the port: udev metadata plus the cached session state only (spec §16).
             Some("serial.status") => {
                 let id = identity(t).ok();
                 let g = st.lock().unwrap();
-                Ok(json!({"connected": id.is_some(), "identity": id, "session": g.session.as_ref().map(|s| json!({"sessionId": s.id, "openedAtMs": s.opened_at_ms, "idleMs": s.last_used.elapsed().as_millis() as u64})), "samples": g.samples}))
+                Ok(
+                    json!({"connected": id.is_some(), "identity": id, "session": g.session.as_ref().map(|s| json!({"sessionId": s.id, "openedAtMs": s.opened_at_ms, "idleMs": s.last_used.elapsed().as_millis() as u64})), "samples": g.samples}),
+                )
             }
             Some("device.list") => Ok(json!({"devices": list_devices()})),
             _ => Err(WErr::none("CAPABILITY_VERSION_UNSUPPORTED", "unsupported serial read")),
@@ -168,7 +172,13 @@ pub fn handle(req: &WorkerRequest, st: &Arc<Mutex<State>>) -> Res {
             }
             if g.session.is_none() {
                 let fd = open_port(&path)?;
-                g.session = Some(Session { id: format!("ss_{}", agentos_protocol::random_hex(6)), fd, identity: id.clone(), last_used: Instant::now(), opened_at_ms: agentos_protocol::now_ms() });
+                g.session = Some(Session {
+                    id: format!("ss_{}", agentos_protocol::random_hex(6)),
+                    fd,
+                    identity: id.clone(),
+                    last_used: Instant::now(),
+                    opened_at_ms: agentos_protocol::now_ms(),
+                });
             }
             let mut sess = g.session.take().unwrap();
             let fd = sess.fd.as_raw_fd();

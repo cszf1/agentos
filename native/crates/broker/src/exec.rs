@@ -34,18 +34,31 @@ pub fn observe(b: &Broker, r: &CatalogRes) -> Result<Obs, BErr> {
 /// Record an observation: a changed identity increases the generation (old grants and plans become stale).
 pub fn apply_observation(c: &Connection, r: &CatalogRes, obs: &Result<Obs, BErr>) -> Result<(i64, String, Option<String>), BErr> {
     let (gen, digest, quarantine): (i64, Option<String>, Option<String>) =
-        c.query_row("SELECT generation, identity_digest, quarantine_operation_id FROM resource_state WHERE resource_id=?1", params![r.resource_id], |x| Ok((x.get(0)?, x.get(1)?, x.get(2)?)))?;
+        c.query_row("SELECT generation, identity_digest, quarantine_operation_id FROM resource_state WHERE resource_id=?1", params![r.resource_id], |x| {
+            Ok((x.get(0)?, x.get(1)?, x.get(2)?))
+        })?;
     match obs {
         Ok(o) => {
             let mut g = gen;
             if let Some(d) = &digest {
                 if d != &o.digest {
                     g += 1;
-                    db::audit(c, "resource_generation", None, None, None, None, &json!({"resource": r.resource_id, "generation": g, "reason": "identity changed"}))?;
+                    db::audit(
+                        c,
+                        "resource_generation",
+                        None,
+                        None,
+                        None,
+                        None,
+                        &json!({"resource": r.resource_id, "generation": g, "reason": "identity changed"}),
+                    )?;
                 }
             }
             let status = if quarantine.is_some() { "quarantined" } else { "available" };
-            c.execute("UPDATE resource_state SET generation=?2, identity_digest=?3, observed_version=?4, status=?5, updated_at=?6 WHERE resource_id=?1", params![r.resource_id, g, o.digest, o.version, status, now()])?;
+            c.execute(
+                "UPDATE resource_state SET generation=?2, identity_digest=?3, observed_version=?4, status=?5, updated_at=?6 WHERE resource_id=?1",
+                params![r.resource_id, g, o.digest, o.version, status, now()],
+            )?;
             Ok((g, status.into(), quarantine))
         }
         Err(e) => {
@@ -215,7 +228,8 @@ where
         return Err(BErr::new("INVALID_SYSTEM_PLAN", "read accepts read-only capabilities only"));
     }
     let params = agentos_protocol::params::check_params(&r.capability_id, &r.params).map_err(|m| split_err(&m))?;
-    let res = b.find_res(&r.identity.store_uuid, &r.resource_id).ok_or_else(|| BErr::new("RESOURCE_NOT_BOUND", "resource is not in this workspace's catalog"))?;
+    let res =
+        b.find_res(&r.identity.store_uuid, &r.resource_id).ok_or_else(|| BErr::new("RESOURCE_NOT_BOUND", "resource is not in this workspace's catalog"))?;
     {
         let g = b.db.lock().unwrap();
         let c = g.as_ref().ok_or_else(|| BErr::new("BROKER_HISTORY_MISSING", "log unavailable"))?;
@@ -273,7 +287,8 @@ where
     if normalized != env.params {
         return Err(BErr::new("INVALID_SYSTEM_PLAN", "params are not in normalized form"));
     }
-    let id = Identity { machine_install_id: env.machine_install_id.clone(), store_uuid: env.store_uuid.clone(), workspace_incarnation: env.workspace_incarnation };
+    let id =
+        Identity { machine_install_id: env.machine_install_id.clone(), store_uuid: env.store_uuid.clone(), workspace_incarnation: env.workspace_incarnation };
     let mut g = b.db.lock().unwrap();
     let c = db_or_diag(b, &mut g)?;
     let (_state, inc) = check(c, &id)?;
@@ -289,7 +304,15 @@ where
     }
     // Early grant check (spec §8.3): a request under a revoked/expired/foreign grant is refused before acceptance.
     // Admission re-checks under the same lock, so a revoke committed between the two still wins.
-    if !matches!(c.query_row("SELECT 1 FROM cancel_tombstones WHERE machine_install_id=?1 AND store_uuid=?2 AND incarnation=?3 AND operation_id=?4", params![b.install_id, env.store_uuid, inc, env.operation_id], |_| Ok(())).optional()?, Some(())) {
+    if !matches!(
+        c.query_row(
+            "SELECT 1 FROM cancel_tombstones WHERE machine_install_id=?1 AND store_uuid=?2 AND incarnation=?3 AND operation_id=?4",
+            params![b.install_id, env.store_uuid, inc, env.operation_id],
+            |_| Ok(())
+        )
+        .optional()?,
+        Some(())
+    ) {
         let gen: i64 = c.query_row("SELECT generation FROM resource_state WHERE resource_id=?1", params![env.resource_id], |r| r.get(0)).unwrap_or(-1);
         grant_usable(&load_grant(c, &env.store_uuid, &env.grant_id, env.grant_version)?, &env.capability_id, &env.resource_id, gen)?;
     }
@@ -299,12 +322,26 @@ where
         return Err(BErr::new("RESOURCE_BUSY", "operation log capacity reached; new admissions are refused"));
     }
     let tx = c.unchecked_transaction()?;
-    let seq = db::audit(&tx, "operation_accepted", Some(&env.store_uuid), Some(inc), Some(&env.operation_id), Some(&env.grant_id), &json!({"capability": env.capability_id, "resource": env.resource_id}))?;
+    let seq = db::audit(
+        &tx,
+        "operation_accepted",
+        Some(&env.store_uuid),
+        Some(inc),
+        Some(&env.operation_id),
+        Some(&env.grant_id),
+        &json!({"capability": env.capability_id, "resource": env.resource_id}),
+    )?;
     let tomb: Option<String> = tx
-        .query_row("SELECT reason FROM cancel_tombstones WHERE machine_install_id=?1 AND store_uuid=?2 AND incarnation=?3 AND operation_id=?4", params![b.install_id, env.store_uuid, inc, env.operation_id], |r| r.get(0))
+        .query_row(
+            "SELECT reason FROM cancel_tombstones WHERE machine_install_id=?1 AND store_uuid=?2 AND incarnation=?3 AND operation_id=?4",
+            params![b.install_id, env.store_uuid, inc, env.operation_id],
+            |r| r.get(0),
+        )
         .optional()?;
     let (state, cert, evk, err) = match &tomb {
-        Some(_) => ("cancelled_no_effect", Some("none"), Some("cancel_tombstone"), Some(("CANCELLED", "a cancellation was recorded before this request arrived"))),
+        Some(_) => {
+            ("cancelled_no_effect", Some("none"), Some("cancel_tombstone"), Some(("CANCELLED", "a cancellation was recorded before this request arrived")))
+        }
         None => ("accepted", None, None, None),
     };
     tx.execute(
@@ -338,7 +375,11 @@ where
     let (_, inc) = check(c, &p.identity)?;
     let tx = c.unchecked_transaction()?;
     let st: Option<String> = tx
-        .query_row("SELECT state FROM effect_operations WHERE machine_install_id=?1 AND store_uuid=?2 AND incarnation=?3 AND operation_id=?4", params![b.install_id, p.identity.store_uuid, inc, p.operation_id], |r| r.get(0))
+        .query_row(
+            "SELECT state FROM effect_operations WHERE machine_install_id=?1 AND store_uuid=?2 AND incarnation=?3 AND operation_id=?4",
+            params![b.install_id, p.identity.store_uuid, inc, p.operation_id],
+            |r| r.get(0),
+        )
         .optional()?;
     match st.as_deref() {
         None => {
@@ -351,7 +392,15 @@ where
             return Ok(json!({"operationId": p.operation_id, "state": "cancelled_no_effect", "tombstone": true}));
         }
         Some("accepted") => {
-            let seq = db::audit(&tx, "operation_cancelled", Some(&p.identity.store_uuid), Some(inc), Some(&p.operation_id), None, &json!({"reason": p.reason, "before": "admission"}))?;
+            let seq = db::audit(
+                &tx,
+                "operation_cancelled",
+                Some(&p.identity.store_uuid),
+                Some(inc),
+                Some(&p.operation_id),
+                None,
+                &json!({"reason": p.reason, "before": "admission"}),
+            )?;
             tx.execute(
                 "UPDATE effect_operations SET state='cancelled_no_effect', effect_certainty='none', evidence_kind='cancelled_before_admission', error_code='CANCELLED', error_message=?5, updated_seq=?6, updated_at=?7 WHERE machine_install_id=?1 AND store_uuid=?2 AND incarnation=?3 AND operation_id=?4",
                 params![b.install_id, p.identity.store_uuid, inc, p.operation_id, p.reason, seq, now()],
@@ -388,9 +437,18 @@ where
         return Err(BErr::new("RECONCILIATION_REQUIRED", "only indeterminate operations take an operator decision"));
     }
     let tx = c.unchecked_transaction()?;
-    let seq = db::audit(&tx, "operation_resolved", Some(&p.identity.store_uuid), Some(inc), Some(&p.operation_id), None, &json!({"decision": p.decision, "releaseQuarantine": p.release_quarantine}))?;
+    let seq = db::audit(
+        &tx,
+        "operation_resolved",
+        Some(&p.identity.store_uuid),
+        Some(inc),
+        Some(&p.operation_id),
+        None,
+        &json!({"decision": p.decision, "releaseQuarantine": p.release_quarantine}),
+    )?;
     // The original state and evidence stay; the decision is recorded beside them (spec §17.5).
-    let resolution = json!({"operatorDecision": p.decision, "observedEvidence": p.observed_evidence, "releaseQuarantine": p.release_quarantine, "seq": seq, "at": now()});
+    let resolution =
+        json!({"operatorDecision": p.decision, "observedEvidence": p.observed_evidence, "releaseQuarantine": p.release_quarantine, "seq": seq, "at": now()});
     tx.execute(
         "UPDATE effect_operations SET resolution_json=?5, updated_seq=?6, updated_at=?7 WHERE machine_install_id=?1 AND store_uuid=?2 AND incarnation=?3 AND operation_id=?4",
         params![b.install_id, p.identity.store_uuid, inc, p.operation_id, resolution.to_string(), seq, now()],
@@ -428,9 +486,17 @@ where
         let (busy, indeterminate, seq, accepted) = {
             let g = b.db.lock().unwrap();
             let c = g.as_ref().unwrap();
-            let busy: i64 = c.query_row("SELECT count(*) FROM effect_operations WHERE store_uuid=?1 AND state IN ('running','reconciling')", params![p.identity.store_uuid], |r| r.get(0))?;
-            let mut st = c.prepare("SELECT operation_id, resource_id FROM effect_operations WHERE store_uuid=?1 AND state='indeterminate' AND resolution_json IS NULL")?;
-            let ind: Vec<Value> = st.query_map(params![p.identity.store_uuid], |r| Ok(json!({"operationId": r.get::<_, String>(0)?, "resourceId": r.get::<_, String>(1)?})))?.filter_map(|x| x.ok()).collect();
+            let busy: i64 = c.query_row(
+                "SELECT count(*) FROM effect_operations WHERE store_uuid=?1 AND state IN ('running','reconciling')",
+                params![p.identity.store_uuid],
+                |r| r.get(0),
+            )?;
+            let mut st =
+                c.prepare("SELECT operation_id, resource_id FROM effect_operations WHERE store_uuid=?1 AND state='indeterminate' AND resolution_json IS NULL")?;
+            let ind: Vec<Value> = st
+                .query_map(params![p.identity.store_uuid], |r| Ok(json!({"operationId": r.get::<_, String>(0)?, "resourceId": r.get::<_, String>(1)?})))?
+                .filter_map(|x| x.ok())
+                .collect();
             let mut st2 = c.prepare("SELECT operation_id FROM effect_operations WHERE store_uuid=?1 AND state='accepted'")?;
             let acc: Vec<String> = st2.query_map(params![p.identity.store_uuid], |r| r.get(0))?.filter_map(|x| x.ok()).collect();
             let seq: i64 = db::meta(c, "seq").and_then(|s| s.parse().ok()).unwrap_or(0);
@@ -441,7 +507,9 @@ where
             let fw = b.call_worker("managed-root", "status", &json!({}), json!({}), None, None, 3000).ok();
             let idle = fw.as_ref().and_then(|v| v["active"].as_u64()).map(|n| n == 0).unwrap_or(false);
             if idle {
-                return Ok(json!({"state": "quiescing", "checkpointSeq": seq, "workspaceIncarnation": inc, "machineInstallId": b.install_id, "indeterminate": indeterminate, "acceptedNotAdmitted": accepted, "fileWorkerIdle": true}));
+                return Ok(
+                    json!({"state": "quiescing", "checkpointSeq": seq, "workspaceIncarnation": inc, "machineInstallId": b.install_id, "indeterminate": indeterminate, "acceptedNotAdmitted": accepted, "fileWorkerIdle": true}),
+                );
             }
         }
         if std::time::Instant::now() >= deadline {
@@ -463,7 +531,9 @@ fn restore_binding(b: &Broker, c: &Connection, uid: u32, sess_store: Option<&str
         return Err(BErr::new("INVALID_SYSTEM_PLAN", "malformed restoreRequestId"));
     }
     let (inc, state, au): (i64, String, i64) = c
-        .query_row("SELECT incarnation, state, allowed_uid FROM workspace_bindings WHERE store_uuid=?1", params![p.store_uuid], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+        .query_row("SELECT incarnation, state, allowed_uid FROM workspace_bindings WHERE store_uuid=?1", params![p.store_uuid], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+        })
         .optional()?
         .ok_or_else(|| BErr::new("BROKER_POLICY_DENIED", "workspace is not registered"))?;
     if au as u32 != uid {
@@ -481,7 +551,9 @@ pub fn restore_begin(b: &Shared, uid: u32, sess_store: Option<&str>, p: &Restore
         if let Some(v) = restore_session(c, &p.restore_request_id)? {
             return Ok(v);
         }
-        let open: Option<String> = c.query_row("SELECT restore_request_id FROM restore_sessions WHERE store_uuid=?1 AND phase='fenced'", params![p.store_uuid], |r| r.get(0)).optional()?;
+        let open: Option<String> = c
+            .query_row("SELECT restore_request_id FROM restore_sessions WHERE store_uuid=?1 AND phase='fenced'", params![p.store_uuid], |r| r.get(0))
+            .optional()?;
         if let Some(o) = open {
             return Err(BErr::new("RECONCILIATION_REQUIRED", format!("restore {o} is not complete")).with(json!({"restoreRequestId": o})));
         }
@@ -494,7 +566,11 @@ pub fn restore_begin(b: &Shared, uid: u32, sess_store: Option<&str>, p: &Restore
     loop {
         let busy: i64 = {
             let g = b.db.lock().unwrap();
-            g.as_ref().unwrap().query_row("SELECT count(*) FROM effect_operations WHERE store_uuid=?1 AND state IN ('running','reconciling')", params![p.store_uuid], |r| r.get(0))?
+            g.as_ref().unwrap().query_row(
+                "SELECT count(*) FROM effect_operations WHERE store_uuid=?1 AND state IN ('running','reconciling')",
+                params![p.store_uuid],
+                |r| r.get(0),
+            )?
         };
         if busy == 0 {
             break;
@@ -512,7 +588,15 @@ pub fn restore_begin(b: &Shared, uid: u32, sess_store: Option<&str>, p: &Restore
     }
     let tx = c.unchecked_transaction()?;
     let target = inc + 1;
-    let seq = db::audit(&tx, "restore_begin", Some(&p.store_uuid), Some(inc), None, None, &json!({"restoreRequestId": p.restore_request_id, "target": target, "source": p.source_incarnation}))?;
+    let seq = db::audit(
+        &tx,
+        "restore_begin",
+        Some(&p.store_uuid),
+        Some(inc),
+        None,
+        None,
+        &json!({"restoreRequestId": p.restore_request_id, "target": target, "source": p.source_incarnation}),
+    )?;
     // Fence every old-incarnation request that was never admitted: it can never run.
     tx.execute(
         "UPDATE effect_operations SET state='cancelled_no_effect', effect_certainty='none', evidence_kind='fenced_by_restore', error_code='WORKSPACE_FENCED', error_message='workspace restored to a new incarnation before admission', updated_seq=?3, updated_at=?4 WHERE store_uuid=?1 AND incarnation=?2 AND state='accepted'",
@@ -524,7 +608,10 @@ pub fn restore_begin(b: &Shared, uid: u32, sess_store: Option<&str>, p: &Restore
         params![p.restore_request_id, p.store_uuid, p.source_incarnation.map(|x| x as i64), inc, target, seq, now()],
     )?;
     // Grants of the old incarnation stop authorizing anything.
-    tx.execute("UPDATE broker_grants SET revoked_seq=?3, revoked_at=?4 WHERE store_uuid=?1 AND incarnation=?2 AND revoked_seq IS NULL", params![p.store_uuid, inc, seq, now()])?;
+    tx.execute(
+        "UPDATE broker_grants SET revoked_seq=?3, revoked_at=?4 WHERE store_uuid=?1 AND incarnation=?2 AND revoked_seq IS NULL",
+        params![p.store_uuid, inc, seq, now()],
+    )?;
     tx.commit()?;
     b.fault("broker.after_restore_fence");
     Ok(restore_session(c, &p.restore_request_id)?.unwrap())
@@ -562,7 +649,15 @@ pub fn restore_complete(b: &Shared, sess_store: Option<&str>, p: &RestoreParams)
         return Ok(s);
     }
     let tx = c.unchecked_transaction()?;
-    let seq = db::audit(&tx, "restore_complete", Some(&p.store_uuid), s["targetIncarnation"].as_i64(), None, None, &json!({"restoreRequestId": p.restore_request_id}))?;
+    let seq = db::audit(
+        &tx,
+        "restore_complete",
+        Some(&p.store_uuid),
+        s["targetIncarnation"].as_i64(),
+        None,
+        None,
+        &json!({"restoreRequestId": p.restore_request_id}),
+    )?;
     tx.execute("UPDATE restore_sessions SET phase='complete', completed_at=?2 WHERE restore_request_id=?1", params![p.restore_request_id, now()])?;
     tx.execute("UPDATE workspace_bindings SET state='active', updated_at=?2 WHERE store_uuid=?1", params![p.store_uuid, now()])?;
     let _ = seq;
@@ -634,11 +729,15 @@ fn step(c: &Connection, op: &OpRow, name: &str, attempt: i64, before: Option<&Va
 }
 
 fn has_step(c: &Connection, op: &OpRow, name: &str) -> Option<Value> {
-    c.query_row("SELECT before_json, after_json FROM effect_steps WHERE operation_id=?1 AND incarnation=?2 AND step=?3 ORDER BY id DESC LIMIT 1", params![op.op_id, op.inc, name], |r| {
-        let a: Option<String> = r.get(0)?;
-        let bb: Option<String> = r.get(1)?;
-        Ok(json!({"before": a.and_then(|s| serde_json::from_str::<Value>(&s).ok()), "after": bb.and_then(|s| serde_json::from_str::<Value>(&s).ok())}))
-    })
+    c.query_row(
+        "SELECT before_json, after_json FROM effect_steps WHERE operation_id=?1 AND incarnation=?2 AND step=?3 ORDER BY id DESC LIMIT 1",
+        params![op.op_id, op.inc, name],
+        |r| {
+            let a: Option<String> = r.get(0)?;
+            let bb: Option<String> = r.get(1)?;
+            Ok(json!({"before": a.and_then(|s| serde_json::from_str::<Value>(&s).ok()), "after": bb.and_then(|s| serde_json::from_str::<Value>(&s).ok())}))
+        },
+    )
     .optional()
     .ok()
     .flatten()
@@ -661,7 +760,15 @@ fn no_effect(state: &'static str, evidence_kind: &'static str, evidence: Value, 
     Outcome { state, completion: None, certainty: "none", evidence_kind, evidence, result: Value::Null, error: Some((code.into(), msg.into())) }
 }
 fn unknown(evidence_kind: &'static str, evidence: Value, code: &str, msg: impl Into<String>) -> Outcome {
-    Outcome { state: "indeterminate", completion: None, certainty: "unknown", evidence_kind, evidence, result: Value::Null, error: Some((code.into(), msg.into())) }
+    Outcome {
+        state: "indeterminate",
+        completion: None,
+        certainty: "unknown",
+        evidence_kind,
+        evidence,
+        result: Value::Null,
+        error: Some((code.into(), msg.into())),
+    }
 }
 
 fn finish(b: &Broker, op: &OpRow, o: Outcome) {
@@ -671,23 +778,44 @@ fn finish(b: &Broker, op: &OpRow, o: Outcome) {
         Ok(t) => t,
         Err(_) => return,
     };
-    let seq = db::audit(&tx, "operation_finished", Some(&op.store), Some(op.inc), Some(&op.op_id), None, &json!({"state": o.state, "certainty": o.certainty, "evidence": o.evidence_kind})).unwrap_or(0);
+    let seq = db::audit(
+        &tx,
+        "operation_finished",
+        Some(&op.store),
+        Some(op.inc),
+        Some(&op.op_id),
+        None,
+        &json!({"state": o.state, "certainty": o.certainty, "evidence": o.evidence_kind}),
+    )
+    .unwrap_or(0);
     let _ = tx.execute(
         "UPDATE effect_operations SET state=?5, completion_kind=?6, effect_certainty=?7, evidence_kind=?8, evidence_json=?9, result_json=?10, error_code=?11, error_message=?12, updated_seq=?13, updated_at=?14 WHERE machine_install_id=?1 AND store_uuid=?2 AND incarnation=?3 AND operation_id=?4",
         params![b.install_id, op.store, op.inc, op.op_id, o.state, o.completion, o.certainty, o.evidence_kind, o.evidence.to_string(), o.result.to_string(), o.error.as_ref().map(|e| e.0.clone()), o.error.as_ref().map(|e| e.1.clone()), seq, now()],
     );
     if o.state == "indeterminate" {
         // Keep the write lock and quarantine the resource: only reconciliation or an operator decision releases it.
-        let _ = tx.execute("UPDATE resource_state SET quarantine_operation_id=?2, lock_operation_id=?2, status='quarantined', updated_at=?3 WHERE resource_id=?1", params![op.env.resource_id, op.op_id, now()]);
+        let _ = tx.execute(
+            "UPDATE resource_state SET quarantine_operation_id=?2, lock_operation_id=?2, status='quarantined', updated_at=?3 WHERE resource_id=?1",
+            params![op.env.resource_id, op.op_id, now()],
+        );
     } else {
-        let _ = tx.execute("UPDATE resource_state SET lock_operation_id=NULL, updated_at=?3 WHERE resource_id=?1 AND lock_operation_id=?2", params![op.env.resource_id, op.op_id, now()]);
+        let _ = tx.execute(
+            "UPDATE resource_state SET lock_operation_id=NULL, updated_at=?3 WHERE resource_id=?1 AND lock_operation_id=?2",
+            params![op.env.resource_id, op.op_id, now()],
+        );
         if let Some(v) = o.result.get("version").and_then(|v| v.as_str()) {
             let _ = tx.execute("UPDATE resource_state SET observed_version=?2 WHERE resource_id=?1", params![op.env.resource_id, v]);
         }
     }
     if o.state != "running" && o.state != "reconciling" {
         let outcome = match o.state {
-            "succeeded" => if o.completion == Some("already_satisfied") { "no_change" } else { "succeeded" },
+            "succeeded" => {
+                if o.completion == Some("already_satisfied") {
+                    "no_change"
+                } else {
+                    "succeeded"
+                }
+            }
             "indeterminate" => "unknown",
             _ => "failed",
         };
@@ -724,20 +852,31 @@ fn admission(b: &Broker, op: &OpRow) -> Admission {
     let c = g.as_ref().unwrap();
     let Ok(tx) = c.unchecked_transaction() else { return Admission::Wait };
     let _ = apply_observation(&tx, &res, &obs);
-    let ws: (i64, String) = match tx.query_row("SELECT incarnation, state FROM workspace_bindings WHERE store_uuid=?1", params![op.store], |r| Ok((r.get(0)?, r.get(1)?))) {
-        Ok(x) => x,
-        Err(_) => return Admission::Wait,
-    };
+    let ws: (i64, String) =
+        match tx.query_row("SELECT incarnation, state FROM workspace_bindings WHERE store_uuid=?1", params![op.store], |r| Ok((r.get(0)?, r.get(1)?))) {
+            Ok(x) => x,
+            Err(_) => return Admission::Wait,
+        };
     if ws.0 != op.inc {
         let _ = tx.commit();
-        return Admission::Refused(no_effect("cancelled_no_effect", "fenced_by_restore", json!({"incarnation": ws.0}), "WORKSPACE_FENCED", "the workspace moved to a new incarnation"));
+        return Admission::Refused(no_effect(
+            "cancelled_no_effect",
+            "fenced_by_restore",
+            json!({"incarnation": ws.0}),
+            "WORKSPACE_FENCED",
+            "the workspace moved to a new incarnation",
+        ));
     }
     if ws.1 != "active" {
         let _ = tx.commit();
         return Admission::Wait;
     }
     let cancel: i64 = tx
-        .query_row("SELECT cancel_requested FROM effect_operations WHERE machine_install_id=?1 AND store_uuid=?2 AND incarnation=?3 AND operation_id=?4", params![b.install_id, op.store, op.inc, op.op_id], |r| r.get(0))
+        .query_row(
+            "SELECT cancel_requested FROM effect_operations WHERE machine_install_id=?1 AND store_uuid=?2 AND incarnation=?3 AND operation_id=?4",
+            params![b.install_id, op.store, op.inc, op.op_id],
+            |r| r.get(0),
+        )
         .unwrap_or(0);
     if cancel != 0 {
         let _ = tx.commit();
@@ -745,18 +884,39 @@ fn admission(b: &Broker, op: &OpRow) -> Admission {
     }
     if (env.deadline_ms as i64) <= now() {
         let _ = tx.commit();
-        return Admission::Refused(no_effect("expired_no_effect", "deadline_before_dispatch", json!({"deadlineMs": env.deadline_ms}), "PLAN_EXPIRED", "the execution deadline passed before dispatch"));
+        return Admission::Refused(no_effect(
+            "expired_no_effect",
+            "deadline_before_dispatch",
+            json!({"deadlineMs": env.deadline_ms}),
+            "PLAN_EXPIRED",
+            "the execution deadline passed before dispatch",
+        ));
     }
     let grant = load_grant(&tx, &op.store, &env.grant_id, env.grant_version).ok().flatten();
-    let (gen, lock, quarantine): (i64, Option<String>, Option<String>) =
-        tx.query_row("SELECT generation, lock_operation_id, quarantine_operation_id FROM resource_state WHERE resource_id=?1", params![env.resource_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap_or((0, None, None));
+    let (gen, lock, quarantine): (i64, Option<String>, Option<String>) = tx
+        .query_row("SELECT generation, lock_operation_id, quarantine_operation_id FROM resource_state WHERE resource_id=?1", params![env.resource_id], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+        })
+        .unwrap_or((0, None, None));
     if let Err(e) = obs {
         let _ = tx.commit();
-        return Admission::Refused(no_effect("failed_no_effect", "admission_refused", json!({"observe": e.message}), if e.code == "RESOURCE_GONE" { "RESOURCE_GONE" } else { "PROVIDER_UNAVAILABLE" }, e.message));
+        return Admission::Refused(no_effect(
+            "failed_no_effect",
+            "admission_refused",
+            json!({"observe": e.message}),
+            if e.code == "RESOURCE_GONE" { "RESOURCE_GONE" } else { "PROVIDER_UNAVAILABLE" },
+            e.message,
+        ));
     }
     if gen as u64 != env.resource_generation {
         let _ = tx.commit();
-        return Admission::Refused(no_effect("failed_no_effect", "admission_refused", json!({"generation": gen}), "RESOURCE_GENERATION_STALE", format!("resource generation is {gen}, the plan was made for {}", env.resource_generation)));
+        return Admission::Refused(no_effect(
+            "failed_no_effect",
+            "admission_refused",
+            json!({"generation": gen}),
+            "RESOURCE_GENERATION_STALE",
+            format!("resource generation is {gen}, the plan was made for {}", env.resource_generation),
+        ));
     }
     // Protocol-2 maintenance operation: the approved policy, pause state and target control epoch replace the grant.
     let maint = crate::maintenance::maintenance_of(&tx, &b.install_id, &op.store, op.inc, &op.op_id);
@@ -767,37 +927,61 @@ fn admission(b: &Broker, op: &OpRow) -> Admission {
         }
     }
     if maint.is_none() {
-    if let Err(e) = grant_usable(&grant, &env.capability_id, &env.resource_id, gen) {
-        let _ = tx.commit();
-        return Admission::Refused(no_effect("failed_no_effect", "admission_refused", json!({}), &e.code, e.message));
-    }
-    let g0 = grant.unwrap();
-    if let Some(ph) = &g0.params_hash {
-        let h = agentos_protocol::domain_hash("agentos.system-params.v1", &env.params).unwrap_or_default();
-        if &h != ph {
+        if let Err(e) = grant_usable(&grant, &env.capability_id, &env.resource_id, gen) {
             let _ = tx.commit();
-            return Admission::Refused(no_effect("failed_no_effect", "admission_refused", json!({}), "PLAN_HASH_MISMATCH", "parameters differ from the confirmed plan"));
+            return Admission::Refused(no_effect("failed_no_effect", "admission_refused", json!({}), &e.code, e.message));
         }
-    }
-    if g0.principal["kind"] == "system_action" && g0.principal["actionId"] != env.action_id {
-        let _ = tx.commit();
-        return Admission::Refused(no_effect("failed_no_effect", "admission_refused", json!({}), "PROVIDER_GRANT_REQUIRED", "the one-time grant belongs to another action"));
-    }
-    if let Err(e) = params_within(&env.capability_id, &env.params, &g0.limits, &res.caps) {
-        let _ = tx.commit();
-        return Admission::Refused(no_effect("failed_no_effect", "admission_refused", json!({}), &e.code, e.message));
-    }
+        let g0 = grant.unwrap();
+        if let Some(ph) = &g0.params_hash {
+            let h = agentos_protocol::domain_hash("agentos.system-params.v1", &env.params).unwrap_or_default();
+            if &h != ph {
+                let _ = tx.commit();
+                return Admission::Refused(no_effect(
+                    "failed_no_effect",
+                    "admission_refused",
+                    json!({}),
+                    "PLAN_HASH_MISMATCH",
+                    "parameters differ from the confirmed plan",
+                ));
+            }
+        }
+        if g0.principal["kind"] == "system_action" && g0.principal["actionId"] != env.action_id {
+            let _ = tx.commit();
+            return Admission::Refused(no_effect(
+                "failed_no_effect",
+                "admission_refused",
+                json!({}),
+                "PROVIDER_GRANT_REQUIRED",
+                "the one-time grant belongs to another action",
+            ));
+        }
+        if let Err(e) = params_within(&env.capability_id, &env.params, &g0.limits, &res.caps) {
+            let _ = tx.commit();
+            return Admission::Refused(no_effect("failed_no_effect", "admission_refused", json!({}), &e.code, e.message));
+        }
     }
     // A quarantined resource refuses new writes at once (spec §12.4); only a held execution lock makes it wait.
     if let Some(q) = quarantine.filter(|q| q != &op.op_id) {
         let _ = tx.commit();
-        return Admission::Refused(no_effect("failed_no_effect", "admission_refused", json!({"quarantineOperationId": q}), "RESOURCE_BUSY", "the resource is quarantined until an unknown result is resolved"));
+        return Admission::Refused(no_effect(
+            "failed_no_effect",
+            "admission_refused",
+            json!({"quarantineOperationId": q}),
+            "RESOURCE_BUSY",
+            "the resource is quarantined until an unknown result is resolved",
+        ));
     }
     if lock.as_deref().map_or(false, |l| l != op.op_id) {
         let _ = tx.commit();
         return Admission::Wait;
     }
-    let inflight: i64 = tx.query_row("SELECT count(*) FROM effect_operations WHERE store_uuid=?1 AND state IN ('running','reconciling') AND operation_id<>?2", params![op.store, op.op_id], |r| r.get(0)).unwrap_or(0);
+    let inflight: i64 = tx
+        .query_row(
+            "SELECT count(*) FROM effect_operations WHERE store_uuid=?1 AND state IN ('running','reconciling') AND operation_id<>?2",
+            params![op.store, op.op_id],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
     if inflight > 0 {
         let _ = tx.commit();
         return Admission::Wait;
@@ -821,7 +1005,17 @@ fn admit_and_run(b: &Shared, op: &OpRow) {
     match admission(b, op) {
         Admission::Wait => {
             if (op.env.deadline_ms as i64) <= now() {
-                finish(b, op, no_effect("expired_no_effect", "deadline_before_dispatch", json!({}), "RESOURCE_BUSY", "the deadline passed while the resource was busy or the workspace quiesced"));
+                finish(
+                    b,
+                    op,
+                    no_effect(
+                        "expired_no_effect",
+                        "deadline_before_dispatch",
+                        json!({}),
+                        "RESOURCE_BUSY",
+                        "the deadline passed while the resource was busy or the workspace quiesced",
+                    ),
+                );
             }
         }
         Admission::Refused(o) => finish(b, op, o),
@@ -844,7 +1038,14 @@ fn admit_and_run(b: &Shared, op: &OpRow) {
 fn cancel_requested(b: &Broker, op: &OpRow) -> bool {
     let g = b.db.lock().unwrap();
     g.as_ref()
-        .and_then(|c| c.query_row("SELECT cancel_requested FROM effect_operations WHERE machine_install_id=?1 AND store_uuid=?2 AND incarnation=?3 AND operation_id=?4", params![b.install_id, op.store, op.inc, op.op_id], |r| r.get::<_, i64>(0)).ok())
+        .and_then(|c| {
+            c.query_row(
+                "SELECT cancel_requested FROM effect_operations WHERE machine_install_id=?1 AND store_uuid=?2 AND incarnation=?3 AND operation_id=?4",
+                params![b.install_id, op.store, op.inc, op.op_id],
+                |r| r.get::<_, i64>(0),
+            )
+            .ok()
+        })
         .unwrap_or(0)
         != 0
 }
@@ -882,11 +1083,24 @@ fn run(b: &Broker, op: &OpRow, res: &CatalogRes, caps: &Value, nonce: &str, atte
                 if cur_v.as_deref() == Some(new_hash.as_str()) {
                     return ok("already_satisfied", "target_hash", json!({"version": new_hash}), json!({"version": new_hash, "path": path}));
                 }
-                return no_effect("failed_no_effect", "precondition_mismatch", json!({"current": cur_v, "expected": expected}), "FILE_VERSION_STALE", "the target changed since the plan was made");
+                return no_effect(
+                    "failed_no_effect",
+                    "precondition_mismatch",
+                    json!({"current": cur_v, "expected": expected}),
+                    "FILE_VERSION_STALE",
+                    "the target changed since the plan was made",
+                );
             }
-            let usage = b.call_worker("managed-root", "usage", &res.target, json!({}), None, None, 5000).ok().and_then(|v| v["bytes"].as_u64()).unwrap_or(u64::MAX);
+            let usage =
+                b.call_worker("managed-root", "usage", &res.target, json!({}), None, None, 5000).ok().and_then(|v| v["bytes"].as_u64()).unwrap_or(u64::MAX);
             if usage.saturating_add(content.len() as u64) > caps["quotaBytes"].as_u64().unwrap_or(0) {
-                return no_effect("failed_no_effect", "admission_refused", json!({"usage": usage}), "LIMIT_EXCEEDED", "managed directory quota would be exceeded");
+                return no_effect(
+                    "failed_no_effect",
+                    "admission_refused",
+                    json!({"usage": usage}),
+                    "LIMIT_EXCEEDED",
+                    "managed directory quota would be exceeded",
+                );
             }
             let (parent, leaf) = agentos_protocol::fsutil::split_parent(path);
             let temp = format!(".aos-tmp-{}-{}", op.op_id, nonce);
@@ -894,16 +1108,38 @@ fn run(b: &Broker, op: &OpRow, res: &CatalogRes, caps: &Value, nonce: &str, atte
             if !log_step(b, op, "prepared", attempt, Some(&plan), None) {
                 return unknown("log_failure", json!({}), "RECONCILIATION_REQUIRED", "could not record the prepare step");
             }
-            if let Err(e) = b.call_worker("managed-root", "write_temp", &res.target, json!({"parent": parent, "temp": temp, "content": content}), Some(&op.op_id), Some(nonce), 5000) {
+            if let Err(e) = b.call_worker(
+                "managed-root",
+                "write_temp",
+                &res.target,
+                json!({"parent": parent, "temp": temp, "content": content}),
+                Some(&op.op_id),
+                Some(nonce),
+                5000,
+            ) {
                 let _ = b.call_worker("managed-root", "cleanup", &res.target, json!({"parent": parent, "temp": temp}), None, None, 5000);
                 return no_effect("failed_no_effect", "target_unchanged", json!({"stage": "write_temp"}), &e.code, e.message);
             }
             b.fault("broker.after_temp");
             if cancel_requested(b, op) {
                 let _ = b.call_worker("managed-root", "cleanup", &res.target, json!({"parent": parent, "temp": temp}), None, None, 5000);
-                return no_effect("cancelled_no_effect", "target_unchanged", json!({"stage": "before_publish"}), "CANCELLED", "cancelled before publication; the target was not touched");
+                return no_effect(
+                    "cancelled_no_effect",
+                    "target_unchanged",
+                    json!({"stage": "before_publish"}),
+                    "CANCELLED",
+                    "cancelled before publication; the target was not touched",
+                );
             }
-            match b.call_worker("managed-root", "publish", &res.target, json!({"parent": parent, "temp": temp, "leaf": leaf, "noReplace": expected_absent, "expectedVersion": cur_v}), Some(&op.op_id), Some(nonce), 5000) {
+            match b.call_worker(
+                "managed-root",
+                "publish",
+                &res.target,
+                json!({"parent": parent, "temp": temp, "leaf": leaf, "noReplace": expected_absent, "expectedVersion": cur_v}),
+                Some(&op.op_id),
+                Some(nonce),
+                5000,
+            ) {
                 Ok(_) => {}
                 Err(e) if !e.maybe_sent || e.effect == "none" => {
                     let _ = b.call_worker("managed-root", "cleanup", &res.target, json!({"parent": parent, "temp": temp}), None, None, 5000);
@@ -942,11 +1178,30 @@ fn reconcile_file(b: &Broker, _op: &OpRow, res: &CatalogRes, plan: &Value, why: 
     if cur_v == old_v {
         let _ = b.call_worker("managed-root", "cleanup", &res.target, json!({"parent": parent, "temp": temp}), None, None, 5000);
         if may_continue {
-            return Outcome { state: "reconciling", completion: None, certainty: "none", evidence_kind: "target_unchanged", evidence: json!({"why": why}), result: Value::Null, error: None };
+            return Outcome {
+                state: "reconciling",
+                completion: None,
+                certainty: "none",
+                evidence_kind: "target_unchanged",
+                evidence: json!({"why": why}),
+                result: Value::Null,
+                error: None,
+            };
         }
-        return no_effect("failed_no_effect", "target_unchanged", json!({"version": cur_v, "why": why}), "EXTERNAL_RESULT_INDETERMINATE", "publication did not take effect; the target still has its previous content");
+        return no_effect(
+            "failed_no_effect",
+            "target_unchanged",
+            json!({"version": cur_v, "why": why}),
+            "EXTERNAL_RESULT_INDETERMINATE",
+            "publication did not take effect; the target still has its previous content",
+        );
     }
-    unknown("third_content", json!({"current": cur_v, "old": old_v, "new": new_v}), "RESOURCE_CHANGED", "the target holds content that is neither the previous nor the planned version")
+    unknown(
+        "third_content",
+        json!({"current": cur_v, "old": old_v, "new": new_v}),
+        "RESOURCE_CHANGED",
+        "the target holds content that is neither the previous nor the planned version",
+    )
 }
 
 fn run_service(b: &Broker, op: &OpRow, res: &CatalogRes, caps: &Value, nonce: &str, attempt: i64) -> Outcome {
@@ -958,18 +1213,36 @@ fn run_service(b: &Broker, op: &OpRow, res: &CatalogRes, caps: &Value, nonce: &s
     };
     let d = &before["details"];
     if d["loadState"] != "loaded" {
-        return no_effect("failed_no_effect", "admission_refused", json!({"loadState": d["loadState"]}), "SERVICE_TARGET_NOT_REGISTERED", "the catalog unit is not loaded");
+        return no_effect(
+            "failed_no_effect",
+            "admission_refused",
+            json!({"loadState": d["loadState"]}),
+            "SERVICE_TARGET_NOT_REGISTERED",
+            "the catalog unit is not loaded",
+        );
     }
     if env.capability_id == "service.ensure_state" {
         let want = p["state"].as_str().unwrap_or("");
         let active = d["activeState"].as_str().unwrap_or("");
         if (want == "running" && active == "active") || (want == "stopped" && (active == "inactive" || active == "failed")) {
-            return ok("already_satisfied", "unit_state", json!({"state": d}), json!({"activeState": active, "subState": d["subState"], "invocationId": d["invocationId"]}));
+            return ok(
+                "already_satisfied",
+                "unit_state",
+                json!({"state": d}),
+                json!({"activeState": active, "subState": d["subState"], "invocationId": d["invocationId"]}),
+            );
         }
         if cancel_requested(b, op) {
             return no_effect("cancelled_no_effect", "not_dispatched", json!({}), "CANCELLED", "cancelled before the job was requested");
         }
-        let _ = log_step(b, op, "job_requested", attempt, Some(&json!({"activeState": active, "invocationId": d["invocationId"], "bootId": agentos_protocol::boot_id()})), None);
+        let _ = log_step(
+            b,
+            op,
+            "job_requested",
+            attempt,
+            Some(&json!({"activeState": active, "invocationId": d["invocationId"], "bootId": agentos_protocol::boot_id()})),
+            None,
+        );
         let timeout = remaining_ms(op).min(15_000);
         match b.call_worker("service", "ensure", &res.target, json!({"state": want, "timeoutMs": timeout}), Some(&op.op_id), Some(nonce), timeout + 3000) {
             Ok(v) => {
@@ -978,9 +1251,19 @@ fn run_service(b: &Broker, op: &OpRow, res: &CatalogRes, caps: &Value, nonce: &s
                 let st = v["state"]["activeState"].as_str().unwrap_or("");
                 let reached = (want == "running" && st == "active") || (want == "stopped" && (st == "inactive" || st == "failed"));
                 if reached {
-                    return ok("applied", "unit_state", json!({"job": v["job"], "jobResult": v["jobResult"], "state": v["state"]}), json!({"activeState": st, "subState": v["state"]["subState"], "invocationId": v["state"]["invocationId"], "job": v["job"]}));
+                    return ok(
+                        "applied",
+                        "unit_state",
+                        json!({"job": v["job"], "jobResult": v["jobResult"], "state": v["state"]}),
+                        json!({"activeState": st, "subState": v["state"]["subState"], "invocationId": v["state"]["invocationId"], "job": v["job"]}),
+                    );
                 }
-                unknown("unit_state", json!({"job": v["job"], "jobResult": v["jobResult"], "state": v["state"]}), "SERVICE_STATE_UNCONFIRMED", "the job finished but the unit is not in the requested state")
+                unknown(
+                    "unit_state",
+                    json!({"job": v["job"], "jobResult": v["jobResult"], "state": v["state"]}),
+                    "SERVICE_STATE_UNCONFIRMED",
+                    "the job finished but the unit is not in the requested state",
+                )
             }
             Err(e) if !e.maybe_sent => no_effect("failed_no_effect", "not_dispatched", json!({}), &e.code, e.message),
             Err(e) => reconcile_service(b, op, res, caps, &format!("job response lost: {}", e.message)),
@@ -995,12 +1278,24 @@ fn run_service(b: &Broker, op: &OpRow, res: &CatalogRes, caps: &Value, nonce: &s
         if cancel_requested(b, op) {
             return no_effect("cancelled_no_effect", "not_dispatched", json!({}), "CANCELLED", "cancelled before the property was set");
         }
-        let _ = log_step(b, op, "property_requested", attempt, Some(&json!({"property": prop, "value": cur, "invocationId": d["invocationId"], "bootId": agentos_protocol::boot_id()})), None);
+        let _ = log_step(
+            b,
+            op,
+            "property_requested",
+            attempt,
+            Some(&json!({"property": prop, "value": cur, "invocationId": d["invocationId"], "bootId": agentos_protocol::boot_id()})),
+            None,
+        );
         match b.call_worker("service", "set_property", &res.target, json!({"property": prop, "value": val}), Some(&op.op_id), Some(nonce), 8000) {
             Ok(v) => {
                 b.fault("broker.after_job");
                 if v["value"].as_u64() == Some(val) && v["cgroupMatches"].as_bool() == Some(true) {
-                    return ok("applied", "unit_property", json!({"property": prop, "value": val, "cgroup": v["cgroup"]}), json!({"property": prop, "value": val, "previous": cur, "cgroup": v["cgroup"]}));
+                    return ok(
+                        "applied",
+                        "unit_property",
+                        json!({"property": prop, "value": val, "cgroup": v["cgroup"]}),
+                        json!({"property": prop, "value": val, "previous": cur, "cgroup": v["cgroup"]}),
+                    );
                 }
                 unknown("unit_property", v, "SERVICE_STATE_UNCONFIRMED", "the property read back differs from the request")
             }
@@ -1026,33 +1321,84 @@ fn reconcile_service(b: &Broker, op: &OpRow, res: &CatalogRes, caps: &Value, why
     let boot_changed = req.as_ref().map(|r| r["before"]["bootId"].as_str() != Some(&agentos_protocol::boot_id())).unwrap_or(false);
     if boot_changed {
         // Spec §22.3: the unit's identity changed with the boot; never apply the old request to the new instance.
-        return unknown("identity_changed", json!({"why": why, "state": d}), "SERVICE_STATE_UNCONFIRMED", "the machine rebooted after the request; the outcome before the reboot is unknown");
+        return unknown(
+            "identity_changed",
+            json!({"why": why, "state": d}),
+            "SERVICE_STATE_UNCONFIRMED",
+            "the machine rebooted after the request; the outcome before the reboot is unknown",
+        );
     }
     if env.capability_id == "service.ensure_state" {
         let want = p["state"].as_str().unwrap_or("");
         let st = d["activeState"].as_str().unwrap_or("");
         if (want == "running" && st == "active") || (want == "stopped" && (st == "inactive" || st == "failed")) {
-            return ok("satisfied_on_reconcile", "unit_state", json!({"why": why, "state": d}), json!({"activeState": st, "subState": d["subState"], "invocationId": d["invocationId"]}));
+            return ok(
+                "satisfied_on_reconcile",
+                "unit_state",
+                json!({"why": why, "state": d}),
+                json!({"activeState": st, "subState": d["subState"], "invocationId": d["invocationId"]}),
+            );
         }
-        if caps["autoConverge"].as_bool() == Some(true) && caps["safeRepeatStart"].as_bool() == Some(true) && remaining_ms(op) > 2000 && op.attempts < MAX_AUTO_RECONCILE {
-            return Outcome { state: "reconciling", completion: None, certainty: "unknown", evidence_kind: "unit_state", evidence: json!({"why": why, "state": d}), result: Value::Null, error: None };
+        if caps["autoConverge"].as_bool() == Some(true)
+            && caps["safeRepeatStart"].as_bool() == Some(true)
+            && remaining_ms(op) > 2000
+            && op.attempts < MAX_AUTO_RECONCILE
+        {
+            return Outcome {
+                state: "reconciling",
+                completion: None,
+                certainty: "unknown",
+                evidence_kind: "unit_state",
+                evidence: json!({"why": why, "state": d}),
+                result: Value::Null,
+                error: None,
+            };
         }
-        unknown("unit_state", json!({"why": why, "state": d}), "SERVICE_STATE_UNCONFIRMED", "the job outcome is unknown and the catalog does not allow repeating it")
+        unknown(
+            "unit_state",
+            json!({"why": why, "state": d}),
+            "SERVICE_STATE_UNCONFIRMED",
+            "the job outcome is unknown and the catalog does not allow repeating it",
+        )
     } else {
         let prop = p["property"].as_str().unwrap_or("");
         let val = p["value"].as_u64().unwrap_or(0);
         let now_v = d[prop].as_u64().unwrap_or(u64::MAX);
         if now_v == val {
-            return ok("satisfied_on_reconcile", "unit_property", json!({"why": why, "property": prop, "value": now_v}), json!({"property": prop, "value": now_v}));
+            return ok(
+                "satisfied_on_reconcile",
+                "unit_property",
+                json!({"why": why, "property": prop, "value": now_v}),
+                json!({"property": prop, "value": now_v}),
+            );
         }
         let before = req.as_ref().and_then(|r| r["before"]["value"].as_u64());
         if Some(now_v) == before {
             if caps["autoConverge"].as_bool() == Some(true) && remaining_ms(op) > 2000 && op.attempts < MAX_AUTO_RECONCILE {
-                return Outcome { state: "reconciling", completion: None, certainty: "none", evidence_kind: "unit_property", evidence: json!({"why": why}), result: Value::Null, error: None };
+                return Outcome {
+                    state: "reconciling",
+                    completion: None,
+                    certainty: "none",
+                    evidence_kind: "unit_property",
+                    evidence: json!({"why": why}),
+                    result: Value::Null,
+                    error: None,
+                };
             }
-            return no_effect("failed_no_effect", "unit_property_unchanged", json!({"why": why, "value": now_v}), "SERVICE_STATE_UNCONFIRMED", "the property still has its previous value");
+            return no_effect(
+                "failed_no_effect",
+                "unit_property_unchanged",
+                json!({"why": why, "value": now_v}),
+                "SERVICE_STATE_UNCONFIRMED",
+                "the property still has its previous value",
+            );
         }
-        unknown("unit_property", json!({"why": why, "value": now_v}), "SERVICE_STATE_UNCONFIRMED", "the property has neither the previous nor the requested value")
+        unknown(
+            "unit_property",
+            json!({"why": why, "value": now_v}),
+            "SERVICE_STATE_UNCONFIRMED",
+            "the property has neither the previous nor the requested value",
+        )
     }
 }
 
@@ -1069,12 +1415,24 @@ fn run_network(b: &Broker, op: &OpRow, res: &CatalogRes, nonce: &str, attempt: i
     if cancel_requested(b, op) {
         return no_effect("cancelled_no_effect", "not_dispatched", json!({}), "CANCELLED", "cancelled before the ruleset commit");
     }
-    let _ = log_step(b, op, "commit_requested", attempt, Some(&json!({"ruleHash": before["details"]["ruleHash"], "netns": before["identity"], "targetHash": target_hash})), None);
+    let _ = log_step(
+        b,
+        op,
+        "commit_requested",
+        attempt,
+        Some(&json!({"ruleHash": before["details"]["ruleHash"], "netns": before["identity"], "targetHash": target_hash})),
+        None,
+    );
     match b.call_worker("lab-network", "apply", &res.target, json!({"profileId": profile}), Some(&op.op_id), Some(nonce), remaining_ms(op).min(5000) + 1000) {
         Ok(v) => {
             let probe_ok = v["probe"]["matchesProfile"].as_bool() == Some(true);
             if v["ruleHash"].as_str() == Some(target_hash.as_str()) && probe_ok {
-                return ok("applied", "rule_hash_and_probe", json!({"ruleHash": v["ruleHash"], "probe": v["probe"]}), json!({"profileId": profile, "ruleHash": v["ruleHash"], "probe": v["probe"]}));
+                return ok(
+                    "applied",
+                    "rule_hash_and_probe",
+                    json!({"ruleHash": v["ruleHash"], "probe": v["probe"]}),
+                    json!({"profileId": profile, "ruleHash": v["ruleHash"], "probe": v["probe"]}),
+                );
             }
             unknown("rule_hash_and_probe", v, "EXTERNAL_RESULT_INDETERMINATE", "ruleset or traffic probe does not match the profile")
         }
@@ -1113,25 +1471,62 @@ fn reconcile_network(b: &Broker, op: &OpRow, res: &CatalogRes, why: &str) -> Out
     let target_hash = cur["details"]["profileHashes"][profile].as_str().unwrap_or("");
     let netns_before = req.as_ref().map(|r| r["before"]["netns"].clone()).unwrap_or(Value::Null);
     if !netns_before.is_null() && netns_before != cur["identity"] {
-        return unknown("identity_changed", json!({"why": why}), "RESOURCE_GENERATION_STALE", "the lab namespace was recreated; the old request is not applied to the new one");
+        return unknown(
+            "identity_changed",
+            json!({"why": why}),
+            "RESOURCE_GENERATION_STALE",
+            "the lab namespace was recreated; the old request is not applied to the new one",
+        );
     }
     let rh = cur["details"]["ruleHash"].as_str().unwrap_or("");
     if rh == target_hash {
-        return ok("satisfied_on_reconcile", "rule_hash_and_probe", json!({"why": why, "ruleHash": rh, "probe": cur["details"]["probe"]}), json!({"profileId": profile, "ruleHash": rh}));
+        return ok(
+            "satisfied_on_reconcile",
+            "rule_hash_and_probe",
+            json!({"why": why, "ruleHash": rh, "probe": cur["details"]["probe"]}),
+            json!({"profileId": profile, "ruleHash": rh}),
+        );
     }
     if Some(rh) == req.as_ref().and_then(|r| r["before"]["ruleHash"].as_str()) {
         if remaining_ms(op) > 1500 && op.attempts < MAX_AUTO_RECONCILE {
-            return Outcome { state: "reconciling", completion: None, certainty: "none", evidence_kind: "rule_hash", evidence: json!({"why": why}), result: Value::Null, error: None };
+            return Outcome {
+                state: "reconciling",
+                completion: None,
+                certainty: "none",
+                evidence_kind: "rule_hash",
+                evidence: json!({"why": why}),
+                result: Value::Null,
+                error: None,
+            };
         }
-        return no_effect("failed_no_effect", "rule_hash_unchanged", json!({"why": why, "ruleHash": rh}), "EXTERNAL_RESULT_INDETERMINATE", "the ruleset still has its previous content");
+        return no_effect(
+            "failed_no_effect",
+            "rule_hash_unchanged",
+            json!({"why": why, "ruleHash": rh}),
+            "EXTERNAL_RESULT_INDETERMINATE",
+            "the ruleset still has its previous content",
+        );
     }
-    unknown("rule_hash", json!({"why": why, "ruleHash": rh}), "EXTERNAL_RESULT_INDETERMINATE", "the ruleset matches neither the previous nor the requested profile")
+    unknown(
+        "rule_hash",
+        json!({"why": why, "ruleHash": rh}),
+        "EXTERNAL_RESULT_INDETERMINATE",
+        "the ruleset matches neither the previous nor the requested profile",
+    )
 }
 
 fn run_serial(b: &Broker, op: &OpRow, res: &CatalogRes, nonce: &str, attempt: i64) -> Outcome {
     let obs = match b.call_worker("serial", "observe", &res.target, json!({}), None, None, 3000) {
         Ok(v) => v,
-        Err(e) => return no_effect("failed_no_effect", "not_dispatched", json!({}), if e.code == "RESOURCE_GONE" { "DEVICE_DISCONNECTED" } else { &e.code }, e.message),
+        Err(e) => {
+            return no_effect(
+                "failed_no_effect",
+                "not_dispatched",
+                json!({}),
+                if e.code == "RESOURCE_GONE" { "DEVICE_DISCONNECTED" } else { &e.code },
+                e.message,
+            )
+        }
     };
     let pre_ident = op.env.preconditions.get("identityDigest").and_then(|x| x.as_str()).unwrap_or("");
     if !pre_ident.is_empty() && pre_ident != digest(&obs["identity"]) {
@@ -1147,10 +1542,20 @@ fn run_serial(b: &Broker, op: &OpRow, res: &CatalogRes, nonce: &str, attempt: i6
     match b.call_worker("serial", "exchange", &res.target, json!({"params": op.env.params, "reqId": req_id}), Some(&op.op_id), Some(nonce), 3500) {
         Ok(v) => {
             let _ = log_step(b, op, "response_received", attempt, None, Some(&json!({"bytes": v["bytesWritten"]})));
-            ok("applied", "device_response", json!({"reqId": req_id, "response": v["response"], "sessionId": v["sessionId"]}), json!({"reqId": req_id, "response": v["response"], "fields": v["fields"]}))
+            ok(
+                "applied",
+                "device_response",
+                json!({"reqId": req_id, "response": v["response"], "sessionId": v["sessionId"]}),
+                json!({"reqId": req_id, "response": v["response"], "fields": v["fields"]}),
+            )
         }
         Err(e) if e.effect == "none" => no_effect("failed_no_effect", "not_dispatched", json!({"message": e.message}), &e.code, e.message),
-        Err(e) => unknown("send_uncertain", json!({"reqId": req_id, "message": e.message}), "SERIAL_DELIVERY_UNKNOWN", "the frame may have been sent; no matching response was received"),
+        Err(e) => unknown(
+            "send_uncertain",
+            json!({"reqId": req_id, "message": e.message}),
+            "SERIAL_DELIVERY_UNKNOWN",
+            "the frame may have been sent; no matching response was received",
+        ),
     }
 }
 
@@ -1182,7 +1587,13 @@ fn reconcile_one(b: &Shared, op: &OpRow) {
                         let nonce = agentos_protocol::random_hex(8);
                         run(b, &op, &res, &caps, &nonce, op.attempts)
                     } else {
-                        no_effect("failed_no_effect", "not_dispatched", json!({}), "EXTERNAL_RESULT_INDETERMINATE", "interrupted before any file step; deadline passed")
+                        no_effect(
+                            "failed_no_effect",
+                            "not_dispatched",
+                            json!({}),
+                            "EXTERNAL_RESULT_INDETERMINATE",
+                            "interrupted before any file step; deadline passed",
+                        )
                     }
                 }
                 Some(plan) => {
@@ -1192,7 +1603,13 @@ fn reconcile_one(b: &Shared, op: &OpRow) {
                             let nonce = agentos_protocol::random_hex(8);
                             run(b, &op, &res, &caps, &nonce, op.attempts)
                         } else {
-                            no_effect("failed_no_effect", "target_unchanged", json!({"why": "recovery after deadline"}), "EXTERNAL_RESULT_INDETERMINATE", "interrupted before publication; the target kept its previous content")
+                            no_effect(
+                                "failed_no_effect",
+                                "target_unchanged",
+                                json!({"why": "recovery after deadline"}),
+                                "EXTERNAL_RESULT_INDETERMINATE",
+                                "interrupted before publication; the target kept its previous content",
+                            )
                         }
                     } else {
                         r
@@ -1203,13 +1620,20 @@ fn reconcile_one(b: &Shared, op: &OpRow) {
         "service.ensure_state" | "service.set_limit" => {
             let requested = {
                 let g = b.db.lock().unwrap();
-                has_step(g.as_ref().unwrap(), &op, if op.env.capability_id == "service.ensure_state" { "job_requested" } else { "property_requested" }).is_some()
+                has_step(g.as_ref().unwrap(), &op, if op.env.capability_id == "service.ensure_state" { "job_requested" } else { "property_requested" })
+                    .is_some()
             };
             if !requested {
                 if remaining_ms(&op) > 1000 && op.attempts <= MAX_AUTO_RECONCILE {
                     run(b, &op, &res, &caps, &agentos_protocol::random_hex(8), op.attempts)
                 } else {
-                    no_effect("failed_no_effect", "not_dispatched", json!({}), "SERVICE_STATE_UNCONFIRMED", "interrupted before the request was sent; deadline passed")
+                    no_effect(
+                        "failed_no_effect",
+                        "not_dispatched",
+                        json!({}),
+                        "SERVICE_STATE_UNCONFIRMED",
+                        "interrupted before the request was sent; deadline passed",
+                    )
                 }
             } else {
                 let r = reconcile_service(b, &op, &res, &caps, "recovery");
@@ -1229,7 +1653,13 @@ fn reconcile_one(b: &Shared, op: &OpRow) {
                 if remaining_ms(&op) > 1000 && op.attempts <= MAX_AUTO_RECONCILE {
                     run(b, &op, &res, &caps, &agentos_protocol::random_hex(8), op.attempts)
                 } else {
-                    no_effect("failed_no_effect", "not_dispatched", json!({}), "EXTERNAL_RESULT_INDETERMINATE", "interrupted before the commit; deadline passed")
+                    no_effect(
+                        "failed_no_effect",
+                        "not_dispatched",
+                        json!({}),
+                        "EXTERNAL_RESULT_INDETERMINATE",
+                        "interrupted before the commit; deadline passed",
+                    )
                 }
             } else {
                 let r = reconcile_network(b, &op, &res, "recovery");
@@ -1246,7 +1676,12 @@ fn reconcile_one(b: &Shared, op: &OpRow) {
                 has_step(g.as_ref().unwrap(), &op, "port_open_started").is_some()
             };
             if started {
-                unknown("send_uncertain", json!({"why": "recovery"}), "SERIAL_DELIVERY_UNKNOWN", "the broker stopped after the port was opened; the frame may have been sent")
+                unknown(
+                    "send_uncertain",
+                    json!({"why": "recovery"}),
+                    "SERIAL_DELIVERY_UNKNOWN",
+                    "the broker stopped after the port was opened; the frame may have been sent",
+                )
             } else if remaining_ms(&op) > 2500 && op.attempts <= MAX_AUTO_RECONCILE {
                 run(b, &op, &res, &caps, &agentos_protocol::random_hex(8), op.attempts)
             } else {

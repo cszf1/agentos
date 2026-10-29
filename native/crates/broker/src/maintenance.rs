@@ -73,12 +73,19 @@ fn policy_sync(b: &Shared, sess: &mut Session, g: &MaintenancePolicySyncParams) 
         if h != g.request_hash {
             return Err(BErr::new("OPERATION_CONFLICT", "same policy id/version with a different body"));
         }
-        return Ok(json!({"policyId": g.policy_id, "policyVersion": g.policy_version, "state": if revoked.is_some() { "revoked" } else { "active" }, "replayed": true}));
+        return Ok(
+            json!({"policyId": g.policy_id, "policyVersion": g.policy_version, "state": if revoked.is_some() { "revoked" } else { "active" }, "replayed": true}),
+        );
     }
     // Install caps: the user's policy may only narrow them (V4-P06).
     let caps = install_caps(b, &g.identity.store_uuid, &g.resource_id, &g.action_family)
         .ok_or_else(|| BErr::new("BROKER_POLICY_DENIED", "this unit is not registered for maintenance recovery in the root policy"))?;
-    if g.bounds.per_hour == 0 || g.bounds.per24h == 0 || g.bounds.per_hour > caps.per_hour || g.bounds.per24h > caps.per24h || g.bounds.cooldown_seconds < caps.cooldown_seconds {
+    if g.bounds.per_hour == 0
+        || g.bounds.per24h == 0
+        || g.bounds.per_hour > caps.per_hour
+        || g.bounds.per24h > caps.per24h
+        || g.bounds.cooldown_seconds < caps.cooldown_seconds
+    {
         return Err(BErr::new("BROKER_POLICY_DENIED", "the policy exceeds the install caps (per hour, per 24 h or cooldown)").with(json!({
             "caps": {"perHour": caps.per_hour, "per24h": caps.per24h, "cooldownSeconds": caps.cooldown_seconds}
         })));
@@ -91,7 +98,15 @@ fn policy_sync(b: &Shared, sess: &mut Session, g: &MaintenancePolicySyncParams) 
         return Err(BErr::new("RESOURCE_GENERATION_STALE", format!("resource generation is {gen}")).with(json!({"generation": gen})));
     }
     let tx = c.unchecked_transaction()?;
-    let seq = db::audit(&tx, "maintenance_policy_sync", Some(&g.identity.store_uuid), Some(inc), None, Some(&g.policy_id), &json!({"version": g.policy_version, "resource": g.resource_id, "bounds": g.bounds}))?;
+    let seq = db::audit(
+        &tx,
+        "maintenance_policy_sync",
+        Some(&g.identity.store_uuid),
+        Some(inc),
+        None,
+        Some(&g.policy_id),
+        &json!({"version": g.policy_version, "resource": g.resource_id, "bounds": g.bounds}),
+    )?;
     tx.execute(
         "INSERT INTO maintenance_policies(store_uuid, incarnation, policy_id, policy_version, policy_hash, resource_id, resource_generation, action_family, bounds_json, expires_at, maintenance_epoch, request_hash, synced_seq)
          VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",
@@ -124,7 +139,15 @@ fn policy_revoke(b: &Shared, sess: &mut Session, g: &MaintenancePolicyRevokePara
     let seq = match row {
         Some(Some(s)) => s,
         Some(None) => {
-            let seq = db::audit(&tx, "maintenance_policy_revoke", Some(&g.identity.store_uuid), Some(inc), None, Some(&g.policy_id), &json!({"version": g.policy_version}))?;
+            let seq = db::audit(
+                &tx,
+                "maintenance_policy_revoke",
+                Some(&g.identity.store_uuid),
+                Some(inc),
+                None,
+                Some(&g.policy_id),
+                &json!({"version": g.policy_version}),
+            )?;
             tx.execute(
                 "UPDATE maintenance_policies SET revoked_seq=?4 WHERE store_uuid=?1 AND policy_id=?2 AND policy_version <= ?3 AND revoked_seq IS NULL",
                 params![g.identity.store_uuid, g.policy_id, g.policy_version as i64, seq],
@@ -133,7 +156,15 @@ fn policy_revoke(b: &Shared, sess: &mut Session, g: &MaintenancePolicyRevokePara
         }
         None => {
             // Unknown version: a revoked tombstone, so a late sync of that version can never activate.
-            let seq = db::audit(&tx, "maintenance_policy_revoke_tombstone", Some(&g.identity.store_uuid), Some(inc), None, Some(&g.policy_id), &json!({"version": g.policy_version}))?;
+            let seq = db::audit(
+                &tx,
+                "maintenance_policy_revoke_tombstone",
+                Some(&g.identity.store_uuid),
+                Some(inc),
+                None,
+                Some(&g.policy_id),
+                &json!({"version": g.policy_version}),
+            )?;
             tx.execute(
                 "INSERT INTO maintenance_policies(store_uuid, incarnation, policy_id, policy_version, policy_hash, resource_id, resource_generation, action_family, bounds_json, expires_at, maintenance_epoch, request_hash, synced_seq, revoked_seq)
                  VALUES (?1,?2,?3,?4,'tombstone','',0,'','{}',0,0,'tombstone',?5,?5)",
@@ -164,13 +195,25 @@ fn control(b: &Shared, sess: &mut Session, g: &MaintenanceControlParams) -> Resu
     let tx = c.unchecked_transaction()?;
     // A new incarnation (restore) starts its own epoch sequence; inside one incarnation epochs only move forward, so a
     // late (older) control message never re-opens maintenance.
-    let cur: Option<(String, i64)> = tx.query_row("SELECT state, maintenance_epoch FROM workspace_maintenance_state WHERE store_uuid=?1 AND incarnation=?2", params![store, inc], |r| Ok((r.get(0)?, r.get(1)?))).optional()?;
+    let cur: Option<(String, i64)> = tx
+        .query_row("SELECT state, maintenance_epoch FROM workspace_maintenance_state WHERE store_uuid=?1 AND incarnation=?2", params![store, inc], |r| {
+            Ok((r.get(0)?, r.get(1)?))
+        })
+        .optional()?;
     let applied_ws = match &cur {
         Some((_, e)) if (*e as u64) > g.maintenance_epoch => false,
         Some((s, e)) if (*e as u64) == g.maintenance_epoch && s == &g.state => false,
         _ => true,
     };
-    let seq = db::audit(&tx, "maintenance_control", Some(store), Some(inc), None, None, &json!({"state": g.state, "epoch": g.maintenance_epoch, "target": g.target}))?;
+    let seq = db::audit(
+        &tx,
+        "maintenance_control",
+        Some(store),
+        Some(inc),
+        None,
+        None,
+        &json!({"state": g.state, "epoch": g.maintenance_epoch, "target": g.target}),
+    )?;
     if applied_ws {
         tx.execute(
             "INSERT INTO workspace_maintenance_state(store_uuid, incarnation, state, maintenance_epoch, updated_seq) VALUES (?1,?5,?2,?3,?4)
@@ -183,7 +226,13 @@ fn control(b: &Shared, sess: &mut Session, g: &MaintenanceControlParams) -> Resu
         if !safe_u64(t.control_epoch) {
             return Err(BErr::new("INVALID_SYSTEM_PLAN", "control epoch outside the safe range"));
         }
-        let cur_t: Option<i64> = tx.query_row("SELECT control_epoch FROM target_control_epochs WHERE store_uuid=?1 AND incarnation=?3 AND resource_id=?2", params![store, t.resource_id, inc], |r| r.get(0)).optional()?;
+        let cur_t: Option<i64> = tx
+            .query_row(
+                "SELECT control_epoch FROM target_control_epochs WHERE store_uuid=?1 AND incarnation=?3 AND resource_id=?2",
+                params![store, t.resource_id, inc],
+                |r| r.get(0),
+            )
+            .optional()?;
         let next = cur_t.map(|e| e.max(t.control_epoch as i64)).unwrap_or(t.control_epoch as i64);
         tx.execute(
             "INSERT INTO target_control_epochs(store_uuid, incarnation, resource_id, control_epoch, updated_seq) VALUES (?1,?5,?2,?3,?4)
@@ -193,20 +242,36 @@ fn control(b: &Shared, sess: &mut Session, g: &MaintenanceControlParams) -> Resu
         target_epoch = Some(next);
     }
     tx.commit()?;
-    let st: (String, i64) = c.query_row("SELECT state, maintenance_epoch FROM workspace_maintenance_state WHERE store_uuid=?1 AND incarnation=?2", params![store, inc], |r| Ok((r.get(0)?, r.get(1)?))).unwrap_or(("paused".into(), 0));
+    let st: (String, i64) = c
+        .query_row("SELECT state, maintenance_epoch FROM workspace_maintenance_state WHERE store_uuid=?1 AND incarnation=?2", params![store, inc], |r| {
+            Ok((r.get(0)?, r.get(1)?))
+        })
+        .unwrap_or(("paused".into(), 0));
     Ok(json!({"state": st.0, "maintenanceEpoch": st.1, "applied": applied_ws, "targetControlEpoch": target_epoch, "seq": seq}))
 }
 
 pub fn counts(c: &Connection, store: &str, resource_id: &str, family: &str) -> (i64, i64, Option<i64>) {
     let t = now();
     let hour: i64 = c
-        .query_row("SELECT count(*) FROM maintenance_attempts WHERE store_uuid=?1 AND resource_id=?2 AND action_family=?3 AND admitted_at > ?4", params![store, resource_id, family, t - 3_600_000], |r| r.get(0))
+        .query_row(
+            "SELECT count(*) FROM maintenance_attempts WHERE store_uuid=?1 AND resource_id=?2 AND action_family=?3 AND admitted_at > ?4",
+            params![store, resource_id, family, t - 3_600_000],
+            |r| r.get(0),
+        )
         .unwrap_or(0);
     let day: i64 = c
-        .query_row("SELECT count(*) FROM maintenance_attempts WHERE store_uuid=?1 AND resource_id=?2 AND action_family=?3 AND admitted_at > ?4", params![store, resource_id, family, t - 86_400_000], |r| r.get(0))
+        .query_row(
+            "SELECT count(*) FROM maintenance_attempts WHERE store_uuid=?1 AND resource_id=?2 AND action_family=?3 AND admitted_at > ?4",
+            params![store, resource_id, family, t - 86_400_000],
+            |r| r.get(0),
+        )
         .unwrap_or(0);
     let last: Option<i64> = c
-        .query_row("SELECT max(admitted_at) FROM maintenance_attempts WHERE store_uuid=?1 AND resource_id=?2 AND action_family=?3", params![store, resource_id, family], |r| r.get(0))
+        .query_row(
+            "SELECT max(admitted_at) FROM maintenance_attempts WHERE store_uuid=?1 AND resource_id=?2 AND action_family=?3",
+            params![store, resource_id, family],
+            |r| r.get(0),
+        )
         .ok()
         .flatten();
     (hour, day, last)
@@ -217,7 +282,11 @@ fn state(b: &Shared, sess: &mut Session, g: &MaintenanceStateParams) -> Result<V
     let c = db_or_diag(b, &mut guard)?;
     let (_, inc) = check_identity_db(b, c, sess, &g.identity, true)?;
     let store = &g.identity.store_uuid;
-    let ws: Option<(String, i64)> = c.query_row("SELECT state, maintenance_epoch FROM workspace_maintenance_state WHERE store_uuid=?1 AND incarnation=?2", params![store, inc], |r| Ok((r.get(0)?, r.get(1)?))).optional()?;
+    let ws: Option<(String, i64)> = c
+        .query_row("SELECT state, maintenance_epoch FROM workspace_maintenance_state WHERE store_uuid=?1 AND incarnation=?2", params![store, inc], |r| {
+            Ok((r.get(0)?, r.get(1)?))
+        })
+        .optional()?;
     let mut st = c.prepare("SELECT policy_id, policy_version, resource_id, action_family, bounds_json, expires_at, revoked_seq, policy_hash FROM maintenance_policies WHERE store_uuid=?1 AND incarnation=?2 AND policy_hash <> 'tombstone' ORDER BY synced_seq DESC LIMIT 64")?;
     let policies: Vec<Value> = st
         .query_map(params![store, inc], |r| {
@@ -238,7 +307,10 @@ fn state(b: &Shared, sess: &mut Session, g: &MaintenanceStateParams) -> Result<V
         out_p.push(pv);
     }
     let mut st2 = c.prepare("SELECT resource_id, control_epoch FROM target_control_epochs WHERE store_uuid=?1 AND incarnation=?2")?;
-    let targets: Vec<Value> = st2.query_map(params![store, inc], |r| Ok(json!({"resourceId": r.get::<_, String>(0)?, "controlEpoch": r.get::<_, i64>(1)?})))?.filter_map(|x| x.ok()).collect();
+    let targets: Vec<Value> = st2
+        .query_map(params![store, inc], |r| Ok(json!({"resourceId": r.get::<_, String>(0)?, "controlEpoch": r.get::<_, i64>(1)?})))?
+        .filter_map(|x| x.ok())
+        .collect();
     let caps: Vec<Value> = b
         .policy
         .maintenance
@@ -267,7 +339,8 @@ fn submit(b: &Shared, sess: &mut Session, env: &MaintenanceWriteEnvelope) -> Res
     if env.capability_id != "service.ensure_state" || env.contract_version != 1 || env.params != json!({"state": "running"}) {
         return Err(BErr::new("BROKER_POLICY_DENIED", "a maintenance write is service.ensure_state(running) only"));
     }
-    let id = Identity { machine_install_id: env.machine_install_id.clone(), store_uuid: env.store_uuid.clone(), workspace_incarnation: env.workspace_incarnation };
+    let id =
+        Identity { machine_install_id: env.machine_install_id.clone(), store_uuid: env.store_uuid.clone(), workspace_incarnation: env.workspace_incarnation };
     let mut g = b.db.lock().unwrap();
     let c = db_or_diag(b, &mut g)?;
     let (_, inc) = check_identity_db(b, c, sess, &id, false)?;
@@ -280,12 +353,20 @@ fn submit(b: &Shared, sess: &mut Session, env: &MaintenanceWriteEnvelope) -> Res
     let store = &env.store_uuid;
     let family = MAINTENANCE_FAMILY_ENSURE_RUNNING;
     let res = b.find_res(store, &env.resource_id).ok_or_else(|| BErr::new("RESOURCE_NOT_BOUND", "resource is not in this workspace's catalog"))?;
-    let caps = install_caps(b, store, &env.resource_id, family).ok_or_else(|| BErr::new("BROKER_POLICY_DENIED", "this unit is not registered for maintenance recovery"))?;
+    let caps = install_caps(b, store, &env.resource_id, family)
+        .ok_or_else(|| BErr::new("BROKER_POLICY_DENIED", "this unit is not registered for maintenance recovery"))?;
     let tx = c.unchecked_transaction()?;
-    let ws: Option<(String, i64)> = tx.query_row("SELECT state, maintenance_epoch FROM workspace_maintenance_state WHERE store_uuid=?1 AND incarnation=?2", params![store, inc], |r| Ok((r.get(0)?, r.get(1)?))).optional()?;
+    let ws: Option<(String, i64)> = tx
+        .query_row("SELECT state, maintenance_epoch FROM workspace_maintenance_state WHERE store_uuid=?1 AND incarnation=?2", params![store, inc], |r| {
+            Ok((r.get(0)?, r.get(1)?))
+        })
+        .optional()?;
     match &ws {
         Some((s, e)) if s == "running" && *e as u64 == env.maintenance_epoch => {}
-        Some((s, e)) => return Err(BErr::new("MAINTENANCE_DISABLED", format!("maintenance is {s} at epoch {e}; the request carries epoch {}", env.maintenance_epoch)).with(json!({"state": s, "maintenanceEpoch": e}))),
+        Some((s, e)) => {
+            return Err(BErr::new("MAINTENANCE_DISABLED", format!("maintenance is {s} at epoch {e}; the request carries epoch {}", env.maintenance_epoch))
+                .with(json!({"state": s, "maintenanceEpoch": e})))
+        }
         None => return Err(BErr::new("MAINTENANCE_DISABLED", "maintenance control was never synced for this workspace")),
     }
     let pol: Option<(String, i64, String, String, i64, Option<i64>)> = tx
@@ -309,15 +390,29 @@ fn submit(b: &Shared, sess: &mut Session, env: &MaintenanceWriteEnvelope) -> Res
     }
     let gen: i64 = tx.query_row("SELECT generation FROM resource_state WHERE resource_id=?1", params![env.resource_id], |r| r.get(0)).unwrap_or(-1);
     if gen as u64 != env.resource_generation || gen != p_gen {
-        return Err(BErr::new("RESOURCE_GENERATION_STALE", format!("resource generation is {gen}; the policy was approved for {p_gen}")).with(json!({"generation": gen})));
+        return Err(BErr::new("RESOURCE_GENERATION_STALE", format!("resource generation is {gen}; the policy was approved for {p_gen}"))
+            .with(json!({"generation": gen})));
     }
-    let ce: i64 = tx.query_row("SELECT control_epoch FROM target_control_epochs WHERE store_uuid=?1 AND incarnation=?3 AND resource_id=?2", params![store, env.resource_id, inc], |r| r.get(0)).optional()?.unwrap_or(0);
+    let ce: i64 = tx
+        .query_row(
+            "SELECT control_epoch FROM target_control_epochs WHERE store_uuid=?1 AND incarnation=?3 AND resource_id=?2",
+            params![store, env.resource_id, inc],
+            |r| r.get(0),
+        )
+        .optional()?
+        .unwrap_or(0);
     if ce as u64 != env.target_control_epoch {
-        return Err(BErr::new("EXECUTION_EPOCH_STALE", format!("target control epoch is {ce}; the request carries {} (a user stop or newer control wins)", env.target_control_epoch)).with(json!({"controlEpoch": ce})));
+        return Err(BErr::new(
+            "EXECUTION_EPOCH_STALE",
+            format!("target control epoch is {ce}; the request carries {} (a user stop or newer control wins)", env.target_control_epoch),
+        )
+        .with(json!({"controlEpoch": ce})));
     }
-    let quarantine: Option<String> = tx.query_row("SELECT quarantine_operation_id FROM resource_state WHERE resource_id=?1", params![env.resource_id], |r| r.get(0)).optional()?.flatten();
+    let quarantine: Option<String> =
+        tx.query_row("SELECT quarantine_operation_id FROM resource_state WHERE resource_id=?1", params![env.resource_id], |r| r.get(0)).optional()?.flatten();
     if let Some(q) = quarantine {
-        return Err(BErr::new("RESOURCE_BUSY", "the resource is quarantined by an unknown result; maintenance never clears it").with(json!({"quarantineOperationId": q})));
+        return Err(BErr::new("RESOURCE_BUSY", "the resource is quarantined by an unknown result; maintenance never clears it")
+            .with(json!({"quarantineOperationId": q})));
     }
     let bounds: MaintenanceBounds = serde_json::from_str(&p_bounds).map_err(|e| BErr::new("INVALID_SYSTEM_PLAN", e.to_string()))?;
     let per_hour = bounds.per_hour.min(caps.per_hour) as i64;
@@ -325,11 +420,14 @@ fn submit(b: &Shared, sess: &mut Session, env: &MaintenanceWriteEnvelope) -> Res
     let cooldown = bounds.cooldown_seconds.max(caps.cooldown_seconds) as i64 * 1000;
     let (h, d, last) = counts(&tx, store, &env.resource_id, family);
     if h >= per_hour || d >= per24h {
-        return Err(BErr::new("CIRCUIT_OPEN", format!("{h} attempts in the last hour / {d} in 24 h reach the limit ({per_hour}/{per24h})")).with(json!({"lastHour": h, "last24h": d, "perHour": per_hour, "per24h": per24h})));
+        return Err(BErr::new("CIRCUIT_OPEN", format!("{h} attempts in the last hour / {d} in 24 h reach the limit ({per_hour}/{per24h})"))
+            .with(json!({"lastHour": h, "last24h": d, "perHour": per_hour, "per24h": per24h})));
     }
     if let Some(l) = last {
         if now() - l < cooldown {
-            return Err(BErr::new("CIRCUIT_OPEN", format!("cooldown: {} s remain", (cooldown - (now() - l)) / 1000)).with(json!({"cooldownUntilMs": l + cooldown})));
+            return Err(
+                BErr::new("CIRCUIT_OPEN", format!("cooldown: {} s remain", (cooldown - (now() - l)) / 1000)).with(json!({"cooldownUntilMs": l + cooldown}))
+            );
         }
     }
     let total: i64 = tx.query_row("SELECT count(*) FROM effect_operations WHERE store_uuid=?1", params![store], |r| r.get(0))?;
@@ -367,7 +465,13 @@ fn submit(b: &Shared, sess: &mut Session, env: &MaintenanceWriteEnvelope) -> Res
 /// Executor admission re-check for a maintenance operation (replaces the grant check). Err = refuse with that code.
 pub fn admission_check(c: &Connection, store: &str, inc: i64, maint: &Value, resource_id: &str, gen: i64) -> Result<(), (String, String)> {
     let e = |c: &str, m: String| Err((c.to_string(), m));
-    let ws: Option<(String, i64)> = c.query_row("SELECT state, maintenance_epoch FROM workspace_maintenance_state WHERE store_uuid=?1 AND incarnation=?2", params![store, inc], |r| Ok((r.get(0)?, r.get(1)?))).optional().ok().flatten();
+    let ws: Option<(String, i64)> = c
+        .query_row("SELECT state, maintenance_epoch FROM workspace_maintenance_state WHERE store_uuid=?1 AND incarnation=?2", params![store, inc], |r| {
+            Ok((r.get(0)?, r.get(1)?))
+        })
+        .optional()
+        .ok()
+        .flatten();
     match ws {
         Some((s, ep)) if s == "running" && Some(ep) == maint["maintenanceEpoch"].as_i64() => {}
         Some((s, ep)) => return e("MAINTENANCE_DISABLED", format!("maintenance is {s} at epoch {ep}")),
@@ -387,7 +491,16 @@ pub fn admission_check(c: &Connection, store: &str, inc: i64, maint: &Value, res
         Some((None, _, pg)) if pg != gen => return e("RESOURCE_GENERATION_STALE", "resource identity changed since approval".into()),
         _ => {}
     }
-    let ce: i64 = c.query_row("SELECT control_epoch FROM target_control_epochs WHERE store_uuid=?1 AND incarnation=?3 AND resource_id=?2", params![store, resource_id, inc], |r| r.get(0)).optional().ok().flatten().unwrap_or(0);
+    let ce: i64 = c
+        .query_row(
+            "SELECT control_epoch FROM target_control_epochs WHERE store_uuid=?1 AND incarnation=?3 AND resource_id=?2",
+            params![store, resource_id, inc],
+            |r| r.get(0),
+        )
+        .optional()
+        .ok()
+        .flatten()
+        .unwrap_or(0);
     if Some(ce) != maint["targetControlEpoch"].as_i64() {
         return e("EXECUTION_EPOCH_STALE", format!("target control epoch moved to {ce} (user stop wins)"));
     }

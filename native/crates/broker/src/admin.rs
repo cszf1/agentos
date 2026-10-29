@@ -97,8 +97,13 @@ fn inspect() -> i32 {
         "seq": db::meta(&c, "seq"),
         "integrity": c.query_row("PRAGMA quick_check", [], |r| r.get::<_, String>(0)).unwrap_or_else(|e| e.to_string()),
     });
-    out["workspaces"] = json!(q(&c, "SELECT store_uuid, allowed_uid, incarnation, state FROM workspace_bindings", &["storeUUID", "uid", "incarnation", "state"]));
-    out["resources"] = json!(q(&c, "SELECT resource_id, kind, catalog_key, generation, status, lock_operation_id, quarantine_operation_id FROM resource_state", &["resourceId", "kind", "key", "generation", "status", "lock", "quarantine"]));
+    out["workspaces"] =
+        json!(q(&c, "SELECT store_uuid, allowed_uid, incarnation, state FROM workspace_bindings", &["storeUUID", "uid", "incarnation", "state"]));
+    out["resources"] = json!(q(
+        &c,
+        "SELECT resource_id, kind, catalog_key, generation, status, lock_operation_id, quarantine_operation_id FROM resource_state",
+        &["resourceId", "kind", "key", "generation", "status", "lock", "quarantine"]
+    ));
     out["unreconciled"] = json!(q(
         &c,
         "SELECT operation_id, incarnation, capability_id, state, error_code FROM effect_operations WHERE state IN ('accepted','running','reconciling') OR (state='indeterminate' AND resolution_json IS NULL)",
@@ -106,7 +111,11 @@ fn inspect() -> i32 {
     ));
     out["counts"] = json!(q(&c, "SELECT state, count(*) FROM effect_operations GROUP BY state", &["state", "n"]));
     out["grants"] = json!(q(&c, "SELECT count(*), sum(revoked_seq IS NOT NULL) FROM broker_grants", &["total", "revoked"]));
-    out["restores"] = json!(q(&c, "SELECT restore_request_id, previous_incarnation, target_incarnation, phase FROM restore_sessions", &["restoreRequestId", "from", "to", "phase"]));
+    out["restores"] = json!(q(
+        &c,
+        "SELECT restore_request_id, previous_incarnation, target_incarnation, phase FROM restore_sessions",
+        &["restoreRequestId", "from", "to", "phase"]
+    ));
     println!("{}", serde_json::to_string_pretty(&out).unwrap());
     0
 }

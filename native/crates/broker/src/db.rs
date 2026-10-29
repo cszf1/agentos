@@ -224,7 +224,10 @@ pub fn open_existing(path: &str) -> Result<Connection, String> {
     if ok != "ok" {
         return Err(format!("BROKER_HISTORY_MISSING: integrity check failed: {ok}"));
     }
-    let v: Option<String> = c.query_row("SELECT value FROM broker_meta WHERE key='schema_version'", [], |r| r.get(0)).optional().map_err(|e| format!("BROKER_HISTORY_MISSING: {e}"))?;
+    let v: Option<String> = c
+        .query_row("SELECT value FROM broker_meta WHERE key='schema_version'", [], |r| r.get(0))
+        .optional()
+        .map_err(|e| format!("BROKER_HISTORY_MISSING: {e}"))?;
     match v.and_then(|s| s.parse::<i64>().ok()) {
         Some(SCHEMA_VERSION) => Ok(c),
         Some(1) => {
@@ -259,7 +262,13 @@ pub fn create(path: &str, install_id: &str, policy_version: &str) -> Result<Conn
     c.execute_batch(SCHEMA_V2).map_err(|e| format!("schema v2: {e}"))?;
     c.execute_batch(SCHEMA_V3).map_err(|e| format!("schema v3: {e}"))?;
     let now = agentos_protocol::now_ms() as i64;
-    for (k, v) in [("schema_version", SCHEMA_VERSION.to_string()), ("machine_install_id", install_id.to_string()), ("policy_version", policy_version.to_string()), ("seq", "0".into()), ("created_at", now.to_string())] {
+    for (k, v) in [
+        ("schema_version", SCHEMA_VERSION.to_string()),
+        ("machine_install_id", install_id.to_string()),
+        ("policy_version", policy_version.to_string()),
+        ("seq", "0".into()),
+        ("created_at", now.to_string()),
+    ] {
         c.execute("INSERT INTO broker_meta(key,value) VALUES (?1,?2)", params![k, v]).map_err(|e| e.to_string())?;
     }
     Ok(c)
@@ -276,7 +285,15 @@ pub fn next_seq(c: &Connection) -> rusqlite::Result<i64> {
     Ok(s + 1)
 }
 
-pub fn audit(c: &Connection, kind: &str, store: Option<&str>, inc: Option<i64>, op: Option<&str>, grant: Option<&str>, summary: &Value) -> rusqlite::Result<i64> {
+pub fn audit(
+    c: &Connection,
+    kind: &str,
+    store: Option<&str>,
+    inc: Option<i64>,
+    op: Option<&str>,
+    grant: Option<&str>,
+    summary: &Value,
+) -> rusqlite::Result<i64> {
     let seq = next_seq(c)?;
     c.execute(
         "INSERT INTO broker_audit(seq,kind,store_uuid,incarnation,operation_id,grant_id,summary_json,at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",

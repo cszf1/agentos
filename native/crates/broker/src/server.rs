@@ -61,7 +61,8 @@ pub fn serve() -> i32 {
         eprintln!("agentos-broker: diagnostics-only mode: {d}");
     }
     let install_id = pol.machine_install_id.clone();
-    let b: Shared = Arc::new(Broker { db: Mutex::new(conn), diag, policy: pol, policy_version: pver, instance_id, install_id, wake: (Mutex::new(false), Condvar::new()) });
+    let b: Shared =
+        Arc::new(Broker { db: Mutex::new(conn), diag, policy: pol, policy_version: pver, instance_id, install_id, wake: (Mutex::new(false), Condvar::new()) });
     if b.diag.is_none() {
         {
             let g = b.db.lock().unwrap();
@@ -70,7 +71,15 @@ pub fn serve() -> i32 {
                 eprintln!("agentos-broker: resource rows: {e}");
                 return 1;
             }
-            let _ = db::audit(c, "broker_start", None, None, None, None, &json!({"instance": b.instance_id, "policyVersion": b.policy_version, "bootId": agentos_protocol::boot_id()}));
+            let _ = db::audit(
+                c,
+                "broker_start",
+                None,
+                None,
+                None,
+                None,
+                &json!({"instance": b.instance_id, "policyVersion": b.policy_version, "bootId": agentos_protocol::boot_id()}),
+            );
         }
         // Spec §12.3: before reconciling, make sure no worker from the previous broker instance can still write.
         exec::fence_workers(&b);
@@ -138,7 +147,12 @@ fn handle_conn(b: &Shared, s: UnixStream) {
     // Only installed host UIDs may talk to the broker at all (the socket mode is a second layer).
     if !b.policy.hosts.iter().any(|h| h.uid == pc.uid) {
         let mut w = &s;
-        let _ = write_frame(&mut w, json!({"v": 1, "id": "", "ok": false, "error": {"code": "BROKER_POLICY_DENIED", "message": "this uid is not registered with the broker"}}).to_string().as_bytes());
+        let _ = write_frame(
+            &mut w,
+            json!({"v": 1, "id": "", "ok": false, "error": {"code": "BROKER_POLICY_DENIED", "message": "this uid is not registered with the broker"}})
+                .to_string()
+                .as_bytes(),
+        );
         return;
     }
     s.set_read_timeout(Some(Duration::from_secs(300))).ok();
@@ -171,7 +185,14 @@ fn handle_conn(b: &Shared, s: UnixStream) {
         // maintenance request cannot be downgraded to a user/action request (v0.4 spec §13.3, V4-B08).
         let is_v2 = METHODS_V2.contains(&req.method.as_str());
         if (is_v2 && req.v != PROTOCOL_V2) || (!is_v2 && req.v != PROTOCOL_VERSION) {
-            reply_err(&s, &req.id, BErr::new("CAPABILITY_VERSION_UNSUPPORTED", format!("method {} is protocol {}", req.method, if is_v2 { PROTOCOL_V2 } else { PROTOCOL_VERSION })));
+            reply_err(
+                &s,
+                &req.id,
+                BErr::new(
+                    "CAPABILITY_VERSION_UNSUPPORTED",
+                    format!("method {} is protocol {}", req.method, if is_v2 { PROTOCOL_V2 } else { PROTOCOL_VERSION }),
+                ),
+            );
             continue;
         }
         let out = if is_v2 { crate::maintenance::dispatch(b, &mut sess, &req.method, &req.params) } else { dispatch(b, &mut sess, &req) };
@@ -222,14 +243,17 @@ pub fn check_identity_db(b: &Broker, c: &rusqlite::Connection, sess: &Session, i
         return Err(BErr::new("BROKER_IDENTITY_MISMATCH", "machineInstallId does not match this broker's log").with(json!({"machineInstallId": b.install_id})));
     }
     let row: Option<(i64, String, i64)> = c
-        .query_row("SELECT incarnation, state, allowed_uid FROM workspace_bindings WHERE store_uuid=?1", params![id.store_uuid], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+        .query_row("SELECT incarnation, state, allowed_uid FROM workspace_bindings WHERE store_uuid=?1", params![id.store_uuid], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+        })
         .optional()?;
     let Some((inc, state, uid)) = row else { return Err(BErr::new("BROKER_POLICY_DENIED", "workspace is not registered")) };
     if uid as u32 != sess.uid {
         return Err(BErr::new("BROKER_IDENTITY_MISMATCH", "peer uid is not the registered host for this workspace"));
     }
     if !any_incarnation && inc as u64 != id.workspace_incarnation {
-        return Err(BErr::new("WORKSPACE_FENCED", format!("workspace incarnation {} is current; request carries {}", inc, id.workspace_incarnation)).with(json!({"workspaceIncarnation": inc})));
+        return Err(BErr::new("WORKSPACE_FENCED", format!("workspace incarnation {} is current; request carries {}", inc, id.workspace_incarnation))
+            .with(json!({"workspaceIncarnation": inc})));
     }
     Ok((state, inc))
 }
@@ -247,7 +271,8 @@ fn dispatch(b: &Shared, sess: &mut Session, req: &Request) -> Result<Value, BErr
             let mut g = b.db.lock().unwrap();
             let c = db_or_diag(b, &mut g)?;
             let (_, inc) = check_identity_db(b, c, sess, &r.identity, false)?;
-            op_view(c, &b.install_id, &r.identity.store_uuid, inc, &r.operation_id)?.ok_or_else(|| BErr::new("NOT_FOUND", "no such operation in this incarnation"))
+            op_view(c, &b.install_id, &r.identity.store_uuid, inc, &r.operation_id)?
+                .ok_or_else(|| BErr::new("NOT_FOUND", "no such operation in this incarnation"))
         }
         "operation-cancel" => exec::cancel(b, &p(&req.params)?, |c, id| check_identity_db(b, c, sess, id, false)),
         "operation-resolve" => exec::resolve(b, &p(&req.params)?, |c, id| check_identity_db(b, c, sess, id, false)),
@@ -305,7 +330,9 @@ fn handshake(b: &Shared, sess: &mut Session, v: &Value) -> Result<Value, BErr> {
         sess.store = Some(h.store_uuid);
         return Ok(out);
     };
-    let row: Option<(i64, String)> = c.query_row("SELECT incarnation, state FROM workspace_bindings WHERE store_uuid=?1", params![h.store_uuid], |r| Ok((r.get(0)?, r.get(1)?))).optional()?;
+    let row: Option<(i64, String)> = c
+        .query_row("SELECT incarnation, state FROM workspace_bindings WHERE store_uuid=?1", params![h.store_uuid], |r| Ok((r.get(0)?, r.get(1)?)))
+        .optional()?;
     let (inc, state) = match row {
         Some(x) => x,
         None => {
@@ -382,15 +409,23 @@ fn grant_sync(b: &Shared, sess: &mut Session, g: &GrantSyncParams) -> Result<Val
         _ => return Err(BErr::new("INVALID_SYSTEM_PLAN", "unsupported grant principal")),
     }
     let existing: Option<(String, Option<i64>)> = c
-        .query_row("SELECT request_hash, revoked_seq FROM broker_grants WHERE grant_id=?1 AND grant_version=?2", params![g.grant_id, g.grant_version as i64], |r| Ok((r.get(0)?, r.get(1)?)))
+        .query_row(
+            "SELECT request_hash, revoked_seq FROM broker_grants WHERE grant_id=?1 AND grant_version=?2",
+            params![g.grant_id, g.grant_version as i64],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
         .optional()?;
     if let Some((h, revoked)) = existing {
         if h != g.request_hash {
             return Err(BErr::new("OPERATION_CONFLICT", "same grant id/version with a different body"));
         }
-        return Ok(json!({"grantId": g.grant_id, "grantVersion": g.grant_version, "state": if revoked.is_some() { "revoked" } else { "active" }, "replayed": true}));
+        return Ok(
+            json!({"grantId": g.grant_id, "grantVersion": g.grant_version, "state": if revoked.is_some() { "revoked" } else { "active" }, "replayed": true}),
+        );
     }
-    let res = b.find_res(&g.identity.store_uuid, &g.resource_id).ok_or_else(|| BErr::new("RESOURCE_NOT_BOUND", "resource is not in this workspace's installed catalog"))?;
+    let res = b
+        .find_res(&g.identity.store_uuid, &g.resource_id)
+        .ok_or_else(|| BErr::new("RESOURCE_NOT_BOUND", "resource is not in this workspace's installed catalog"))?;
     let cap = agentos_protocol::params::capability(&g.capability_id).ok_or_else(|| BErr::new("CAPABILITY_VERSION_UNSUPPORTED", "unknown capability"))?;
     if g.contract_version != 1 {
         return Err(BErr::new("CAPABILITY_VERSION_UNSUPPORTED", "contract version"));
@@ -404,7 +439,15 @@ fn grant_sync(b: &Shared, sess: &mut Session, g: &GrantSyncParams) -> Result<Val
         return Err(BErr::new("RESOURCE_GENERATION_STALE", format!("resource generation is {gen}")).with(json!({"generation": gen})));
     }
     let tx = c.unchecked_transaction()?;
-    let seq = db::audit(&tx, "grant_sync", Some(&g.identity.store_uuid), Some(inc), None, Some(&g.grant_id), &json!({"capability": g.capability_id, "resource": g.resource_id, "principal": g.principal}))?;
+    let seq = db::audit(
+        &tx,
+        "grant_sync",
+        Some(&g.identity.store_uuid),
+        Some(inc),
+        None,
+        Some(&g.grant_id),
+        &json!({"capability": g.capability_id, "resource": g.resource_id, "principal": g.principal}),
+    )?;
     tx.execute(
         "INSERT INTO broker_grants(grant_id, grant_version, store_uuid, incarnation, principal_json, capability_id, contract_version, resource_id, resource_generation, limits_json, params_hash, expires_at, request_hash, created_seq) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)",
         params![g.grant_id, g.grant_version as i64, g.identity.store_uuid, inc, serde_json::to_string(&g.principal).unwrap(), g.capability_id, g.contract_version, g.resource_id, gen, g.limits.to_string(), g.params_hash, g.expires_at_ms as i64, g.request_hash, seq],
@@ -419,7 +462,13 @@ fn grant_revoke(b: &Shared, sess: &mut Session, g: &GrantRevokeParams) -> Result
     let (_, inc) = check_identity_db(b, c, sess, &g.identity, true)?;
     // Same write lock as execution admission: whichever commits first wins (spec §8.3, §17.2).
     let tx = c.unchecked_transaction()?;
-    let row: Option<Option<i64>> = tx.query_row("SELECT revoked_seq FROM broker_grants WHERE grant_id=?1 AND grant_version=?2 AND store_uuid=?3", params![g.grant_id, g.grant_version as i64, g.identity.store_uuid], |r| r.get(0)).optional()?;
+    let row: Option<Option<i64>> = tx
+        .query_row(
+            "SELECT revoked_seq FROM broker_grants WHERE grant_id=?1 AND grant_version=?2 AND store_uuid=?3",
+            params![g.grant_id, g.grant_version as i64, g.identity.store_uuid],
+            |r| r.get(0),
+        )
+        .optional()?;
     let seq = match row {
         None => {
             // Unknown grant: record a revoked tombstone so a late grant-sync cannot activate it.
@@ -433,7 +482,10 @@ fn grant_revoke(b: &Shared, sess: &mut Session, g: &GrantRevokeParams) -> Result
         Some(Some(s)) => s,
         Some(None) => {
             let seq = db::audit(&tx, "grant_revoke", Some(&g.identity.store_uuid), Some(inc), None, Some(&g.grant_id), &json!({}))?;
-            tx.execute("UPDATE broker_grants SET revoked_seq=?3, revoked_at=?4 WHERE grant_id=?1 AND grant_version=?2", params![g.grant_id, g.grant_version as i64, seq, now()])?;
+            tx.execute(
+                "UPDATE broker_grants SET revoked_seq=?3, revoked_at=?4 WHERE grant_id=?1 AND grant_version=?2",
+                params![g.grant_id, g.grant_version as i64, seq, now()],
+            )?;
             seq
         }
     };

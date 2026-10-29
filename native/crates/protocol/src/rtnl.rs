@@ -1,7 +1,7 @@
 //! Read-only rtnetlink dumps (spec §15): links, addresses and a route summary of the caller's network namespace.
 //! Requests are built here from constants; no caller-supplied netlink message is ever sent.
 use serde_json::{json, Value};
-use std::os::unix::io::{FromRawFd, OwnedFd, AsRawFd};
+use std::os::unix::io::{AsRawFd, FromRawFd, OwnedFd};
 
 const NETLINK_ROUTE: i32 = 0;
 const RTM_GETLINK: u16 = 18;
@@ -23,7 +23,15 @@ fn dump(msg_type: u16, family: u8, hdr_len: usize) -> Result<Vec<(u16, Vec<u8>)>
     }
     let fd = unsafe { OwnedFd::from_raw_fd(fd) };
     let tv = libc::timeval { tv_sec: 2, tv_usec: 0 };
-    unsafe { libc::setsockopt(fd.as_raw_fd(), libc::SOL_SOCKET, libc::SO_RCVTIMEO, &tv as *const _ as *const libc::c_void, std::mem::size_of::<libc::timeval>() as u32) };
+    unsafe {
+        libc::setsockopt(
+            fd.as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_RCVTIMEO,
+            &tv as *const _ as *const libc::c_void,
+            std::mem::size_of::<libc::timeval>() as u32,
+        )
+    };
     let total = 16 + align(hdr_len);
     let mut req = vec![0u8; total];
     req[0..4].copy_from_slice(&(total as u32).to_ne_bytes());
@@ -121,7 +129,9 @@ pub fn snapshot() -> Result<Value, String> {
         let index = u32::from_ne_bytes(m[4..8].try_into().unwrap());
         for (t, d) in attrs(&m[8..]) {
             if t == 1 {
-                addrs.push(json!({"ifindex": index, "family": if family == libc::AF_INET as u8 { "inet" } else { "inet6" }, "address": ip(family, d), "prefix": plen}));
+                addrs.push(
+                    json!({"ifindex": index, "family": if family == libc::AF_INET as u8 { "inet" } else { "inet6" }, "address": ip(family, d), "prefix": plen}),
+                );
             }
         }
     }

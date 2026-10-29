@@ -93,7 +93,9 @@ fn only(m: &Map<String, Value>, allowed: &[&str]) -> Result<(), String> {
 fn int(m: &Map<String, Value>, k: &str) -> Result<Option<u64>, String> {
     match m.get(k) {
         None => Ok(None),
-        Some(Value::Number(n)) => n.as_u64().filter(|x| *x <= crate::dto::MAX_SAFE).map(Some).ok_or_else(|| format!("INVALID_SYSTEM_PLAN: {k} must be a non-negative integer")),
+        Some(Value::Number(n)) => {
+            n.as_u64().filter(|x| *x <= crate::dto::MAX_SAFE).map(Some).ok_or_else(|| format!("INVALID_SYSTEM_PLAN: {k} must be a non-negative integer"))
+        }
         Some(_) => Err(format!("INVALID_SYSTEM_PLAN: {k} must be a non-negative integer")),
     }
 }

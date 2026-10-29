@@ -90,7 +90,9 @@ fn handle(role: &str, s: UnixStream, st: Arc<Mutex<serial::State>>, seen: Arc<Mu
     let mut r = &s;
     let Ok(body) = read_frame(&mut r, MAX_CONTROL_FRAME) else { return };
     let resp = match parse_strict(&body).map_err(|e| e.to_string()).and_then(|v| serde_json::from_value::<WorkerRequest>(v).map_err(|e| e.to_string())) {
-        Err(e) => WorkerResponse { ok: false, result: None, error: Some(WorkerError { code: "INVALID_SYSTEM_PLAN".into(), message: e, effect: "none".into() }) },
+        Err(e) => {
+            WorkerResponse { ok: false, result: None, error: Some(WorkerError { code: "INVALID_SYSTEM_PLAN".into(), message: e, effect: "none".into() }) }
+        }
         Ok(req) => {
             let key = req.operation_id.as_ref().zip(req.dispatch_nonce.as_ref()).map(|(o, n)| format!("{}|{}|{}|{}", req.broker_instance_id, o, n, req.op));
             if let Some(k) = &key {

@@ -37,7 +37,10 @@ pub fn run() {
         Some(c) => c,
         None => return,
     };
-    let out = Arc::new(Mutex::new(Out { epoch: format!("w_{}_{}", agentos_protocol::boot_id().chars().take(8).collect::<String>(), agentos_protocol::random_hex(4)), seqs: HashMap::new() }));
+    let out = Arc::new(Mutex::new(Out {
+        epoch: format!("w_{}_{}", agentos_protocol::boot_id().chars().take(8).collect::<String>(), agentos_protocol::random_hex(4)),
+        seqs: HashMap::new(),
+    }));
     for src in ["inotify", "dbus", "udev"] {
         emit(&out, src, json!({"kind": "epoch_start", "gap": true}));
     }
@@ -65,7 +68,16 @@ fn add_tree(fd: i32, root_id: &str, base: &std::path::Path, depth: usize, map: &
         return false;
     }
     let c = CString::new(base.as_os_str().to_string_lossy().as_bytes()).unwrap();
-    let mask = libc::IN_CREATE | libc::IN_DELETE | libc::IN_MODIFY | libc::IN_MOVED_FROM | libc::IN_MOVED_TO | libc::IN_CLOSE_WRITE | libc::IN_DELETE_SELF | libc::IN_MOVE_SELF | libc::IN_DONT_FOLLOW | libc::IN_ONLYDIR;
+    let mask = libc::IN_CREATE
+        | libc::IN_DELETE
+        | libc::IN_MODIFY
+        | libc::IN_MOVED_FROM
+        | libc::IN_MOVED_TO
+        | libc::IN_CLOSE_WRITE
+        | libc::IN_DELETE_SELF
+        | libc::IN_MOVE_SELF
+        | libc::IN_DONT_FOLLOW
+        | libc::IN_ONLYDIR;
     let wd = unsafe { libc::inotify_add_watch(fd, c.as_ptr(), mask) };
     if wd < 0 {
         return true;
@@ -97,7 +109,11 @@ fn inotify_loop(out: Arc<Mutex<Out>>, roots: Vec<Value>) {
             let id = r["resourceId"].as_str().unwrap_or("").to_string();
             let path = r["path"].as_str().unwrap_or("");
             if !add_tree(fd, &id, std::path::Path::new(path), 0, &mut map, String::new()) {
-                emit(&out, "inotify", json!({"kind": "watch_limit", "resourceId": id, "gap": true, "detail": format!("more than {MAX_DIRS} directories or depth > {MAX_DEPTH}; changes beyond the limit need a rescan")}));
+                emit(
+                    &out,
+                    "inotify",
+                    json!({"kind": "watch_limit", "resourceId": id, "gap": true, "detail": format!("more than {MAX_DIRS} directories or depth > {MAX_DEPTH}; changes beyond the limit need a rescan")}),
+                );
             }
         }
         let mut buf = vec![0u8; 64 * 1024];
@@ -152,7 +168,13 @@ fn dbus_loop(out: Arc<Mutex<Out>>, units: Vec<Value>) {
                 paths.insert(p.as_str().to_string(), (u["resourceId"].as_str().unwrap_or("").to_string(), name.to_string()));
             }
         }
-        let rule = zbus::MatchRule::builder().msg_type(zbus::message::Type::Signal).interface("org.freedesktop.DBus.Properties").unwrap().member("PropertiesChanged").unwrap().build();
+        let rule = zbus::MatchRule::builder()
+            .msg_type(zbus::message::Type::Signal)
+            .interface("org.freedesktop.DBus.Properties")
+            .unwrap()
+            .member("PropertiesChanged")
+            .unwrap()
+            .build();
         let Ok(it) = zbus::blocking::MessageIterator::for_match_rule(rule, &c, Some(256)) else {
             emit(&out, "dbus", json!({"kind": "unavailable", "gap": true}));
             std::thread::sleep(std::time::Duration::from_secs(5));
@@ -163,7 +185,11 @@ fn dbus_loop(out: Arc<Mutex<Out>>, units: Vec<Value>) {
             let path = m.header().path().map(|p| p.as_str().to_string()).unwrap_or_default();
             if let Some((rid, unit)) = paths.get(&path) {
                 let state = agentos_protocol::sysd::describe(&c, unit).ok();
-                emit(&out, "dbus", json!({"kind": "service_changed", "resourceId": rid, "activeState": state.as_ref().map(|s| s["activeState"].clone()), "invocationId": state.as_ref().map(|s| s["invocationId"].clone())}));
+                emit(
+                    &out,
+                    "dbus",
+                    json!({"kind": "service_changed", "resourceId": rid, "activeState": state.as_ref().map(|s| s["activeState"].clone()), "invocationId": state.as_ref().map(|s| s["invocationId"].clone())}),
+                );
             }
         }
         // The bus connection ended: anything in between is unknown.
@@ -188,7 +214,11 @@ fn udev_loop(out: Arc<Mutex<Out>>) {
             continue;
         }
         for ev in sock.iter() {
-            emit(&out, "udev", json!({"kind": format!("device_{:?}", ev.event_type()).to_lowercase(), "devnode": ev.devnode().map(|p| p.display().to_string())}));
+            emit(
+                &out,
+                "udev",
+                json!({"kind": format!("device_{:?}", ev.event_type()).to_lowercase(), "devnode": ev.devnode().map(|p| p.display().to_string())}),
+            );
         }
     }
 }

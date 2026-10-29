@@ -466,7 +466,8 @@ fn client(sh: Shared, s: UnixStream) {
                 let path = req["cgroupPath"].as_str().unwrap_or("").to_string();
                 let kind = req["kind"].as_str().unwrap_or("").to_string();
                 let mut st = sh.0.lock().unwrap();
-                let allowed = st.cfg.allowed_cgroup_prefixes.iter().any(|p| path.starts_with(p.as_str())) && !path.contains("..") && path.starts_with("/sys/fs/cgroup/");
+                let allowed =
+                    st.cfg.allowed_cgroup_prefixes.iter().any(|p| path.starts_with(p.as_str())) && !path.contains("..") && path.starts_with("/sys/fs/cgroup/");
                 let res = if key.is_empty() || key.len() > 96 || !allowed {
                     json!({"ok": false, "error": {"code": "BROKER_POLICY_DENIED", "message": "cgroup outside the registered workload scope"}})
                 } else if st.workloads.len() >= 200 {
@@ -487,7 +488,14 @@ fn client(sh: Shared, s: UnixStream) {
                             st.next_slot = st.next_slot.wrapping_add(1).max(1);
                             let w = Workload { key: key.clone(), kind, cgroup_path: path, cgroup_id: cg, slot, generation: st.gen_counter };
                             if st.workloads_fd > 0 {
-                                unsafe { bpf_map_update_elem(st.workloads_fd, &cg as *const u64 as *const libc::c_void, &slot as *const u32 as *const libc::c_void, 0) };
+                                unsafe {
+                                    bpf_map_update_elem(
+                                        st.workloads_fd,
+                                        &cg as *const u64 as *const libc::c_void,
+                                        &slot as *const u32 as *const libc::c_void,
+                                        0,
+                                    )
+                                };
                             }
                             st.by_cg.insert(cg, key.clone());
                             st.workloads.insert(key.clone(), w.clone());

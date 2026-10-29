@@ -74,7 +74,9 @@ fn handle(v: &Value) -> Result<Value, Value> {
             }
             // Readability with the user's own permissions is the only access check (no privilege is involved).
             fsutil::list(fd.as_raw_fd(), "", None, 1).map_err(|e| err(e.code, format!("cannot read the directory: {}", e.message)))?;
-            Ok(json!({"path": path, "identity": root_identity(&st), "mode": format!("{:o}", st.st_mode & 0o7777), "ownedByUser": st.st_uid == unsafe { libc::geteuid() }}))
+            Ok(
+                json!({"path": path, "identity": root_identity(&st), "mode": format!("{:o}", st.st_mode & 0o7777), "ownedByUser": st.st_uid == unsafe { libc::geteuid() }}),
+            )
         }
         "observe_root" => {
             let fd = open_checked(&p["root"])?;
@@ -109,7 +111,9 @@ fn handle(v: &Value) -> Result<Value, Value> {
             // native:doctor helper: report what this user-level process can reach.
             let openat2 = fsutil::open_root("/").and_then(|(fd, _)| fsutil::openat2(fd.as_raw_fd(), "etc", libc::O_RDONLY | libc::O_DIRECTORY, 0)).is_ok();
             let bus = agentos_protocol::sysd::system().and_then(|c| agentos_protocol::sysd::describe(&c, "dbus.service")).is_ok();
-            Ok(json!({"openat2": openat2, "systemBus": bus, "rtnetlink": agentos_protocol::rtnl::snapshot().is_ok(), "udev": udev::Enumerator::new().is_ok(), "bootId": agentos_protocol::boot_id()}))
+            Ok(
+                json!({"openat2": openat2, "systemBus": bus, "rtnetlink": agentos_protocol::rtnl::snapshot().is_ok(), "udev": udev::Enumerator::new().is_ok(), "bootId": agentos_protocol::boot_id()}),
+            )
         }
         o => Err(err("CAPABILITY_VERSION_UNSUPPORTED", format!("unknown op {o}"))),
     }

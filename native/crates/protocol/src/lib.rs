@@ -2,13 +2,13 @@
 pub mod canonical;
 pub mod dto;
 pub mod frame;
+pub mod fsutil;
 pub mod params;
 pub mod peer;
-pub mod fsutil;
-pub mod worker;
 pub mod rtnl;
 #[cfg(feature = "dbus")]
 pub mod sysd;
+pub mod worker;
 
 pub use canonical::{canonical_json, domain_hash, sha256_hex};
 

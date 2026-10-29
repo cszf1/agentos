@@ -118,10 +118,24 @@ impl Broker {
         }
     }
 
-    pub fn call_worker(&self, kind: &str, op: &str, target: &Value, params: Value, op_id: Option<&str>, nonce: Option<&str>, timeout_ms: u64) -> Result<Value, CallError> {
+    pub fn call_worker(
+        &self,
+        kind: &str,
+        op: &str,
+        target: &Value,
+        params: Value,
+        op_id: Option<&str>,
+        nonce: Option<&str>,
+        timeout_ms: u64,
+    ) -> Result<Value, CallError> {
         let w = self.worker_for(kind);
         // Worker fault points fire only on effectful dispatches of the matching worker (never on observe/read).
-        let role = match kind { "managed-root" => "file", "service" => "service", "lab-network" => "network", _ => "serial" };
+        let role = match kind {
+            "managed-root" => "file",
+            "service" => "service",
+            "lab-network" => "network",
+            _ => "serial",
+        };
         let faults = if op_id.is_some() && !matches!(op, "observe" | "read" | "version" | "status" | "usage") { self.worker_faults(role) } else { vec![] };
         let req = WorkerRequest {
             v: 1,
@@ -238,7 +252,10 @@ pub fn ensure_resource_rows(c: &Connection, b: &Broker) -> rusqlite::Result<()> 
 pub fn db_or_diag<'a>(b: &'a Broker, g: &'a mut std::sync::MutexGuard<'_, Option<Connection>>) -> Result<&'a Connection, BErr> {
     match g.as_ref() {
         Some(c) => Ok(c),
-        None => Err(BErr::new(if b.diag.as_deref().unwrap_or("").starts_with("BROKER_IDENTITY_MISMATCH") { "BROKER_IDENTITY_MISMATCH" } else { "BROKER_HISTORY_MISSING" }, b.diag.clone().unwrap_or_else(|| "broker log unavailable".into()))),
+        None => Err(BErr::new(
+            if b.diag.as_deref().unwrap_or("").starts_with("BROKER_IDENTITY_MISMATCH") { "BROKER_IDENTITY_MISMATCH" } else { "BROKER_HISTORY_MISSING" },
+            b.diag.clone().unwrap_or_else(|| "broker log unavailable".into()),
+        )),
     }
 }
 
@@ -249,4 +266,3 @@ pub fn now() -> i64 {
 pub fn digest(v: &Value) -> String {
     agentos_protocol::domain_hash("agentos.resource-identity.v1", v).unwrap_or_default()
 }
-

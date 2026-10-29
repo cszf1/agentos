@@ -6,8 +6,8 @@ use std::io::{Read, Write};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::io::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 
-use sha2::{Digest, Sha256};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 const RESOLVE_NO_XDEV: u64 = 0x01;
 const RESOLVE_NO_MAGICLINKS: u64 = 0x02;
@@ -78,7 +78,11 @@ pub fn open_root(path: &str) -> Result<(OwnedFd, libc::stat), FsError> {
 
 pub fn openat2(dir: RawFd, rel: &str, flags: i32, mode: u32) -> Result<OwnedFd, FsError> {
     let c = CString::new(if rel.is_empty() { "." } else { rel }).map_err(|_| FsError::new("PATH_SCOPE_VIOLATION", "NUL in path"))?;
-    let how = OpenHow { flags: (flags | libc::O_CLOEXEC) as u64, mode: mode as u64, resolve: RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS | RESOLVE_NO_XDEV };
+    let how = OpenHow {
+        flags: (flags | libc::O_CLOEXEC) as u64,
+        mode: mode as u64,
+        resolve: RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS | RESOLVE_NO_XDEV,
+    };
     let fd = unsafe { libc::syscall(SYS_OPENAT2, dir, c.as_ptr(), &how as *const OpenHow, std::mem::size_of::<OpenHow>()) };
     if fd < 0 {
         return Err(FsError::os("CONTENT_UNAVAILABLE", "openat2"));
@@ -159,7 +163,13 @@ pub fn list(root: RawFd, rel: &str, cursor: Option<&str>, limit: usize) -> Resul
         if n.starts_with(".aos-tmp-") {
             continue;
         }
-        out.push(Entry { name: n, kind: kind_of(&st), size: st.st_size as u64, mtime_ms: st.st_mtime * 1000 + st.st_mtime_nsec / 1_000_000, supported: check_supported(&st).is_ok() });
+        out.push(Entry {
+            name: n,
+            kind: kind_of(&st),
+            size: st.st_size as u64,
+            mtime_ms: st.st_mtime * 1000 + st.st_mtime_nsec / 1_000_000,
+            supported: check_supported(&st).is_ok(),
+        });
     }
     Ok((out, next, dst))
 }
@@ -174,7 +184,13 @@ pub struct TextRead {
 }
 
 fn same_meta(a: &libc::stat, b: &libc::stat) -> bool {
-    a.st_dev == b.st_dev && a.st_ino == b.st_ino && a.st_size == b.st_size && a.st_mtime == b.st_mtime && a.st_mtime_nsec == b.st_mtime_nsec && a.st_ctime == b.st_ctime && a.st_ctime_nsec == b.st_ctime_nsec
+    a.st_dev == b.st_dev
+        && a.st_ino == b.st_ino
+        && a.st_size == b.st_size
+        && a.st_mtime == b.st_mtime
+        && a.st_mtime_nsec == b.st_mtime_nsec
+        && a.st_ctime == b.st_ctime
+        && a.st_ctime_nsec == b.st_ctime_nsec
 }
 
 /// Read a bounded UTF-8 text file; the version is the hash of the whole content. Metadata is compared before and after.
@@ -332,9 +348,16 @@ pub fn read_cap(root: i32, cap: &str, p: &Value) -> Result<serde_json::Value, Fs
         }
         "file.stat" => {
             let path = p["path"].as_str().unwrap_or("");
-            let fd = openat2(root, path, libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_NOCTTY | if path.is_empty() { libc::O_DIRECTORY } else { 0 }, 0)?;
+            let fd = openat2(
+                root,
+                path,
+                libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_NOCTTY | if path.is_empty() { libc::O_DIRECTORY } else { 0 },
+                0,
+            )?;
             let st = fstat(fd.as_raw_fd())?;
-            Ok(serde_json::json!({"path": path, "kind": kind_of(&st), "size": st.st_size, "nlink": st.st_nlink, "mtimeMs": st.st_mtime * 1000 + st.st_mtime_nsec / 1_000_000, "supported": check_supported(&st).is_ok()}))
+            Ok(
+                serde_json::json!({"path": path, "kind": kind_of(&st), "size": st.st_size, "nlink": st.st_nlink, "mtimeMs": st.st_mtime * 1000 + st.st_mtime_nsec / 1_000_000, "supported": check_supported(&st).is_ok()}),
+            )
         }
         "file.read_text" => {
             let path = p["path"].as_str().unwrap_or("");
@@ -342,7 +365,9 @@ pub fn read_cap(root: i32, cap: &str, p: &Value) -> Result<serde_json::Value, Fs
             if r.changed {
                 return Err(FsError::new("RESOURCE_CHANGED", "the file changed while it was read"));
             }
-            Ok(serde_json::json!({"path": path, "content": r.content, "truncated": r.truncated, "size": r.size, "version": r.version, "identity": {"dev": r.ident.dev, "ino": r.ident.ino}}))
+            Ok(
+                serde_json::json!({"path": path, "content": r.content, "truncated": r.truncated, "size": r.size, "version": r.version, "identity": {"dev": r.ident.dev, "ino": r.ident.ino}}),
+            )
         }
         _ => Err(FsError::new("CAPABILITY_VERSION_UNSUPPORTED", "unsupported file read")),
     }

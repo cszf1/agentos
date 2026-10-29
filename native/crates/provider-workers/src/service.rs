@@ -66,7 +66,11 @@ pub fn handle(req: &WorkerRequest) -> Res {
             }
             let val = p["value"].as_u64().ok_or_else(|| WErr::none("INVALID_SYSTEM_PLAN", "value"))?;
             sysd::set_property(&c, &u, prop, val).map_err(|e| {
-                if e.contains("AccessDenied") || e.contains("InvalidArgs") { WErr::none("BROKER_POLICY_DENIED", e) } else { WErr::unknown("SERVICE_STATE_UNCONFIRMED", e) }
+                if e.contains("AccessDenied") || e.contains("InvalidArgs") {
+                    WErr::none("BROKER_POLICY_DENIED", e)
+                } else {
+                    WErr::unknown("SERVICE_STATE_UNCONFIRMED", e)
+                }
             })?;
             if has_fault(req, "service.die_after_job") {
                 die("service.die_after_job");

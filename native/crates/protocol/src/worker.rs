@@ -54,20 +54,55 @@ pub struct CallError {
 }
 
 pub fn call(socket: &str, expect_uid: u32, req: &WorkerRequest, timeout: Duration) -> Result<Value, CallError> {
-    let s = UnixStream::connect(socket).map_err(|e| CallError { code: "PROVIDER_UNAVAILABLE".into(), message: format!("connect {socket}: {e}"), maybe_sent: false, effect: "none".into() })?;
-    let pc = peer_cred(&s).map_err(|e| CallError { code: "PROVIDER_UNAVAILABLE".into(), message: format!("peer cred: {e}"), maybe_sent: false, effect: "none".into() })?;
+    let s = UnixStream::connect(socket).map_err(|e| CallError {
+        code: "PROVIDER_UNAVAILABLE".into(),
+        message: format!("connect {socket}: {e}"),
+        maybe_sent: false,
+        effect: "none".into(),
+    })?;
+    let pc = peer_cred(&s).map_err(|e| CallError {
+        code: "PROVIDER_UNAVAILABLE".into(),
+        message: format!("peer cred: {e}"),
+        maybe_sent: false,
+        effect: "none".into(),
+    })?;
     if pc.uid != expect_uid {
-        return Err(CallError { code: "BROKER_IDENTITY_MISMATCH".into(), message: format!("worker socket peer uid {} != {}", pc.uid, expect_uid), maybe_sent: false, effect: "none".into() });
+        return Err(CallError {
+            code: "BROKER_IDENTITY_MISMATCH".into(),
+            message: format!("worker socket peer uid {} != {}", pc.uid, expect_uid),
+            maybe_sent: false,
+            effect: "none".into(),
+        });
     }
     s.set_read_timeout(Some(timeout)).ok();
     s.set_write_timeout(Some(timeout)).ok();
     let body = serde_json::to_vec(req).unwrap();
     let mut w = &s;
-    write_frame(&mut w, &body).map_err(|e| CallError { code: "PROVIDER_UNAVAILABLE".into(), message: format!("send: {e}"), maybe_sent: true, effect: "unknown".into() })?;
+    write_frame(&mut w, &body).map_err(|e| CallError {
+        code: "PROVIDER_UNAVAILABLE".into(),
+        message: format!("send: {e}"),
+        maybe_sent: true,
+        effect: "unknown".into(),
+    })?;
     let mut r = &s;
-    let resp = read_frame(&mut r, MAX_CONTROL_FRAME).map_err(|e| CallError { code: "EXTERNAL_RESULT_INDETERMINATE".into(), message: format!("no response: {e}"), maybe_sent: true, effect: "unknown".into() })?;
-    let v = parse_strict(&resp).map_err(|e| CallError { code: "EXTERNAL_RESULT_INDETERMINATE".into(), message: e.to_string(), maybe_sent: true, effect: "unknown".into() })?;
-    let r: WorkerResponse = serde_json::from_value(v).map_err(|e| CallError { code: "EXTERNAL_RESULT_INDETERMINATE".into(), message: e.to_string(), maybe_sent: true, effect: "unknown".into() })?;
+    let resp = read_frame(&mut r, MAX_CONTROL_FRAME).map_err(|e| CallError {
+        code: "EXTERNAL_RESULT_INDETERMINATE".into(),
+        message: format!("no response: {e}"),
+        maybe_sent: true,
+        effect: "unknown".into(),
+    })?;
+    let v = parse_strict(&resp).map_err(|e| CallError {
+        code: "EXTERNAL_RESULT_INDETERMINATE".into(),
+        message: e.to_string(),
+        maybe_sent: true,
+        effect: "unknown".into(),
+    })?;
+    let r: WorkerResponse = serde_json::from_value(v).map_err(|e| CallError {
+        code: "EXTERNAL_RESULT_INDETERMINATE".into(),
+        message: e.to_string(),
+        maybe_sent: true,
+        effect: "unknown".into(),
+    })?;
     if r.ok {
         Ok(r.result.unwrap_or(Value::Null))
     } else {

@@ -58,11 +58,26 @@ fn main() {
                 }
                 let mut g = c.lock().unwrap();
                 let reply = match line.trim() {
-                    "drop-next" => { g.drop_next = true; "ok".to_string() }
-                    "garbage-next" => { g.garbage_next = true; "ok".to_string() }
-                    "disconnect" => { g.disconnect = true; "ok".to_string() }
-                    "reconnect" => { g.reconnect = true; "ok".to_string() }
-                    "status" => format!("{{\"requests\":{},\"responses\":{},\"slaveOpens\":{},\"lastReq\":\"{}\",\"connected\":{},\"generation\":{}}}", g.requests, g.responses, g.slave_opens, g.last_req, g.connected, g.generation),
+                    "drop-next" => {
+                        g.drop_next = true;
+                        "ok".to_string()
+                    }
+                    "garbage-next" => {
+                        g.garbage_next = true;
+                        "ok".to_string()
+                    }
+                    "disconnect" => {
+                        g.disconnect = true;
+                        "ok".to_string()
+                    }
+                    "reconnect" => {
+                        g.reconnect = true;
+                        "ok".to_string()
+                    }
+                    "status" => format!(
+                        "{{\"requests\":{},\"responses\":{},\"slaveOpens\":{},\"lastReq\":\"{}\",\"connected\":{},\"generation\":{}}}",
+                        g.requests, g.responses, g.slave_opens, g.last_req, g.connected, g.generation
+                    ),
                     _ => "unknown".to_string(),
                 };
                 let mut w = &s;
