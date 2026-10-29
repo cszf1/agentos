@@ -105,6 +105,8 @@ export function openCore(file: string, opts: { clock?: Clock; runSettings?: Part
   const lifecycle = new LifecycleService(store, policies);
   const proposals = new ProposalService(store, apps, runs);
   const compactions = new CompactionService(store);
+  // one foreground-priority predicate for background model admission and background dispatch (V4-S06)
+  scheduler.backgroundIdle = () => budgets.backgroundIdle();
   agentOps.proposals = proposals;
   jobs.register("app-diagnose", diagnoseHandler(store, runs, incidents));
   jobs.register("app-optimize", optimizeHandler(store, runs, incidents));

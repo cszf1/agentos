@@ -55,7 +55,13 @@ export class ModelBudgets {
   /** process identity: attempts of an earlier process are interrupted at recover() */
   readonly bootId = randomUUID();
   /** §9.4 idle signal: may a background request start now? (no foreground work waiting for dispatch or the build slot) */
-  backgroundIdle: () => boolean = () => true;
+  /**
+   * Foreground priority (spec §9.2, V4-S06): a background request waits while any foreground task waits for a slot,
+   * a target or the build queue. The host and the scheduler share this one predicate.
+   */
+  backgroundIdle: () => boolean = () =>
+    !this.store.get("SELECT 1 FROM runs WHERE background = 0 AND status = 'queued' AND scheduling_state IN ('waiting_slot','waiting_target','dispatching')") &&
+    !this.store.get("SELECT 1 FROM runs WHERE background = 0 AND scheduling_state = 'waiting_build'");
   /** for tests and diagnostics */
   readonly stats = { admitted: 0, denied: 0, networkStarts: 0, waitedForeground: 0, waitedBackground: 0, maxConcurrent: 0 };
 

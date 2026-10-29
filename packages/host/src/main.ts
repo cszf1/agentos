@@ -224,11 +224,7 @@ export async function main(): Promise<void> {
   if (interrupted > 0) log.warn("model attempts of the previous process marked interrupted (usage unknown, reservation kept)", { interrupted });
   const coord = new RunCoordinator(core.runs, engine, { info: log.info, warn: log.warn, error: log.error }, 500, core.scheduler);
   coord.onChange = () => core.budgets.pump();
-  const fgIdle = () =>
-    !core.store.get("SELECT 1 FROM runs WHERE background = 0 AND status = 'queued' AND scheduling_state IN ('waiting_slot','waiting_target','dispatching')") &&
-    !core.store.get("SELECT 1 FROM runs WHERE background = 0 AND scheduling_state = 'waiting_build'");
-  core.budgets.backgroundIdle = fgIdle;
-  core.scheduler.backgroundIdle = fgIdle;
+  core.scheduler.backgroundIdle = () => core.budgets.backgroundIdle();
   rt.coord = coord;
   await coord.recover();
   if (coord.recoveryBlocked) {

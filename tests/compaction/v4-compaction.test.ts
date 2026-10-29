@@ -129,3 +129,28 @@ describe("compaction", () => {
     expect((await rig.core.compactions.request(a.conversationId, {})).id).toBe(j.id);
   });
 });
+
+describe("background vs foreground model permits", () => {
+  it("V4-S06/S08 a waiting foreground task holds back the background summary; generation + summary never exceed 2 permits", async () => {
+    rig = await compactRig();
+    rig.core.runs.foregroundSlots = 1; // one slot so the second foreground task really waits in the queue
+    const a = await endedRun(rig);
+    const f1 = await submit(rig, "做一个记账应用 [faux:slow:300]");
+    const f2 = await submit(rig, "做一个读书应用 [faux:slow:300]");
+    await waitFor(() => rig!.core.runs.getRow(f2.runId)!.scheduling_state === "waiting_slot", 20_000);
+    expect(rig.core.budgets.backgroundIdle()).toBe(false);
+    const j = await rig.core.compactions.request(a.conversationId, {});
+    // drive the compaction while the foreground queue is not empty: its one request waits
+    const summaryDone = settle(rig, j.id, 120_000);
+    await waitRun(rig, f1.runId, 60_000);
+    const fgEnded = await waitRun(rig, f2.runId, 60_000);
+    const done = await summaryDone;
+    expect(["placed", "summary_unplaced"]).toContain(done.state);
+    const sAt = rig.core.store.get<{ started_at: string }>("SELECT started_at FROM model_attempts WHERE compaction_job_id = ?", j.id)!;
+    // the background request started only after the queued foreground task had left the queue (got its slot)
+    const f2First = rig.core.store.get<{ started_at: string }>("SELECT MIN(started_at) AS started_at FROM model_attempts WHERE run_id = ?", f2.runId)!;
+    expect(Date.parse(sAt.started_at)).toBeGreaterThanOrEqual(Date.parse(f2First.started_at));
+    expect(fgEnded.status).toBe("succeeded");
+    expect(rig.core.budgets.stats.maxConcurrent).toBeLessThanOrEqual(2);
+  });
+});
