@@ -83,8 +83,8 @@ d("v0.4 backup / restore", () => {
     expect(meta.scheduler_epoch).toBeGreaterThan(backupEpochs.s);
     expect(meta.maintenance_epoch).toBeGreaterThan(backupEpochs.e);
     expect(q<{ state: string }>(target, "SELECT state FROM maintenance_policies WHERE id = ?", created.data.policyId)[0]!.state).toBe("paused_needs_review");
-    expect(q(target, "SELECT id FROM maintenance_jobs WHERE state IN ('queued','observing','analyzing','waiting','acting','verifying')")).toHaveLength(0);
-    expect(q(target, "SELECT id FROM maintenance_effect_outbox WHERE dispatch_state IN ('pending','sent','accepted')")).toHaveLength(0);
+    expect(q(target, "SELECT id FROM maintenance_jobs WHERE state IN ('queued','deferred','observing','diagnosing','ready','running','verifying','reconciling')")).toHaveLength(0);
+    expect(q(target, "SELECT job_id FROM maintenance_effect_outbox WHERE dispatch_state IN ('pending','sent','accepted')")).toHaveLength(0);
     // the task that was running at backup time is fenced: a new execution epoch and a closed route
     const old = q<{ status: string; stop_reason: string | null }>(target, "SELECT status, stop_reason FROM runs WHERE id = ?", r2.data.runId)[0]!;
     expect(["cancel_requested", "cancelled", "failed"]).toContain(old.status);
