@@ -313,6 +313,50 @@ describe("H: app recovery through the one runtime controller", () => {
     expect(() => core.store.tx(() => core.store.run("DELETE FROM maintenance_attempts"))).toThrow(/never deleted/);
   });
 
+  it("V4-H04 stable recovery needs a new handshaked instance, a probe after the restart and the full window; a brief start that exits is not stable", async () => {
+    const { core, adv } = rig();
+    const kicks = { n: 0 };
+    recovery(core, kicks);
+    const appId = seedApp(core);
+    runtimeRow(core, appId, "degraded");
+    enablePolicy(core, { templateId: "app-recovery", target: { kind: "app", id: appId }, mode: "automatic", trigger: { kind: "event" }, params: { observeSeconds: 60 } });
+    core.store.tx(() => core.store.run("INSERT INTO artifacts (id, build_key, runtime_lock_id, platform, manifest_json, relative_path, size_bytes, gc_state, created_at) VALUES ('sha256:h4', 'k', 'l', 'p', '{}', 'h4', 1, 'live', 'x')"));
+    const startInstance = (gen: number, probeAt: string | null) =>
+      core.store.tx(() => {
+        const id = randomUUID();
+        core.store.run("INSERT INTO runtime_instances (id, app_id, revision_id, artifact_id, role, generation, host_boot_id, container_name, desired_state, observed_state, lease_digest, last_probe_at, created_at, updated_at) SELECT ?, ?, active_revision_id, 'sha256:h4', 'active', ?, 'b', ?, 'running', 'ready', '', ?, 'x', 'x' FROM apps WHERE id = ?", id, appId, gen, `c-${gen}`, probeAt, appId);
+        core.store.run("UPDATE app_runtime SET health = 'ready', generation = ?, active_instance_id = ? WHERE app_id = ?", gen, id, appId);
+      });
+    // round 1: the new instance comes up, then exits inside the window -> not stable
+    let { incident } = core.maintenance.incidents.raise({ targetKind: "app", targetId: appId, condition: "app.crash_loop", value: "bad", quality: "fresh", evidence: { r: 1 } });
+    const t1 = core.maintenance.jobs.eventTrigger(incident, "app-recovery")!;
+    await core.maintenance.jobs.pass(true);
+    startInstance(2, new Date(core.store.clock.now() + 1000).toISOString());
+    adv(20_000);
+    await core.maintenance.jobs.pass(true);
+    expect(core.maintenance.jobs.requireJob(t1.jobId).state).not.toBe("succeeded"); // still in the window
+    core.store.tx(() => core.store.run("UPDATE app_runtime SET health = 'degraded' WHERE app_id = ?", appId));
+    await core.maintenance.jobs.pass(true);
+    expect(core.maintenance.jobs.requireJob(t1.jobId).state).toBe("failed_no_effect");
+    expect(core.maintenance.jobs.requireJob(t1.jobId).outcome_reason).toMatch(/did not hold/);
+
+    // round 2: the instance stays up for the window but no probe has run since the restart -> still not stable
+    adv(31 * 60_000);
+    runtimeRow(core, appId, "degraded");
+    ({ incident } = core.maintenance.incidents.raise({ targetKind: "app", targetId: appId, condition: "app.crash_loop", value: "bad", quality: "fresh", evidence: { r: 2 } }));
+    const t2 = core.maintenance.jobs.eventTrigger(incident, "app-recovery")!;
+    await core.maintenance.jobs.pass(true);
+    startInstance(3, null);
+    adv(70_000);
+    await core.maintenance.jobs.pass(true);
+    expect(core.maintenance.jobs.requireJob(t2.jobId).state).not.toBe("succeeded");
+    // a probe after the restart and the full window -> stable recovery
+    core.store.tx(() => core.store.run("UPDATE runtime_instances SET last_probe_at = ? WHERE generation = 3 AND app_id = ?", new Date(core.store.clock.now()).toISOString(), appId));
+    await core.maintenance.jobs.pass(true);
+    expect(core.maintenance.jobs.requireJob(t2.jobId).state).toBe("succeeded");
+    expect(core.maintenance.jobs.requireJob(t2.jobId).outcome_reason).toMatch(/handshaked, probed and stayed up/);
+  });
+
   it("V4-H02/H03 a user stop wins: the epoch moved, so a queued recovery never restarts it", async () => {
     const { core } = rig();
     const kicks = { n: 0 };

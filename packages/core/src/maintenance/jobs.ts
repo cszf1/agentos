@@ -679,8 +679,23 @@ export class MaintenanceService {
         if (obs.incidentId) this.incidents.setState(obs.incidentId, "mitigating", { jobId: id });
         return this.#advance(id);
       }
-      case "awaiting_approval":
-        return; // the user decides; no execution slot is taken
+      case "awaiting_approval": {
+        // the user decides; no execution slot is taken. A candidate that went stale/expired/was rejected ends the job.
+        const pid = (() => {
+          try {
+            return (JSON.parse(j.outcome_reason ?? "{}") as { proposalId?: string }).proposalId;
+          } catch {
+            return undefined;
+          }
+        })();
+        if (pid) {
+          const p = this.store.get<{ state: string }>("SELECT state FROM proposals WHERE id = ?", pid);
+          if (p && ["stale", "expired", "rejected", "needs_recheck"].includes(p.state)) {
+            this.finish(id, p.state === "rejected" ? "cancelled" : "no_change", `the candidate ${pid} is ${p.state}; nothing was published`, "none");
+          }
+        }
+        return;
+      }
       case "diagnosing":
         return; // the background run reports through finishAnalysis()
       case "ready": {

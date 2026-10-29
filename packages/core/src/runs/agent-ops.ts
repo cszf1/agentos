@@ -493,8 +493,7 @@ export class AgentOps {
     return this.wrap(() => {
       const f = this.#frozenScope(entered.runId, "maintenance_refactor");
       if (!this.candidates) throw new AgentOsError("SANDBOX_UNAVAILABLE", "candidate checks need the code runtime");
-      const rev = this.apps.getRevisionRow(f.run.target_app_id!, String(revisionId));
-      if (!rev || rev.created_by_run_id !== entered.runId) throw new AgentOsError("FORBIDDEN", "only a candidate staged by this run can be checked");
+      if (!this.proposals?.stagedByRun(entered.runId, f.run.target_app_id!, String(revisionId))) throw new AgentOsError("FORBIDDEN", "only a candidate staged by this run can be checked");
       authorize("candidates.write", principal);
       this.runs.assertWritable(entered.runId, entered.bindingEpoch);
       return this.candidates.start(entered.runId, f.run.target_app_id!, String(revisionId));

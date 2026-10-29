@@ -193,7 +193,18 @@ export class ProposalService {
       if (issues.length > 0) return { revisionId: "", valid: false, errors: issues };
     }
     const r = this.apps.stage(app.id, bundle, runId);
+    // revisions are content-addressed: a later optimisation may stage the same candidate another run created first.
+    // The staging fact of THIS run is what lets it check and propose that revision.
+    if (r.revisionId) this.store.event("candidate.staged", { runId, revisionId: r.revisionId }, { appId: app.id, runId });
     return { revisionId: r.revisionId, valid: r.issues.length === 0, errors: r.issues };
+  }
+
+  /** Did this run stage this candidate (itself first, or the same content again)? */
+  stagedByRun(runId: string, appId: string, revisionId: string): boolean {
+    const rev = this.apps.getRevisionRow(appId, revisionId);
+    if (!rev) return false;
+    if (rev.created_by_run_id === runId) return true;
+    return this.store.all<{ payload_json: string }>("SELECT payload_json FROM events WHERE kind = 'candidate.staged' AND run_id = ?", runId).some((e) => (JSON.parse(e.payload_json) as { revisionId?: string }).revisionId === revisionId);
   }
 
   /** Submit the proposal: a passed check of the same run and revision, the boundary again, workspace/app caps. */
