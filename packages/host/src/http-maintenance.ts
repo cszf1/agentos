@@ -332,7 +332,7 @@ export function registerMaintenanceRoutes(
     h.withWrite(async () => {
       const meta = h.writeMeta(req);
       const b = obj(req.body ?? {}, ["allowProviderContent", "instructions"]);
-      const prior = core.store.get<{ response_json: string }>("SELECT response_json FROM operations WHERE principal = 'user:local' AND operation_key = ?", meta.operationKey);
+      const prior = core.store.get<{ result_json: string }>("SELECT result_json FROM operations WHERE principal = 'user:local' AND operation_key = ?", meta.operationKey);
       if (prior) return h.ok(reply, 202, write("conversations.compact", meta, () => ({ status: 202, body: null })).body);
       const job = await core.compactions.request(req.params.id, { allowProviderContent: b.allowProviderContent === true, instructions: typeof b.instructions === "string" ? b.instructions : undefined });
       const r = write("conversations.compact", meta, () => ({ status: 202, body: core.compactions.view(job) }));

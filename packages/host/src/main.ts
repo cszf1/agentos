@@ -110,6 +110,8 @@ export async function main(): Promise<void> {
     gate: core.budgets,
     modelConfig,
     fauxContextWindow: config.testMode && process.env.AGENTOS_TEST_FAUX_CONTEXT ? Number(process.env.AGENTOS_TEST_FAUX_CONTEXT) : undefined,
+    // Pi's kept-recent window for manual compaction (tokens). Unset = Pi 1.4.0's default.
+    compaction: Number(process.env.AGENTOS_COMPACTION_KEEP_RECENT_TOKENS) > 0 ? { keepRecentTokens: Number(process.env.AGENTOS_COMPACTION_KEEP_RECENT_TOKENS) } : undefined,
     // Spec §10.3 (V4-S10): a fatal Pi storage failure closes the whole Agent subsystem (no new run, no model request,
     // no empty replacement store) while apps, records, deterministic maintenance and queries keep working.
     onFailure: (error) => {

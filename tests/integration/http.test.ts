@@ -170,3 +170,34 @@ describe("O02 no model configured", () => {
     await stopHost(host);
   });
 });
+
+describe("V4 compaction over HTTP (real process, faux model)", () => {
+  it("POST /api/conversations/:id/compactions is accepted, replays by key, and the summary is placed", async () => {
+    const dir = tmpDir();
+    const host = await startHost(dir, { AGENTOS_COMPACTION_KEEP_RECENT_TOKENS: "50" });
+    try {
+      const c = new Client(host);
+      await c.login(dir);
+      const run = await c.req("POST", "/api/runs", { intent: "做一个待办应用", targetAppId: null });
+      await c.waitRun(run.data.runId);
+      const conv = (await c.get(`/api/runs/${run.data.runId}/transcript`)).data.conversationId as string;
+      expect(conv).toBeTruthy();
+      const key = randomUUID();
+      const a = await c.req("POST", `/api/conversations/${conv}/compactions`, {}, key);
+      expect(a.status, JSON.stringify(a)).toBe(202);
+      const again = await c.req("POST", `/api/conversations/${conv}/compactions`, {}, key);
+      expect(again.status).toBe(202);
+      let state = "";
+      for (let i = 0; i < 120 && !["placed", "failed", "summary_unplaced", "cancelled", "stale"].includes(state); i++) {
+        await new Promise((r) => setTimeout(r, 500));
+        state = (await c.get(`/api/conversations/${conv}/compactions`)).data.items[0]?.state ?? "";
+      }
+      expect(state).toBe("placed");
+      const list = (await c.get(`/api/conversations/${conv}/compactions`)).data.items;
+      expect(list).toHaveLength(1);
+      expect(list[0].result.entryId).toBeTruthy();
+    } finally {
+      await stopHost(host);
+    }
+  }, 120_000);
+});

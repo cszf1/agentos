@@ -51,7 +51,7 @@ export class CompactionService {
     return {
       compactionId: j.id, conversationId: j.conversation_id, runId: j.run_id, cutoffEntryId: j.cutoff_entry_id, state: j.state, piTaskId: j.pi_task_id,
       scope: JSON.parse(j.input_scope), result: j.result_json ? JSON.parse(j.result_json) : null, requestedBy: j.requested_by, createdAt: j.created_at, updatedAt: j.updated_at,
-      label: j.state === "placed" ? "摘要已生成并放置（原始记录保留）" : j.state === "summary_unplaced" ? "摘要已生成但未放置" : j.state === "stale" ? "摘要已过时（未覆盖更新的摘要）" : j.state,
+      label: j.state === "placed" ? "摘要已生成并放置（原始记录保留）" : j.state === "summary_unplaced" ? (j.result_json && (JSON.parse(j.result_json) as { generated?: boolean }).generated === false ? "无需压缩：没有超出保留窗口的内容，未生成摘要" : "摘要已生成但未放置") : j.state === "stale" ? "摘要已过时（未覆盖更新的摘要）" : j.state,
     };
   }
 
@@ -170,7 +170,9 @@ export class CompactionService {
         return;
       }
       if (st.state === "done") return this.#end(j, "placed", { entryId: st.entryId ?? null, sourceCutoff: j.cutoff_entry_id });
-      if (st.state === "done_unplaced") return this.#end(j, "summary_unplaced", { sourceCutoff: j.cutoff_entry_id });
+      // Pi completes with an empty result when nothing lies before its kept-recent window (or a hook declined): no
+      // summary was produced and nothing was placed. Recorded as such, never shown as a generated summary.
+      if (st.state === "done_unplaced") return this.#end(j, "summary_unplaced", { sourceCutoff: j.cutoff_entry_id, generated: false, reason: "nothing older than the kept-recent window to summarise" });
       if (st.state === "cancelled") return this.#end(j, "cancelled", {});
       if (st.state === "missing") {
         // the mapping commit did not happen: create again with the same key (read-before-create finds no duplicate)

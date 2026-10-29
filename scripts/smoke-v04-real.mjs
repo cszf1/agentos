@@ -38,7 +38,7 @@ const q = (sql, ...a) => {
 
 async function start() {
   logs = [];
-  host = spawn(path.join(ROOT, "bin", "agentos-host"), [], { env: { ...process.env, AGENTOS_DATA_DIR: dataDir, AGENTOS_PORT: String(port), AGENTOS_MODEL_MODE: "real" }, stdio: ["ignore", "pipe", "pipe"] });
+  host = spawn(path.join(ROOT, "bin", "agentos-host"), [], { env: { AGENTOS_COMPACTION_KEEP_RECENT_TOKENS: "2000", ...process.env, AGENTOS_DATA_DIR: dataDir, AGENTOS_PORT: String(port), AGENTOS_MODEL_MODE: "real" }, stdio: ["ignore", "pipe", "pipe"] });
   host.stdout.on("data", (d) => logs.push(String(d)));
   host.stderr.on("data", (d) => logs.push(String(d)));
   for (let i = 0; i < 600; i++) {
@@ -115,7 +115,7 @@ try {
   if (cj.status !== 202) throw new Error(`compaction ${JSON.stringify(cj)}`);
   const comp = await until(() => req("GET", `/api/conversations/${A.conversationId}/compactions`).then((r) => r.data.items[0]), (j) => j && ["placed", "summary_unplaced", "failed", "cancelled", "stale"].includes(j.state), 600_000, "compaction");
   const compAttempts = q("SELECT purpose, background, state, output_tokens, usage_json, route_id FROM model_attempts WHERE compaction_job_id = ?", comp.compactionId);
-  report.steps.compaction = { state: comp.state, result: comp.result, scope: comp.scope, attempts: compAttempts };
+  report.steps.compaction = { state: comp.state, label: comp.label, result: comp.result, scope: comp.scope, keepRecentTokens: Number(process.env.AGENTOS_COMPACTION_KEEP_RECENT_TOKENS ?? 2000), attempts: compAttempts };
   if (comp.state !== "placed") throw new Error("O03 compaction not placed");
 
   if (!codeApp) throw new Error("no code app was generated; the background candidate needs one");

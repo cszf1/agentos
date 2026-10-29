@@ -343,7 +343,8 @@ export class PiAgentEngine implements AgentEngine {
     if (rec.state.status !== "terminal") return { taskId: String(map.taskId), state: "running" };
     const outcome = (rec.state as { outcome: { status: string; result?: { entryId?: unknown; submissionId?: unknown }; error?: { message?: string } } }).outcome;
     if (outcome.status === "completed") {
-      return { taskId: String(map.taskId), state: outcome.result?.entryId !== undefined || outcome.result?.submissionId !== undefined ? "done" : "done_unplaced", entryId: outcome.result?.entryId !== undefined ? String(outcome.result.entryId) : undefined };
+      const placedId = outcome.result?.entryId ?? outcome.result?.submissionId;
+      return { taskId: String(map.taskId), state: placedId !== undefined ? "done" : "done_unplaced", entryId: placedId !== undefined ? String(placedId) : undefined };
     }
     if (outcome.status === "aborted" || outcome.status === "cancelled") return { taskId: String(map.taskId), state: "cancelled" };
     return { taskId: String(map.taskId), state: "failed", error: outcome.error?.message ?? outcome.status };
