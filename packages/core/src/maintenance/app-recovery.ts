@@ -75,11 +75,13 @@ export class AppRecovery {
     this.store.tx(() => this.store.run("UPDATE maintenance_circuits SET state = 'closed', consecutive_failures = 0, reason = 'reset by the user', updated_at = ? WHERE target_kind = 'app' AND target_id = ?", this.now(), appId));
   }
 
-  #recordOutcome(jobId: string, appId: string, outcome: "succeeded" | "failed", circuitAfter: number): void {
+  #recordOutcome(jobId: string, appId: string, outcome: "succeeded" | "failed" | "no_change", circuitAfter: number): void {
     this.store.tx(() => {
       const a = this.store.get<{ id: string; outcome: string }>("SELECT id, outcome FROM maintenance_attempts WHERE job_id = ? AND action_family = ? ORDER BY admitted_at DESC LIMIT 1", jobId, FAMILY);
       if (!a || a.outcome !== "pending") return;
       this.store.run("UPDATE maintenance_attempts SET outcome = ?, verified_at = ? WHERE id = ?", outcome, this.now(), a.id);
+      // A user stop is not a failed recovery and must not reset the failure streak or open the circuit.
+      if (outcome === "no_change") return;
       const c = this.circuit(appId);
       const fails = outcome === "failed" ? c.consecutive + 1 : 0;
       const open = fails >= circuitAfter || c.state === "open";
@@ -169,9 +171,13 @@ export class AppRecovery {
         const windowMs = (ctx.bounds.observeSeconds ?? 60) * 1000;
         const ar = self.#ar(appId);
         const circuitAfter = ctx.bounds.circuitAfter ?? 3;
-        if (!ar || ar.enabled !== 1) {
-          self.#recordOutcome(ctx.job.id, appId, "failed", circuitAfter);
-          return { healthy: null, reason: "the app was stopped during verification" };
+        const expectEpoch = Number(ctx.job.target_version ?? NaN);
+        // User stop (enabled cleared) or any newer control epoch wins. The attempt stays in the rate window, but it is
+        // not a failed recovery and the job is not an unknown result (spec §8.3, §15).
+        if (!ar || ar.enabled !== 1 || (Number.isFinite(expectEpoch) && ar.control_epoch !== expectEpoch)) {
+          self.#recordOutcome(ctx.job.id, appId, "no_change", circuitAfter);
+          const why = !ar || ar.enabled !== 1 ? "the user stopped the app during verification" : `control epoch changed (${expectEpoch} → ${ar.control_epoch})`;
+          return { healthy: false, userStopped: true, reason: `${why}; this recovery is superseded and is not a failure` };
         }
         if (ar.health === "degraded") {
           self.#recordOutcome(ctx.job.id, appId, "failed", circuitAfter);

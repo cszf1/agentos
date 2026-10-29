@@ -1,4 +1,5 @@
 import { V4_LIMITS } from "@agentos/contracts";
+import { compactionBusy } from "../model-budgets/budgets.js";
 import { iso, type Store } from "../persistence/store.js";
 import type { RunRow, RunService } from "../runs/run-service.js";
 import type { AppService } from "../apps/app-service.js";
@@ -74,8 +75,9 @@ export class RunScheduler {
         }
         const bg = r.background === 1;
         if (bg) {
-          if (bgBusy >= V4_LIMITS.backgroundModelSlots) {
-            this.runs.setWaiting(r.id, "waiting_slot", "waiting for the background slot");
+          // Spec §7.2: one slot for a background model run and session compaction together, not one of each.
+          if (bgBusy >= V4_LIMITS.backgroundModelSlots || compactionBusy(this.store)) {
+            this.runs.setWaiting(r.id, "waiting_slot", compactionBusy(this.store) ? "waiting for the background slot (a conversation summary is running)" : "waiting for the background slot");
             continue;
           }
           if (fgWaiting || !this.backgroundIdle()) {
@@ -146,15 +148,19 @@ export class RunScheduler {
   /** Metrics (spec §24.2). */
   /**
    * V4-R05: a lease past its deadline becomes `reclaiming`; it is released (with a raised epoch) only once its owner is
-   * confirmed to have stopped writing: a run that reached a terminal state, a maintenance job that ended. A live or
-   * unknown owner keeps the target fenced; an `unknown` lease is never released by time.
+   * confirmed to have stopped writing: a run that reached a terminal state, or a maintenance job in a finished state
+   * other than `indeterminate` (an unknown external result stays fenced; time never releases an `unknown` lease).
    */
   reclaimLeasesInTx(): number {
     let n = 0;
     for (const l of this.leases.expired()) {
       let stopped = false;
       if (l.owner_kind === "run") stopped = !!this.store.get("SELECT 1 FROM runs WHERE id = ? AND status IN ('succeeded','failed','cancelled')", l.owner_id) || !this.store.get("SELECT 1 FROM runs WHERE id = ?", l.owner_id);
-      else if (l.owner_kind === "job") stopped = !!this.store.get("SELECT 1 FROM maintenance_jobs WHERE id = ? AND state IN ('succeeded','no_change','failed_no_effect','cancelled','expired')", l.owner_id);
+      else if (l.owner_kind === "job") {
+        // needs_attention has stopped executing. indeterminate is an unknown external result: time never releases it
+        // (spec §8.2). A missing job row is not "stopped" either.
+        stopped = !!this.store.get("SELECT 1 FROM maintenance_jobs WHERE id = ? AND state IN ('succeeded','no_change','failed_no_effect','cancelled','expired','needs_attention')", l.owner_id);
+      }
       if (stopped) {
         this.leases.reclaim(l.target_kind, l.target_id);
         this.store.event("lease.reclaimed", { targetKind: l.target_kind, targetId: l.target_id, ownerKind: l.owner_kind, ownerId: l.owner_id });

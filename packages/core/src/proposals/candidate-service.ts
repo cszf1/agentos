@@ -45,9 +45,14 @@ export class CandidateService {
     if (!bundle || !isCodeBundle(bundle)) throw new AgentOsError("INVALID_REQUEST", "only a staged code revision can be checked");
     const app = this.rt.core.apps.requireApp(appId);
     const base = app.active_revision_id ? this.rt.core.apps.revisionBundle(appId, app.active_revision_id) : null;
-    const id = this.store.tx(() => {
-      const prior = this.store.get<{ id: string }>("SELECT id FROM candidate_checks WHERE run_id = ? AND revision_id = ? AND state IN ('queued','running','passed')", runId, revisionId);
-      if (prior) return prior.id;
+    const { id, launch } = this.store.tx(() => {
+      // A check already in flight is the same check. A passed check is reused only while the catalog it measured is
+      // still the approved one; a catalog change needs a new check (spec §19.3 needs_recheck), and the old passed
+      // result is not run again.
+      const inflight = this.store.get<{ id: string }>("SELECT id FROM candidate_checks WHERE run_id = ? AND revision_id = ? AND state IN ('queued','running') ORDER BY created_at DESC LIMIT 1", runId, revisionId);
+      if (inflight) return { id: inflight.id, launch: false };
+      const passed = this.store.get<{ id: string }>("SELECT id FROM candidate_checks WHERE run_id = ? AND revision_id = ? AND state = 'passed' AND catalog_hash = ? ORDER BY created_at DESC LIMIT 1", runId, revisionId, this.rt.opts.catalog.hash);
+      if (passed) return { id: passed.id, launch: false };
       const n = this.store.get<{ n: number }>("SELECT COUNT(*) AS n FROM candidate_checks WHERE run_id = ?", runId)!.n;
       if (n >= 2) throw new AgentOsError("LIMIT_EXCEEDED", "at most 2 candidate checks per optimisation run");
       const cid = randomUUID();
@@ -60,9 +65,9 @@ export class CandidateService {
         JSON.stringify({ ...RUNTIME_POLICY.app, queryTimeoutMs: RUNTIME_POLICY.queryTimeoutMs }),
         base ? sha256Hex(canonicalJson(base)) : null, sha256Hex(canonicalJson(bundle)), `${lock.runtimeImage.name}#${lock.id}`, this.now(), this.now(),
       );
-      return cid;
+      return { id: cid, launch: true };
     });
-    void this.#run(id).catch((e) => this.#finish(id, "failed", { code: "CHECK_FAILED", message: (e as Error).message }));
+    if (launch) void this.#run(id).catch((e) => this.#finish(id, "failed", { code: "CHECK_FAILED", message: (e as Error).message }));
     return { checkId: id, state: this.get(id)!.state };
   }
 
@@ -78,8 +83,9 @@ export class CandidateService {
   }
 
   async #run(id: string): Promise<void> {
+    const claimed = this.store.tx(() => this.store.run("UPDATE candidate_checks SET state = 'running', updated_at = ? WHERE id = ? AND state = 'queued'", this.now(), id).changes);
+    if (claimed !== 1) return;
     const c = this.get(id)!;
-    this.store.tx(() => this.store.run("UPDATE candidate_checks SET state = 'running', updated_at = ? WHERE id = ?", this.now(), id));
     const apps = this.rt.core.apps;
     const app = apps.requireApp(c.app_id);
     const cand = apps.revisionBundle(c.app_id, c.revision_id) as CodeBundle;

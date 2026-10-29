@@ -4,6 +4,26 @@ import { iso, type Store } from "../persistence/store.js";
 import type { RunService } from "../runs/run-service.js";
 
 /**
+ * Foreground is not idle for a new background model activity (spec §7.2, §9.4): a foreground task is still waiting for
+ * a slot, a target or dispatch, or for the single build slot. Shared by model-request admission and by starting a
+ * background run or a compaction job.
+ */
+export function foregroundBusy(store: Store): boolean {
+  return !!store.get("SELECT 1 FROM runs WHERE background = 0 AND status = 'queued' AND scheduling_state IN ('waiting_slot','waiting_target','dispatching')")
+    || !!store.get("SELECT 1 FROM runs WHERE background = 0 AND scheduling_state = 'waiting_build'");
+}
+
+/** A background model run already holds the one shared slot (spec §7.2: background run and compaction together are 1). */
+export function backgroundRunBusy(store: Store): boolean {
+  return !!store.get("SELECT 1 FROM runs WHERE background = 1 AND scheduling_state IN ('dispatching','active','waiting_build','waiting_model','draining')");
+}
+
+/** A compaction job already holds that same slot. */
+export function compactionBusy(store: Store): boolean {
+  return !!store.get("SELECT 1 FROM compaction_jobs WHERE state IN ('creating','running')");
+}
+
+/**
  * Persistent model-request budgets and the workspace-wide concurrency permit (spec §9).
  *
  * Every network request of every model route goes through `admit()` before anything connects upstream:
@@ -59,9 +79,7 @@ export class ModelBudgets {
    * Foreground priority (spec §9.2, V4-S06): a background request waits while any foreground task waits for a slot,
    * a target or the build queue. The host and the scheduler share this one predicate.
    */
-  backgroundIdle: () => boolean = () =>
-    !this.store.get("SELECT 1 FROM runs WHERE background = 0 AND status = 'queued' AND scheduling_state IN ('waiting_slot','waiting_target','dispatching')") &&
-    !this.store.get("SELECT 1 FROM runs WHERE background = 0 AND scheduling_state = 'waiting_build'");
+  backgroundIdle: () => boolean = () => !foregroundBusy(this.store);
   /** for tests and diagnostics */
   readonly stats = { admitted: 0, denied: 0, networkStarts: 0, waitedForeground: 0, waitedBackground: 0, maxConcurrent: 0 };
 
@@ -246,6 +264,10 @@ export class ModelBudgets {
     let executionEpoch: number | null = null;
     if (b.route_purpose === "compaction") {
       compactionJobId = b.route_subject_id;
+      const job = s.get<{ budget_route_epoch: number | null; state: string }>("SELECT budget_route_epoch, state FROM compaction_jobs WHERE id = ?", compactionJobId);
+      if (!job || (job.state !== "creating" && job.state !== "running")) return { ok: false, reason: "the compaction job is not open", code: "EXECUTION_EPOCH_STALE" };
+      // The route epoch was raised for this job. A request that arrives after the route moved on is not this job's.
+      if (job.budget_route_epoch === null || job.budget_route_epoch !== b.route_epoch) return { ok: false, reason: "the route belongs to another compaction binding", code: "EXECUTION_EPOCH_STALE" };
       const used = s.get<{ n: number }>("SELECT COUNT(*) AS n FROM model_attempts WHERE compaction_job_id = ? AND state <> 'denied'", compactionJobId)!.n;
       if (used >= COMPACTION_BUDGET.maxModelRequests) return { ok: false, reason: "the compaction job already used its model request", code: "MODEL_BUDGET_EXCEEDED" };
       maxTokens = COMPACTION_BUDGET.maxOutputTokens;

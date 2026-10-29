@@ -7,9 +7,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { AppRecovery, CompactionService, buildEvidence, candidateBoundary, openCore, type Core, type JobContext, type TemplateHandler } from "@agentos/core";
+import { AppRecovery, CandidateService, CompactionService, buildEvidence, candidateBoundary, openCore, requestHash, type Core, type JobContext, type TemplateHandler } from "@agentos/core";
 import { MAINTENANCE_TEMPLATES, type CodeBundle } from "@agentos/contracts";
 import { ManualClock } from "../agent-helpers.js";
+import { codeFixture } from "../fixtures-v02.js";
 import { ROOT, fixture, tmpDir } from "../helpers.js";
 
 function rig() {
@@ -622,5 +623,155 @@ describe("E/G: lifecycle and candidates", () => {
   it("templates: the automatic whitelist excludes records, history, serial, network, limits and publication", () => {
     const auto = Object.values(MAINTENANCE_TEMPLATES).flatMap((t) => t.automaticActions);
     for (const forbidden of ["records", "revision", "serial", "network", "set_limit", "activate", "publish", "exec", "grant"]) expect(auto.some((a) => a.includes(forbidden))).toBe(false);
+  });
+});
+
+describe("review: queue, shared background slot, recovery stop, candidate recheck", () => {
+  const meta = () => ({ operationKey: randomUUID(), requestHash: requestHash({ n: randomUUID() }) });
+
+  it("a cancelled foreground task does not keep the queue full", () => {
+    const { core } = rig();
+    const ids: string[] = [];
+    for (let i = 0; i < 16; i++) ids.push(core.user.submitRun(meta(), { intent: `queued ${i}`, targetAppId: null }).body.runId);
+    expect(() => core.user.submitRun(meta(), { intent: "one too many", targetAppId: null })).toThrow(/queue is full/);
+    for (const id of ids) core.user.cancelRun(meta(), id);
+    const extra = core.user.submitRun(meta(), { intent: "after the others were cancelled", targetAppId: null }).body;
+    expect(extra.queueState).toBe("waiting_slot");
+    expect(core.runs.getRow(extra.runId)!.status).toBe("queued");
+  });
+
+  it("a background model run and a compaction job share one slot", async () => {
+    const { core } = rig();
+    const now = new Date(core.store.clock.now()).toISOString();
+    const runId = core.runs.acceptBackground({ mode: "maintenance_diagnose", jobId: "job-bg", incidentId: null, appId: null, intent: "diagnose", scope: {} });
+    core.store.tx(() => {
+      core.store.run(
+        "INSERT INTO compaction_jobs (id, conversation_id, cutoff_entry_id, input_scope, compaction_key, state, requested_by, created_at, updated_at) VALUES ('cmp-1', 'conv-1', 'e1', '{}', 'cmp-key-1', 'creating', 'user', ?, ?)",
+        now, now,
+      );
+    });
+    const admitted = core.scheduler.admit();
+    expect(admitted.started).not.toContain(runId);
+    expect(core.runs.getRow(runId)!.scheduling_state).toBe("waiting_slot");
+    expect(core.runs.getRow(runId)!.wait_reason).toMatch(/summary/);
+
+    core.store.tx(() => {
+      core.store.run("UPDATE compaction_jobs SET state = 'queued', updated_at = ? WHERE id = 'cmp-1'", now);
+      core.store.run("UPDATE runs SET status = 'running', scheduling_state = 'active', updated_at = ? WHERE id = ?", now, runId);
+    });
+    let started = 0;
+    core.compactions.engine = { startCompaction: async () => { started++; return "task"; } } as never;
+    await core.compactions.tick();
+    expect(started).toBe(0);
+    expect(core.compactions.get("cmp-1")!.state).toBe("queued");
+  });
+
+  it("a compaction request on a route epoch other than the job's is refused", async () => {
+    const { core } = rig();
+    const now = new Date(core.store.clock.now()).toISOString();
+    const jobId = randomUUID();
+    const routeId = `route-${jobId}`;
+    core.store.tx(() => {
+      core.store.run(
+        "INSERT INTO compaction_jobs (id, conversation_id, cutoff_entry_id, input_scope, compaction_key, budget_route_epoch, state, requested_by, created_at, updated_at) VALUES (?, 'conv-x', 'e1', '{}', ?, 2, 'running', 'user', ?, ?)",
+        jobId, `key-${jobId}`, now, now,
+      );
+      core.store.run(
+        "INSERT INTO agent_conversations (create_key, conversation_id, purpose, profile_id, binding_hash, toolset_version, model_route_id, route_epoch, route_purpose, route_subject_id, binding_state, maintenance_lock, created_at, updated_at) VALUES (?, 'conv-x', 'run', 'builder', 'h', 4, ?, 3, 'compaction', ?, 'closed', ?, ?, ?)",
+        `ck-${jobId}`, routeId, jobId, jobId, now, now,
+      );
+    });
+    const denied = await core.budgets.admit(routeId, "cfg");
+    expect(denied.ok).toBe(false);
+    if (!denied.ok) expect(denied.code).toBe("EXECUTION_EPOCH_STALE");
+    core.store.tx(() => core.store.run("UPDATE agent_conversations SET route_epoch = 2 WHERE model_route_id = ?", routeId));
+    const ok = await core.budgets.admit(routeId, "cfg");
+    expect(ok.ok).toBe(true);
+  });
+
+  it("a job that ended in needs_attention releases its lease; an indeterminate job stays fenced", () => {
+    const { core, adv } = rig();
+    const appId = seedApp(core);
+    const ended = core.maintenance.jobs.manualCheck("log-cleanup", { kind: "workspace", id: "workspace" }, "ended");
+    const unknown = core.maintenance.jobs.manualCheck("log-cleanup", { kind: "workspace", id: "workspace" }, "unknown");
+    core.store.tx(() => {
+      core.scheduler.leases.tryAcquire("app", appId, { kind: "job", id: ended.jobId }, 1_000, null);
+      core.scheduler.leases.tryAcquire("workspace", "workspace", { kind: "job", id: unknown.jobId }, 1_000, null);
+      core.store.run("UPDATE maintenance_jobs SET state = 'needs_attention', ended_at = ?, updated_at = ? WHERE id = ?", new Date().toISOString(), new Date().toISOString(), ended.jobId);
+      core.store.run("UPDATE maintenance_jobs SET state = 'indeterminate', ended_at = ?, updated_at = ? WHERE id = ?", new Date().toISOString(), new Date().toISOString(), unknown.jobId);
+    });
+    adv(5_000);
+    core.scheduler.admit();
+    expect(core.scheduler.leases.holder("app", appId)).toBeUndefined();
+    expect(core.scheduler.leases.holder("workspace", "workspace")?.state).toBe("reclaiming");
+  });
+
+  it("stopping the app during recovery verification does not open the circuit or leave the job unknown", async () => {
+    const { core } = rig();
+    const kicks = { n: 0 };
+    const r = new AppRecovery(core.store, { row: () => undefined } as never, core.maintenance.incidents, () => kicks.n++);
+    core.maintenance.jobs.register("app-recovery", r.handler());
+    const appId = seedApp(core);
+    runtimeRow(core, appId, "degraded");
+    enablePolicy(core, { templateId: "app-recovery", target: { kind: "app", id: appId }, mode: "automatic", trigger: { kind: "event" }, params: { observeSeconds: 60 } });
+    const { incident } = core.maintenance.incidents.raise({ targetKind: "app", targetId: appId, condition: "app.crash_loop", value: "bad", quality: "fresh", evidence: {} });
+    const t = core.maintenance.jobs.eventTrigger(incident, "app-recovery")!;
+    await core.maintenance.jobs.pass(true);
+    expect(core.maintenance.jobs.requireJob(t.jobId).state).toBe("verifying");
+    expect(kicks.n).toBe(1);
+    const now = new Date(core.store.clock.now()).toISOString();
+    core.store.tx(() => {
+      core.store.run("UPDATE app_runtime SET enabled = 0, health = 'stopped', control_epoch = control_epoch + 1, updated_at = ? WHERE app_id = ?", now, appId);
+      core.store.run(
+        "INSERT INTO maintenance_circuits (target_kind, target_id, action_family, state, consecutive_failures, reason, updated_at) VALUES ('app', ?, 'instance.converge', 'closed', 2, 'two earlier failures', ?)",
+        appId, now,
+      );
+    });
+    await core.maintenance.jobs.pass(true);
+    const job = core.maintenance.jobs.requireJob(t.jobId);
+    expect(job.state).toBe("cancelled");
+    expect(job.effect_certainty).not.toBe("unknown");
+    expect(core.store.get<{ outcome: string }>("SELECT outcome FROM maintenance_attempts WHERE job_id = ?", t.jobId)!.outcome).toBe("no_change");
+    const circuit = core.store.get<{ state: string; consecutive_failures: number }>("SELECT state, consecutive_failures FROM maintenance_circuits WHERE target_id = ?", appId)!;
+    expect(circuit).toEqual({ state: "closed", consecutive_failures: 2 });
+    expect(core.store.get<{ health: string; enabled: number }>("SELECT health, enabled FROM app_runtime WHERE app_id = ?", appId)).toEqual({ health: "stopped", enabled: 0 });
+    expect(kicks.n).toBe(1);
+  });
+
+  it("a passed candidate check is not run again, and a catalog change starts a new check", async () => {
+    const { core } = rig();
+    const bundle = codeFixture("todo-kanban");
+    core.apps.seedActivated(bundle);
+    const app = core.apps.requireApp(bundle.manifest.appId);
+    const rev = app.active_revision_id!;
+    const hash = { value: "sha256:catalog-a" };
+    const rt = {
+      core,
+      opts: {
+        catalog: {
+          get hash() { return hash.value; },
+          requireLock: () => ({ id: bundle.runtimeLockId, abiVersion: 1, runtimeImage: { name: "rt" }, builderImage: { name: "bd" } }),
+        },
+      },
+    };
+    const checks = new CandidateService(core.store, rt as never, null);
+    const runId = randomUUID();
+    const now = new Date(core.store.clock.now()).toISOString();
+    const passedId = randomUUID();
+    core.store.tx(() => core.store.run(
+      "INSERT INTO candidate_checks (id, run_id, app_id, revision_id, input_hash, fixture_set_version, catalog_hash, tool_versions, limits_json, state, result_json, created_at, updated_at) VALUES (?, ?, ?, ?, 'h', 'preview-fixtures-v1', ?, '{}', '{}', 'passed', '{\"ok\":true}', ?, ?)",
+      passedId, runId, app.id, rev, hash.value, now, now,
+    ));
+    const again = checks.start(runId, app.id, rev);
+    expect(again.checkId).toBe(passedId);
+    await new Promise((r) => setImmediate(r));
+    expect(checks.get(passedId)!.state).toBe("passed");
+    hash.value = "sha256:catalog-b";
+    const fresh = checks.start(runId, app.id, rev);
+    expect(fresh.checkId).not.toBe(passedId);
+    await new Promise((r) => setImmediate(r));
+    expect(checks.get(passedId)!.state).toBe("passed");
+    expect(checks.get(fresh.checkId)!.state).not.toBe("passed");
+    expect(core.store.get<{ n: number }>("SELECT COUNT(*) AS n FROM candidate_checks WHERE run_id = ?", runId)!.n).toBe(2);
   });
 });
