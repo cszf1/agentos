@@ -381,9 +381,10 @@ function fauxRefactor(userText: string, results: { toolName: string; isError?: b
   if (!started && !results.some((r) => r.toolName === "candidate_check")) return fauxAssistantMessage([fauxToolCall("candidate_validate", { revisionId }), fauxToolCall("candidate_check", { revisionId })], { stopReason: "toolUse" });
   if (!started) return fauxAssistantMessage(`平台检查无法开始：${textOf(last).slice(0, 300)}`);
   const checkId = String(bodyOf(started).checkId ?? "");
-  const st = ok("candidate_check_status").at(-1);
-  const state = st ? String(bodyOf(st).state ?? "") : "";
-  if (!st || ["queued", "running", "preparing", "checking"].includes(state) || lr.toolName === "candidate_check_status" && lr.isError) {
+  // candidate_check itself waits for the result; status is polled only while the check is still running
+  const st = ok("candidate_check_status").at(-1) ?? started;
+  const state = String(bodyOf(st).state ?? "");
+  if (["queued", "running", "preparing", "checking"].includes(state) || lr.toolName === "candidate_check_status" && lr.isError) {
     return call("candidate_check_status", { checkId });
   }
   if (state !== "passed") return fauxAssistantMessage(`平台检查未通过：${state}`);

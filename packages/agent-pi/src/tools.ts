@@ -71,6 +71,16 @@ export type ToolLog = (msg: string, fields: Record<string, unknown>) => void;
 function allTools(ops: AgentOps, toolLog?: ToolLog) {
   /** Identity from Pi's trusted ToolExecutionApi only: the model's arguments can never select the run (spec §6.3). */
   const id = (api: { taskId: unknown; conversationId: unknown }, toolName: string) => ({ piTaskId: String(api.taskId), toolName, conversationId: String(api.conversationId) });
+  /** Waiting is not a model loop (spec V4-S09): check tools wait up to 90 s in the tool for the check to end. */
+  const waitCheck = async (api: { taskId: unknown; conversationId: unknown }, checkId: string) => {
+    const until = Date.now() + 90_000;
+    let out = ops.candidateCheckStatus(id(api, "candidate_check_status"), checkId);
+    while (out.ok && ["queued", "running"].includes((out.value as { state: string }).state) && Date.now() < until && !(api as { signal?: AbortSignal }).signal?.aborted) {
+      await new Promise((r) => setTimeout(r, 1000));
+      out = ops.candidateCheckStatus(id(api, "candidate_check_status"), checkId);
+    }
+    return out;
+  };
   /** Spec §15: one log line per tool execution (ids, status, duration; never bundle bodies). */
   const withLog = <T extends { name: string; execute: (...args: never[]) => Promise<ToolExecutionResult> }>(tool: T): T => {
     if (!toolLog) return tool;
@@ -276,26 +286,23 @@ function allTools(ops: AgentOps, toolLog?: ToolLog) {
     }),
     defineTool({
       name: "candidate_check",
-      description: "maintenance_refactor runs: start the platform's fixed check of a staged candidate (sandbox build, preview container, platform fixtures, baseline vs candidate timing). Returns {checkId, state}; poll candidate_check_status.",
+      description:
+        "maintenance_refactor runs: run the platform's fixed check of a staged candidate (sandbox build, preview container, platform fixtures, baseline vs candidate timing). Waits up to 90 s and returns {checkId, state, result}; only if state is still queued/running call candidate_check_status.",
       parameters: Type.Object({ revisionId: Type.String() }),
       replay: "safe",
-      execute: async (a, api) => result(ops.candidateCheck(id(api, "candidate_check"), (a as { revisionId: string }).revisionId)),
+      execute: async (a, api) => {
+        const started = ops.candidateCheck(id(api, "candidate_check"), (a as { revisionId: string }).revisionId);
+        const checkId = started.ok ? (started.value as { checkId?: string }).checkId : undefined;
+        if (!started.ok || !checkId || !["queued", "running"].includes((started.value as { state: string }).state)) return result(started);
+        return result(await waitCheck(api, checkId));
+      },
     }),
     defineTool({
       name: "candidate_check_status",
       description: "maintenance_refactor runs: the state and result of a candidate check of this run.",
       parameters: Type.Object({ checkId: Type.String() }),
       replay: "safe",
-      execute: async (a, api) => {
-        // Waiting is not a model loop (spec V4-S09): the tool itself waits up to 90 s for the check to end.
-        const until = Date.now() + 90_000;
-        let out = ops.candidateCheckStatus(id(api, "candidate_check_status"), (a as { checkId: string }).checkId);
-        while (out.ok && ["queued", "running"].includes((out.value as { state: string }).state) && Date.now() < until && !(api as { signal?: AbortSignal }).signal?.aborted) {
-          await new Promise((r) => setTimeout(r, 1000));
-          out = ops.candidateCheckStatus(id(api, "candidate_check_status"), (a as { checkId: string }).checkId);
-        }
-        return result(out);
-      },
+      execute: async (a, api) => result(await waitCheck(api, (a as { checkId: string }).checkId)),
     }),
     defineTool({
       name: "proposal_submit",

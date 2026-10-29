@@ -173,7 +173,7 @@ export function renderRunInput(f: FrozenRunInput): string {
     return [
       `AgentOS optimisation run ${f.runId} (job ${f.maintenance?.jobId ?? "?"}).`,
       `Mode: maintenance_refactor - target app ${f.targetAppId}, base revision ${f.activeRevisionAtAccept ?? "none"}, app epoch ${f.expectedAppEpoch}.`,
-      "Read target_app_get, stage ONE candidate with candidate_stage, validate, run candidate_check, then proposal_submit. You cannot publish.",
+      "Budget: 6 model requests. Read target_app_get, stage ONE candidate with candidate_stage (it already validates: fix and restage only if valid is false), run candidate_check (it waits for the result), then proposal_submit. You cannot publish.",
       `Host: AgentOS ${f.system.hostVersion} on ${f.system.platform}/${f.system.arch}`,
       "",
       "Goal approved by the user:",
