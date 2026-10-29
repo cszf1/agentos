@@ -106,10 +106,14 @@ export async function main(): Promise<void> {
     gate: core.budgets,
     modelConfig,
     fauxContextWindow: config.testMode && process.env.AGENTOS_TEST_FAUX_CONTEXT ? Number(process.env.AGENTOS_TEST_FAUX_CONTEXT) : undefined,
+    // Spec §10.3 (V4-S10): a fatal Pi storage failure closes the whole Agent subsystem (no new run, no model request,
+    // no empty replacement store) while apps, records, deterministic maintenance and queries keep working.
     onFailure: (error) => {
-      log.error("agent storage failed; exiting for a clean restart", { error: (error as Error)?.message });
-      rt.status.phase = "stopping";
-      process.exit(1);
+      log.error("agent storage failed; the agent subsystem is closed, apps keep working", { error: (error as Error)?.message });
+      rt.status.agentState = "blocked";
+      rt.status.agentDiagnostic = `agent storage failed: ${(error as Error)?.message ?? String(error)}`;
+      rt.coord?.stop();
+      core.scheduler.paused = true;
     },
     log: (msg, f) => log.warn(msg, f),
     toolLog: (msg, f) => log.info(msg, f),

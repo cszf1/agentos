@@ -7,6 +7,11 @@ import { AgentOps } from "./runs/agent-ops.js";
 import { UserActions } from "./user-actions.js";
 import { ModelBudgets } from "./model-budgets/budgets.js";
 import { RunScheduler } from "./scheduling/run-scheduler.js";
+import { PolicyService } from "./maintenance/policy-service.js";
+import { ClockGuard } from "./maintenance/clock-guard.js";
+import { IncidentStore, Notifications } from "./health/incidents.js";
+import { MaintenanceService } from "./maintenance/jobs.js";
+import { HealthMonitor } from "./health/health-monitor.js";
 
 export * from "./persistence/store.js";
 export { MIGRATIONS } from "./persistence/migrations.js";
@@ -23,6 +28,11 @@ export * from "./user-actions.js";
 export * from "./model-budgets/budgets.js";
 export * from "./scheduling/target-leases.js";
 export * from "./scheduling/run-scheduler.js";
+export * from "./maintenance/policy-service.js";
+export * from "./maintenance/clock-guard.js";
+export * from "./maintenance/jobs.js";
+export * from "./health/incidents.js";
+export * from "./health/health-monitor.js";
 
 export interface Core {
   store: Store;
@@ -34,9 +44,17 @@ export interface Core {
   user: UserActions;
   budgets: ModelBudgets;
   scheduler: RunScheduler;
+  maintenance: {
+    policies: PolicyService;
+    clock: ClockGuard;
+    incidents: IncidentStore;
+    notifications: Notifications;
+    jobs: MaintenanceService;
+    health: HealthMonitor;
+  };
 }
 
-export function openCore(file: string, opts: { clock?: Clock; runSettings?: Partial<RunSettings> } = {}): Core {
+export function openCore(file: string, opts: { clock?: Clock; runSettings?: Partial<RunSettings>; mono?: () => number } = {}): Core {
   const store = Store.open(file, opts.clock ?? systemClock);
   const gateway = new CapabilityGateway(store);
   const apps = new AppService(store);
@@ -46,7 +64,30 @@ export function openCore(file: string, opts: { clock?: Clock; runSettings?: Part
   const user = new UserActions(store, gateway, apps, records, runs);
   const budgets = new ModelBudgets(store, runs);
   const scheduler = new RunScheduler(store, runs, apps);
-  return { store, gateway, apps, records, runs, agentOps, user, budgets, scheduler };
+  const policies = new PolicyService(store);
+  const clock = new ClockGuard(store, opts.mono);
+  const incidents = new IncidentStore(store);
+  const notifications = new Notifications(store);
+  incidents.onNotify = (k, sub, sev, title, detail) => notifications.notify(k, sub, sev, title, detail);
+  const jobs = new MaintenanceService(store, policies, clock, incidents);
+  const health = new HealthMonitor(store, incidents, jobs);
+  policies.targetCheck = (kind, id) => {
+    if (kind === "app") {
+      const a = store.get<{ id: string; active_revision_id: string | null; contract_json: string }>("SELECT id, active_revision_id, contract_json FROM apps WHERE id = ?", id);
+      return a ? { ok: true, contract: { revisionId: a.active_revision_id } } : { ok: false, reason: "app not found" };
+    }
+    if (kind === "workspace") return id === "workspace" ? { ok: true } : { ok: false, reason: "workspace target id must be \"workspace\"" };
+    if (kind === "service") {
+      const r = store.get<{ id: string; generation: number; identity_digest: string | null; status: string }>("SELECT id, generation, identity_digest, status FROM system_resources WHERE id = ? AND kind = 'service'", id);
+      return r ? { ok: true, contract: { generation: r.generation, identity: r.identity_digest } } : { ok: false, reason: "service resource not registered" };
+    }
+    if (kind === "conversation") {
+      const c = store.get("SELECT 1 FROM agent_conversations WHERE conversation_id = ?", id);
+      return c ? { ok: true } : { ok: false, reason: "conversation not found" };
+    }
+    return { ok: false, reason: "unknown target kind" };
+  };
+  return { store, gateway, apps, records, runs, agentOps, user, budgets, scheduler, maintenance: { policies, clock, incidents, notifications, jobs, health } };
 }
 export * from "./runtime/driver.js";
 export * from "./runtime/policy.js";

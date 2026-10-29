@@ -92,6 +92,19 @@ pub struct Workers {
     pub serial: WorkerEntry,
 }
 
+/// v0.4 (spec §13.3, §16): which registered units a workspace's maintenance principal may keep running, with hard
+/// upper bounds. User policies can only narrow these; an entry missing here means "no maintenance recovery".
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MaintenanceEntry {
+    pub unit_key: String,
+    pub store_uuid: String,
+    pub action_families: Vec<String>,
+    pub per_hour: u32,
+    pub per24h: u32,
+    pub cooldown_seconds: u64,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Policy {
@@ -103,6 +116,9 @@ pub struct Policy {
     pub lab_networks: Vec<LabNetwork>,
     pub serial: Vec<SerialEntry>,
     pub workers: Workers,
+    /// v0.4 maintenance install caps (absent in v0.3 policies: no maintenance recovery allowed).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub maintenance: Vec<MaintenanceEntry>,
     /// Enables fault points from /etc/agentos/broker/faultpoints (dedicated test installs only).
     pub test_mode: bool,
 }

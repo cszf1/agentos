@@ -9,7 +9,7 @@ export const V04_MIGRATION_SQL = `
 ALTER TABLE meta ADD COLUMN scheduler_protocol_version INTEGER NOT NULL DEFAULT 1;
 ALTER TABLE meta ADD COLUMN scheduler_epoch INTEGER NOT NULL DEFAULT 1 CHECK (scheduler_epoch >= 1);
 ALTER TABLE meta ADD COLUMN maintenance_epoch INTEGER NOT NULL DEFAULT 1 CHECK (maintenance_epoch >= 1);
-ALTER TABLE meta ADD COLUMN maintenance_state TEXT NOT NULL DEFAULT 'paused' CHECK (maintenance_state IN ('running','paused'));
+ALTER TABLE meta ADD COLUMN maintenance_state TEXT NOT NULL DEFAULT 'running' CHECK (maintenance_state IN ('running','paused'));
 ALTER TABLE meta ADD COLUMN maintenance_root_state TEXT NOT NULL DEFAULT 'synced' CHECK (maintenance_root_state IN ('synced','pending','unavailable'));
 ALTER TABLE meta ADD COLUMN background_model_enabled INTEGER NOT NULL DEFAULT 0 CHECK (background_model_enabled IN (0,1));
 ALTER TABLE meta ADD COLUMN clock_state TEXT NOT NULL DEFAULT 'ok' CHECK (clock_state IN ('ok','clock_uncertain'));
@@ -163,7 +163,7 @@ BEGIN SELECT RAISE(ABORT, 'a policy version is immutable; create a new version')
 CREATE TRIGGER maintenance_policies_approval_once BEFORE UPDATE OF approved_at, approved_hash, approved_by ON maintenance_policies
 WHEN OLD.approved_at IS NOT NULL
 BEGIN SELECT RAISE(ABORT, 'an approval is recorded once'); END;
-CREATE UNIQUE INDEX maintenance_policies_live ON maintenance_policies (id) WHERE state IN ('pending_approval','syncing','enabled','paused','paused_needs_review');
+CREATE UNIQUE INDEX maintenance_policies_live ON maintenance_policies (id) WHERE state IN ('syncing','enabled');
 
 CREATE TABLE schedule_cursors (
   policy_id TEXT NOT NULL,

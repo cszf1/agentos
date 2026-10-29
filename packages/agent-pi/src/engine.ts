@@ -366,6 +366,12 @@ export class PiAgentEngine implements AgentEngine {
     if (this.#harness) await this.#harness.close(ctx);
   }
 
+  /** The pairing marker on the legacy root (diagnostics, agents:doctor). */
+  async workspaceMarker(): Promise<{ storeUUID?: string; protocolVersion?: number; toolsetVersion?: number; schedulerProtocolVersion?: number } | undefined> {
+    const root = await this.root();
+    return this.harness.snapshot(WorkspaceDoc, root.id, ctx);
+  }
+
   /** For tests: the harness, to assert on Pi state. */
   get rawHarness(): Harness | undefined {
     return this.#harness;

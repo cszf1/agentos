@@ -3,7 +3,60 @@
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::Value;
 
-pub const SCHEMA_VERSION: i64 = 1;
+pub const SCHEMA_VERSION: i64 = 2;
+
+/// v0.4 (spec §21.2): maintenance policies, workspace maintenance state, target control epochs and the rolling
+/// attempt counts (authority for privileged maintenance), plus the maintenance origin of an operation. Additive.
+const SCHEMA_V2: &str = r#"
+CREATE TABLE maintenance_policies (
+  store_uuid TEXT NOT NULL,
+  incarnation INTEGER NOT NULL,
+  policy_id TEXT NOT NULL,
+  policy_version INTEGER NOT NULL,
+  policy_hash TEXT NOT NULL,
+  resource_id TEXT NOT NULL,
+  resource_generation INTEGER NOT NULL,
+  action_family TEXT NOT NULL,
+  bounds_json TEXT NOT NULL,
+  expires_at INTEGER NOT NULL,
+  maintenance_epoch INTEGER NOT NULL,
+  request_hash TEXT NOT NULL,
+  synced_seq INTEGER NOT NULL,
+  revoked_seq INTEGER,
+  PRIMARY KEY (store_uuid, policy_id, policy_version)
+) STRICT;
+CREATE TABLE workspace_maintenance_state (
+  store_uuid TEXT PRIMARY KEY,
+  state TEXT NOT NULL CHECK (state IN ('running','paused')),
+  maintenance_epoch INTEGER NOT NULL,
+  updated_seq INTEGER NOT NULL
+) STRICT;
+CREATE TABLE target_control_epochs (
+  store_uuid TEXT NOT NULL,
+  resource_id TEXT NOT NULL,
+  control_epoch INTEGER NOT NULL,
+  updated_seq INTEGER NOT NULL,
+  PRIMARY KEY (store_uuid, resource_id)
+) STRICT;
+CREATE TABLE maintenance_attempts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  store_uuid TEXT NOT NULL,
+  incarnation INTEGER NOT NULL,
+  resource_id TEXT NOT NULL,
+  action_family TEXT NOT NULL,
+  operation_id TEXT NOT NULL,
+  policy_id TEXT NOT NULL,
+  policy_version INTEGER NOT NULL,
+  job_id TEXT NOT NULL,
+  step_id TEXT NOT NULL,
+  admitted_at INTEGER NOT NULL,
+  outcome TEXT NOT NULL DEFAULT 'pending',
+  seq INTEGER NOT NULL
+) STRICT;
+CREATE INDEX maintenance_attempts_window ON maintenance_attempts(store_uuid, resource_id, action_family, admitted_at);
+CREATE TRIGGER maintenance_attempts_keep BEFORE DELETE ON maintenance_attempts BEGIN SELECT RAISE(ABORT, 'maintenance attempts are never deleted'); END;
+ALTER TABLE effect_operations ADD COLUMN maintenance_json TEXT;
+"#;
 pub const DATA_DIR: &str = "/var/lib/agentos-broker";
 pub const DB_PATH: &str = "/var/lib/agentos-broker/broker.sqlite";
 pub const BLOB_DIR: &str = "/var/lib/agentos-broker/blobs";
@@ -145,6 +198,12 @@ pub fn open_existing(path: &str) -> Result<Connection, String> {
     let v: Option<String> = c.query_row("SELECT value FROM broker_meta WHERE key='schema_version'", [], |r| r.get(0)).optional().map_err(|e| format!("BROKER_HISTORY_MISSING: {e}"))?;
     match v.and_then(|s| s.parse::<i64>().ok()) {
         Some(SCHEMA_VERSION) => Ok(c),
+        Some(1) => {
+            // v0.3 log → v0.4: additive tables only; history, tombstones and incarnations are untouched.
+            c.execute_batch(&format!("BEGIN IMMEDIATE; {SCHEMA_V2} UPDATE broker_meta SET value='2' WHERE key='schema_version'; COMMIT;"))
+                .map_err(|e| format!("BROKER_HISTORY_MISSING: schema upgrade 1→2 failed: {e}"))?;
+            Ok(c)
+        }
         Some(n) if n > SCHEMA_VERSION => Err(format!("BROKER_HISTORY_MISSING: log schema {n} is newer than this broker ({SCHEMA_VERSION})")),
         _ => Err("BROKER_HISTORY_MISSING: log schema version missing or unsupported".into()),
     }
@@ -162,6 +221,7 @@ pub fn create(path: &str, install_id: &str, policy_version: &str) -> Result<Conn
     let c = Connection::open(path).map_err(|e| format!("create: {e}"))?;
     pragmas(&c)?;
     c.execute_batch(SCHEMA).map_err(|e| format!("schema: {e}"))?;
+    c.execute_batch(SCHEMA_V2).map_err(|e| format!("schema v2: {e}"))?;
     let now = agentos_protocol::now_ms() as i64;
     for (k, v) in [("schema_version", SCHEMA_VERSION.to_string()), ("machine_install_id", install_id.to_string()), ("policy_version", policy_version.to_string()), ("seq", "0".into()), ("created_at", now.to_string())] {
         c.execute("INSERT INTO broker_meta(key,value) VALUES (?1,?2)", params![k, v]).map_err(|e| e.to_string())?;
