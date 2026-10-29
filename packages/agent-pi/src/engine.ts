@@ -323,8 +323,8 @@ export class PiAgentEngine implements AgentEngine {
     const id = await conv.commit(async (tx) => {
       const map = await tx.doc(CompactionMap, start.compactionKey, null);
       if (map.taskId) return String(map.taskId);
-      const taskId = await tx.createTask(CompactionTask, { reason: "manual" as const, ...(start.instructions ? { instructions: start.instructions } : {}) }, { ownership: { kind: "conversation" }, conversationId: start.conversationId, background: false } as never);
-      const live = (await tx.doc(LiveDoc, start.conversationId as never)) as unknown as { compactions?: unknown[] };
+      const taskId = await tx.createTask(CompactionTask, { reason: "manual" as const, ...(start.instructions ? { instructions: start.instructions } : {}) }, { ownership: { kind: "conversation" }, conversationId: conv.id, background: false } as never);
+      const live = (await tx.doc(LiveDoc, conv.id as never)) as unknown as { compactions?: unknown[] };
       live.compactions ??= [];
       live.compactions.push({ taskId, reason: "manual", blocking: false, attempt: 1 });
       map.taskId = String(taskId);

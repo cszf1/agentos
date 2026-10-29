@@ -28,6 +28,7 @@ export interface RouteBindingRow {
   route_purpose: "run" | "compaction" | "closed";
   route_subject_id: string | null;
   binding_state: string;
+  maintenance_lock?: string | null;
 }
 
 export type Admission =
@@ -182,7 +183,10 @@ export class ModelBudgets {
   async admit(routeId: string, configHash: string, signal?: AbortSignal): Promise<Admission> {
     const b0 = this.binding(routeId);
     if (!b0) return this.#deny("no trusted binding for this model route", "RUN_IDENTITY_MISMATCH");
-    if (b0.route_purpose === "closed" || b0.binding_state === "closed" || b0.binding_state === "quarantined") return this.#deny("this model route is closed", "EXECUTION_EPOCH_STALE");
+    if (b0.route_purpose === "closed" || b0.binding_state === "quarantined") return this.#deny("this model route is closed", "EXECUTION_EPOCH_STALE");
+    // An ended task's binding is closed for good; the only request it can still carry is its own approved compaction
+    // job's summary, on the route the job re-pointed (purpose=compaction, job lock held, job still open).
+    if (b0.binding_state === "closed" && !this.#openCompaction(b0)) return this.#deny("this model route is closed", "EXECUTION_EPOCH_STALE");
     const background = this.#isBackground(b0);
     const deadline = this.#deadlineOf(b0);
     if (deadline <= this.store.clock.now()) return this.#deny("the task deadline passed", "DEADLINE");
@@ -207,6 +211,11 @@ export class ModelBudgets {
     this.stats.admitted++;
     this.stats.networkStarts++;
     return res;
+  }
+
+  #openCompaction(b: { route_purpose: string; route_subject_id: string | null; maintenance_lock?: string | null }): boolean {
+    if (b.route_purpose !== "compaction" || !b.route_subject_id || b.maintenance_lock !== b.route_subject_id) return false;
+    return !!this.store.get("SELECT 1 FROM compaction_jobs WHERE id = ? AND state IN ('creating','running')", b.route_subject_id);
   }
 
   #deny(reason: string, code: Extract<Admission, { ok: false }>["code"]): Admission {

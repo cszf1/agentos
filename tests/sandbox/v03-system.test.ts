@@ -247,6 +247,25 @@ run("v0.3 host system path (real broker, real sandbox)", () => {
     await waitRun(rig, r.body.runId, 60_000).catch(() => undefined);
   });
 
+  it("V4-C01 a system_plan conversation (real provider content) is compacted only with explicit consent", async () => {
+    const svc = res("service");
+    const body = { intent: "看看演示服务的状态 [faux:no-plan]", targetAppId: null, mode: "system_plan" as const, resourceIds: [svc.id], capabilityScopes: ["service.set_limit"] };
+    const r = rig.core.user.submitRun(key(), body as never);
+    void rig.coord.kick();
+    await waitRun(rig, r.body.runId, 60_000).catch(() => undefined);
+    if (!["succeeded", "failed", "cancelled"].includes(rig.core.runs.getRow(r.body.runId)!.status)) {
+      rig.core.user.cancelRun(key(), r.body.runId);
+      await waitRun(rig, r.body.runId, 60_000);
+    }
+    const conv = rig.core.store.get<{ conversation_id: string }>("SELECT conversation_id FROM agent_conversations WHERE run_id = ?", r.body.runId);
+    expect(conv).toBeTruthy();
+    rig.core.compactions.engine = rig.engine;
+    await expect(rig.core.compactions.request(conv!.conversation_id, {})).rejects.toMatchObject({ code: "COMPACTION_SCOPE_DENIED", message: expect.stringMatching(/provider content/) });
+    const ok = await rig.core.compactions.request(conv!.conversation_id, { allowProviderContent: true });
+    expect(JSON.parse(ok.input_scope)).toMatchObject({ mode: "system_plan", providerContentConsent: true, crossConversation: false });
+    await rig.core.compactions.cancel(ok.id);
+  });
+
   it("V3-F07 file compensation restores the previous content only while the file still has the written version", async () => {
     await connect("exports", "managed-root");
     const name = `f07-${Date.now()}`;
