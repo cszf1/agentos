@@ -47,6 +47,8 @@ export async function main(): Promise<void> {
     fail(log, "os.sqlite could not be opened or migrated; not deleting anything", { error: (e as Error).message });
   }
   core.store.onSlowTransaction = (info) => log.warn("slow transaction", info);
+  // Spec §23.1: new scheduling stays off until clock, incidents and cursors have been re-read.
+  core.scheduler.paused = true;
   ensureSecrets(config.dataDir);
   const auth = new SessionAuth(config.dataDir, config.sessionTtlMs);
 
@@ -244,7 +246,12 @@ export async function main(): Promise<void> {
     if (m.t === TOOLSET_VERSION && m.s === SCHEDULER_PROTOCOL_VERSION && !coord.recoveryBlocked) core.runs.foregroundSlots = V4_LIMITS.foregroundSlots;
     log.info("foreground slots", { slots: core.runs.foregroundSlots });
   }
-  // resume Pi scheduling and the coordinator
+  // Spec §23.1 steps 5–6: re-read time, incidents and cursors before any new run or maintenance effect is admitted.
+  // HTTP stays on "starting" (503) until this returns, so a request cannot land in the gap.
+  if (rt.maint) {
+    await rt.maint.observeAgain().catch((e) => log.warn("maintenance re-observation failed", { error: (e as Error).message }));
+  }
+  core.scheduler.paused = false;
   engine.resume();
   coord.start();
   rt.status.agentState = engine.modelAvailable ? "ready" : "unavailable";
@@ -256,11 +263,7 @@ export async function main(): Promise<void> {
   }
   if (!fs.existsSync(path.join(config.webDir, "index.html"))) log.warn("web shell build not found", { webDir: config.webDir });
   rt.status.phase = "ready";
-  // 8. v0.4 (spec §23.1 steps 5–6): re-read time/incidents/cursors, then open background scheduling last.
-  if (rt.maint) {
-    await rt.maint.observeAgain().catch((e) => log.warn("maintenance re-observation failed", { error: (e as Error).message }));
-    if (process.env.AGENTOS_MAINTENANCE_DISABLED !== "1") rt.maint.start();
-  }
+  if (rt.maint && process.env.AGENTOS_MAINTENANCE_DISABLED !== "1") rt.maint.start();
   log.info("ready", { modelAvailable: rt.model.available, model: rt.model.ref });
 }
 
