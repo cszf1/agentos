@@ -50,7 +50,7 @@ d("v0.4 backup / restore", () => {
     expect(r1.status).toBe(202);
     expect((await c.waitRun(r1.data.runId, 180_000)).status).toBe("succeeded");
     // a second task still running when the host stops (shutdown drains it to a durable state)
-    const r2 = await c.req("POST", "/api/runs", { intent: "增加截止日期 [faux:slow:5000]", targetAppId: a!.appId, expectedAppEpoch: (await c.get(`/api/apps/${a!.appId}`)).data.epoch });
+    const r2 = await c.req("POST", "/api/runs", { intent: "增加截止日期 [faux:slow:5000]", targetAppId: a!.appId, expectedAppEpoch: (await c.get(`/api/apps/${a!.appId}`)).data.appEpoch });
     expect(r2.status).toBe(202);
     await until(async () => q<{ status: string }>(dir, "SELECT status FROM runs WHERE id = ?", r2.data.runId)[0]?.status === "running");
     await stopHost(h);
@@ -110,7 +110,7 @@ d("v0.4 backup / restore", () => {
     const pol = (await c2.get("/api/maintenance/policies")).data.items.find((p: { policyId: string }) => p.policyId === created.data.policyId);
     expect(pol.state).toBe("paused_needs_review");
     // a new task runs normally on the restored workspace (new execution epoch)
-    const r3 = await c2.req("POST", "/api/runs", { intent: "增加备注", targetAppId: a!.appId, expectedAppEpoch: (await c2.get(`/api/apps/${a!.appId}`)).data.epoch });
+    const r3 = await c2.req("POST", "/api/runs", { intent: "增加备注", targetAppId: a!.appId, expectedAppEpoch: (await c2.get(`/api/apps/${a!.appId}`)).data.appEpoch });
     expect(r3.status, JSON.stringify(r3)).toBe(202);
     expect((await c2.waitRun(r3.data.runId, 180_000)).status).toBe("succeeded");
     await stopHost(h2);
