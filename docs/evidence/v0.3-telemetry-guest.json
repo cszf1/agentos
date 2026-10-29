@@ -1,13 +1,13 @@
 {
   "kernel": "6.12.113+deb13-cloud-amd64",
   "btf": true,
-  "objectSha256": "03a2234af161eca63bb6d9b0f1980e194cef118bfabb2698b95e2ab9fe4c84a8",
+  "objectSha256": "edf86f1cd8130fe3316546cf7812058b936a4e76df9bdd267c7c6380c664a59c",
   "status": {
     "available": true,
     "bootId": "63e8497f-822f-42e6-9efc-e7229500f628",
     "kernelDrops": 0,
     "lastSeq": 1,
-    "objectSha256": "03a2234af161eca63bb6d9b0f1980e194cef118bfabb2698b95e2ab9fe4c84a8",
+    "objectSha256": "edf86f1cd8130fe3316546cf7812058b936a4e76df9bdd267c7c6380c664a59c",
     "reason": "",
     "ringBytes": 16384,
     "sourceEpoch": "t_63e8497f_1",
@@ -21,7 +21,7 @@
     "ok": true,
     "result": {
       "available": true,
-      "cgroupId": 4529,
+      "cgroupId": 6661,
       "workloadGeneration": 1,
       "workloadKey": "app:test/w1"
     }
