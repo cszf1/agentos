@@ -26,3 +26,23 @@ describe("V4-P02 role tool sets", () => {
     expect(names("maintenance-refactor")).not.toContain("app_activate");
   });
 });
+
+describe("bundle strings with a trailing bracket defect", () => {
+  const obj = { formatVersion: 2, title: "看板", ui: { root: { type: "Stack", children: [{ type: "Button", input: { form: "f" } }] } } };
+  const text = JSON.stringify(obj);
+  it("one closer too many or too few at the very end is repaired; the body is unchanged", async () => {
+    const { decodeBundleArg, undecodableBundle } = await import("../src/tools.js");
+    for (const bad of [text + "}", text.slice(0, -1), text.slice(0, -2) + "}}}}", text + " \n"]) {
+      expect(undecodableBundle(bad)).toBeNull();
+      expect(decodeBundleArg(bad)).toEqual(obj);
+    }
+  });
+  it("a defect inside the body is still refused with its position", async () => {
+    const { decodeBundleArg, undecodableBundle } = await import("../src/tools.js");
+    const bad = text.replace('"Button",', '"Button" ');
+    expect(undecodableBundle(bad)).toMatch(/not valid JSON/);
+    expect(decodeBundleArg(bad)).toBe(bad);
+    const early = JSON.stringify({ a: [1, 2], b: "x" }).replace("2]", "2}");
+    expect(undecodableBundle(early)).toMatch(/not valid JSON/);
+  });
+});

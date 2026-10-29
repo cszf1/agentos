@@ -340,12 +340,49 @@ export function createBuilderExtension(ops: AgentOps, toolLog?: ToolLog): Extens
  * Some providers deliver a large nested tool argument as a JSON-encoded string. A string that parses to a JSON object is
  * the same bundle, so it is decoded here; anything else is passed through and fails schema validation as before.
  */
+/**
+ * A bundle sent as a JSON string whose ONLY defect is its closing brackets at the very end (one too many or too few
+ * `}`/`]` after the last value — a common failure of models emitting long nested JSON). The body is left exactly as
+ * sent: trailing closers are dropped and the closers the open structure needs are appended, in order. Returns the
+ * parsed object or null when that does not yield one object; the result still goes through full validation.
+ */
+export function repairTrailingBrackets(text: string): Record<string, unknown> | null {
+  let end = text.length;
+  while (end > 0 && /[\s}\]]/.test(text[end - 1]!)) end--;
+  const body = text.slice(0, end);
+  const stack: string[] = [];
+  let inStr = false;
+  let esc = false;
+  for (const ch of body) {
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === "\\") esc = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') inStr = true;
+    else if (ch === "{") stack.push("}");
+    else if (ch === "[") stack.push("]");
+    else if (ch === "}" || ch === "]") {
+      if (stack.pop() !== ch) return null; // a mismatch inside the body is not a trailing defect
+    }
+  }
+  if (inStr || stack.length === 0) return null;
+  try {
+    const v = JSON.parse(body + stack.reverse().join("")) as unknown;
+    return v !== null && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
 export function undecodableBundle(bundle: unknown): string | null {
   if (typeof bundle !== "string") return null;
   try {
     JSON.parse(bundle);
     return null;
   } catch (e) {
+    if (repairTrailingBrackets(bundle)) return null;
     const msg = (e as Error).message;
     const at = Number(/position (\d+)/.exec(msg)?.[1] ?? -1);
     const near = at >= 0 ? ` near …${bundle.slice(Math.max(0, at - 80), at)}⟨here⟩${bundle.slice(at, at + 40)}…` : "";
@@ -359,6 +396,6 @@ export function decodeBundleArg(bundle: unknown): unknown {
     const v = JSON.parse(bundle) as unknown;
     return v !== null && typeof v === "object" && !Array.isArray(v) ? v : bundle;
   } catch {
-    return bundle;
+    return repairTrailingBrackets(bundle) ?? bundle;
   }
 }
