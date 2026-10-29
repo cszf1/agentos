@@ -1,4 +1,4 @@
-# AgentOS v0.3
+# AgentOS v0.4
 
 A single-user application runtime for Linux. You describe an app in natural language; a Pi Durable agent builds it
 through host tools; the host validates, prepares, health-checks and publishes it; a trusted React renderer shows it;
@@ -29,8 +29,20 @@ fences, quarantine of unknown outcomes and evidence-based reconciliation; unpriv
 systemd, nftables and serial work; an eBPF collector reports exec/exit of registered workloads only. Pi gets a
 `system_plan` mode that can read the resources the user chose and prepare ONE plan — it can never execute it.
 
-Baseline: [docs/AGENTOS_MVP_V0.3.md](docs/AGENTOS_MVP_V0.3.md) (M0–M7, 80 checks). Acceptance report:
-[docs/ACCEPTANCE_V0.3.md](docs/ACCEPTANCE_V0.3.md). Earlier: v0.2 [docs/AGENTOS_MVP_V0.2.md](docs/AGENTOS_MVP_V0.2.md) (M0–M6). Acceptance report:
+v0.4 adds **parallel tasks and bounded maintenance**. Each task runs in its own Pi conversation (at most 2 foreground
+tasks, a queue of 16; a new request is accepted as `202 queued`, never refused as busy) with a durable scheduler,
+target leases and per-model budgets that always put foreground work first. A **task center** shows queued/running
+work and its reasons; a **maintenance center** shows the policies you approved (exact template, target, automatic
+actions, frequency, caps, expiry — never auto-renewed), jobs and their steps, incidents, reports and proposals.
+Maintenance is template-based: app recovery and the demo unit `ensure-running` through the one runtime controller /
+the broker (protocol 2 maintenance envelopes, root-side caps), online cache GC and log cleanup in batches, session
+compaction, and model-backed **diagnosis** (a structured report over frozen, scrubbed evidence) and **optimisation**
+(a candidate checked on platform fixtures that you publish yourself with its exact hash and app epoch). Nothing a
+model suggests is installed, merged or published automatically.
+
+Baseline: [docs/AGENTOS_MVP_V0.4.md](docs/AGENTOS_MVP_V0.4.md) (M0–M8, 88 checks). Acceptance report:
+[docs/ACCEPTANCE_V0.4.md](docs/ACCEPTANCE_V0.4.md). Earlier: v0.3 [docs/AGENTOS_MVP_V0.3.md](docs/AGENTOS_MVP_V0.3.md)
+(M0–M7, 80 checks), report [docs/ACCEPTANCE_V0.3.md](docs/ACCEPTANCE_V0.3.md). Earlier: v0.2 [docs/AGENTOS_MVP_V0.2.md](docs/AGENTOS_MVP_V0.2.md) (M0–M6). Acceptance report:
 [docs/ACCEPTANCE_V0.2.md](docs/ACCEPTANCE_V0.2.md). Contracts: [docs/contracts/](docs/contracts/).
 
 ## Layout
@@ -120,7 +132,7 @@ cat ~/.local/share/agentos/auth-token           # paste into the login page
 The shell shows "代码运行环境 就绪" when the sandbox is usable. After `runtime:prefetch` everything needed for builds and
 runs is local: builders and apps never use the network, so the machine can be offline (V2-B04).
 
-### v0.3 privileged side (administrator, once)
+### Privileged side (administrator, once; v0.4 adds maintenance)
 
 The host itself still runs as your user. The privileged part is installed by root from a build you made:
 
@@ -132,10 +144,12 @@ curl -fsSL https://sh.rustup.rs | sh -s -- -y --default-toolchain none   # rust-
 pnpm native:build              # cargo build --release --locked + the fixed BPF object; prints versions and sha256s
 # register this user and its workspace store with the broker (store UUID: meta.store_uuid of os.sqlite, printed by doctor)
 STORE=$(node -e 'console.log(new (require("node:sqlite").DatabaseSync)(process.argv[1],{readOnly:true}).prepare("SELECT store_uuid FROM meta").get().store_uuid)' ~/.local/share/agentos/os.sqlite)
-sudo bash deploy/v0.3/agentos-system-admin install --host-user "$USER" --store-uuid "$STORE" --serial-pty
+sudo bash deploy/v0.4/agentos-system-admin install --host-user "$USER" --store-uuid "$STORE" --serial-pty
 #   add --serial-udev /dev/ttyUSB0:VID:PID:SERIAL for a real serial device; --test-mode only on test machines
-sudo bash deploy/v0.3/agentos-system-admin inspect     # registration, caps, log version, quarantines, unknown ops
+sudo bash deploy/v0.4/agentos-system-admin inspect     # registration, caps, maintenance caps, log version, quarantines, unknown ops
 pnpm native:doctor             # openat2/systemd/cgroup/broker identity/policy/network/serial/BPF, item by item
+pnpm agents:doctor             # v0.4 read-only: Pi version, tool set, conversations/bindings, routes, budgets, queue
+pnpm maintenance:doctor        # v0.4 read-only: policies, jobs, outbox, broker protocol 2 and maintenance caps
 systemctl --user restart agentos-host                  # the shell now shows "系统执行服务 就绪"
 ```
 
@@ -143,9 +157,11 @@ Installed: root-owned binaries in `/usr/lib/agentos`, `/etc/agentos/broker/polic
 the broker log `/var/lib/agentos-broker/broker.sqlite` (0700/0600, never part of a workspace backup), the managed
 directory `/var/lib/agentos-managed/<store>/exports`, the demo unit `agentos-demo.service`, the lab namespace
 `agentos-lab` with its peer, and, with `--serial-pty`, a **software** PTY serial sample (labeled as such everywhere).
+v0.4 adds the root-side maintenance caps for `agentos-demo.service` (2 recoveries per hour, 3 per 24 h, 600 s
+cooldown; user policies can only be narrower) and broker log schema 3 (maintenance state per workspace incarnation).
 Telemetry needs a kernel with BTF (`/sys/kernel/btf/vmlinux`) and tracepoints; without them it reports
 "不可用" and nothing else changes. If the broker log is ever lost: `sudo bash deploy/v0.3/agentos-system-admin
-reinstall-log` (new machineInstallId), then `bin/agentos-admin rebind-broker --confirm-new-install` with the host
+reinstall-log` (new machineInstallId; `deploy/v0.4/...` on v0.4), then `bin/agentos-admin rebind-broker --confirm-new-install` with the host
 stopped; old plans, grants and outbox entries are void and never replayed.
 
 ### Approved runtime images
@@ -273,6 +289,26 @@ upstream in 5.8.4 / 6.0.0). AgentOS mitigates it on any engine version:
 | `invalid image env ... CVE-2026-57231` (422) | the image's config has an `Env` entry without `=`; it is refused on purpose. Rebuild the platform image (`pnpm runtime:prefetch`) or restore from a trusted backup |
 | doctor: `engine env (CVE-2026-57231)` FAIL | run `bash deploy/install-engine-env.sh`, then `pnpm runtime:doctor` again |
 
+### Upgrade from v0.3 to v0.4
+
+All tasks must be finished (the host refuses the Pi tool-set upgrade while a v0.3 run is open). Your workspace is
+migrated in place, once; apps, versions, records, grants and run history are kept, and `agent.sqlite` keeps its
+pairing and old conversations (readable, never written again).
+
+```bash
+systemctl --user stop agentos-host
+pnpm backup -- --output ~/agentos-backups/before-v0.4   # cold backup first
+git -C ~/agentos pull && cd ~/agentos && pnpm install --frozen-lockfile && pnpm build
+pnpm native:build
+sudo bash deploy/v0.4/agentos-system-admin install --host-user "$USER" --store-uuid "$STORE" --serial-pty
+#   keeps the broker log and its history (schema 1/2 → 3, rows copied, nothing deleted)
+systemctl --user start agentos-host
+pnpm agents:doctor && pnpm maintenance:doctor && pnpm native:doctor
+```
+
+Maintenance starts with **no policy enabled**: open the maintenance center, review a template and approve it.
+Restoring a backup puts every policy into `paused_needs_review`; nothing old acts again until you approve it.
+
 ## Development and tests
 
 ```bash
@@ -288,12 +324,32 @@ pnpm test:native       # v0.3: real broker/providers/workers on the installed pr
 pnpm test:broker-recovery   # SIGKILL of broker/workers/host around every fence; coordinated backup/restore
 pnpm test:telemetry    # host: unavailable path; QEMU guest with BTF: real eBPF (AGENTOS_TELEMETRY_GUEST=ssh target)
 pnpm smoke:v0.3-real   # V3-E01–E03 with a real model (AGENTOS_MODEL_REASONING_EFFORT=low recommended)
+pnpm test:agents       # v0.4: Pi multi-conversation prototype, scheduler, leases, budgets, roles
+pnpm test:maintenance  # v0.4: policies, triggers, jobs, recovery, incidents, proposals (in-process, manual clock)
+pnpm test:maintenance-recovery   # v0.4: SIGKILL inside maintenance jobs/outbox
+pnpm test:gc-online    # v0.4: online GC batches, reference protection, intents
+pnpm test:compaction   # v0.4: per-conversation compaction, budgets, routes
+pnpm smoke:v0.4-real   # V4-O01/O03 with a real model (parallel apps, candidate publish, diagnosis, compaction)
 node scripts/export-contracts.mjs   # regenerate docs/contracts from the validators
 ```
 
 Fault injection points exist only when `NODE_ENV=test` and `AGENTOS_FAULTS=1`. Opt-in tests: `AGENTOS_OFFLINE_TEST=1`
 (engine without network: V2-B04/O03, it changes the user podman service environment and restores it) and
-`AGENTOS_V01_ROOT=<v0.1 checkout>` (V2-O01 migration from a workspace written by the real v0.1 host).
+`AGENTOS_V01_ROOT=<v0.1 checkout>` (V2-O01 migration from a workspace written by the real v0.1 host),
+`AGENTOS_V03_WORKSPACE=<stopped v0.3 data dir>` (V4-B02; make one with `node scripts/make-v03-workspace.mjs <v0.3
+checkout> <dir>`), `AGENTOS_PERF_OUT=<file>` (V4-O05 raw latency samples).
+
+## Known scope (v0.4)
+
+- Automatic effects are limited to the approved templates: app recovery (re-converge through the runtime controller,
+  never replaying commands or touching records), demo-unit ensure-running (broker protocol 2, root caps), cache GC of
+  unreferenced build objects, log cleanup of closed files, session compaction. Everything else is a report or a
+  proposal you decide on. There is no "whole machine self-maintenance".
+- An unknown outcome is quarantined and never retried blindly; a higher control epoch the host did not write (for
+  example a stop by the user) wins over automatic recovery.
+- Telemetry stays non-authoritative: gaps, unavailable probes or identity changes are observed, never read as a fault.
+- Real serial hardware (V3-E04) remains outside acceptance; the PTY sample is software; guest eBPF evidence comes
+  from the QEMU guest with BTF.
 
 ## Known scope (v0.3)
 
