@@ -78,6 +78,14 @@ Final-tree reruns (`/data/home/aff.sh`, commit `d8de568`):
 | `vitest --project compaction` | 6/6 |
 | `vitest --project sandbox tests/sandbox/v04-proposals.test.ts` (faux refactor now sends `files`; candidate differs from the base only in that file) | 3/3 |
 
+Opt-in old-version tests rerun on the final tree with their real sources (`/data/home/optin.sh`):
+
+| Command | Result |
+|---|---|
+| `AGENTOS_OFFLINE_TEST=1 AGENTOS_V01_ROOT=<real v0.1 build 7cd2bbe> AGENTOS_UPGRADE_SOURCE=<copy of the live v0.2 workspace> vitest --project recovery v02-recovery v03-upgrade` (V2-O01, V2-O03, V3-O01 included) | 15/15 (V3-O01 first failed only on its stale `hostVersion` expectation `0.3.0`; updated to the current host) |
+| `AGENTOS_OFFLINE_TEST=1 vitest --project sandbox tests/sandbox/v02-ops.test.ts` (V2-B04 offline included) | 7/7 |
+| `vitest --project agents` after the report-schema change | 24/24 |
+
 ## Real model (V4-O01, V4-O03)
 
 `pnpm smoke:v0.4-real` (`scripts/smoke-v04-real.mjs`) on the dev box against a fresh workspace. Provider
@@ -95,7 +103,18 @@ host with a new data directory under `/data/home/smoke-v04`; every report is kep
 | 8 | failed (infrastructure) | the sandbox forwarder process died; no model requests reached the provider |
 | 9, 10 | failed at O01 parallel | code-app run of the "看板" intent failed within its 3 stage attempts (bracket error, then RPC schema strings without `maxLength`); the other app succeeded both times |
 | 11 | **all steps pass** | code intent set via `SMOKE_CODE_INTENT` to an explicit code app (番茄钟记录) |
-| 12 | __RUN12__ | final tree (adds the `recommendedTemplate` check found in run 11) |
+| 12 | parallel, code app, compaction, optimisation, publication pass; diagnosis failed | the analyst prompt asked for an `explanation` field and `hypotheses[].summary` that the report service does not accept; the refused call used the one report attempt → prompt now states the exact report fields, and the tool's argument schema is closed so Pi refuses a malformed report before the host counts it |
+| 13 | **all steps pass** | final code tree (`4783155`; the later commit only changes a test expectation) |
+
+Run 13 — final tree (`docs/evidence/v0.4-smoke-real.run13.json`, 2026-10-29 17:45–17:49 CST, same intents as run 11):
+
+| Step | Evidence |
+|---|---|
+| O01 two foreground apps in parallel | both `succeeded` in separate conversations (9, 18), runs overlapped, 98 s. Reading list: 5 requests, 879 output tokens, no tool error. 番茄钟 code app (formatVersion 2): 9 requests, 6183 output tokens; one `app_stage` refusal and one failed Prepare were corrected by new revisions inside the stage budget, then app_activate |
+| O03 compaction | conversation 9: `placed`, summary entry 92, source cutoff 57, scope = that conversation and run, providerContentConsent false, crossConversation false; one background attempt, input 554 / output 741 (reasoning 269) tokens, route `2b3198ed…` |
+| O01 background optimisation | maintenance_refactor run, 4 requests: target_app_get, candidate_stage (`files`), candidate_check, proposal_submit; job `awaiting_approval`; proposal check: baseline `6b2d84b2…`, candidate `94735faf…`, `preview-fixtures-v1`, container timing p50 0.113 → 0.052 ms on the fixture |
+| O01 user publication | exact hash + expectedAppEpoch 1 → 202; `proposal_accept` deployment `committed`; epoch 1 → 2; active revision `421baf6d…` → `43114602…` |
+| O01 background diagnosis | real crash loop (memory limit) → incident → `app-diagnose` `succeeded`; maintenance_diagnose run, 2 requests: incident_get, maintenance_context, maintenance_report; 4 hypotheses (high/medium/low/low), evidence refs only from the job's frozen ids, recommendedTemplate `app-recovery` (a listed template) |
 
 Run 11 (`docs/evidence/v0.4-smoke-real.run11.json`, 2026-10-29 17:28–17:31 CST):
 
@@ -226,14 +245,14 @@ Labels say what each row ran on; "faux model" rows use the real Pi Durable 1.4.0
 | V4-R08 | 外部历史保留 | tests/recovery/v04-restore.test.ts（备份后的事实不回灌；历史 transcript 可查）；broker schema 3 按 incarnation 保留 | real process | pass |
 | V4-R09 | 恢复后的缓存状态 | tests/recovery/v04-restore.test.ts（无 deleting/marked 残留） | real process | pass |
 | V4-R10 | 不完整/损坏恢复 | tests/recovery/v04-restore.test.ts（两库不配对：业务可读、agent 写关闭、两库均未被清空） | real process | pass |
-| V4-O01 | 真实模型主线 |  | in-process | **open** |
+| V4-O01 | 真实模型主线 | `pnpm smoke:v0.4-real` run 13（docs/evidence/v0.4-smoke-real.run13.json，qwen3.8-flash，reasoning low，最终代码树）：两前台应用真实并行（会话 9/18 重叠）、后台优化候选（files）→ 平台检查 → 用户精确 hash/epoch 接受 → proposal_accept committed、真实崩溃循环 → 后台诊断报告；run 11 同样全过；失败的 run 1–10、12 及原因全部记录在 ACCEPTANCE_V0.4.md | real model | pass |
 | V4-O02 | 真维护且模型断网 | tests/sandbox/v04-offline-real.test.ts（box 真 podman，模型未配置）：容器反复被杀至 degraded → 自动 app-recovery 作业 succeeded（generation 2→5），在线 cache-gc no_change，无模型请求，记录不变 | real Podman | pass |
-| V4-O03 | 真实模型压缩 |  | in-process | **open** |
+| V4-O03 | 真实模型压缩 | 同一 smoke run 13：会话 9 摘要真实生成并放置（entry 92，cutoff 57，原始记录保留），后台 1 次请求，用量与 route 记录；run 11 entry 80 / cutoff 71 | real model | pass |
 | V4-O04 | 干净安装与升级 | 新机 agentos-clean4（Debian 13，空机）按 README 安装通过：runtime:doctor 全 ok、broker protocol 1/2、testMode=false、agents/maintenance doctor 全 ✓；agentos-clean3（v0.3 安装）按 README 升级：记录哈希不变、schema 3→4、doctors 通过，暴露并修复空 managed 目录备份失败，修复后备份+恢复（incarnation 2）通过；native:build 在 dev box 与 clean4 六个产物 sha256 完全一致 | real native, clean box | pass |
 | V4-O05 | 前台性能 | tests/recovery/v04-perf.test.ts（box，A/B 交替 3+3 轮×200 次 CRUD/查询）：基线 p95 1.333 ms，后台批处理期间 1.473 ms，比值 1.105；原始数据 docs/evidence/perf-v04-o05.json | real process | pass |
 | V4-O06 | 压力与空间 | tests/maintenance/v4-maintenance.test.ts（作业队列 64 上限拒绝新工作不丢旧事实；低于安全落账空间 64 MiB 不启动新效果、作业带原因等待、receipt/作业不删除，空间恢复后继续；诊断证据 ≤64 KiB）+ 既有 queue/compaction/proposal 上限测试 | faux model | pass |
 | V4-O07 | 关键 API 门槛 | packages/agent-pi/test/m0-pi-prototype.test.ts（固定 Pi 1.4.0 实测：两会话路由并发、按会话 abort、原子会话目录、原子压缩登记、重启重建），无替代路径 | in-process | pass |
-| V4-O08 | 证据与遗留项 |  | in-process | **open** |
+| V4-O08 | 证据与遗留项 | ACCEPTANCE_V0.4.md「Scope and what is not claimed」：自动/建议范围、V3-E04 未验收（无串口硬件）、PTY 与 guest eBPF 分列、单一模型、无“全机零维护”结论 | report (separates static, faux, software PTY, guest eBPF, real native, real model) | pass |
 
 ## §26 exit conditions
 
@@ -247,7 +266,7 @@ Labels say what each row ran on; "faux model" rows use the real Pi Durable 1.4.0
 | M5 | G01–G08, archive/restore E06/E07 |
 | M6 | E01–E08, C01–C06; real-model candidate and compaction in O01/O03 |
 | M7 | R01–R10 |
-| M8 | __M8__ |
+| M8 | real-model mainline (O01/O03 run 13), native recovery (broker-recovery, host-maintenance), online pressure/UI/offline (O02, O05, O06, e2e), reproducible native build, clean install/upgrade (O04, B02), this 88-item report; V3-E04 still not accepted (no serial hardware) |
 
 ## Scope and what is not claimed (V4-O08)
 

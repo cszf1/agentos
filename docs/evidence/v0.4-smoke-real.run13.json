@@ -1,0 +1,261 @@
+{
+  "dataDir": "/data/home/smoke-v04/aos-real4-WsB2iX",
+  "model": {
+    "provider": "openai-compatible",
+    "id": "qwen3.8-flash",
+    "baseUrl": "http://127.0.0.1:4500/v1"
+  },
+  "startedAt": "2026-10-29T09:45:41.582Z",
+  "steps": {
+    "parallel": {
+      "a": {
+        "status": "succeeded",
+        "appId": "8e13cace-b3de-4032-8b3e-e2c230a886e2",
+        "conversationId": "9",
+        "errors": [],
+        "tools": [
+          "app_get",
+          "app_stage",
+          "app_validate",
+          "app_prepare",
+          "app_activate"
+        ],
+        "usage": null,
+        "model": "qwen3.8-flash",
+        "attempts": 5,
+        "background": false,
+        "outputTokens": 879
+      },
+      "b": {
+        "status": "succeeded",
+        "appId": "20e73fdb-dea1-44eb-ae7c-b92579aac653",
+        "conversationId": "18",
+        "errors": [
+          "app_stage: \"{\\\"error\\\":\\\"INVALID_CODE_BUNDLE\\\",\\\"message\\\":\\\"bundle failed schema validation\\\",\\\"errors\\\":[{\\\"path\\\":\\\"/queries/main/outputSchema/properties/records/maxItems\\\",\\\"code\\\":\\\"INVALID_RPC_SCHEMA\\\",\\\"message\\\":\\\"arrays must declare maxItems\\\"}]}\""
+        ],
+        "tools": [
+          "app_get",
+          "runtime_catalog",
+          "app_stage!",
+          "app_stage",
+          "app_validate",
+          "app_prepare",
+          "app_stage",
+          "app_validate",
+          "app_prepare",
+          "app_activate"
+        ],
+        "usage": null,
+        "model": "qwen3.8-flash",
+        "attempts": 9,
+        "background": false,
+        "outputTokens": 6183
+      },
+      "overlapped": true,
+      "seconds": 98
+    },
+    "codeApp": "20e73fdb-dea1-44eb-ae7c-b92579aac653",
+    "compaction": {
+      "state": "placed",
+      "label": "摘要已生成并放置（原始记录保留）",
+      "result": {
+        "instructions": null,
+        "entryId": "92",
+        "sourceCutoff": "57"
+      },
+      "scope": {
+        "conversationId": "9",
+        "runId": "5cf55c83-c59e-4d79-af61-9f95af92a9cc",
+        "cutoffEntryId": "57",
+        "mode": "build",
+        "providerContentConsent": false,
+        "crossConversation": false
+      },
+      "keepRecentTokens": 2000,
+      "attempts": [
+        {
+          "purpose": "compaction",
+          "background": 1,
+          "state": "completed",
+          "output_tokens": 741,
+          "usage_json": "{\"input\":554,\"output\":741,\"cacheRead\":0,\"cacheWrite\":0,\"reasoning\":269,\"totalTokens\":1295,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}}",
+          "route_id": "2b3198ed574fe9eeac72af71"
+        }
+      ]
+    },
+    "optimise": {
+      "job": {
+        "state": "awaiting_approval",
+        "outcome": "{\"proposalId\":\"4613af5f-fd3b-466c-8513-491d9af3f999\"}"
+      },
+      "run": {
+        "conversationId": "94",
+        "errors": [],
+        "tools": [
+          "target_app_get",
+          "candidate_stage",
+          "candidate_check",
+          "proposal_submit"
+        ],
+        "usage": null,
+        "model": "qwen3.8-flash",
+        "attempts": 4,
+        "background": true,
+        "outputTokens": 2818
+      },
+      "proposals": [
+        {
+          "id": "4613af5f-fd3b-466c-8513-491d9af3f999",
+          "check": {
+            "baselineHash": "6b2d84b2d5043b37e2250adca2d9b1c4771cda96c3bf0af86587dedafeb9b839",
+            "candidateHash": "94735fafc9265efc9dd0f525656e8ddcc0a62a4018b7e1c600acdd3b2844ba6e",
+            "checkId": "5f1f7d8b-b1eb-42ed-97d8-e5bc0b8c83b4",
+            "fixtureSetVersion": "preview-fixtures-v1",
+            "result": {
+              "artifactId": "sha256:4d79dc64dc7656983ebfe4f7cb3f923678455bfc8823d90ebc1d7482ff35aa4c",
+              "fixtureSetVersion": "preview-fixtures-v1",
+              "fixtures": "platform preview fixtures only (empty + default collection); never real records",
+              "timing": {
+                "baseline": {
+                  "samplesMs": [
+                    0.221,
+                    0.137,
+                    0.114,
+                    0.096,
+                    0.164,
+                    0.289,
+                    0.13,
+                    0.077,
+                    0.056,
+                    0.113,
+                    0.262,
+                    0.1,
+                    0.057,
+                    0.047,
+                    0.046
+                  ],
+                  "summary": {
+                    "mean": 0.127,
+                    "n": 15,
+                    "p50": 0.113,
+                    "p95": 0.289,
+                    "sd": 0.074
+                  }
+                },
+                "candidate": {
+                  "samplesMs": [
+                    0.34,
+                    0.209,
+                    0.108,
+                    0.076,
+                    0.052,
+                    0.051,
+                    0.046,
+                    0.059,
+                    0.048,
+                    0.05,
+                    0.05,
+                    0.046,
+                    0.041,
+                    0.06,
+                    0.069
+                  ],
+                  "summary": {
+                    "mean": 0.087,
+                    "n": 15,
+                    "p50": 0.052,
+                    "p95": 0.34,
+                    "sd": 0.079
+                  }
+                },
+                "method": "main data-source queries on the default fixture; 3 warm-up rounds, 15 measured rounds; same container limits",
+                "note": "a fixture timing is evidence for this fixture only, not a general claim"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "publish": {
+      "accept": 202,
+      "before": {
+        "epoch": 1,
+        "active_revision_id": "sha256:421baf6d7f61ee7ce336d5daf7399f076d3559794718503d0b20dbbae5eed401"
+      },
+      "after": {
+        "epoch": 2,
+        "active_revision_id": "sha256:431146023fbeb12c36dc762bd33845b4146582eb37da5fe7257a7e9300820181"
+      },
+      "deployment": {
+        "status": "committed",
+        "origin": "proposal_accept",
+        "error_json": null
+      }
+    },
+    "diagnose": {
+      "job": "succeeded",
+      "run": {
+        "conversationId": "121",
+        "errors": [],
+        "tools": [
+          "incident_get",
+          "maintenance_context",
+          "maintenance_report"
+        ],
+        "usage": null,
+        "model": "qwen3.8-flash",
+        "attempts": 2,
+        "background": true,
+        "outputTokens": 1742
+      },
+      "report": {
+        "reportId": "45ae8826-d962-4bf9-9650-e8eb0c1b36bd",
+        "runId": "b540e9fa-b661-491b-a9e5-aef901fcf16f",
+        "incidentId": "449b2568-d543-42c4-9b41-865a069d7565",
+        "jobId": "09f8699c-4162-4fa2-862b-c508c5f61a44",
+        "body": {
+          "evidenceRefs": [
+            "incident:449b2568-d543-42c4-9b41-865a069d7565",
+            "samples:app:20e73fdb-dea1-44eb-ae7c-b92579aac653",
+            "runtime:20e73fdb-dea1-44eb-ae7c-b92579aac653",
+            "app:20e73fdb-dea1-44eb-ae7c-b92579aac653"
+          ],
+          "hypotheses": [
+            {
+              "confidence": "high",
+              "text": "应用实际工作集/瞬时占用超过其配置的内存上限，被宿主 OOM 终止后重启又超限，形成崩溃循环（与 APP_RESOURCE_LIMIT 错误码一致）。"
+            },
+            {
+              "confidence": "medium",
+              "text": "崩溃循环起点（约 09:48:17 起连续 app.exit）与一次修订/重新部署相关：appEpoch/controlEpoch=2、activeRevisionId=sha256:4311460...、generation=4，提示新代码可能引入了内存泄漏或更高的内存占用/未释放的缓存。"
+            },
+            {
+              "confidence": "low",
+              "text": "内存限额相对正常负载被设置过小，或在近期被下调（限额配置问题），导致冷启动/请求尖峰即超限，而非应用缺陷本身。"
+            },
+            {
+              "confidence": "low",
+              "text": "重启循环为放大因素：崩溃后被立即重启、未做退避/冷却，使 restartCount 在数十秒内累积至 3 并持续 degraded。"
+            }
+          ],
+          "incidentId": "449b2568-d543-42c4-9b41-865a069d7565",
+          "missingEvidence": [
+            "应用实际内存占用时间线（RSS/工作集 vs 上限），以确认是渐进泄漏还是瞬时峰值超限",
+            "当前配置的具体内存上限数值，以及该上限近期是否被修改/下调",
+            "应用容器/进程的真实日志、栈与 OOM 终止详情（现 details.logs 为空，无法定位分配热点或泄漏点）",
+            "修订/部署时间线：activeRevisionId sha256:4311460... 的发布时间与崩溃起点(09:48:17)是否吻合，以及与上一可工作版本(可能为 appEpoch=1)的差异",
+            "重启策略/退避配置（判断崩溃循环是否由无冷却立即重启放大）",
+            "崩溃前是否有输入负载/请求尖峰或外部依赖异常触发额外内存占用"
+          ],
+          "recommendedTemplate": "app-recovery",
+          "summary": "该应用 (20e73fdb...) 处于 app.crash_loop（critical），runtime_state 与事件快照一致显示 health=degraded、restartCount=3、generation=4、controlEpoch/appEpoch=2，唯一 lastError 为 APP_RESOURCE_LIMIT“exceeded its memory limit”，且 details.logs 为空。健康采样显示 seq21–41 的 crash_loop 均为 ok，到 seq43/45/47（09:48:17–27）转为 app.exit=bad，再 seq49/51（09:48:32–37）转为 crash_loop=bad——即先发生反复退出、随后被判定为崩溃循环。最直接的表象是应用反复超出内存上限被宿主终止并重启，进入循环。由于无应用日志/堆内存/实际限额数值/时间线，无法区分是内存泄漏、新修订版本抬高内存占用、还是限额被调低/配置过小，故仅给出假设。"
+        },
+        "bodyHash": "2426e500b799dc886f288e5c1ccd78aa5577b48c6323034516ba891f9245378a",
+        "createdAt": "2026-10-29T09:49:14.043Z",
+        "kind": "diagnosis (hypothesis, not a repair)"
+      }
+    }
+  },
+  "finishedAt": "2026-10-29T09:49:15.043Z",
+  "ok": true
+}
