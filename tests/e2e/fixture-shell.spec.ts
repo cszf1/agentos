@@ -101,6 +101,13 @@ test("M2: seeded fixtures run without a model; CRUD, search, filter, history, re
   await expect(page.locator(".record-form .banner.error")).toContainText("这条记录刚被修改过");
   await expect(page.locator(".record-form").getByLabel("任务")).toHaveValue("A 页的修改");
   await other.close();
+
+  // archive is a user lifecycle action in the shell, then restore brings the same records back
+  await page.getByRole("button", { name: "归档此应用" }).click();
+  await expect(page.getByRole("button", { name: "恢复此应用" })).toBeVisible();
+  await page.getByRole("button", { name: "恢复此应用" }).click();
+  await expect(page.getByRole("button", { name: "归档此应用" })).toBeVisible();
+  await expect(page.locator("table.records")).toContainText("买牛奶和面包");
   await page.screenshot({ path: path.join(import.meta.dirname, "../../test-results/m2-fixture-final.png"), fullPage: true });
   await stopHost(host);
 });

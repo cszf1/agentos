@@ -266,6 +266,14 @@ export const api = {
   notifications: () => call<{ items: { id: string; kind: string; severity: string; title: string; detail: string | null; count: number; state: string; updatedAt: string }[] }>("GET", "/api/notifications"),
   readNotification: (id: string, key: string) => call<unknown>("POST", `/api/notifications/${id}/read`, {}, key),
   transcript: (runId: string) => call<{ final: boolean; items: { kind: string; role: string; text: string; toolName?: string; isError?: boolean }[] }>("GET", `/api/runs/${runId}/transcript`),
+  proposals: () => call<{ items: ProposalView[] }>("GET", "/api/proposals"),
+  acceptProposal: (id: string, proposalHash: string, expectedAppEpoch: number, key: string) =>
+    call<ProposalView>("POST", `/api/proposals/${id}/accept`, { proposalHash, expectedAppEpoch }, key),
+  rejectProposal: (id: string, key: string) => call<ProposalView>("POST", `/api/proposals/${id}/reject`, {}, key),
+  lifecycle: (appId: string) => call<LifecycleView | null>("GET", `/api/apps/${appId}/lifecycle`),
+  archiveApp: (appId: string, expectedAppEpoch: number, key: string) => call<LifecycleView>("POST", `/api/apps/${appId}/archive`, { expectedAppEpoch }, key),
+  restoreApp: (appId: string, key: string) => call<LifecycleView>("POST", `/api/apps/${appId}/restore`, {}, key),
+  compactConversation: (conversationId: string, key: string) => call<{ compactionId: string; state: string }>("POST", `/api/conversations/${conversationId}/compactions`, {}, key),
 };
 
 export function describeError(e: unknown): string {
@@ -309,11 +317,46 @@ export function describeError(e: unknown): string {
       COMPENSATION_CONFLICT: "当前状态已变化，不能补偿",
       OBSERVATION_EXPIRED: "观察已过期，请重新读取",
       OBSERVATION_GAP: "观察有缺口，请重新读取",
+      RUN_QUEUE_FULL: "任务队列已满，请等一个任务结束后再提交",
+      TARGET_BUSY: "这个目标正忙，请稍后再试",
+      TARGET_CHANGED: "排队期间应用已经变化，请按当前版本重新提交",
+      RUN_IDENTITY_MISMATCH: "任务身份不匹配，这次调用被拒绝",
+      EXECUTION_EPOCH_STALE: "这次执行已经失效（取消、撤销或恢复之后）",
+      MODEL_BUDGET_EXCEEDED: "模型额度已用完",
+      MAINTENANCE_DISABLED: "自动维护未启用",
+      POLICY_VERSION_STALE: "维护策略已经更新，请按新版本重新确认",
+      POLICY_SYNC_PENDING: "维护策略还在等待系统执行端确认",
+      CLOCK_UNCERTAIN: "系统时钟发生跳变，自动维护已停止",
+      CIRCUIT_OPEN: "自动恢复已熔断，需要你确认后才能继续",
+      ARTIFACT_GC_PENDING: "构建缓存正在清理，请稍后再试",
+      PROPOSAL_STALE: "候选已经过期或基线变了，请重新查看",
+      APP_ARCHIVED: "应用已归档",
+      COMPACTION_SCOPE_DENIED: "不能压缩这段对话",
     };
     return map[e.code] ? `${map[e.code]}（${e.code}）` : `${e.message}（${e.code}）`;
   }
   if (e instanceof NetworkError) return "连接中断，可以点“重试”（不会重复提交）";
   return (e as Error)?.message ?? String(e);
+}
+
+export interface ProposalView {
+  proposalId: string;
+  appId: string;
+  state: string;
+  proposalHash: string;
+  baseAppEpoch: number;
+  label: string;
+  reasons?: string[];
+  expectedBenefit?: string;
+  diff?: { files?: { path: string }[] };
+  expiresAt?: string;
+}
+export interface LifecycleView {
+  appId: string;
+  state: string;
+  lastUsedAt: string | null;
+  recoveryPaused?: boolean;
+  note?: string;
 }
 
 export interface MaintState {

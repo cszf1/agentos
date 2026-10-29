@@ -88,6 +88,7 @@ export function AppView(props: { detail: AppDetail; onChanged: () => void; refre
   const [offset, setOffset] = useState(0);
   const [page, setPage] = useState<RecordPage | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [life, setLife] = useState<string | null>(null);
   const [form, setForm] = useState<FormState | null>(null);
   const [pendingDelete, setPendingDelete] = useState<{ rec: RecordEnvelope; key: string } | null>(null);
 
@@ -110,6 +111,23 @@ export function AppView(props: { detail: AppDetail; onChanged: () => void; refre
   useEffect(() => {
     void load();
   }, [load, props.refreshToken, detail.appEpoch]);
+
+  useEffect(() => {
+    let stop = false;
+    void api.lifecycle(detail.appId).then((v) => { if (!stop) setLife(v?.state ?? "active"); }).catch(() => { if (!stop) setLife(null); });
+    return () => { stop = true; };
+  }, [detail.appId, detail.appEpoch, props.refreshToken]);
+
+  const setLifecycle = async (action: "archive" | "restore") => {
+    setError(null);
+    try {
+      const v = action === "archive" ? await api.archiveApp(detail.appId, detail.appEpoch, newKey()) : await api.restoreApp(detail.appId, newKey());
+      setLife(v.state);
+      props.onChanged();
+    } catch (e) {
+      setError(describeError(e));
+    }
+  };
 
   const stale = form !== null && form.epoch !== detail.appEpoch;
 
@@ -189,11 +207,20 @@ export function AppView(props: { detail: AppDetail; onChanged: () => void; refre
           <h2>{bundle.manifest.title}</h2>
           {bundle.manifest.description && <p className="muted">{bundle.manifest.description}</p>}
         </div>
-        {writable && (
-          <button className="primary" onClick={openCreate} disabled={form !== null}>
-            新建
-          </button>
-        )}
+        <div className="app-actions">
+          {life === "archived" ? (
+            <button className="small" onClick={() => void setLifecycle("restore")}>恢复此应用</button>
+          ) : life === "active" || life === null ? (
+            <button className="small" onClick={() => void setLifecycle("archive")}>归档此应用</button>
+          ) : (
+            <span className="muted small">{life === "archiving" ? "正在归档" : life === "restoring" ? "正在恢复" : life}</span>
+          )}
+          {writable && (
+            <button className="primary" onClick={openCreate} disabled={form !== null || life === "archived" || life === "archiving"}>
+              新建
+            </button>
+          )}
+        </div>
       </header>
 
       <div className="toolbar">

@@ -45,6 +45,19 @@ function TaskRow(props: { r: RunView; apps: AppSummary[]; onCancelled: () => voi
   const [open, setOpen] = useState(false);
   const target = r.targetAppId ? (props.apps.find((a) => a.appId === r.targetAppId)?.title ?? "（新应用）") : "无目标应用";
   const cancellable = ["queued", "running", "blocked"].includes(r.status);
+  const compact = async () => {
+    if (!r.conversationId) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      await api.compactConversation(r.conversationId, newKey());
+      props.onCancelled();
+    } catch (e) {
+      setErr(describeError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
   const cancel = async () => {
     setBusy(true);
     setErr(null);
@@ -77,6 +90,9 @@ function TaskRow(props: { r: RunView; apps: AppSummary[]; onCancelled: () => voi
           <button className="danger small" disabled={busy} onClick={() => void cancel()} aria-label={`取消任务 ${r.intent.slice(0, 20)}`}>
             取消此任务
           </button>
+        )}
+        {!r.background && r.conversationId && ["succeeded", "failed", "cancelled"].includes(r.status) && (
+          <button className="small" disabled={busy} onClick={() => void compact()}>生成这段对话的摘要</button>
         )}
         <button className="link small" onClick={() => setOpen((v) => !v)}>{open ? "收起详情" : "详情"}</button>
       </div>

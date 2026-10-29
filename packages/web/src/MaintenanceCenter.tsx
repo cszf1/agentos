@@ -43,12 +43,13 @@ export function MaintenanceCenter() {
   const [targets, setTargets] = useState<Record<string, string>>({});
   const [incidents, setIncidents] = useState<Awaited<ReturnType<typeof api.incidents>>["items"]>([]);
   const [notes, setNotes] = useState<Awaited<ReturnType<typeof api.notifications>>["items"]>([]);
+  const [proposals, setProposals] = useState<Awaited<ReturnType<typeof api.proposals>>["items"]>([]);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      const [s, p, j, i, n, sv, rs] = await Promise.all([api.maintState(), api.maintPolicies(), api.maintJobs(), api.incidents(), api.notifications(), api.state(), api.sysResources().catch(() => ({ items: [] as SysResource[], broker: {} }))]);
+      const [s, p, j, i, n, sv, rs, proposalPage] = await Promise.all([api.maintState(), api.maintPolicies(), api.maintJobs(), api.incidents(), api.notifications(), api.state(), api.sysResources().catch(() => ({ items: [] as SysResource[], broker: {} })), api.proposals()]);
       const names: Record<string, string> = {};
       for (const a of sv.apps as { appId: string; name?: string; title?: string }[]) names[`app:${a.appId}`] = a.name ?? a.title ?? a.appId;
       for (const r of rs.items) names[`${r.kind}:${r.resourceId}`] = r.displayName;
@@ -58,6 +59,7 @@ export function MaintenanceCenter() {
       setJobs(j.items);
       setIncidents(i.items);
       setNotes(n.items);
+      setProposals(proposalPage.items);
       setErr(null);
     } catch (e) {
       setErr(describeError(e));
@@ -170,6 +172,31 @@ export function MaintenanceCenter() {
         {last.usageUnknown > 0 ? ` · ${last.usageUnknown} 次用量未知（按上限记账）` : ""}
         {st.foreground ? ` · 前台任务槽 ${st.foreground.slots}，排队 ${st.foreground.queued}` : ""}
       </p>
+
+      {proposals.some((pr) => pr.state === "pending" || pr.state === "needs_recheck" || pr.state === "publishing") && (
+        <>
+          <h4>等待你决定的优化候选</h4>
+          <ul className="policy-approvals" aria-label="优化候选">
+            {proposals.filter((pr) => pr.state === "pending" || pr.state === "needs_recheck" || pr.state === "publishing").map((pr) => (
+              <li key={pr.proposalId} className="policy-card" data-proposal-id={pr.proposalId}>
+                <div><strong>{pr.label}</strong></div>
+                <div className="small">应用 {targets[`app:${pr.appId}`] ?? pr.appId.slice(0, 12)} · 基线版本代次 {pr.baseAppEpoch}</div>
+                <div className="small">改动文件：{(pr.diff?.files ?? []).map((f) => f.path).join("、") || "—"}</div>
+                {pr.expectedBenefit && <div className="small">预期：{pr.expectedBenefit}</div>}
+                {(pr.reasons ?? []).length > 0 && <div className="small muted">{pr.reasons!.join("；")}</div>}
+                <div className="small muted">候选指纹 {pr.proposalHash.slice(0, 19)}…{pr.expiresAt ? ` · 到期 ${pr.expiresAt.slice(0, 16).replace("T", " ")}` : ""}</div>
+                {pr.state === "pending" && (
+                  <div>
+                    <button className="primary small" disabled={busy} onClick={() => void act(() => api.acceptProposal(pr.proposalId, pr.proposalHash, pr.baseAppEpoch, newKey()))}>按此指纹发布</button>
+                    <button className="small" disabled={busy} onClick={() => void act(() => api.rejectProposal(pr.proposalId, newKey()))}>拒绝</button>
+                  </div>
+                )}
+                {pr.state === "publishing" && <div className="small">发布已排队，完成后才算成功。</div>}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
 
       <h4>最近的检查与实际变更</h4>
       {jobs.length === 0 ? (

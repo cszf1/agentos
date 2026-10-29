@@ -51,6 +51,7 @@ textarea { width: 100%; resize: vertical; }
 .app-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
 .app-header h2 { margin: 0 0 4px; font-size: 18px; }
 .app-header p { margin: 0; }
+.app-actions { display: flex; gap: 8px; align-items: center; }
 .toolbar { display: flex; gap: 10px; margin: 12px 0; flex-wrap: wrap; align-items: center; }
 .search { min-width: 220px; }
 .filter { display: flex; gap: 6px; align-items: center; }
