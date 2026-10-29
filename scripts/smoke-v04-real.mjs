@@ -94,7 +94,7 @@ try {
   const t0 = Date.now();
   const [ra, rb] = await Promise.all([
     req("POST", "/api/runs", { intent: "做一个读书清单应用：书名、作者、状态（想读/在读/读完）、评分，可按状态筛选", targetAppId: null }),
-    req("POST", "/api/runs", { intent: "做一个看板应用：任务有标题和状态（待办/进行中/完成），按状态分三列显示，提供统计每列数量的查询，需要自定义代码", targetAppId: null }),
+    req("POST", "/api/runs", { intent: process.env.SMOKE_CODE_INTENT ?? "做一个看板应用", targetAppId: null }),
   ]);
   if (ra.status !== 202 || rb.status !== 202) throw new Error(`submit ${ra.status}/${rb.status}`);
   const [fa, fb] = await Promise.all([waitRun(ra.data.runId), waitRun(rb.data.runId)]);
