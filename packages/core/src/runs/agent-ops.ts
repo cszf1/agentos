@@ -461,17 +461,44 @@ export class AgentOps {
     );
   }
 
-  candidateStage(id: ToolCallIdentity, bundle: unknown): ToolOutcome<unknown> {
+  /**
+   * A candidate is always a complete bundle. The model either sends it whole (`bundle`), or sends only replacement source
+   * files (`files`: path → full new text) and the complete bundle is the frozen target's active bundle with exactly those
+   * code files replaced. Both go through the same staging and contract validation; nothing else of the bundle can change
+   * through `files`.
+   */
+  candidateStage(id: ToolCallIdentity, bundle: unknown, files?: unknown): ToolOutcome<unknown> {
     const entered = this.enter(id, true);
     if ("ok" in entered) return entered;
     const principal = this.principal(entered.runId, id);
+    const hasBundle = bundle !== undefined && bundle !== null;
+    const hasFiles = files !== undefined && files !== null;
     return this.wrap(() =>
-      this.gateway.write("candidates.write", { principal, operationKey: this.opKey(entered.runId, id), requestHash: sha256Hex(canonicalJson({ bundle: bundle ?? null })) }, () => {
+      this.gateway.write("candidates.write", { principal, operationKey: this.opKey(entered.runId, id), requestHash: sha256Hex(canonicalJson(hasFiles && !hasBundle ? { files } : { bundle: bundle ?? null })) }, () => {
         this.runs.assertWritable(entered.runId, entered.bindingEpoch);
         if (!this.proposals) throw new AgentOsError("PROVIDER_UNAVAILABLE", "candidates are not available");
-        return { status: 200, body: this.proposals.stageCandidateInTx(entered.runId, bundle) };
+        if (hasBundle && hasFiles) throw new AgentOsError("INVALID_REQUEST", "send either bundle or files, not both");
+        if (!hasBundle && !hasFiles) throw new AgentOsError("INVALID_REQUEST", "send bundle (the complete AppBundle object) or files ({path: full new source text}) to replace code files of the target");
+        const full = hasBundle ? bundle : this.#bundleWithFiles(entered.runId, files);
+        return { status: 200, body: this.proposals.stageCandidateInTx(entered.runId, full) };
       }).body,
     );
+  }
+
+  #bundleWithFiles(runId: string, files: unknown): unknown {
+    if (typeof files !== "object" || Array.isArray(files) || files === null) throw new AgentOsError("INVALID_REQUEST", "files must be an object {path: full source text}");
+    const entries = Object.entries(files as Record<string, unknown>);
+    if (entries.length === 0) throw new AgentOsError("INVALID_REQUEST", "files is empty");
+    const f = this.#frozenScope(runId, "maintenance_refactor");
+    const base = this.apps.activeBundle(this.apps.requireApp(f.run.target_app_id!)) as { code?: { files?: Record<string, string> } } | null;
+    if (!base?.code?.files) throw new AgentOsError("INVALID_REQUEST", "the target is not a code app; send the complete bundle");
+    const next = structuredClone(base) as { code: { files: Record<string, string> } };
+    for (const [path, text] of entries) {
+      if (typeof text !== "string") throw new AgentOsError("INVALID_REQUEST", `files["${path}"] must be the full source text`);
+      if (!(path in next.code.files)) throw new AgentOsError("INVALID_REQUEST", `files["${path}"] is not a file of the target (existing: ${Object.keys(next.code.files).join(", ")}); new files need the complete bundle`);
+      next.code.files[path] = text;
+    }
+    return next;
   }
 
   candidateValidate(id: ToolCallIdentity, revisionId: string): ToolOutcome<unknown> {

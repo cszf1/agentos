@@ -367,7 +367,10 @@ function fauxRefactor(userText: string, results: { toolName: string; isError?: b
       base.data.fields["extraFaux"] = { type: "string", label: "extra" };
     } else if (base.code?.files) {
       const f = base.code.entry && base.code.files[base.code.entry] !== undefined ? base.code.entry : Object.keys(base.code.files).sort()[0]!;
-      base.code.files[f] = `${base.code.files[f]}\n// optimised by the faux candidate\n`;
+      const text = `${base.code.files[f]}\n// optimised by the faux candidate\n`;
+      // a code app sends only the changed file (the tool rebuilds the complete bundle from the frozen target)
+      if (!userText.includes("[faux:refactor-bundle]")) return call("candidate_stage", { files: { [f]: text } });
+      base.code.files[f] = text;
     }
     return call("candidate_stage", { bundle: base });
   }

@@ -253,13 +253,18 @@ function allTools(ops: AgentOps, toolLog?: ToolLog) {
     }),
     defineTool({
       name: "candidate_stage",
-      description: "maintenance_refactor runs: store a complete candidate bundle of the bound app (same formatVersion, data, query/command contracts, imports/exports, system, capabilities and runtimeLockId). Returns revisionId, valid, errors.",
-      parameters: Type.Object({ bundle: Type.Unknown() }),
+      description:
+        "maintenance_refactor runs: store ONE candidate of the bound app. For a code app prefer `files`: an object {path: full new source text} replacing existing code files; everything else is kept from the target. Otherwise send `bundle`, the complete bundle object (same formatVersion, data, query/command contracts, imports/exports, system, capabilities and runtimeLockId). Returns revisionId, valid, errors.",
+      parameters: Type.Object({
+        files: Type.Optional(Type.Record(Type.String(), Type.String(), { description: "code app: path → full new source text of an existing file" })),
+        bundle: Type.Optional(Type.Unknown({ description: "the complete AppBundle JSON object (not a string)" })),
+      }),
       replay: "safe",
       execute: async (a, api) => {
-        const bad = undecodableBundle((a as { bundle?: unknown }).bundle);
+        const args = a as { bundle?: unknown; files?: unknown };
+        const bad = undecodableBundle(args.bundle);
         if (bad) return result({ ok: false, code: "INVALID_REQUEST", message: bad } as never);
-        return result(ops.candidateStage(id(api, "candidate_stage"), decodeBundleArg((a as { bundle?: unknown }).bundle)));
+        return result(ops.candidateStage(id(api, "candidate_stage"), decodeBundleArg(args.bundle), args.files));
       },
     }),
     defineTool({

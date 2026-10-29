@@ -73,6 +73,14 @@ describe("v0.4 proposals through the formal deployment", () => {
     expect(p.check.fixtureSetVersion).toBeTruthy();
     const chk = q<{ state: string }>("SELECT state FROM candidate_checks WHERE id = (SELECT candidate_check_id FROM proposals WHERE id = ?)", p.proposalId)[0]!;
     expect(chk.state).toBe("passed");
+    // the faux refactor sent only `files`: the candidate is the frozen target bundle with exactly that code file changed
+    const rev = (id: string) => JSON.parse(q<{ bundle_json: string }>("SELECT bundle_json FROM revisions WHERE app_id = ? AND id = ?", appId, id)[0]!.bundle_json) as { code: { files: Record<string, string> } };
+    const cand = rev(p.candidateRevisionId);
+    const base = rev(before.active_revision_id);
+    const changed = Object.keys(cand.code.files).filter((k) => cand.code.files[k] !== base.code.files[k]);
+    expect(changed.length).toBe(1);
+    expect(cand.code.files[changed[0]!]).toContain("optimised by the faux candidate");
+    expect({ ...cand, code: { ...cand.code, files: base.code.files } }).toEqual(base);
     // the candidate is not active: a background run cannot publish
     expect(app(appId).active_revision_id).toBe(before.active_revision_id);
     expect(q<{ n: number }>("SELECT COUNT(*) AS n FROM deployments WHERE app_id = ? AND origin = 'proposal_accept'", appId)[0]!.n).toBe(0);
