@@ -153,6 +153,8 @@ export async function quiesceForBackup(osFile: string, out: string, socket?: str
     if (root && fs.existsSync(root)) {
       const files: Record<string, string> = {};
       const dst = path.join(out, "managed");
+      // an empty managed directory is still recorded (as an empty snapshot), so the manifest never names a missing path
+      fs.mkdirSync(dst, { recursive: true, mode: 0o700 });
       const walk = (rel: string) => {
         for (const e of fs.readdirSync(path.join(root, rel), { withFileTypes: true })) {
           const r = rel ? `${rel}/${e.name}` : e.name;
