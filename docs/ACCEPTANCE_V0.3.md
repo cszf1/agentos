@@ -24,15 +24,15 @@ kept and rerun. Every row says what the evidence ran on. Labels used below:
 Known VM quirk on both boxes: `/proc/sys/kernel/random/boot_id` is overmounted (README Troubleshooting has the fix; the clean
 install script applies it).
 
-### Artifacts (pnpm native:build manifest)
+### Artifacts (pnpm native:build manifest, commit `c16ab21`)
 
 | File | sha256 |
 |---|---|
-| `native/bpf/exec_exit.bpf.o` (fixed BPF object; identical on the box install and in the guest) | `03a2234af161eca63bb6d9b0f1980e194cef118bfabb2698b95e2ab9fe4c84a8` |
-| `agentos-broker` | `dcc03bf6ab6b21dc37808394e1a1eb76c69f25fc6bcf19a45a2644ca7bb33de0` |
-| `agentos-worker` | `0b626b9e4bacd9a351118bcac70b2642a22adbe803d88ce6dbbd39aec4a9a9ba` |
-| `agentos-provider-user` (runs as the host user, from the checkout) | `40657bcc566270b45346ff8d95ce5fc9a3a09bbdeeb4f3d4d5cc686f340abb92` |
-| `agentos-telemetry` | `51445fef4bba4bde7c6f7e11725ed255a56f52f28da8f9499dfb4b965b58047a` |
+| `native/bpf/exec_exit.bpf.o` (fixed BPF object; identical on the box install and in the guest) | `edf86f1cd8130fe3316546cf7812058b936a4e76df9bdd267c7c6380c664a59c` |
+| `agentos-broker` | `0fbb0d61716289a910b25d3fcf58ee5d7d57c07e1bf6c9cbc85f0f34365e6c51` |
+| `agentos-worker` | `374735e9340b05bcdf0d26a303d3335d880c3ab89f6a322f89922495966fc227` |
+| `agentos-provider-user` (runs as the host user, from the checkout) | `f5e80ee00bb5ba66d4eb5dae9a04721d62c874b6007143284c56cbd439883ecc` |
+| `agentos-telemetry` | `e0cd37d2c034e93b6737898a65c821c96490755ed28433981778ef90c07256d4` |
 | `agentos-serial-sim` | `8f6a572aa590ec5952b50681e1dc545ab74f347ccb65994208266ccdd7e6218b` |
 
 The installed copies under `/usr/lib/agentos` on the dev box have exactly these hashes. Policy
@@ -64,6 +64,24 @@ An earlier full pass on the same tree failed 2 recovery and 23 sandbox tests onl
 filled with test temp directories ("less than 256 MiB free … new builds are refused"); after cleaning `/tmp` all passed.
 Fixes made during the final passes: telemetry/refresh timers no longer touch a closed store after shutdown (unhandled
 rejection in unit), V2-A05 expects the v3 tool set, G02 treats a broker that closes before the client writes as a refusal.
+
+## Reproducible native build
+
+Added after the first version of this report (commit `c16ab21`). `pnpm native:build` now passes
+`--remap-path-prefix=<checkout>/native=/agentos/native --remap-path-prefix=$CARGO_HOME=/cargo` to rustc and
+`-ffile-prefix-map`/`-fdebug-compilation-dir` to clang, so output no longer depends on the checkout directory. Built three
+times from the same source, all six artifacts byte-identical to the table above:
+
+| Build | Where | Result |
+|---|---|---|
+| dev box `/data/home/agentos-dev` | Rust 1.91.0, clang 19.1.7 | hashes above |
+| dev box, fresh copy in `/data/home/rb-copy` | same | identical |
+| clean box `agentos-clean3`, `git archive c16ab21` unpacked in `~/agentos-c16` | rustc 1.91.0 (f8297e351), Debian clang 19.1.7 | identical |
+
+After the rebuild the privileged side was reinstalled on the dev box with these binaries (installed hashes equal the table) and
+the suites that use them were rerun: native 21/21, broker-recovery 22/22, telemetry 6/6. The QEMU guest loaded the new object
+(`docs/evidence/v0.3-telemetry-guest.json`: objectSha256 `edf86f1c…a59c`, BTF true, T01–T05 true, 4 workload events,
+1514 kernel ring drops reported as a gap).
 
 ## Matrix (§26)
 
@@ -206,10 +224,8 @@ Usage (Pi session totals): after E01 input 20,424 / output 15,239 (reasoning 8,5
 
 ## Known limits
 
-- The BPF object is built with `-g`; its debug info embeds the checkout path, so the clean box (different path) built
-  `67c032a0…c25a` instead of `03a2234a…a8`. The accepted object is the latter (dev box install and guest). Path-independent
-  BPF builds are not done in v0.3.
-
+- (fixed after the first report) Native builds are path-independent: `pnpm native:build` remaps the checkout and cargo
+  paths (`--remap-path-prefix`, clang `-ffile-prefix-map`/`-fdebug-compilation-dir`). See "Reproducible native build".
 - No serial hardware: V3-E04 is not accepted; the PTY sample is a software protocol test.
 - The development and clean boxes have no BTF/tracepoints; telemetry there is reported unavailable. Real eBPF was accepted in
   the QEMU guest (kernel 6.12.113).
@@ -219,4 +235,4 @@ Usage (Pi session totals): after E01 input 20,424 / output 15,239 (reasoning 8,5
 
 Implementation, tests and evidence: `7b31947`. All final suites above ran on that tree on the development box (the box checkout
 was synced from it before the last pass). The clean box ran the README install on the same work before the last small fixes
-(telemetry resource status, timer shutdown, test-only changes). This report was finalized in the next commit.
+(telemetry resource status, timer shutdown, test-only changes). This report was finalized in the next commit; the native rebuild and reruns above are on `c16ab21`.
