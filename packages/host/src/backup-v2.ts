@@ -15,6 +15,7 @@ import { createDriver, loadCatalog } from "./runtime-setup.js";
  * hashes. A set missing an image or artifact is refused, never marked complete.
  */
 import { brokerRestore, quiesceForBackup, type V03BackupFacts } from "./backup-v3.js";
+import { applyV04Restore, settleGcBeforeBackup, v04Facts, type V04BackupFacts } from "./backup-v4.js";
 
 export interface ManifestV2 {
   format: 2;
@@ -35,6 +36,8 @@ export interface ManifestV2 {
   images: { name: string; id: string; platform: string; recipeHash: string; file: string; sha256: string }[];
   /** v0.3 (spec §23.1): provider catalog/policy hash, resources, broker checkpoint, audit export, managed snapshot. */
   v03?: V03BackupFacts;
+  /** v0.4 (spec §23.3): bindings summary, scheduler/maintenance epochs, approved policy hashes, open jobs/intents/pins, unknown effects. */
+  v04?: V04BackupFacts;
 }
 
 const sha256File = (f: string) => createHash("sha256").update(fs.readFileSync(f)).digest("hex");
@@ -90,6 +93,8 @@ export async function backupFull(config: HostConfig, output: string, driverIn?: 
   const dataDir = config.dataDir;
   const osFile = path.join(dataDir, "os.sqlite");
   if (!fs.existsSync(osFile)) throw new Error(`os.sqlite is missing in ${dataDir}`);
+  // v0.4: delete intents are finished from their phases before the copy decides which artifacts it holds.
+  const gcResumed = await settleGcBeforeBackup(dataDir);
   const facts = dbFacts(osFile);
   const catalog = loadCatalog(config);
   const driver = driverIn === undefined ? createDriver(config, catalog) : driverIn;
@@ -112,6 +117,7 @@ export async function backupFull(config: HostConfig, output: string, driverIn?: 
   const staging = `${out}.v03-staging`;
   fs.rmSync(staging, { recursive: true, force: true });
   fs.mkdirSync(staging, { recursive: true, mode: 0o700 });
+  const v04 = v04Facts(osFile, gcResumed);
   const q = await quiesceForBackup(osFile, staging);
   let v03: V03BackupFacts | null = q.facts;
   try {
@@ -187,6 +193,7 @@ export async function backupFull(config: HostConfig, output: string, driverIn?: 
     artifacts,
     images,
     ...(v03 ? { v03 } : {}),
+    ...(v04 ? { v04 } : {}),
   };
   // The v1 manifest written by the database step is replaced by the complete v2 manifest, written last.
   fs.writeFileSync(path.join(out, "manifest.json"), JSON.stringify(manifest, null, 2), { mode: 0o600 });
@@ -280,6 +287,7 @@ export async function restoreFull(config: HostConfig, backupDir: string, opts: {
     failAfterFirstReplace: opts.failAfterFirstReplace,
     beforeMarkerRemoval: () => {
       br.beforeMarkerRemoval();
+      applyV04Restore(config.dataDir, `backup ${path.basename(src)}`);
       const db = new DatabaseSync(path.join(config.dataDir, "os.sqlite"));
       try {
         const hasV2 = !!db.prepare("SELECT 1 FROM sqlite_master WHERE name = 'runtime_instances'").get();

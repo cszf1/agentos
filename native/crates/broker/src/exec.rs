@@ -761,7 +761,7 @@ fn admission(b: &Broker, op: &OpRow) -> Admission {
     // Protocol-2 maintenance operation: the approved policy, pause state and target control epoch replace the grant.
     let maint = crate::maintenance::maintenance_of(&tx, &b.install_id, &op.store, op.inc, &op.op_id);
     if let Some(m) = &maint {
-        if let Err((code, msg)) = crate::maintenance::admission_check(&tx, &op.store, m, &env.resource_id, gen) {
+        if let Err((code, msg)) = crate::maintenance::admission_check(&tx, &op.store, op.inc, m, &env.resource_id, gen) {
             let _ = tx.commit();
             return Admission::Refused(no_effect("failed_no_effect", "admission_refused", json!({"maintenance": m}), &code, msg));
         }

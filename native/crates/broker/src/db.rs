@@ -23,16 +23,18 @@ CREATE TABLE maintenance_policies (
   request_hash TEXT NOT NULL,
   synced_seq INTEGER NOT NULL,
   revoked_seq INTEGER,
-  PRIMARY KEY (store_uuid, policy_id, policy_version)
+  PRIMARY KEY (store_uuid, incarnation, policy_id, policy_version)
 ) STRICT;
 CREATE TABLE workspace_maintenance_state (
   store_uuid TEXT PRIMARY KEY,
+  incarnation INTEGER NOT NULL,
   state TEXT NOT NULL CHECK (state IN ('running','paused')),
   maintenance_epoch INTEGER NOT NULL,
   updated_seq INTEGER NOT NULL
 ) STRICT;
 CREATE TABLE target_control_epochs (
   store_uuid TEXT NOT NULL,
+  incarnation INTEGER NOT NULL,
   resource_id TEXT NOT NULL,
   control_epoch INTEGER NOT NULL,
   updated_seq INTEGER NOT NULL,
