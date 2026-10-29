@@ -271,7 +271,9 @@ export class RunService {
 
   #queueCheck(background: boolean): void {
     if (background) return;
-    const n = this.store.get<{ n: number }>(`SELECT COUNT(*) AS n FROM runs WHERE background = 0 AND ${QUEUED_SQL}`)!.n;
+    // Cancelled tasks stay in waiting_* until the scheduler ends them. They are not waiting work and must not fill the
+    // 16-deep queue (a paused scheduler would otherwise refuse every new task).
+    const n = this.store.get<{ n: number }>(`SELECT COUNT(*) AS n FROM runs WHERE background = 0 AND status = 'queued' AND ${QUEUED_SQL}`)!.n;
     if (n >= V4_LIMITS.foregroundQueue) throw new AgentOsError("RUN_QUEUE_FULL", `the task queue is full (${V4_LIMITS.foregroundQueue}); wait for a task to finish`);
   }
 

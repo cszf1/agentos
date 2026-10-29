@@ -106,8 +106,12 @@ export interface TemplateHandler {
   admission?(ctx: JobContext): Admit;
   /** the fixed effect steps */
   act(ctx: JobContext): Promise<{ certainty: EffectCertainty; reason: string; completed: number }>;
-  /** real-state verification after the effect; `pending` keeps the job verifying (observation window) */
-  verify?(ctx: JobContext): Promise<{ healthy: boolean | null; reason: string; pending?: boolean }>;
+  /**
+   * Real-state verification after the effect. `pending` keeps the job verifying (observation window).
+   * `userStopped` means a newer user control (stop/start) superseded this recovery: end the job, do not treat it as
+   * an unknown effect or a failed recovery.
+   */
+  verify?(ctx: JobContext): Promise<{ healthy: boolean | null; reason: string; pending?: boolean; userStopped?: boolean }>;
   /** background model analysis (diagnose/optimize): returns the run id it started */
   analyze?(ctx: JobContext): Promise<{ runId: string } | null>;
 }
@@ -776,6 +780,10 @@ export class MaintenanceService {
         const ctx = this.#context(j);
         const v = await h.verify!(ctx);
         if (v.pending) return;
+        if (v.userStopped) {
+          this.finish(id, "cancelled", v.reason, "none");
+          return;
+        }
         if (v.healthy === true) {
           if (j.incident_id) this.incidents.resolve(j.incident_id, { jobId: id, reason: v.reason }, this.nowMs());
           this.finish(id, "succeeded", v.reason);

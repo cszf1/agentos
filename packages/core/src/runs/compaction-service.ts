@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { AgentOsError, V4_LIMITS, canonicalJson, sha256Hex, COMPACTION_BUDGET } from "@agentos/contracts";
 import { iso, type Store } from "../persistence/store.js";
+import { backgroundRunBusy, foregroundBusy } from "../model-budgets/budgets.js";
 import type { AgentEngine } from "./engine.js";
 import { fault } from "../faults.js";
 
@@ -114,6 +115,9 @@ export class CompactionService {
       const active = this.store.get<CompactionJobRow>("SELECT * FROM compaction_jobs WHERE state IN ('creating','running') ORDER BY created_at LIMIT 1");
       if (active) return await this.#advance(active);
       if (this.store.get<{ n: number }>("SELECT COUNT(*) AS n FROM compaction_jobs WHERE state IN ('creating','running')")!.n >= V4_LIMITS.compactionsWorkspace) return;
+      // Do not start a summary while foreground work is waiting to dispatch, or while a background model run holds the
+      // one shared slot (spec §7.2). An already-started job keeps advancing; its model request still yields in budgets.
+      if (foregroundBusy(this.store) || backgroundRunBusy(this.store)) return;
       const next = this.store.get<CompactionJobRow>("SELECT * FROM compaction_jobs WHERE state = 'queued' ORDER BY created_at LIMIT 1");
       if (next) await this.#advance(next);
     } catch (e) {
@@ -142,6 +146,10 @@ export class CompactionService {
       if (this.store.clock.now() - Date.parse(j.created_at) > 3_600_000) return this.#end(j, "failed", { error: "waited too long for the compaction slot" });
       // bind the conversation's route to this job (own budget route epoch); the run's write route never comes back
       const ok = this.store.tx(() => {
+        // Take the write lock, then re-read: the scheduler's admission transaction does the same for compaction rows,
+        // so the two cannot both win the single background slot.
+        if (this.store.run("UPDATE compaction_jobs SET updated_at = ? WHERE id = ? AND state = 'queued'", this.now(), j.id).changes !== 1) return null;
+        if (foregroundBusy(this.store) || backgroundRunBusy(this.store)) return null;
         const b = this.store.get<{ maintenance_lock: string | null; model_route_id: string; route_epoch: number }>("SELECT maintenance_lock, model_route_id, route_epoch FROM agent_conversations WHERE conversation_id = ?", j.conversation_id);
         if (!b || (b.maintenance_lock && b.maintenance_lock !== j.id)) return null;
         this.store.run("UPDATE agent_conversations SET maintenance_lock = ?, route_purpose = 'compaction', route_subject_id = ?, route_epoch = route_epoch + 1, updated_at = ? WHERE conversation_id = ?", j.id, j.id, this.now(), j.conversation_id);
