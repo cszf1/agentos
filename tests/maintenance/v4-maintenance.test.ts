@@ -357,6 +357,41 @@ describe("H: app recovery through the one runtime controller", () => {
     expect(core.maintenance.jobs.requireJob(t2.jobId).outcome_reason).toMatch(/handshaked, probed and stayed up/);
   });
 
+  it("V4-H08 gaps, an unavailable probe and an identity change are observed, never read as 'stopped'; quarantine is never cleared", async () => {
+    const { core, adv } = rig();
+    const svc = "res_service_h08";
+    core.store.tx(() => core.store.run("INSERT INTO system_resources (id, kind, display_name, execution_class, generation, catalog_key, status, created_at, updated_at) VALUES (?, 'service', 'h08', 'broker', 1, 'demo', 'quarantined', 'x', 'x')", svc));
+    core.maintenance.policies.installCaps = () => ({ allowed: true, max: { perHour: 2, per24h: 3 } });
+    enablePolicy(core, { templateId: "service-ensure-running", target: { kind: "service", id: svc }, mode: "automatic", trigger: { kind: "event" } });
+    const seq: { state: "running" | "stopped" | "unknown"; quality: "fresh" | "gap" | "unavailable"; identity: string; throws?: boolean }[] = [
+      { state: "stopped", quality: "fresh", identity: "A" },
+      { state: "unknown", quality: "gap", identity: "A" },
+      { state: "stopped", quality: "fresh", identity: "A" },
+      { state: "stopped", quality: "fresh", identity: "A", throws: true },
+      { state: "stopped", quality: "fresh", identity: "A" },
+      { state: "stopped", quality: "fresh", identity: "B" }, // the unit identity changed between samples
+      { state: "stopped", quality: "fresh", identity: "B" },
+    ];
+    let i = 0;
+    core.maintenance.health.serviceProbe = async () => {
+      const s = seq[Math.min(i++, seq.length - 1)]!;
+      if (s.throws) throw new Error("broker unreachable");
+      return { state: s.state, quality: s.quality, generation: 1, identity: s.identity };
+    };
+    for (let k = 0; k < seq.length; k++) {
+      await core.maintenance.health.tick();
+      adv(16_000);
+    }
+    // no incident and no job: never three consistent fresh "stopped" samples of one identity
+    expect(core.store.get<{ n: number }>("SELECT COUNT(*) AS n FROM health_incidents WHERE target_id = ?", svc)!.n).toBe(0);
+    expect(core.store.get<{ n: number }>("SELECT COUNT(*) AS n FROM maintenance_jobs WHERE target_id = ?", svc)!.n).toBe(0);
+    // a third consistent sample of identity B opens exactly one incident
+    await core.maintenance.health.tick();
+    expect(core.store.get<{ n: number }>("SELECT COUNT(*) AS n FROM health_incidents WHERE target_id = ?", svc)!.n).toBe(1);
+    // nothing in maintenance cleared the quarantine
+    expect(core.store.get<{ status: string }>("SELECT status FROM system_resources WHERE id = ?", svc)!.status).toBe("quarantined");
+  });
+
   it("V4-H02/H03 a user stop wins: the epoch moved, so a queued recovery never restarts it", async () => {
     const { core } = rig();
     const kicks = { n: 0 };

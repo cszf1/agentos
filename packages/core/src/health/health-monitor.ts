@@ -121,7 +121,13 @@ export class HealthMonitor {
       this.incidents.sample({ targetKind: "service", targetId: t.target_id, condition: "service.down", value, quality: r.quality, detail: { ...r.detail, generation: r.generation, identity: r.identity } });
       const need = bounds.samples ?? V4_LIMITS.serviceFreshSamples;
       const recent = this.incidents.recent("service", t.target_id, "service.down", need);
-      const allBad = recent.length >= need && recent.every((s) => s.value === "bad" && s.quality === "fresh");
+      // V4-H08: only fresh samples of ONE unit identity/generation count; a gap, an unavailable probe or an identity
+      // change in between starts the observation over instead of being read as "stopped".
+      const ident = (x: { detail_json: string | null }) => {
+        const d = x.detail_json ? (JSON.parse(x.detail_json) as { identity?: unknown; generation?: unknown }) : {};
+        return `${String(d.identity ?? "")}/${String(d.generation ?? "")}`;
+      };
+      const allBad = recent.length >= need && recent.every((s) => s.value === "bad" && s.quality === "fresh") && new Set(recent.map(ident)).size === 1;
       if (allBad) {
         const { incident } = this.incidents.raise({ targetKind: "service", targetId: t.target_id, condition: "service.down", value: "bad", quality: "fresh", generation: r.generation, severity: "warning", evidence: { samples: recent.length, identity: r.identity, generation: r.generation } });
         this.#trigger("service-ensure-running", incident.id);
