@@ -253,6 +253,13 @@ export class ModelBudgets {
     if (!b) return { ok: false, reason: "no trusted binding for this model route", code: "RUN_IDENTITY_MISMATCH" };
     if (b.route_purpose === "closed") return { ok: false, reason: "this model route is closed", code: "EXECUTION_EPOCH_STALE" };
     const nowMs = s.clock.now();
+    if (background) {
+      // Final background admission (spec §8.1, §13.1, §13.2, §14.3): re-checked here, at the permit, not only when the
+      // job or run was scheduled. A global pause, the background-model switch, an observe-only job, a cancelled job
+      // or a policy with no live version stops a background model request before it reaches the provider.
+      const deny = this.#backgroundAuthorityInTx(b);
+      if (deny) return { ok: false, reason: deny, code: "FORBIDDEN" };
+    }
     const lim = this.limits();
     const since = iso(nowMs - 86_400_000);
     const total = s.get<{ n: number }>("SELECT COUNT(*) AS n FROM model_attempts WHERE started_at > ? AND state <> 'denied'", since)!.n;
@@ -303,6 +310,22 @@ export class ModelBudgets {
       background ? 1 : 0, configHash, maxTokens, iso(nowMs), this.bootId,
     );
     return { ok: true, attemptId, maxTokens, background, subject: runId ?? `compaction:${compactionJobId}` };
+  }
+
+  #backgroundAuthorityInTx(b: { route_purpose: string; run_id?: string | null }): string | null {
+    const s = this.store;
+    const m = s.get<{ ms: string; bm: number }>("SELECT maintenance_state AS ms, background_model_enabled AS bm FROM meta WHERE id = 1");
+    if (m?.ms === "paused") return "maintenance is paused: no new background model request";
+    if (b.route_purpose === "compaction" || !b.run_id) return null; // a user-requested summary: its own job checks
+    const run = s.get<{ job_id: string | null }>("SELECT job_id FROM runs WHERE id = ?", b.run_id);
+    if (!run?.job_id) return null;
+    if (m && m.bm !== 1) return "background model analysis is switched off";
+    const j = s.get<{ mode: string; state: string; cancel_requested: number; policy_id: string | null }>("SELECT mode, state, cancel_requested, policy_id FROM maintenance_jobs WHERE id = ?", run.job_id);
+    if (!j) return "the maintenance job of this run is gone";
+    if (j.mode === "observe") return "an observe-only job never calls the model";
+    if (j.cancel_requested === 1 || j.state !== "diagnosing") return `the maintenance job is ${j.cancel_requested === 1 ? "cancelled" : j.state}`;
+    if (j.policy_id && !s.get("SELECT 1 FROM maintenance_policies WHERE id = ? AND state = 'enabled'", j.policy_id)) return "the job's policy is no longer enabled";
+    return null;
   }
 
   /** A background denial inside the reservation tx: the run counter must not move (the tx would otherwise commit it). */

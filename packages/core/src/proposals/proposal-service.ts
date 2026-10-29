@@ -196,6 +196,11 @@ export class ProposalService {
     if (app.epoch !== run.expected_app_epoch || app.active_revision_id !== frozen.activeRevisionAtAccept) {
       throw new AgentOsError("PROPOSAL_STALE", "the app changed since this optimisation started; the candidate would be stale", { appEpoch: app.epoch });
     }
+    // the candidate write is the only moment the optimisation touches the app's revisions: a user task on the app
+    // (running or waiting) has priority and closes this write (spec §8.2, §8.3)
+    if (this.store.get("SELECT 1 FROM runs WHERE background = 0 AND target_app_id = ? AND status IN ('queued','running','blocked')", app.id)) {
+      throw new AgentOsError("PROPOSAL_STALE", "a user task on this app has priority; this optimisation's candidate is not written");
+    }
     const base = app.active_revision_id ? this.apps.revisionBundle(app.id, app.active_revision_id) : null;
     if (!base) throw new AgentOsError("FORBIDDEN", "the app has no active version to optimise");
     if (bundle && typeof bundle === "object") {

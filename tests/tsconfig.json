@@ -6,13 +6,18 @@
     "declarationMap": false,
     "noEmit": true,
     "rootDir": "..",
+    "jsx": "react-jsx",
+    "lib": ["ES2024", "DOM"],
     "paths": {
       "@agentos/contracts": ["../packages/contracts/src/index.ts"],
       "@agentos/core": ["../packages/core/src/index.ts"],
       "@agentos/agent-pi": ["../packages/agent-pi/src/index.ts"],
       "@agentos/host": ["../packages/host/src/index.ts"],
       "@agentos/runtime-podman": ["../packages/runtime-podman/src/index.ts"],
-      "@agentos/broker-client": ["../packages/broker-client/src/index.ts"]
+      "@agentos/broker-client": ["../packages/broker-client/src/index.ts"],
+      "react": ["../packages/web/node_modules/@types/react/index.d.ts"],
+      "react/jsx-runtime": ["../packages/web/node_modules/@types/react/jsx-runtime.d.ts"],
+      "react-dom/server": ["../packages/web/node_modules/@types/react-dom/server.d.ts"]
     }
   },
   "include": ["**/*.ts", "../vitest.config.ts"]

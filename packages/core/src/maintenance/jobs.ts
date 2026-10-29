@@ -134,6 +134,8 @@ export class MaintenanceService {
   #inflight = new Set<Promise<unknown>>();
   /** root-side control sync hook (protocol 2): pause/resume of the whole workspace */
   onControl: ((state: "running" | "paused", epoch: number) => void) | null = null;
+  /** Wired by core: close a background analysis run's execution and model route (inside the caller's tx). */
+  onCancelAnalysisInTx: ((runId: string) => void) | null = null;
   log: (lvl: "info" | "warn" | "error", msg: string, f?: Record<string, unknown>) => void = () => {};
   /** host quiescing (shutdown / backup): no new trigger, no new step */
   quiescing = false;
@@ -386,6 +388,9 @@ export class MaintenanceService {
         this.#finish(j, "cancelled", "cancelled before any effect", "none");
       } else {
         this.store.run("UPDATE maintenance_jobs SET cancel_requested = 1, stop_reason = 'user', updated_at = ? WHERE id = ?", this.now(), id);
+        // spec §10.1, §14.3: cancelling an analysing job first closes its run's new execution (queued or running):
+        // the run's write fence and model route close in this same transaction, so no model task starts afterwards
+        if (j.state === "diagnosing" && j.run_id) this.onCancelAnalysisInTx?.(j.run_id);
       }
       this.store.event("maintenance.job_cancel", { jobId: id }, {});
     });
@@ -659,6 +664,12 @@ export class MaintenanceService {
           return;
         }
         const tpl = MAINTENANCE_TEMPLATES[j.template_id];
+        // observe = no model and no maintenance write (spec §13.1): it ends here, before any model analysis branch
+        if (j.mode === "observe") {
+          if (obs.incidentId) this.incidents.setState(obs.incidentId, "open");
+          this.finish(id, "succeeded", `observed: ${obs.reason} (observe only, no action)`, "none");
+          return;
+        }
         if (tpl.usesModel && h.analyze) {
           if (!st.backgroundModel) {
             this.finish(id, "no_change", "background model analysis is switched off (enable it in maintenance settings)", "none");
@@ -672,7 +683,7 @@ export class MaintenanceService {
           this.#setState(id, "diagnosing", { run_id: r.runId, wait_reason: "background analysis running" });
           return;
         }
-        if (j.mode === "observe" || (j.mode === "manual_check" && tpl.automaticActions.length === 0)) {
+        if (j.mode === "manual_check" && tpl.automaticActions.length === 0) {
           if (obs.incidentId) this.incidents.setState(obs.incidentId, "open");
           this.finish(id, "succeeded", `observed: ${obs.reason} (observe only, no action)`, "none");
           return;
@@ -803,6 +814,12 @@ export class MaintenanceService {
   finishAnalysis(runId: string, outcome: { reportId: string | null; proposalId: string | null; status: string }): void {
     const j = this.store.get<JobRow>("SELECT * FROM maintenance_jobs WHERE run_id = ? AND state = 'diagnosing'", runId);
     if (!j) return;
+    if (j.cancel_requested === 1) {
+      // what already happened stays recorded (a saved report or registered proposal); the job itself ends cancelled
+      const kept = outcome.proposalId ? `; proposal ${outcome.proposalId} was already registered` : outcome.reportId ? `; report ${outcome.reportId} was already saved` : "";
+      this.finish(j.id, "cancelled", `cancelled by the user during analysis${kept}`, "none");
+      return;
+    }
     if (outcome.proposalId) {
       this.#setState(j.id, "awaiting_approval", { wait_reason: "a validated candidate waits for your decision", outcome_reason: JSON.stringify({ proposalId: outcome.proposalId }) });
     } else if (outcome.reportId) {

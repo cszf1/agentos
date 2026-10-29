@@ -775,3 +775,158 @@ describe("review: queue, shared background slot, recovery stop, candidate rechec
     expect(core.store.get<{ n: number }>("SELECT COUNT(*) AS n FROM candidate_checks WHERE run_id = ?", runId)!.n).toBe(2);
   });
 });
+
+describe("review d41d3b0 F1–F6: authority, cancel, priority and pause boundaries", () => {
+  const meta = () => ({ operationKey: randomUUID(), requestHash: requestHash({ n: randomUUID() }) });
+  const bgRuns = (core: Core) => core.store.all<{ id: string; status: string; mode: string }>("SELECT id, status, mode FROM runs WHERE background = 1");
+
+  it("F1 pausing a policy that has an enabled version and a newer draft stops the enabled version too", () => {
+    const { core } = rig();
+    const P = core.maintenance.policies;
+    const v1 = enablePolicy(core, { templateId: "log-cleanup", target: { kind: "workspace", id: "workspace" }, mode: "automatic", trigger: { kind: "interval", intervalSeconds: 3600 } });
+    const v2 = P.create({ policyId: v1.id, templateId: "log-cleanup", target: { kind: "workspace", id: "workspace" }, mode: "automatic", trigger: { kind: "interval", intervalSeconds: 7200 } } as never);
+    expect(v2.version).toBe(2);
+    expect(P.live(v1.id)!.version).toBe(1); // the draft does not replace the live approval
+    P.pause(v1.id, "user");
+    expect(P.live(v1.id)).toBeUndefined();
+    expect(core.store.all<{ version: number; state: string }>("SELECT version, state FROM maintenance_policies WHERE id = ? ORDER BY version", v1.id)).toEqual([
+      { version: 1, state: "paused" },
+      { version: 2, state: "paused" },
+    ]);
+    expect(P.enabled().some((p) => p.id === v1.id)).toBe(false);
+    // a target stop goes through the same path
+    const appId = seedApp(core);
+    const a1 = enablePolicy(core, { templateId: "app-recovery", target: { kind: "app", id: appId }, mode: "automatic", trigger: { kind: "event" } });
+    P.create({ policyId: a1.id, templateId: "app-recovery", target: { kind: "app", id: appId }, mode: "suggest", trigger: { kind: "event" } } as never);
+    core.store.tx(() => P.pauseTargetInTx("app", appId, "user stopped the app"));
+    expect(P.live(a1.id)).toBeUndefined();
+  });
+
+  it("F2 an observe-only policy never starts a model analysis, even with the background model switched on", async () => {
+    const { core } = rig();
+    core.maintenance.jobs.setBackgroundModel(true);
+    const appId = seedApp(core);
+    for (const templateId of ["app-diagnose"] as const) {
+      enablePolicy(core, { templateId, target: { kind: "app", id: appId }, mode: "observe", trigger: { kind: "event" } });
+      const { incident } = core.maintenance.incidents.raise({ targetKind: "app", targetId: appId, condition: "app.crash_loop", value: "bad", quality: "fresh", evidence: {} });
+      const t = core.maintenance.jobs.eventTrigger(incident, templateId)!;
+      for (let i = 0; i < 4; i++) await core.maintenance.jobs.pass(true);
+      const j = core.maintenance.jobs.requireJob(t.jobId);
+      expect(j.mode).toBe("observe");
+      expect(j.state).toBe("succeeded");
+      expect(j.run_id).toBeNull();
+    }
+    expect(bgRuns(core)).toHaveLength(0);
+    expect(core.store.all("SELECT 1 FROM model_attempts")).toHaveLength(0);
+  });
+
+  it("F3 background analysis holds no app lease; a user change to the app is admitted and closes a background optimisation", () => {
+    const { core } = rig();
+    const appId = seedApp(core);
+    const refactor = core.runs.acceptBackground({ mode: "maintenance_refactor", jobId: "job-f3", incidentId: null, appId, intent: "optimise", scope: {} } as never);
+    expect(core.scheduler.admit().started).toContain(refactor);
+    expect(core.store.all("SELECT 1 FROM target_leases WHERE target_kind = 'app' AND target_id = ? AND state IN ('held','reclaiming','unknown')", appId)).toHaveLength(0);
+    // the user modifies the same app: it is not left waiting for the background task's lease
+    const fg = core.user.submitRun(meta(), { intent: "改一下标题", targetAppId: appId, expectedAppEpoch: core.apps.requireApp(appId).epoch } as never).body.runId;
+    const second = core.scheduler.admit();
+    expect(second.started).toContain(fg);
+    expect(core.runs.getRow(fg)!.scheduling_state).not.toBe("waiting_target");
+    // the background optimisation of that app lost its write qualification (fence closed, route closed)
+    expect(core.runs.getRow(refactor)!.status).toBe("cancel_requested");
+    expect(core.runs.getRow(refactor)!.stop_reason).toBe("target_changed");
+    // once the stopped optimisation has drained, a new background analysis of that app waits while the user task runs
+    core.store.tx(() => {
+      core.store.run("UPDATE runs SET status = 'cancelled', scheduling_state = 'done' WHERE id = ?", refactor);
+      core.store.run("UPDATE runs SET status = 'running', scheduling_state = 'active' WHERE id = ?", fg);
+    });
+    const diag = core.runs.acceptBackground({ mode: "maintenance_diagnose", jobId: "job-f3b", incidentId: null, appId, intent: "diagnose", scope: {} } as never);
+    expect(core.scheduler.admit().started).not.toContain(diag);
+    expect(core.runs.getRow(diag)!.wait_reason).toMatch(/user task on this app has priority/);
+  });
+
+  it("F6 cancelling an analysing job closes its queued run: it is never dispatched, and the job ends cancelled", async () => {
+    const { core } = rig();
+    core.maintenance.jobs.setBackgroundModel(true);
+    const appId = seedApp(core);
+    enablePolicy(core, { templateId: "app-diagnose", target: { kind: "app", id: appId }, mode: "suggest", trigger: { kind: "event" } });
+    const { incident } = core.maintenance.incidents.raise({ targetKind: "app", targetId: appId, condition: "app.crash_loop", value: "bad", quality: "fresh", evidence: {} });
+    const t = core.maintenance.jobs.eventTrigger(incident, "app-diagnose")!;
+    for (let i = 0; i < 3 && core.maintenance.jobs.requireJob(t.jobId).state !== "diagnosing"; i++) await core.maintenance.jobs.pass(true);
+    const j = core.maintenance.jobs.requireJob(t.jobId);
+    expect(j.state).toBe("diagnosing");
+    const runId = j.run_id!;
+    expect(core.runs.getRow(runId)!.status).toBe("queued");
+    core.maintenance.jobs.cancel(t.jobId);
+    expect(core.runs.getRow(runId)!.status).toBe("cancel_requested");
+    const adm = core.scheduler.admit();
+    expect(adm.started).not.toContain(runId);
+    expect(adm.ended.map((e) => e.runId)).toContain(runId);
+    core.maintenance.jobs.finishAnalysis(runId, { reportId: null, proposalId: null, status: "cancelled" });
+    expect(core.maintenance.jobs.requireJob(t.jobId).state).toBe("cancelled");
+  });
+
+  it("F5/F6 the model permit itself re-checks pause, cancel and observe for background requests", async () => {
+    const { core } = rig();
+    core.maintenance.jobs.setBackgroundModel(true);
+    const appId = seedApp(core);
+    enablePolicy(core, { templateId: "app-diagnose", target: { kind: "app", id: appId }, mode: "suggest", trigger: { kind: "event" } });
+    const { incident } = core.maintenance.incidents.raise({ targetKind: "app", targetId: appId, condition: "app.crash_loop", value: "bad", quality: "fresh", evidence: {} });
+    const t = core.maintenance.jobs.eventTrigger(incident, "app-diagnose")!;
+    for (let i = 0; i < 3 && core.maintenance.jobs.requireJob(t.jobId).state !== "diagnosing"; i++) await core.maintenance.jobs.pass(true);
+    const runId = core.maintenance.jobs.requireJob(t.jobId).run_id!;
+    expect(core.scheduler.admit().started).toContain(runId);
+    const now = new Date(core.store.clock.now()).toISOString();
+    const routeId = `route-${runId}`;
+    const epoch = core.runs.getRow(runId)!.execution_epoch;
+    core.store.tx(() => {
+      core.store.run("UPDATE runs SET status = 'running', scheduling_state = 'active', updated_at = ? WHERE id = ?", now, runId);
+      core.store.run(
+        "INSERT INTO agent_conversations (create_key, conversation_id, purpose, profile_id, binding_hash, toolset_version, model_route_id, route_epoch, route_purpose, run_id, binding_state, created_at, updated_at) VALUES (?, 'conv-f', 'run', 'maintenance-analyst', 'h', 4, ?, ?, 'run', ?, 'bound', ?, ?)",
+        `ck-${runId}`, routeId, epoch, runId, now, now,
+      );
+    });
+    // a global pause: the next background request is refused at the permit
+    core.maintenance.jobs.pause();
+    const paused = await core.budgets.admit(routeId, "cfg");
+    expect(paused.ok).toBe(false);
+    if (!paused.ok) expect(paused.reason).toMatch(/paused/);
+    core.maintenance.jobs.resume();
+    // the switch turned off after the run started
+    core.maintenance.jobs.setBackgroundModel(false);
+    const off = await core.budgets.admit(routeId, "cfg");
+    expect(off.ok).toBe(false);
+    core.maintenance.jobs.setBackgroundModel(true);
+    const ok = await core.budgets.admit(routeId, "cfg");
+    expect(ok.ok).toBe(true);
+    if (ok.ok) core.budgets.settle(ok.attemptId, true, { usage: { output: 1 } });
+    expect(core.store.all("SELECT 1 FROM model_attempts WHERE run_id = ? AND state <> 'denied'", runId)).toHaveLength(1);
+  });
+
+  it("F5 a global pause keeps queued conversation summaries from starting and stops an open one before its request", async () => {
+    const { core } = rig();
+    const now = new Date(core.store.clock.now()).toISOString();
+    core.store.tx(() => {
+      core.store.run("INSERT INTO compaction_jobs (id, conversation_id, cutoff_entry_id, input_scope, compaction_key, state, requested_by, created_at, updated_at) VALUES ('cmp-q', 'conv-q', 'e1', '{}', 'k-q', 'queued', 'user', ?, ?)", now, now);
+      core.store.run("INSERT INTO compaction_jobs (id, conversation_id, cutoff_entry_id, input_scope, compaction_key, budget_route_epoch, state, requested_by, created_at, updated_at) VALUES ('cmp-r', 'conv-r', 'e1', '{}', 'k-r', 2, 'running', 'user', ?, ?)", now, now);
+      core.store.run(
+        "INSERT INTO agent_conversations (create_key, conversation_id, purpose, profile_id, binding_hash, toolset_version, model_route_id, route_epoch, route_purpose, route_subject_id, binding_state, maintenance_lock, created_at, updated_at) VALUES ('ck-r', 'conv-r', 'run', 'builder', 'h', 4, 'route-r', 2, 'compaction', 'cmp-r', 'closed', 'cmp-r', ?, ?)",
+        now, now,
+      );
+    });
+    let started = 0;
+    let aborted = 0;
+    core.compactions.engine = { startCompaction: async () => { started++; return "task"; }, abortCompaction: async () => { aborted++; }, compactionState: async () => ({ state: "running" }) } as never;
+    core.maintenance.jobs.pause();
+    // the permit refuses a summary request while paused
+    const denied = await core.budgets.admit("route-r", "cfg");
+    expect(denied.ok).toBe(false);
+    expect(await core.compactions.pauseOpen()).toBe(1);
+    expect(core.compactions.get("cmp-r")!.state).toBe("cancelled");
+    expect(aborted).toBe(1);
+    core.store.tx(() => core.store.run("DELETE FROM compaction_jobs WHERE id = 'cmp-r'"));
+    await core.compactions.tick();
+    expect(started).toBe(0);
+    expect(core.compactions.get("cmp-q")!.state).toBe("queued");
+    expect(core.store.all("SELECT 1 FROM model_attempts")).toHaveLength(0);
+  });
+});

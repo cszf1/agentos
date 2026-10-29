@@ -111,6 +111,7 @@ export function openCore(file: string, opts: { clock?: Clock; runSettings?: Part
   jobs.register("app-diagnose", diagnoseHandler(store, runs, incidents));
   jobs.register("app-optimize", optimizeHandler(store, runs, incidents));
   jobs.register("app-archive", lifecycle.handler(incidents));
+  jobs.onCancelAnalysisInTx = (runId) => runs.requestStop(runId, "user");
   // background runs report back to their job from their completion facts only (spec §10.2)
   const prevFinal = runs.onFinalizedInTx;
   runs.onFinalizedInTx = (row) => {

@@ -6,7 +6,9 @@ import path from "node:path";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { checkSlotTree, slotTreeSchemaDocument } from "@agentos/contracts";
-import { SlotPreview } from "../../packages/web/src/SlotRenderer.js";
+// The web source is type-checked by its own project (DOM lib, bundler resolution); here it is only loaded.
+const SLOT_RENDERER = "../../packages/web/src/SlotRenderer.js";
+const { SlotPreview } = (await import(/* @vite-ignore */ SLOT_RENDERER)) as { SlotPreview: (props: Record<string, unknown>) => ReturnType<typeof createElement> };
 import { codeFixture } from "../fixtures-v02.js";
 
 /**
@@ -98,7 +100,7 @@ describe("review #5: item bindings (implemented in v0.4 as the slot-tree-v2 List
   it("the real renderer draws one template per item, resolves item bindings and passes input.item", () => {
     const calls: unknown[] = [];
     const html = renderToStaticMarkup(
-      createElement(SlotPreview, { node: good as never, sources: { todos: { items: [{ id: "a1", title: "买牛奶", done: true }, { id: "b2", title: "<写周报>", done: false }] } }, onCommand: (p, it) => calls.push([p.command, it]) }),
+      createElement(SlotPreview, { node: good as never, sources: { todos: { items: [{ id: "a1", title: "买牛奶", done: true }, { id: "b2", title: "<写周报>", done: false }] } }, onCommand: (p: { command: string }, it: unknown) => calls.push([p.command, it]) }),
     );
     expect(html.match(/role="listitem"/g)?.length).toBe(2);
     expect(html).toContain('data-row-id="a1"');

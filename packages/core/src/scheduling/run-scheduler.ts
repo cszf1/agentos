@@ -89,6 +89,19 @@ export class RunScheduler {
           continue;
         }
         const target = r.target_app_id;
+        if (bg && target !== null) {
+          // Spec §8.2/§8.3/§9.4: background analysis never holds the app's change lease (it reads a frozen snapshot;
+          // a candidate is a new revision that a later, user-approved publication re-checks against the app epoch).
+          // It does not start while a user task on the same app runs or waits: the user's change has priority.
+          if (this.store.get("SELECT 1 FROM runs WHERE background = 0 AND target_app_id = ? AND status IN ('queued','running','blocked')", target)) {
+            this.runs.setWaiting(r.id, "waiting_slot", "deferred: a user task on this app has priority");
+            continue;
+          }
+          this.runs.startInTx(r.id);
+          started.push(r.id);
+          bgBusy++;
+          continue;
+        }
         if (target !== null) {
           if (blockedTargets.has(target)) {
             this.runs.setWaiting(r.id, "waiting_target", "waiting for an earlier task on the same app");
@@ -123,6 +136,12 @@ export class RunScheduler {
         started.push(r.id);
         if (bg) bgBusy++;
         else fgBusy++;
+        if (!bg && target !== null) {
+          // a user change to this app closes any background optimisation of it (its candidate would be stale anyway)
+          for (const o of this.store.all<{ id: string }>("SELECT id FROM runs WHERE background = 1 AND mode = 'maintenance_refactor' AND target_app_id = ? AND status IN ('queued','running')", target)) {
+            this.runs.requestStop(o.id, "target_changed");
+          }
+        }
       }
       for (const e of ended) {
         if (e.code !== "CANCELLED") {

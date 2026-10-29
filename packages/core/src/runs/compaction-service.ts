@@ -31,6 +31,8 @@ const OPEN = ["queued", "creating", "running"];
  * route is closed again afterwards. Summaries never replace the original entries and are never a source of authority;
  * other conversations keep running. Conversations of system_plan runs (real provider content) need explicit consent.
  */
+export type CompactionPlan = { conversationId: string; runId: string; cutoff: string; mode: string; allowProviderContent: boolean; instructions?: string };
+
 export class CompactionService {
   engine: AgentEngine | null = null;
   #busy = false;
@@ -64,6 +66,17 @@ export class CompactionService {
 
   /** User request: scope check, idempotent per conversation + cutoff, bounded queue. */
   async request(conversationId: string, opts: { allowProviderContent?: boolean; instructions?: string }, requestedBy = "user"): Promise<CompactionJobRow> {
+    const plan = await this.prepare(conversationId, opts);
+    const row = this.store.tx(() => this.createInTx(plan, requestedBy));
+    this.kick();
+    return row;
+  }
+
+  /**
+   * Read-only part of a request (the Pi conversation state is read asynchronously). Nothing is written here, so a
+   * request the gateway later refuses (stale client epoch, receipt conflict) leaves no job behind (spec §22.1).
+   */
+  async prepare(conversationId: string, opts: { allowProviderContent?: boolean; instructions?: string }): Promise<CompactionPlan> {
     if (!this.engine) throw new AgentOsError("MODEL_UNAVAILABLE", "the agent subsystem is not available");
     const b = this.store.get<{ run_id: string | null; purpose: string; binding_state: string; maintenance_lock: string | null }>("SELECT run_id, purpose, binding_state, maintenance_lock FROM agent_conversations WHERE conversation_id = ?", conversationId);
     if (!b || b.purpose !== "run" || !b.run_id) throw new AgentOsError("COMPACTION_SCOPE_DENIED", "only a task conversation can be compacted (never the legacy root or another job)");
@@ -74,24 +87,30 @@ export class CompactionService {
     if (insp.tasks > 0 || insp.submissions > 0) throw new AgentOsError("TARGET_BUSY", "the conversation still has unfinished work");
     const cutoff = await this.engine.headEntry(conversationId);
     if (!cutoff) throw new AgentOsError("COMPACTION_SCOPE_DENIED", "the conversation has no entries");
+    return { conversationId, runId: b.run_id, cutoff, mode: run.mode, allowProviderContent: !!opts.allowProviderContent, instructions: opts.instructions };
+  }
+
+  /** The durable intent, inside the caller's (gateway) transaction; facts read asynchronously are re-checked here. */
+  createInTx(plan: CompactionPlan, requestedBy = "user"): CompactionJobRow {
+    const { conversationId, cutoff } = plan;
+    const b = this.store.get<{ run_id: string | null; purpose: string }>("SELECT run_id, purpose FROM agent_conversations WHERE conversation_id = ?", conversationId);
+    if (!b || b.purpose !== "run" || b.run_id !== plan.runId) throw new AgentOsError("COMPACTION_SCOPE_DENIED", "the conversation changed while the request was checked");
+    const run = this.store.get<{ status: string }>("SELECT status FROM runs WHERE id = ?", plan.runId);
+    if (!run || !["succeeded", "failed", "cancelled"].includes(run.status)) throw new AgentOsError("COMPACTION_SCOPE_DENIED", "the task of this conversation has not ended");
     const key = `cmp:${sha256Hex(canonicalJson({ conversationId, cutoff })).slice(0, 40)}`;
-    const scope = { conversationId, runId: b.run_id, cutoffEntryId: cutoff, mode: run.mode, providerContentConsent: !!opts.allowProviderContent, crossConversation: false };
-    const row = this.store.tx(() => {
-      const prior = this.store.get<CompactionJobRow>("SELECT * FROM compaction_jobs WHERE compaction_key = ?", key);
-      if (prior) return prior;
-      const open = this.store.get<{ n: number }>(`SELECT COUNT(*) AS n FROM compaction_jobs WHERE state IN (${OPEN.map(() => "?").join(",")})`, ...OPEN)!.n;
-      if (open >= 4) throw new AgentOsError("RESOURCE_BUSY", "compaction queue is full");
-      const id = randomUUID();
-      this.store.run(
-        `INSERT INTO compaction_jobs (id, conversation_id, run_id, cutoff_entry_id, context_version, input_scope, compaction_key, state, result_json, requested_by, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)`,
-        id, conversationId, b.run_id, cutoff, null, JSON.stringify(scope), key, JSON.stringify({ instructions: opts.instructions?.slice(0, 500) ?? null }), requestedBy, this.now(), this.now(),
-      );
-      this.store.event("compaction.queued", { compactionId: id, conversationId }, { runId: b.run_id });
-      return this.get(id)!;
-    });
-    this.kick();
-    return row;
+    const scope = { conversationId, runId: plan.runId, cutoffEntryId: cutoff, mode: plan.mode, providerContentConsent: plan.allowProviderContent, crossConversation: false };
+    const prior = this.store.get<CompactionJobRow>("SELECT * FROM compaction_jobs WHERE compaction_key = ?", key);
+    if (prior) return prior;
+    const open = this.store.get<{ n: number }>(`SELECT COUNT(*) AS n FROM compaction_jobs WHERE state IN (${OPEN.map(() => "?").join(",")})`, ...OPEN)!.n;
+    if (open >= 4) throw new AgentOsError("RESOURCE_BUSY", "compaction queue is full");
+    const id = randomUUID();
+    this.store.run(
+      `INSERT INTO compaction_jobs (id, conversation_id, run_id, cutoff_entry_id, context_version, input_scope, compaction_key, state, result_json, requested_by, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)`,
+      id, conversationId, plan.runId, cutoff, null, JSON.stringify(scope), key, JSON.stringify({ instructions: plan.instructions?.slice(0, 500) ?? null }), requestedBy, this.now(), this.now(),
+    );
+    this.store.event("compaction.queued", { compactionId: id, conversationId }, { runId: plan.runId });
+    return this.get(id)!;
   }
 
   start(pollMs = 1000): void {
@@ -118,6 +137,8 @@ export class CompactionService {
       // Do not start a summary while foreground work is waiting to dispatch, or while a background model run holds the
       // one shared slot (spec §7.2). An already-started job keeps advancing; its model request still yields in budgets.
       if (foregroundBusy(this.store) || backgroundRunBusy(this.store)) return;
+      // a global maintenance pause stops new background model work, compaction included (spec §13.2, §9.3)
+      if (this.#paused()) return;
       const next = this.store.get<CompactionJobRow>("SELECT * FROM compaction_jobs WHERE state = 'queued' ORDER BY created_at LIMIT 1");
       if (next) await this.#advance(next);
     } catch (e) {
@@ -125,6 +146,26 @@ export class CompactionService {
     } finally {
       this.#busy = false;
     }
+  }
+
+  #paused(): boolean {
+    return this.store.get<{ s: string }>("SELECT maintenance_state AS s FROM meta WHERE id = 1")?.s === "paused";
+  }
+
+  /**
+   * Global pause (spec §13.2): open compaction jobs that have not yet had their one model request admitted are
+   * stopped now (their route closes); queued ones stay queued and start only after resume. A request already admitted
+   * before the pause may still finish.
+   */
+  async pauseOpen(): Promise<number> {
+    let n = 0;
+    for (const j of this.store.all<CompactionJobRow>("SELECT * FROM compaction_jobs WHERE state IN ('creating','running')")) {
+      if (this.store.get("SELECT 1 FROM model_attempts WHERE compaction_job_id = ? AND state <> 'denied'", j.id)) continue;
+      if (j.state === "running") await this.engine?.abortCompaction(j.compaction_key).catch(() => undefined);
+      this.#end(j, "cancelled", { cancelledBy: "maintenance_paused" });
+      n++;
+    }
+    return n;
   }
 
   #closeRoute(j: CompactionJobRow): void {
@@ -149,7 +190,7 @@ export class CompactionService {
         // Take the write lock, then re-read: the scheduler's admission transaction does the same for compaction rows,
         // so the two cannot both win the single background slot.
         if (this.store.run("UPDATE compaction_jobs SET updated_at = ? WHERE id = ? AND state = 'queued'", this.now(), j.id).changes !== 1) return null;
-        if (foregroundBusy(this.store) || backgroundRunBusy(this.store)) return null;
+        if (foregroundBusy(this.store) || backgroundRunBusy(this.store) || this.#paused()) return null;
         const b = this.store.get<{ maintenance_lock: string | null; model_route_id: string; route_epoch: number }>("SELECT maintenance_lock, model_route_id, route_epoch FROM agent_conversations WHERE conversation_id = ?", j.conversation_id);
         if (!b || (b.maintenance_lock && b.maintenance_lock !== j.id)) return null;
         this.store.run("UPDATE agent_conversations SET maintenance_lock = ?, route_purpose = 'compaction', route_subject_id = ?, route_epoch = route_epoch + 1, updated_at = ? WHERE conversation_id = ?", j.id, j.id, this.now(), j.conversation_id);
@@ -165,7 +206,12 @@ export class CompactionService {
       const instructions = j.result_json ? ((JSON.parse(j.result_json) as { instructions?: string }).instructions ?? undefined) : undefined;
       const taskId = await engine.startCompaction({ compactionKey: j.compaction_key, conversationId: j.conversation_id, instructions: instructions ?? "Keep only: the current goal, verified conclusions, open items and source ids. Never restate permissions, budgets or operation states." });
       fault("compaction.after_create");
-      this.store.tx(() => this.store.run("UPDATE compaction_jobs SET pi_task_id = COALESCE(pi_task_id, ?), state = 'running', updated_at = ? WHERE id = ?", taskId, this.now(), j.id));
+      const moved = this.store.tx(() => this.store.run("UPDATE compaction_jobs SET pi_task_id = COALESCE(pi_task_id, ?), state = 'running', updated_at = ? WHERE id = ? AND state = 'creating'", taskId, this.now(), j.id).changes);
+      if (moved !== 1) {
+        // cancelled (user or pause) while the Pi task was being created: abort it, never resurrect the job
+        await engine.abortCompaction(j.compaction_key).catch(() => undefined);
+        return;
+      }
       j = this.get(j.id)!;
     }
     if (j.state === "running") {
@@ -193,13 +239,25 @@ export class CompactionService {
   }
 
   async cancel(id: string): Promise<CompactionJobRow> {
-    const j = this.get(id);
-    if (!j) throw new AgentOsError("NOT_FOUND", "compaction job not found");
-    if (!OPEN.includes(j.state)) return j;
-    if (j.state === "running" || j.state === "creating") await this.engine?.abortCompaction(j.compaction_key).catch(() => undefined);
-    this.#end(j, "cancelled", { cancelledBy: "user" });
+    const { row, abort } = this.store.tx(() => this.cancelInTx(id));
+    if (abort) await this.engine?.abortCompaction(row.compaction_key).catch(() => undefined);
     return this.get(id)!;
   }
+
+  async abortTask(compactionKey: string): Promise<void> {
+    await this.engine?.abortCompaction(compactionKey).catch(() => undefined);
+  }
+
+  /** User cancel inside the caller's (gateway) tx: the job ends and its route closes first; the Pi abort follows. */
+  cancelInTx(id: string): { row: CompactionJobRow; abort: boolean } {
+    const j = this.get(id);
+    if (!j) throw new AgentOsError("NOT_FOUND", "compaction job not found");
+    if (!OPEN.includes(j.state)) return { row: j, abort: false };
+    const abort = j.state === "running" || j.state === "creating";
+    this.#end(j, "cancelled", { cancelledBy: "user" });
+    return { row: this.get(id)!, abort };
+  }
+
 
   /** Startup: an unfinished job resumes on its own binding; never re-run as the old run, never a second summary. */
   async recover(): Promise<number> {

@@ -98,7 +98,11 @@ export function registerMaintenanceRoutes(
       if (b.action === "pause") {
         // stop new background model requests of maintenance runs at once (targeted cancel; foreground untouched)
         for (const run of core.runs.unfinished().filter((x) => x.background === 1)) core.runs.requestStop(run.id, "maintenance_paused");
+        // conversation summaries are background model work too (spec §9.3): stop those whose request is not out yet
+        await core.compactions.pauseOpen();
         void rt.coord?.kick();
+      } else {
+        core.compactions.kick();
       }
       return h.ok(reply, r.status, r.body);
     }),
@@ -334,8 +338,11 @@ export function registerMaintenanceRoutes(
       const b = obj(req.body ?? {}, ["allowProviderContent", "instructions"]);
       const prior = core.store.get<{ result_json: string }>("SELECT result_json FROM operations WHERE principal = 'user:local' AND operation_key = ?", meta.operationKey);
       if (prior) return h.ok(reply, 202, write("conversations.compact", meta, () => ({ status: 202, body: null })).body);
-      const job = await core.compactions.request(req.params.id, { allowProviderContent: b.allowProviderContent === true, instructions: typeof b.instructions === "string" ? b.instructions : undefined });
-      const r = write("conversations.compact", meta, () => ({ status: 202, body: core.compactions.view(job) }));
+      // read-only checks first (async Pi reads); the job is created only inside the gateway write, after the client
+      // epoch, Idempotency-Key and request hash were accepted, so a refused request leaves nothing behind (spec §22.1)
+      const plan = await core.compactions.prepare(req.params.id, { allowProviderContent: b.allowProviderContent === true, instructions: typeof b.instructions === "string" ? b.instructions : undefined });
+      const r = write("conversations.compact", meta, () => ({ status: 202, body: core.compactions.view(core.compactions.createInTx(plan)) }));
+      core.compactions.kick();
       return h.ok(reply, r.status, r.body);
     }),
   );
@@ -344,8 +351,13 @@ export function registerMaintenanceRoutes(
     h.withWrite(async () => {
       const meta = h.writeMeta(req);
       obj(req.body ?? {}, []);
-      const j = await core.compactions.cancel(req.params.id);
-      const r = write("conversations.compact", meta, () => ({ status: 200, body: core.compactions.view(j) }));
+      let abort: { key: string } | null = null;
+      const r = write("conversations.compact", meta, () => {
+        const c = core.compactions.cancelInTx(req.params.id);
+        if (c.abort) abort = { key: c.row.compaction_key };
+        return { status: 200, body: core.compactions.view(c.row) };
+      });
+      if (abort) await core.compactions.abortTask((abort as { key: string }).key);
       return h.ok(reply, r.status, r.body);
     }),
   );

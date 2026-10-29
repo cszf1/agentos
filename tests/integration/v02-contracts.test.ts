@@ -16,6 +16,7 @@ import {
   sourcePathIssue,
   type AppBundle,
   type CodeBundle,
+  type CodeBundleV2,
   type RuntimeCatalog,
 } from "@agentos/contracts";
 import { ArtifactStore } from "@agentos/core";
@@ -26,7 +27,7 @@ const root = path.resolve(import.meta.dirname, "../..");
 const v1 = JSON.parse(readFileSync(path.join(root, "fixtures/todo-v1.json"), "utf8")) as AppBundle;
 const v2 = JSON.parse(readFileSync(path.join(root, "fixtures/todo-v2.json"), "utf8")) as AppBundle;
 const catalog = JSON.parse(readFileSync(path.join(root, "runtime/catalog/catalog.json"), "utf8")) as RuntimeCatalog;
-const kanban = () => codeFixture("todo-kanban");
+const kanban = () => codeFixture("todo-kanban") as CodeBundleV2;
 const paths = (issues: { path: string }[]) => issues.map((i) => i.path);
 
 describe("V2-C01 v1 format and hash are frozen", () => {

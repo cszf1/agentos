@@ -182,6 +182,11 @@ describe("V4 compaction over HTTP (real process, faux model)", () => {
       await c.waitRun(run.data.runId);
       const conv = (await c.get(`/api/runs/${run.data.runId}/transcript`)).data.conversationId as string;
       expect(conv).toBeTruthy();
+      // review F4: a stale page (old client epoch) is refused before any compaction job exists
+      const stale = await c.req("POST", `/api/conversations/${conv}/compactions`, {}, randomUUID(), { "x-agentos-epoch": "0" });
+      expect(stale.status).toBe(409);
+      expect(stale.error?.code).toBe("CLIENT_EPOCH_STALE");
+      expect((await c.get(`/api/conversations/${conv}/compactions`)).data.items).toHaveLength(0);
       const key = randomUUID();
       const a = await c.req("POST", `/api/conversations/${conv}/compactions`, {}, key);
       expect(a.status, JSON.stringify(a)).toBe(202);

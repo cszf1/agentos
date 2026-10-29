@@ -68,13 +68,14 @@ run("broker protocol 2: maintenance principal", () => {
   function envelope(p: { policyId: string; policyVersion: number }, o: Partial<MaintenanceWriteEnvelope> = {}): MaintenanceWriteEnvelope {
     const op = id("op");
     const { requestHash: _h, ...rest } = { requestHash: "", ...o } as MaintenanceWriteEnvelope;
-    return sealMaintenanceEnvelope({
+    const base: Omit<MaintenanceWriteEnvelope, "requestHash"> = {
       protocolVersion: 2, machineInstallId: b.identity.machineInstallId, storeUuid: b.identity.storeUuid, workspaceIncarnation: b.identity.workspaceIncarnation,
       operationId: op, actionId: id("sa"), planHash: domainHash("agentos.test-plan.v1", { op }), capabilityId: "service.ensure_state", contractVersion: 1,
       resourceId: svc().resourceId, resourceGeneration: svc().generation, preconditions: {}, deadlineMs: Date.now() + 30_000, params: { state: "running" },
       jobId: id("job"), stepId: "ensure-running", policyId: p.policyId, policyVersion: p.policyVersion, maintenanceEpoch: epoch, targetControlEpoch: ctl, triggerKey: `test:${op}`,
-      ...rest,
-    } as never);
+    };
+    // the defaults first, then the test's overrides
+    return sealMaintenanceEnvelope({ ...base, ...rest } as never);
   }
   const attempts = async () => {
     const st = await b.client.maintenanceState(b.identity);

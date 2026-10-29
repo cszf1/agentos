@@ -274,27 +274,38 @@ export class PolicyService {
     });
   }
 
-  /** Pause new admissions of this policy at once (local), then the broker side (spec §13.2). */
+  /**
+   * Pause new admissions of this policy at once (local), then the broker side (spec §13.2).
+   * Every version of the policy that can still admit or is waiting to (the enabled one AND a newer draft) is closed:
+   * the newest draft is not the live approval, so pausing only it would leave the enabled version running.
+   */
   pause(id: string, reason = "user"): PolicyRow {
     return this.store.tx(() => {
-      const p = this.require(id);
-      if (!["enabled", "syncing", "pending_approval", "paused_needs_review"].includes(p.state)) return p;
-      const root = p.root_sync_state === "synced" || p.root_sync_state === "pending" ? "revoking" : p.root_sync_state;
-      this.store.run("UPDATE maintenance_policies SET state = 'paused', root_sync_state = ?, updated_at = ? WHERE id = ? AND version = ?", root, this.now(), id, p.version);
-      // queued/deferred jobs of this policy never take a new effect
-      this.store.run("UPDATE maintenance_jobs SET wait_reason = 'policy paused', updated_at = ? WHERE policy_id = ? AND state IN ('queued','deferred','awaiting_approval','ready')", this.now(), id);
-      this.store.event("maintenance.policy_paused", { policyId: id, version: p.version, reason }, {});
-      const row = this.require(id);
-      if (root === "revoking") this.onRootSync?.(row, "policy-revoke");
-      return row;
+      this.require(id);
+      const open = this.store.all<PolicyRow>(
+        "SELECT * FROM maintenance_policies WHERE id = ? AND state IN ('enabled','syncing','pending_approval','paused_needs_review') ORDER BY version",
+        id,
+      );
+      const revoke: PolicyRow[] = [];
+      for (const p of open) {
+        const root = p.root_sync_state === "synced" || p.root_sync_state === "pending" ? "revoking" : p.root_sync_state;
+        this.store.run("UPDATE maintenance_policies SET state = 'paused', root_sync_state = ?, updated_at = ? WHERE id = ? AND version = ?", root, this.now(), id, p.version);
+        this.store.event("maintenance.policy_paused", { policyId: id, version: p.version, reason }, {});
+        if (root === "revoking") revoke.push(this.require(id, p.version));
+      }
+      // queued/deferred jobs of this policy (any version) never take a new effect
+      if (open.length) this.store.run("UPDATE maintenance_jobs SET wait_reason = 'policy paused', updated_at = ? WHERE policy_id = ? AND state IN ('queued','deferred','awaiting_approval','ready')", this.now(), id);
+      // the broker revokes exactly the versions it was synced (or being synced) with
+      for (const r of revoke) this.onRootSync?.(r, "policy-revoke");
+      return this.require(id);
     });
   }
 
   /** Inside a tx: pause every policy of a target (user stop / archive, spec §8.3, §13.2). */
   pauseTargetInTx(kind: string, id: string, reason: string): number {
-    const rows = this.store.all<PolicyRow>("SELECT * FROM maintenance_policies WHERE target_kind = ? AND target_id = ? AND state IN ('enabled','syncing')", kind, id);
-    for (const p of rows) this.pause(p.id, reason);
-    return rows.length;
+    const ids = this.store.all<{ id: string }>("SELECT DISTINCT id FROM maintenance_policies WHERE target_kind = ? AND target_id = ? AND state IN ('enabled','syncing','pending_approval','paused_needs_review')", kind, id);
+    for (const p of ids) this.pause(p.id, reason);
+    return ids.length;
   }
 
   /** Restore (spec §23.4): every policy needs review; nothing restored runs on its old approval. */
