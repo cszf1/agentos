@@ -54,7 +54,7 @@ tests, real smoke):
 | `playwright test` | 8/8 |
 | `cargo fmt --check`; Rust warnings | 0; 0 |
 | opt-in: recovery v02-recovery + v03-upgrade with real v0.1 build and live v0.2 workspace copy; sandbox v02-ops offline | 15/15; 7/7 |
-| V4-O05 perf | **not settled**, see Performance (V4-O05) |
+| V4-O05 perf (corrected test) | 8/8 on the fixed tree, ratio 0.967–1.206; see Performance (V4-O05) |
 
 Real model on the fixed tree: run 14 failed at O01 (the code-app run used its 3 `app_stage` attempts on invalid bundles:
 RPC schema strings without `maxLength`, then a bundle without `formatVersion`/`manifest`); run 15 passed every step
@@ -181,29 +181,32 @@ Fixed: the prompt lists the 8 template ids and the service refuses any other val
 
 ## Performance (V4-O05)
 
-**Status: open (re-audit).** The earlier result for `d41d3b0` (ratio 1.105, `docs/evidence/perf-v04-o05.json`) was a single run. Re-measuring after the review
-showed that this test cannot separate background load from noise on the dev box (4 vCPU, 7 GiB; p95 of a ~1 ms request),
-and that its background was mostly idle:
+**Pass (re-audited 2026-10-29).** The earlier result for `d41d3b0` (ratio 1.105, `docs/evidence/perf-v04-o05.json`) came
+from a test that was found defective while re-checking the review fixes; it is replaced by the result below.
 
-1. Original test (200 ops per round, create + query): fixed tree 13 runs, ratio 0.93–1.33, 2 above 1.25 (1.299, 1.329).
-   Pre-fix tree (`39df919`, same box, interleaved with the fixed tree) 6 runs 0.94–1.24; fixed tree in the same
-   interleaving 1.07–1.24. Per-component runs: no compaction 1.050, cache-gc only 0.927, app-recovery only 1.059.
-2. Test defect found: the background loop refilled only when no job was open, and log-cleanup ends `awaiting_approval`
-   (open), so only the first batch of 3 jobs ever ran; later "background" rounds were idle. Fixed: awaiting jobs are
-   cancelled so batches repeat, and the test asserts more than one batch (12–15 jobs per run now).
-3. 200 create-only writes per round hit the 1000-record app limit at larger sample sizes; the workload is now
-   create / query / delete / query so 600 samples per round fit. The 1.25 threshold is unchanged.
+Defects of the old test (A B A B A B, 200 ops per round, create + query):
 
-With the corrected test (600 ops per round, repeated background batches + one compaction), interleaved:
+1. The background loop refilled only when no job was open, and log-cleanup ends `awaiting_approval` (open), so only the
+   first batch of 3 jobs ever ran; later "background" rounds were mostly idle.
+2. Jobs started in a B round kept running into the following A round, so baselines were not free of background work.
+3. The first round of each side ran slower (warm-up), and at 200 samples the p95 of a ~1 ms request moved by ±0.2 ms
+   between identical runs: the fixed tree gave 0.93–1.33 over 13 runs (2 above 1.25), the pre-fix tree 0.94–1.24 over 6.
 
-| tree | runs | ratio range | above 1.25 |
-|---|---|---|---|
-| pre-fix `39df919` | 6 | 0.870–1.149 | 0 |
-| fixed `a539498` | 6 | 0.957–1.262 | 1 (1.262) |
+A CPU profile of the host during a run showed the maintenance/compaction code itself too small to appear among the top entries (host busy ~3.7 s of 8.4 s, almost all in HTTP handlers);
+the time is the foreground requests, SQLite reads and GC, i.e. the spread was measurement noise, not background load.
 
-Per-round p95 inside one run varies 0.60–1.29 ms under the same condition, larger than the difference between the trees;
-the code the fixes add on this path is one `meta` read per compaction tick and the compaction request split. Raw samples
-of a fixed-tree run: `docs/evidence/perf-v04-o05.fix.json`. O05 is not claimed as passed until it passes reliably.
+Corrected test (`tests/recovery/v04-perf.test.ts`; threshold 1.25 unchanged): two warm-up rounds discarded; 12 rounds of
+300 operations (create / query / delete / query, so the app stays under its 1000-record limit) in ABBA order; every
+baseline round starts only after open jobs and compactions have ended; background rounds keep submitting batches
+(awaiting-approval checks are cancelled) and one conversation compaction (faux); the test asserts more than one batch.
+
+| tree | runs (interleaved) | ratio | above 1.25 | background jobs per run |
+|---|---|---|---|---|
+| fixed (`a539498` + test fixes) | 8 | 0.967–1.206 | 0 | 18–24 |
+| pre-fix `39df919` | 4 | 0.957–1.169 | 0 | 18–21 |
+
+Raw samples of the fixed-tree run with the highest ratio (baseline p95 0.893 ms, with background p95 1.077 ms, ratio
+1.206, 21 jobs, 1800 samples a side): `docs/evidence/perf-v04-o05.fix.json`.
 
 ## Clean install and upgrade (V4-O04)
 
@@ -308,7 +311,7 @@ Labels say what each row ran on; "faux model" rows use the real Pi Durable 1.4.0
 | V4-O02 | 真维护且模型断网 | tests/sandbox/v04-offline-real.test.ts（box 真 podman，模型未配置）：容器反复被杀至 degraded → 自动 app-recovery 作业 succeeded（generation 2→5），在线 cache-gc no_change，无模型请求，记录不变 | real Podman | pass |
 | V4-O03 | 真实模型压缩 | 同一 smoke run 13：会话 9 摘要真实生成并放置（entry 92，cutoff 57，原始记录保留），后台 1 次请求，用量与 route 记录；run 11 entry 80 / cutoff 71 | real model | pass |
 | V4-O04 | 干净安装与升级 | 新机 agentos-clean4（Debian 13，空机）按 README 安装通过：runtime:doctor 全 ok、broker protocol 1/2、testMode=false、agents/maintenance doctor 全 ✓；agentos-clean3（v0.3 安装）按 README 升级：记录哈希不变、schema 3→4、doctors 通过，暴露并修复空 managed 目录备份失败，修复后备份+恢复（incarnation 2）通过；native:build 在 dev box 与 clean4 六个产物 sha256 完全一致 | real native, clean box | pass |
-| V4-O05 | 前台性能 | re-audit open：修正后的测试（600 次/轮，后台批次重复）修复树 6 次 0.957–1.262，1 次超限；见 Performance (V4-O05) | real process | **open** |
+| V4-O05 | 前台性能 | 修正后的测试（ABBA 12 轮×300 次 CRUD/查询，基线前等后台排空，后台批次重复）：修复树 8 次比值 0.967–1.206 全部 ≤1.25；原始数据 docs/evidence/perf-v04-o05.fix.json | real process | pass |
 | V4-O06 | 压力与空间 | tests/maintenance/v4-maintenance.test.ts（作业队列 64 上限拒绝新工作不丢旧事实；低于安全落账空间 64 MiB 不启动新效果、作业带原因等待、receipt/作业不删除，空间恢复后继续；诊断证据 ≤64 KiB）+ 既有 queue/compaction/proposal 上限测试 | faux model | pass |
 | V4-O07 | 关键 API 门槛 | packages/agent-pi/test/m0-pi-prototype.test.ts（固定 Pi 1.4.0 实测：两会话路由并发、按会话 abort、原子会话目录、原子压缩登记、重启重建），无替代路径 | in-process | pass |
 | V4-O08 | 证据与遗留项 | ACCEPTANCE_V0.4.md「Scope and what is not claimed」：自动/建议范围、V3-E04 未验收（无串口硬件）、PTY 与 guest eBPF 分列、单一模型、无“全机零维护”结论 | report (separates static, faux, software PTY, guest eBPF, real native, real model) | pass |
@@ -325,7 +328,7 @@ Labels say what each row ran on; "faux model" rows use the real Pi Durable 1.4.0
 | M5 | G01–G08, archive/restore E06/E07 |
 | M6 | E01–E08, C01–C06; real-model candidate and compaction in O01/O03 |
 | M7 | R01–R10 |
-| M8 | real-model mainline (O01/O03 run 13), native recovery (broker-recovery, host-maintenance), online pressure/UI/offline (O02, O05, O06, e2e), reproducible native build, clean install/upgrade (O04, B02), this 88-item report; V3-E04 still not accepted (no serial hardware) |
+| M8 | real-model mainline (O01/O03 run 13; fixed tree run 15), native recovery (broker-recovery, host-maintenance), online pressure/UI/offline (O02, O05, O06, e2e), reproducible native build, clean install/upgrade (O04, B02), this 88-item report; V3-E04 still not accepted (no serial hardware) |
 
 ## Scope and what is not claimed (V4-O08)
 
