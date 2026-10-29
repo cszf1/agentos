@@ -102,7 +102,7 @@ export class CompactionService {
     const prior = this.store.get<CompactionJobRow>("SELECT * FROM compaction_jobs WHERE compaction_key = ?", key);
     if (prior) return prior;
     const open = this.store.get<{ n: number }>(`SELECT COUNT(*) AS n FROM compaction_jobs WHERE state IN (${OPEN.map(() => "?").join(",")})`, ...OPEN)!.n;
-    if (open >= 4) throw new AgentOsError("RESOURCE_BUSY", "compaction queue is full");
+    if (open >= V4_LIMITS.compactionsWorkspace) throw new AgentOsError("RESOURCE_BUSY", "compaction queue is full");
     const id = randomUUID();
     this.store.run(
       `INSERT INTO compaction_jobs (id, conversation_id, run_id, cutoff_entry_id, context_version, input_scope, compaction_key, state, result_json, requested_by, created_at, updated_at)
