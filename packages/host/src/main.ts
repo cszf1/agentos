@@ -9,6 +9,7 @@ import { createLogger, type Logger } from "./log.js";
 import { assertLocalFs, assertLockHeld } from "./lock.js";
 import { SessionAuth, ensureSecrets } from "./auth.js";
 import { buildServer, type HostRuntime } from "./http.js";
+import { MaintenanceHost } from "./maintenance-host.js";
 
 export const RESTORE_MARKER = "restore-in-progress";
 
@@ -76,6 +77,9 @@ export async function main(): Promise<void> {
     log.info("shutting down", { signal });
     rt.status.phase = "stopping";
     rt.coord?.stop();
+    // v0.4 (spec §23.2): no new trigger, run dispatch or maintenance step; bounded drain of local workers.
+    core.scheduler.paused = true;
+    await rt.maint?.quiesce(8000).catch((e) => log.warn("maintenance drain incomplete; the next start resumes from checkpoints", { error: (e as Error).message }));
     // Stop new system admissions and outbox deliveries first; accepted broker operations keep running (spec §22.2).
     rt.caps?.actions.stop();
     const closing = rt.engine?.close().catch((e) => log.warn("harness close failed", { error: (e as Error).message }));
@@ -175,6 +179,17 @@ export async function main(): Promise<void> {
     log.error("code runtime failed to start; code apps are unavailable", { error: (e as Error).message });
   }
 
+  // 5a-1. v0.4 (spec §23.1 step 3): delete intents, pins and staging owners are resumed before anything else touches the
+  // cache; then the maintenance services are wired to the runtime, system and agent layers (nothing runs yet).
+  const maint = new MaintenanceHost(core, rt.sys, caps, config.dataDir, log);
+  try {
+    await maint.recoverStorage();
+    maint.wire(engine);
+    rt.maint = maint;
+  } catch (e) {
+    log.error("maintenance services failed to start; apps keep working", { error: (e as Error).message });
+  }
+
   // 5b. agent tool set upgrade (spec §3.2): only from an idle root and with no unfinished run; recorded in both stores.
   {
     const cur = core.store.get<{ v: number }>("SELECT agent_toolset_version AS v FROM meta WHERE id = 1")!.v;
@@ -243,6 +258,11 @@ export async function main(): Promise<void> {
   }
   if (!fs.existsSync(path.join(config.webDir, "index.html"))) log.warn("web shell build not found", { webDir: config.webDir });
   rt.status.phase = "ready";
+  // 8. v0.4 (spec §23.1 steps 5–6): re-read time/incidents/cursors, then open background scheduling last.
+  if (rt.maint) {
+    await rt.maint.observeAgain().catch((e) => log.warn("maintenance re-observation failed", { error: (e as Error).message }));
+    if (process.env.AGENTOS_MAINTENANCE_DISABLED !== "1") rt.maint.start();
+  }
   log.info("ready", { modelAvailable: rt.model.available, model: rt.model.ref });
 }
 

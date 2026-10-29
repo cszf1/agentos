@@ -40,6 +40,11 @@ export class GcService {
     add(s.all("SELECT DISTINCT ra.artifact_id AS id FROM deployments d JOIN revision_artifacts ra ON ra.app_id = d.app_id AND ra.revision_id = d.target_revision_id WHERE d.status IN ('queued','preparing','ready')"), "deployment");
     add(s.all("SELECT DISTINCT artifact_id AS id FROM runtime_instances WHERE desired_state <> 'removed' OR observed_state IN ('starting','ready','serving','draining','unknown')"), "instance");
     add(s.all("SELECT DISTINCT artifact_id AS id FROM build_jobs WHERE artifact_id IS NOT NULL AND status IN ('queued','building')"), "build");
+    // v0.4: proposals, candidate checks and every held pin (backup, reader, preview) protect too
+    add(s.all("SELECT DISTINCT ra.artifact_id AS id FROM proposals p JOIN revision_artifacts ra ON ra.app_id = p.app_id AND ra.revision_id = p.candidate_revision_id WHERE p.state IN ('pending','accepted','publishing','published','needs_recheck')"), "proposal");
+    add(s.all("SELECT DISTINCT ra.artifact_id AS id FROM candidate_checks c JOIN revision_artifacts ra ON ra.app_id = c.app_id AND ra.revision_id = c.revision_id WHERE c.state IN ('queued','running')"), "candidate_check");
+    add(s.all("SELECT DISTINCT object_id AS id FROM artifact_pins WHERE object_kind = 'artifact' AND state = 'held'"), "pin");
+    add(s.all("SELECT id FROM artifacts WHERE gc_state = 'deleting'"), "online-gc");
     for (const id of this.pinned()) if (!keep.has(id)) keep.set(id, "backup");
     return keep;
   }

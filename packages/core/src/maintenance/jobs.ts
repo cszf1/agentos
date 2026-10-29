@@ -451,9 +451,16 @@ export class MaintenanceService {
     });
   }
 
+  /** Completed effects: succeeded effect steps, where a cleanup step counts each object it really removed (spec §14.2). */
+  #completed(jobId: string): number {
+    const steps = this.store.get<{ n: number }>("SELECT COUNT(*) AS n FROM maintenance_steps WHERE job_id = ? AND state = 'succeeded' AND kind NOT IN ('gc.delete_unreferenced','logs.delete_closed')", jobId)!.n;
+    const objects = this.store.get<{ n: number }>("SELECT COUNT(*) AS n FROM gc_delete_intents WHERE job_id = ? AND phase = 'recorded'", jobId)!.n;
+    return steps + objects;
+  }
+
   /** Inside a tx: settle a job. */
   #finish(j: JobRow, state: JobState, reason: string, certainty?: EffectCertainty): void {
-    const completed = this.store.get<{ n: number }>("SELECT COUNT(*) AS n FROM maintenance_steps WHERE job_id = ? AND state = 'succeeded'", j.id)!.n;
+    const completed = this.#completed(j.id);
     const unknown = this.store.get<{ n: number }>("SELECT COUNT(*) AS n FROM maintenance_steps WHERE job_id = ? AND state = 'unknown'", j.id)!.n;
     let final = state;
     // cancelled / expired only for jobs without unsettled effects (spec §14.2)
@@ -547,7 +554,7 @@ export class MaintenanceService {
   #settleStep(jobId: string, stepId: string, out: StepOutcome): void {
     this.store.tx(() => {
       this.store.run("UPDATE maintenance_steps SET state = ?, result_json = ?, updated_at = ? WHERE job_id = ? AND step_id = ?", out.state, out.result ? JSON.stringify(out.result) : null, this.now(), jobId, stepId);
-      const completed = this.store.get<{ n: number }>("SELECT COUNT(*) AS n FROM maintenance_steps WHERE job_id = ? AND state = 'succeeded'", jobId)!.n;
+      const completed = this.#completed(jobId);
       this.store.run("UPDATE maintenance_jobs SET completed_steps = ?, updated_at = ? WHERE id = ?", completed, this.now(), jobId);
     });
   }

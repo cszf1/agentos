@@ -685,6 +685,14 @@ fn finish(b: &Broker, op: &OpRow, o: Outcome) {
             let _ = tx.execute("UPDATE resource_state SET observed_version=?2 WHERE resource_id=?1", params![op.env.resource_id, v]);
         }
     }
+    if o.state != "running" && o.state != "reconciling" {
+        let outcome = match o.state {
+            "succeeded" => if o.completion == Some("already_satisfied") { "no_change" } else { "succeeded" },
+            "indeterminate" => "unknown",
+            _ => "failed",
+        };
+        let _ = tx.execute("UPDATE maintenance_attempts SET outcome=?3 WHERE store_uuid=?1 AND operation_id=?2", params![op.store, op.op_id, outcome]);
+    }
     let _ = tx.commit();
 }
 
@@ -750,6 +758,15 @@ fn admission(b: &Broker, op: &OpRow) -> Admission {
         let _ = tx.commit();
         return Admission::Refused(no_effect("failed_no_effect", "admission_refused", json!({"generation": gen}), "RESOURCE_GENERATION_STALE", format!("resource generation is {gen}, the plan was made for {}", env.resource_generation)));
     }
+    // Protocol-2 maintenance operation: the approved policy, pause state and target control epoch replace the grant.
+    let maint = crate::maintenance::maintenance_of(&tx, &b.install_id, &op.store, op.inc, &op.op_id);
+    if let Some(m) = &maint {
+        if let Err((code, msg)) = crate::maintenance::admission_check(&tx, &op.store, m, &env.resource_id, gen) {
+            let _ = tx.commit();
+            return Admission::Refused(no_effect("failed_no_effect", "admission_refused", json!({"maintenance": m}), &code, msg));
+        }
+    }
+    if maint.is_none() {
     if let Err(e) = grant_usable(&grant, &env.capability_id, &env.resource_id, gen) {
         let _ = tx.commit();
         return Admission::Refused(no_effect("failed_no_effect", "admission_refused", json!({}), &e.code, e.message));
@@ -769,6 +786,7 @@ fn admission(b: &Broker, op: &OpRow) -> Admission {
     if let Err(e) = params_within(&env.capability_id, &env.params, &g0.limits, &res.caps) {
         let _ = tx.commit();
         return Admission::Refused(no_effect("failed_no_effect", "admission_refused", json!({}), &e.code, e.message));
+    }
     }
     // A quarantined resource refuses new writes at once (spec §12.4); only a held execution lock makes it wait.
     if let Some(q) = quarantine.filter(|q| q != &op.op_id) {

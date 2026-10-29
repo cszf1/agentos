@@ -3,6 +3,7 @@
 mod admin;
 mod db;
 mod exec;
+mod maintenance;
 mod policy;
 mod server;
 mod state;
@@ -21,7 +22,7 @@ fn main() {
         Some("serve") => server::serve(),
         Some("admin") => admin::main(&args[2..]),
         Some("--version") => {
-            println!("agentos-broker {} protocol {}", env!("CARGO_PKG_VERSION"), agentos_protocol::dto::PROTOCOL_VERSION);
+            println!("agentos-broker {} protocol {} (+{} maintenance)", env!("CARGO_PKG_VERSION"), agentos_protocol::dto::PROTOCOL_VERSION, agentos_protocol::dto::PROTOCOL_V2);
             0
         }
         _ => {

@@ -167,15 +167,18 @@ fn handle_conn(b: &Shared, s: UnixStream) {
                 continue;
             }
         };
-        if req.v != PROTOCOL_VERSION {
-            reply_err(&s, &req.id, BErr::new("CAPABILITY_VERSION_UNSUPPORTED", "protocol version"));
+        // Protocol 1 methods keep v=1; protocol-2 (maintenance) methods require v=2 and are never served under v=1, so a
+        // maintenance request cannot be downgraded to a user/action request (v0.4 spec §13.3, V4-B08).
+        let is_v2 = METHODS_V2.contains(&req.method.as_str());
+        if (is_v2 && req.v != PROTOCOL_V2) || (!is_v2 && req.v != PROTOCOL_VERSION) {
+            reply_err(&s, &req.id, BErr::new("CAPABILITY_VERSION_UNSUPPORTED", format!("method {} is protocol {}", req.method, if is_v2 { PROTOCOL_V2 } else { PROTOCOL_VERSION })));
             continue;
         }
-        let out = dispatch(b, &mut sess, &req);
+        let out = if is_v2 { crate::maintenance::dispatch(b, &mut sess, &req.method, &req.params) } else { dispatch(b, &mut sess, &req) };
         match out {
             Ok(result) => {
                 let mut w = &s;
-                let body = json!({"v": 1, "id": req.id, "ok": true, "result": result}).to_string();
+                let body = json!({"v": req.v, "id": req.id, "ok": true, "result": result}).to_string();
                 if write_frame(&mut w, body.as_bytes()).is_err() {
                     return;
                 }
@@ -285,6 +288,7 @@ fn handshake(b: &Shared, sess: &mut Session, v: &Value) -> Result<Value, BErr> {
     }
     let base = json!({
         "protocolVersion": PROTOCOL_VERSION,
+        "supportedProtocols": SUPPORTED_PROTOCOLS,
         "brokerInstanceId": b.instance_id,
         "machineInstallId": b.install_id,
         "policyVersion": b.policy_version,
@@ -451,7 +455,7 @@ fn history(b: &Shared, sess: &mut Session, h: &HistoryParams) -> Result<Value, B
     }
     let limit = h.limit.clamp(1, 500) as i64;
     let mut st = c.prepare(
-        "SELECT operation_id, action_id, incarnation, state, completion_kind, effect_certainty, evidence_kind, evidence_json, result_json, error_code, error_message, resolution_json, capability_id, resource_id, resource_generation, accepted_seq, updated_seq, request_hash, plan_hash, compensates_operation_id, deadline_ms, cancel_requested, reconcile_attempts, external_ref
+        "SELECT operation_id, action_id, incarnation, state, completion_kind, effect_certainty, evidence_kind, evidence_json, result_json, error_code, error_message, resolution_json, capability_id, resource_id, resource_generation, accepted_seq, updated_seq, request_hash, plan_hash, compensates_operation_id, deadline_ms, cancel_requested, reconcile_attempts, external_ref, maintenance_json
          FROM effect_operations WHERE machine_install_id=?1 AND store_uuid=?2 AND updated_seq > ?3 ORDER BY updated_seq LIMIT ?4",
     )?;
     let ops: Vec<Value> = st.query_map(params![b.install_id, h.store_uuid, h.since_seq as i64, limit], |r| row_view(r))?.filter_map(|x| x.ok()).collect();

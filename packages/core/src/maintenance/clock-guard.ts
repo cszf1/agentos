@@ -6,6 +6,15 @@ import { type Store } from "../persistence/store.js";
 export type MonoClock = () => number;
 export const processMono: MonoClock = () => Number(process.hrtime.bigint() / 1_000_000n);
 
+/** CLOCK_BOOTTIME-like milliseconds (includes system suspend): /proc/uptime on Linux; null elsewhere. */
+export function bootTimeMs(): number | null {
+  try {
+    return Math.round(Number(fs.readFileSync("/proc/uptime", "utf8").split(" ")[0]) * 1000);
+  } catch {
+    return null;
+  }
+}
+
 function bootId(): string {
   try {
     return fs.readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
@@ -24,6 +33,11 @@ function bootId(): string {
 export class ClockGuard {
   #lastWall: number | null = null;
   #lastMono: number | null = null;
+  #lastBoot: number | null = null;
+  /** test hook (CLOCK_BOOTTIME source) */
+  bootTime: () => number | null = bootTimeMs;
+  /** last observed suspend (for diagnostics) */
+  lastSleep: { at: number; ms: number } | null = null;
   readonly boot = bootId();
 
   constructor(
@@ -48,15 +62,25 @@ export class ClockGuard {
   sample(): "ok" | "clock_uncertain" {
     const wall = this.store.clock.now();
     const mono = this.mono();
+    const boot = this.bootTime();
     if (this.#lastWall !== null && this.#lastMono !== null) {
       const dw = wall - this.#lastWall;
       const dm = mono - this.#lastMono;
+      const db = boot !== null && this.#lastBoot !== null ? boot - this.#lastBoot : null;
       if (Math.abs(dw - dm) > V4_LIMITS.clockJumpMs) {
-        this.#set("clock_uncertain", `wall clock moved ${Math.round(dw / 1000)} s while ${Math.round(dm / 1000)} s passed (monotonic)`);
+        // A system suspend stops the monotonic clock but not CLOCK_BOOTTIME: the wall clock agrees with boottime, so this
+        // is a sleep/wake. Re-sample (nothing ran while suspended) instead of declaring the clock uncertain.
+        if (db !== null && Math.abs(dw - db) <= V4_LIMITS.clockJumpMs && db - dm > V4_LIMITS.clockJumpMs) {
+          this.lastSleep = { at: wall, ms: db - dm };
+          this.store.tx(() => this.store.event("clock.resumed_from_sleep", { sleptMs: db - dm }));
+        } else {
+          this.#set("clock_uncertain", `wall clock moved ${Math.round(dw / 1000)} s while ${Math.round(dm / 1000)} s passed (monotonic)`);
+        }
       }
     }
     this.#lastWall = wall;
     this.#lastMono = mono;
+    this.#lastBoot = boot;
     this.store.tx(() => this.store.run("UPDATE meta SET clock_wall_ms = MAX(COALESCE(clock_wall_ms, 0), ?), clock_mono_ms = ?, clock_boot_id = ? WHERE id = 1", wall, mono, this.boot));
     return this.state;
   }
@@ -65,6 +89,7 @@ export class ClockGuard {
   recheck(): "ok" | "clock_uncertain" {
     this.#lastWall = null;
     this.#lastMono = null;
+    this.#lastBoot = null;
     const wall = this.store.clock.now();
     this.store.tx(() => {
       this.store.run("UPDATE meta SET clock_state = 'ok', clock_wall_ms = ?, clock_mono_ms = ?, clock_boot_id = ? WHERE id = 1", wall, this.mono(), this.boot);

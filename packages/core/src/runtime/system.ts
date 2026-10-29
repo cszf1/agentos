@@ -53,6 +53,8 @@ export class RuntimeSystem {
   readonly bootId = randomUUID();
   environmentProblems: string[] = [];
   closed = false;
+  /** v0.4: maintenance reacts to user control inside the same transaction */
+  onUserControlInTx: ((appId: string, action: "start" | "stop" | "restart") => void) | null = null;
 
   constructor(readonly core: Core, readonly opts: RuntimeSystemOptions) {
     const storeUUID = core.store.meta().store_uuid;
@@ -296,10 +298,13 @@ export class RuntimeSystem {
   }
 
   control(meta: UserWriteMeta, appId: string, action: "start" | "stop" | "restart", expectedAppEpoch: number): WriteResult<{ controlEpoch: number; appEpoch: number }> {
-    const r = this.core.gateway.write("apps.runtime.control", { principal: { kind: "user" }, ...meta }, () => ({
-      status: 202,
-      body: this.runtime.control(appId, action, expectedAppEpoch),
-    }));
+    const r = this.core.gateway.write("apps.runtime.control", { principal: { kind: "user" }, ...meta }, () => {
+      const body = this.runtime.control(appId, action, expectedAppEpoch);
+      // v0.4 (spec §8.3, §13.2): a user stop first pauses this target's automatic recovery (and raises the lifecycle
+      // control epoch) in the same transaction, so a late maintenance recovery can never restart it.
+      this.onUserControlInTx?.(appId, action);
+      return { status: 202, body };
+    });
     if (!r.replayed) {
       // Stop: revoke now. Start/restart: the reconciler converges; nudge it.
       const ar = this.runtime.row(appId);

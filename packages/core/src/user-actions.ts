@@ -25,28 +25,34 @@ export class UserActions {
     private readonly runs: RunService,
   ) {}
 
+  /** v0.4 (spec §18): an archived app takes no new writes; the check races archive inside the same transaction. */
+  #requireActive(appId: string): void {
+    const lc = this.store.get<{ state: string }>("SELECT state FROM app_lifecycle WHERE app_id = ?", appId);
+    if (lc && lc.state !== "active") throw new AgentOsError("APP_ARCHIVED", "this app is archived; restore it to use it", { appId, lifecycle: lc.state });
+  }
+
   createRecord(meta: UserWriteMeta, appId: string, expectedAppEpoch: number, data: Record<string, unknown>): WriteResult<RecordEnvelope> {
     const principal = { kind: "app" as const, appId, viaUser: true };
-    return this.gateway.write("records.write", { principal, ...meta }, () => ({
-      status: 201,
-      body: this.records.create(principal, appId, expectedAppEpoch, data),
-    }));
+    return this.gateway.write("records.write", { principal, ...meta }, () => {
+      this.#requireActive(appId);
+      return { status: 201, body: this.records.create(principal, appId, expectedAppEpoch, data) };
+    });
   }
 
   updateRecord(meta: UserWriteMeta, appId: string, recordId: string, expectedAppEpoch: number, expectedRecordVersion: number, changes: Record<string, unknown>): WriteResult<RecordEnvelope> {
     const principal = { kind: "app" as const, appId, viaUser: true };
-    return this.gateway.write("records.write", { principal, ...meta }, () => ({
-      status: 200,
-      body: this.records.update(principal, appId, recordId, expectedAppEpoch, expectedRecordVersion, changes),
-    }));
+    return this.gateway.write("records.write", { principal, ...meta }, () => {
+      this.#requireActive(appId);
+      return { status: 200, body: this.records.update(principal, appId, recordId, expectedAppEpoch, expectedRecordVersion, changes) };
+    });
   }
 
   deleteRecord(meta: UserWriteMeta, appId: string, recordId: string, expectedAppEpoch: number, expectedRecordVersion: number): WriteResult<{ deleted: true; id: string }> {
     const principal = { kind: "app" as const, appId, viaUser: true };
-    return this.gateway.write("records.write", { principal, ...meta }, () => ({
-      status: 200,
-      body: this.records.remove(principal, appId, recordId, expectedAppEpoch, expectedRecordVersion),
-    }));
+    return this.gateway.write("records.write", { principal, ...meta }, () => {
+      this.#requireActive(appId);
+      return { status: 200, body: this.records.remove(principal, appId, recordId, expectedAppEpoch, expectedRecordVersion) };
+    });
   }
 
   /** Manual switch to a previously activated revision; refused while a generation run is active. */

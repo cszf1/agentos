@@ -194,6 +194,9 @@ export class InvocationService {
     const snapApp = s.get<{ active_revision_id: string | null; epoch: number; data_epoch: number }>("SELECT active_revision_id, epoch, data_epoch FROM apps WHERE id = ?", appId);
     if (!snapApp) throw new AgentOsError("NOT_FOUND", "app not found");
     if (snapApp.epoch !== expectedAppEpoch) throw new AgentOsError("APP_EPOCH_STALE", "the app version changed; reload before acting", { appEpoch: snapApp.epoch });
+    // v0.4 (spec §18): archive and a new call race inside this transaction; whichever commits first wins.
+    const lc = s.get<{ state: string }>("SELECT state FROM app_lifecycle WHERE app_id = ?", appId);
+    if (lc && lc.state !== "active") throw new AgentOsError("APP_ARCHIVED", "this app is archived; restore it to use it", { appId, lifecycle: lc.state });
     const bundle = snapApp.active_revision_id ? (this.ctx.apps.revisionBundle(appId, snapApp.active_revision_id) as AnyBundle) : null;
     if (!bundle || !isCodeBundle(bundle)) throw new AgentOsError("INVALID_REQUEST", "this app version has no commands");
     const decl = Object.hasOwn(bundle.commands, commandId) ? bundle.commands[commandId] : undefined;

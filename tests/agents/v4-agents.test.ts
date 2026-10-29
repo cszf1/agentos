@@ -90,8 +90,10 @@ describe("S: foreground concurrency and scheduling", () => {
     clock.advance(3_600_000 + 1000);
     const out = rig.core.scheduler.admit();
     expect(out.ended.filter((e) => e.code === "QUEUE_EXPIRED").length).toBe(14); // 16 − 1 cancelled − 2 started + 1 new
-    expect(JSON.parse(rig.core.runs.requireRun(ids[0]!).error_json!).code).toBe("QUEUE_EXPIRED");
-    expect(rig.core.runs.requireRun(ids[0]!).deadline_at).toBeNull();
+    // (which two started depends on the id order at equal accept times; check one that expired)
+    const expired = out.ended.find((e) => e.code === "QUEUE_EXPIRED")!.runId;
+    expect(JSON.parse(rig.core.runs.requireRun(expired).error_json!).code).toBe("QUEUE_EXPIRED");
+    expect(rig.core.runs.requireRun(expired).deadline_at).toBeNull();
   });
 
   it("V4-S04 cancelling A drains only A; B keeps running; the root and the Harness are never aborted", async () => {

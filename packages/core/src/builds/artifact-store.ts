@@ -65,7 +65,7 @@ export class ArtifactStore {
   }
 
   /** Validate, write, fsync and atomically publish. Returns the existing artifact when the same content is present. */
-  put(files: Record<string, Buffer>, meta: { runtimeLockId: string; platform: string; abiVersion: number }): { artifactId: string; manifest: ArtifactManifest; sizeBytes: number; manifestBytes: Buffer } {
+  put(files: Record<string, Buffer>, meta: { runtimeLockId: string; platform: string; abiVersion: number }, hooks: { beforeStaging?: (name: string) => void; afterPublish?: (name: string) => void } = {}): { artifactId: string; manifest: ArtifactManifest; sizeBytes: number; manifestBytes: Buffer } {
     const names = Object.keys(files).sort();
     if (names.join(",") !== [...ARTIFACT_FILES].join(",")) throw new Error(`artifact must contain exactly ${ARTIFACT_FILES.join(", ")}`);
     let size = 0;
@@ -84,7 +84,10 @@ export class ArtifactStore {
       if (problem === null) return { artifactId, manifest, sizeBytes: size, manifestBytes };
       throw new Error(`existing artifact ${artifactId} is damaged: ${problem}`);
     }
-    const staging = path.join(this.root, `.staging-${randomUUID()}`);
+    const stagingName = `.staging-${randomUUID()}`;
+    // v0.4 (spec §17.3): the owner is registered before the directory exists, so online GC never sees an orphan.
+    hooks.beforeStaging?.(stagingName);
+    const staging = path.join(this.root, stagingName);
     mkdirSync(staging, { mode: 0o700 });
     try {
       for (const n of names) writeDurable(path.join(staging, n), files[n]!);
@@ -94,8 +97,10 @@ export class ArtifactStore {
       fsyncDir(this.root);
     } catch (e) {
       rmSync(staging, { recursive: true, force: true });
+      hooks.afterPublish?.(stagingName);
       throw e;
     }
+    hooks.afterPublish?.(stagingName);
     const problem = this.verify(artifactId);
     if (problem !== null) throw new Error(`artifact ${artifactId} failed verification after write: ${problem}`);
     return { artifactId, manifest, sizeBytes: size, manifestBytes };
@@ -140,6 +145,7 @@ export class ArtifactStore {
     const artifacts: string[] = [];
     const staging: string[] = [];
     for (const name of readdirSync(this.root)) {
+      if (name === ".trash") continue;
       if (/^[0-9a-f]{64}$/.test(name)) artifacts.push(`sha256:${name}`);
       else if (name.startsWith(".staging-")) staging.push(name);
     }

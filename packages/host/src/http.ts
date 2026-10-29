@@ -20,6 +20,7 @@ import {
   type StateView, isCodeBundle, AGENT_PROFILES, V4_LIMITS } from "@agentos/contracts";
 import { fault, readSystemInfo, type AgentEngine, type Core, type RunCoordinator, type RuntimeSystem, type SystemCapabilities, type UserWriteMeta } from "@agentos/core";
 import { registerSystemRoutes } from "./http-system.js";
+import { registerMaintenanceRoutes } from "./http-maintenance.js";
 import { COOKIE, parseCookies, type SessionAuth } from "./auth.js";
 import type { HostConfig } from "./config.js";
 import type { Logger } from "./log.js";
@@ -54,6 +55,8 @@ export interface HostRuntime {
   sys: RuntimeSystem | null;
   /** v0.3 system capabilities (resources, grants, actions, observations, broker link). */
   caps: SystemCapabilities | null;
+  /** v0.4 background control loops (maintenance, online GC, candidates, root sync, compaction). */
+  maint?: import("./maintenance-host.js").MaintenanceHost | null;
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -233,7 +236,9 @@ export function buildServer(rt: HostRuntime): FastifyInstance {
         a.runtime = b?.manifest.runtime;
         a.dataEpoch = row.data_epoch;
         a.health = b && isCodeBundle(b) ? (rt.sys?.runtime.row(a.appId)?.health ?? "stopped") : null;
+        (a as { lifecycle?: string }).lifecycle = core.lifecycle.get(a.appId)?.state ?? "active";
       }
+      (v as { maintenance?: unknown }).maintenance = { ...core.maintenance.jobs.state(), clock: core.maintenance.clock.state, openIncidents: core.maintenance.incidents.list({ open: true }).length, notifications: core.maintenance.notifications.list(true).length, pendingProposals: core.store.get<{ n: number }>("SELECT COUNT(*) AS n FROM proposals WHERE state = 'pending'")!.n };
       return v;
     });
     return ok(reply, 200, view);
@@ -247,7 +252,9 @@ export function buildServer(rt: HostRuntime): FastifyInstance {
   app.get<{ Params: { appId: string } }>("/api/apps/:appId", async (req, reply) => {
     requireSession(req);
     if (!UUID.test(req.params.appId)) throw new AgentOsError("NOT_FOUND", "app not found");
-    return ok(reply, 200, core.apps.getApp(req.params.appId));
+    const detail = core.apps.getApp(req.params.appId);
+    core.lifecycle.touch(req.params.appId); // a real user open (spec §18 lastUsedAt)
+    return ok(reply, 200, { ...detail, lifecycle: core.lifecycle.view(req.params.appId) });
   });
 
   app.get<{ Params: { appId: string } }>("/api/apps/:appId/revisions", async (req, reply) => {
@@ -470,6 +477,7 @@ export function buildServer(rt: HostRuntime): FastifyInstance {
     if (ep !== clientEpoch()) throw new AgentOsError("CLIENT_EPOCH_STALE", "this page belongs to an older workspace state; reload", { clientEpoch: clientEpoch() });
     const body = parseDto<{ expectedAppEpoch: number; input: unknown }>("queryCall", req.body);
     const r = await requireSys().invocations.query(appParam(req.params.appId), req.params.queryId, body.input, body.expectedAppEpoch);
+    core.lifecycle.touch(req.params.appId);
     return ok(reply, 200, r);
   });
 
@@ -478,6 +486,7 @@ export function buildServer(rt: HostRuntime): FastifyInstance {
       const meta = writeMeta(req);
       const body = parseDto<{ expectedAppEpoch: number; input: unknown }>("commandCall", req.body);
       const r = requireSys().submitCommand(meta, appParam(req.params.appId), req.params.commandId, body.input, body.expectedAppEpoch);
+      core.lifecycle.touch(req.params.appId);
       log.info("command accepted", { appId: req.params.appId, invocationId: r.body.invocationId, replayed: r.replayed });
       return ok(reply, r.status, r.body);
     }),
@@ -528,6 +537,7 @@ export function buildServer(rt: HostRuntime): FastifyInstance {
   );
 
   registerSystemRoutes(app, rt, { requireSession, writeMeta, withWrite, ok });
+  registerMaintenanceRoutes(app, rt, { requireSession, writeMeta, withWrite, ok });
 
   app.all("/api/*", async () => {
     throw new AgentOsError("NOT_FOUND", "no such endpoint");

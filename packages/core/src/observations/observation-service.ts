@@ -6,11 +6,13 @@ import { iso, type Store } from "../persistence/store.js";
 export type ObservationScope =
   | { kind: "app_call"; callId: string; appId: string; revisionId: string }
   | { kind: "run"; runId: string; toolTaskId: string | null }
-  | { kind: "user" };
+  | { kind: "user" }
+  /** v0.4: the host's maintenance controller (never the user) */
+  | { kind: "maintenance"; jobId: string | null };
 
 export interface ObservationRow {
   id: string;
-  scope_kind: "app_call" | "run" | "user";
+  scope_kind: "app_call" | "run" | "user" | "maintenance";
   call_id: string | null;
   run_id: string | null;
   tool_task_id: string | null;
@@ -60,7 +62,7 @@ export class ObservationService {
   record(scope: ObservationScope, resource: { id: string; generation: number }, capabilityId: string, version: string | null, quality: ObservationQuality, summary: unknown): ObservationRow {
     const id = `obs_${randomBytes(12).toString("hex")}`;
     const now = this.store.clock.now();
-    const pk = scope.kind === "app_call" ? `app:${scope.appId}:${scope.revisionId}` : scope.kind === "run" ? `run:${scope.runId}` : "user:local";
+    const pk = scope.kind === "app_call" ? `app:${scope.appId}:${scope.revisionId}` : scope.kind === "run" ? `run:${scope.runId}` : scope.kind === "maintenance" ? `maintenance:${scope.jobId ?? "monitor"}` : "user:local";
     let text = JSON.stringify(summary ?? null);
     if (text.length > 16 * 1024) text = JSON.stringify({ truncated: true, bytes: text.length });
     this.store.tx(() =>

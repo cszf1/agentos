@@ -120,8 +120,13 @@ export class BuildService {
     const cached = linked ? [] : s.all<{ id: string }>("SELECT id FROM artifacts WHERE build_key = ? AND gc_state = 'live' ORDER BY created_at ASC", key);
     for (const c of cached) {
       if (this.ctx.artifacts.verify(c.id) === null) {
-        s.tx(() => this.link(appId, revisionId, lock.id, c.id));
-        return { artifactId: c.id, buildJobId: null, cacheHit: true };
+        try {
+          s.tx(() => this.link(appId, revisionId, lock.id, c.id));
+          return { artifactId: c.id, buildJobId: null, cacheHit: true };
+        } catch (e) {
+          if ((e as AgentOsError).code !== "ARTIFACT_GC_PENDING") throw e;
+          continue; // GC won the race for this object: build a new physical generation instead
+        }
       }
       s.tx(() => s.run("UPDATE artifacts SET gc_state = 'unavailable' WHERE id = ?", c.id));
     }
@@ -177,6 +182,8 @@ export class BuildService {
 
   private link(appId: string, revisionId: string, lockId: string, artifactId: string): void {
     const s = this.ctx.store;
+    const g = s.get<{ gc_state: string }>("SELECT gc_state FROM artifacts WHERE id = ?", artifactId);
+    if (g && (g.gc_state === "deleting" || g.gc_state === "marked")) throw new AgentOsError("ARTIFACT_GC_PENDING", "the cached artifact is being cleaned up", { artifactId });
     const prior = s.get<{ artifact_id: string }>("SELECT artifact_id FROM revision_artifacts WHERE app_id = ? AND revision_id = ?", appId, revisionId);
     if (prior) {
       if (prior.artifact_id !== artifactId) throw new BuildError("BUILD_NONDETERMINISTIC", `revision already points at ${prior.artifact_id}`);
@@ -297,7 +304,10 @@ export class BuildService {
       if (expectId !== null && this.ctx.artifacts.verify(expectId) !== null) this.ctx.artifacts.remove(expectId);
       let put: ReturnType<ArtifactStore["put"]>;
       try {
-        put = this.ctx.artifacts.put({ "app.mjs": bytes }, { runtimeLockId: lock.id, platform: lock.platform, abiVersion: RUNNER_ABI_VERSION });
+        put = this.ctx.artifacts.put({ "app.mjs": bytes }, { runtimeLockId: lock.id, platform: lock.platform, abiVersion: RUNNER_ABI_VERSION }, {
+          beforeStaging: (name) => s.tx(() => s.run("INSERT INTO staging_owners (path_key, owner_kind, owner_id, state, created_at) VALUES (?, 'build', ?, 'open', ?)", name, job.id, this.now())),
+          afterPublish: (name) => s.tx(() => s.run("UPDATE staging_owners SET state = 'closed', closed_at = ? WHERE path_key = ?", this.now(), name)),
+        });
       } catch (e) {
         fail(new BuildError("BUILD_FAILED", `artifact rejected: ${(e as Error).message}`));
       }
@@ -310,11 +320,15 @@ export class BuildService {
         }
         const other = s.get<{ id: string }>("SELECT id FROM artifacts WHERE build_key = ? AND id <> ? AND gc_state = 'live'", job.build_key, artifactId);
         if (other) throw new BuildError("BUILD_NONDETERMINISTIC", `rebuild of ${job.build_key} produced ${artifactId}, earlier ${other.id}`);
-        if (expectId !== null) s.run("UPDATE artifacts SET gc_state = 'live', verified_at = ? WHERE id = ?", this.now(), artifactId);
+        // v0.4 (spec §17.2): an object in deletion never takes a new reference; the build waits and is retried.
+        const cur = s.get<{ gc_state: string }>("SELECT gc_state FROM artifacts WHERE id = ?", artifactId);
+        if (cur && (cur.gc_state === "deleting" || cur.gc_state === "marked")) throw new AgentOsError("ARTIFACT_GC_PENDING", "the same artifact is being cleaned up; the build is retried after it", { artifactId });
+        if (expectId !== null || cur?.gc_state === "unavailable") s.run("UPDATE artifacts SET gc_state = 'live', verified_at = ? WHERE id = ?", this.now(), artifactId);
         if (!s.get("SELECT 1 FROM artifacts WHERE id = ?", artifactId)) {
           s.run(
-            "INSERT INTO artifacts (id, build_key, runtime_lock_id, platform, manifest_json, relative_path, size_bytes, verified_at, gc_state, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'live', ?)",
-            artifactId, job.build_key, lock.id, lock.platform, put!.manifestBytes.toString("utf8"), this.ctx.artifacts.relativePath(artifactId), put!.sizeBytes, this.now(), this.now(),
+            // a re-created object gets a new physical generation; an old delete intent never matches it (spec §17.2)
+            "INSERT INTO artifacts (id, build_key, runtime_lock_id, platform, manifest_json, relative_path, size_bytes, verified_at, gc_state, created_at, gc_generation) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'live', ?, (SELECT COALESCE(MAX(gc_generation), 0) + 1 FROM gc_delete_intents WHERE object_kind = 'artifact' AND object_id = ?))",
+            artifactId, job.build_key, lock.id, lock.platform, put!.manifestBytes.toString("utf8"), this.ctx.artifacts.relativePath(artifactId), put!.sizeBytes, this.now(), this.now(), artifactId,
           );
         }
         this.link(job.app_id, job.revision_id, lock.id, artifactId);

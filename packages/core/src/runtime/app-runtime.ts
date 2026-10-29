@@ -108,6 +108,8 @@ export class AppRuntimeService {
    * generation, boot and lease; an in-process handle alone never grants the right to serve (spec §14.2).
    */
   route(appId: string, expected?: { revisionId: string }): { inst: LiveInstance; row: InstanceRow; generation: number } {
+    const lc = this.ctx.store.get<{ state: string }>("SELECT state FROM app_lifecycle WHERE app_id = ?", appId);
+    if (lc && lc.state !== "active") throw new AgentOsError("APP_ARCHIVED", "this app is archived; restore it to use it", { appId, lifecycle: lc.state });
     if (!this.ctx.instances || !this.ctx.driver) throw new AgentOsError("SANDBOX_UNAVAILABLE", "the code runtime is not available on this host");
     const s = this.ctx.store;
     const ar = this.row(appId);

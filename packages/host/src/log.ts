@@ -12,7 +12,7 @@ export interface Logger {
   error(msg: string, f?: Record<string, unknown>): void;
 }
 
-/** JSON-lines logger: stdout (journald) plus logs/host.log rotated at 10 MiB, 5 files kept. */
+/** JSON-lines logger: stdout (journald) plus logs/host.log rotated at 10 MiB into closed timestamped files. */
 export function createLogger(dir: string | null, level: Level, opts: { maxBytes?: number; keep?: number } = {}): Logger {
   const maxBytes = opts.maxBytes ?? 10 * 1024 * 1024;
   const keep = opts.keep ?? 5;
@@ -27,15 +27,20 @@ export function createLogger(dir: string | null, level: Level, opts: { maxBytes?
       size = 0;
     }
   }
+  // v0.4 (spec §17.4): atomic rotation to a closed, timestamped file; the writer never reopens it, so the log-cleanup
+  // template may delete closed files only. A hard cap keeps the directory bounded without any policy.
   const rotate = () => {
     if (!file) return;
-    for (let i = keep - 1; i >= 1; i--) {
-      const from = i === 1 ? file : `${file}.${i - 1}`;
-      try {
-        fs.renameSync(from, `${file}.${i}`);
-      } catch {
-        /* missing */
-      }
+    try {
+      fs.renameSync(file, `${file}.${new Date().toISOString().replace(/[-:]/g, "")}`);
+    } catch {
+      /* missing */
+    }
+    try {
+      const closed = fs.readdirSync(dir!).filter((n) => /^host\.log\.\d{8}T\d{6}(\.\d{1,4})?Z$/.test(n)).sort();
+      for (const n of closed.slice(0, Math.max(0, closed.length - Math.max(keep, 50)))) fs.unlinkSync(path.join(dir!, n));
+    } catch {
+      /* best effort */
     }
     size = 0;
   };

@@ -14,6 +14,14 @@ import {
   type ErrorCode,
   type GrantSyncBody,
   type WriteEnvelope,
+  BROKER_PROTOCOL_V2,
+  BROKER_METHODS_V2,
+  checkMaintenanceEnvelope,
+  type BrokerMethodV2,
+  type BrokerMaintenanceState,
+  type MaintenanceControlBody,
+  type MaintenancePolicySyncBody,
+  type MaintenanceWriteEnvelope,
 } from "@agentos/contracts";
 
 /**
@@ -32,6 +40,8 @@ export interface HandshakeResult {
   workspaceState: "active" | "quiescing" | "fenced" | "restoring" | "unavailable";
   identityMismatch?: string[];
   diagnostic?: string | null;
+  /** v0.4 brokers list [1, 2]; absent on a v0.3 broker (no maintenance principal available) */
+  supportedProtocols?: number[];
 }
 
 export interface BrokerOperation {
@@ -58,6 +68,8 @@ export interface BrokerOperation {
   cancelRequested: boolean;
   reconcileAttempts: number;
   steps?: { step: string; attempt: number; at: number }[];
+  /** protocol-2 attribution (job/step/policy) of a maintenance operation; null for protocol-1 operations */
+  maintenance?: { protocolVersion: 2; jobId: string; stepId: string; policyId: string; policyVersion: number; maintenanceEpoch: number; targetControlEpoch: number; triggerKey: string; actionFamily: string } | null;
 }
 
 export class BrokerError extends Error {
@@ -166,11 +178,13 @@ export class BrokerClient {
     }
   }
 
-  #send(method: BrokerMethod, params: unknown, timeoutMs?: number): Promise<unknown> {
+  #send(method: BrokerMethod | BrokerMethodV2, params: unknown, timeoutMs?: number): Promise<unknown> {
     const s = this.#sock;
     if (!s) return Promise.reject(new BrokerError("BROKER_UNAVAILABLE", "not connected"));
     const id = String(++this.#seq);
-    const body = JSON.stringify({ v: BROKER_PROTOCOL_VERSION, id, method, params });
+    // Protocol-2 methods always travel as v=2; protocol-1 methods as v=1 (never downgraded, spec §13.3).
+    const v = (BROKER_METHODS_V2 as readonly string[]).includes(method) ? BROKER_PROTOCOL_V2 : BROKER_PROTOCOL_VERSION;
+    const body = JSON.stringify({ v, id, method, params });
     if (Buffer.byteLength(body) > MAX_BROKER_FRAME) return Promise.reject(new BrokerError("LIMIT_EXCEEDED", "broker request exceeds 512 KiB"));
     if (jsonDepth(body) > MAX_JSON_DEPTH) return Promise.reject(new BrokerError("INVALID_SYSTEM_PLAN", "broker request is nested deeper than 8"));
     const head = Buffer.alloc(4);
@@ -203,7 +217,7 @@ export class BrokerClient {
   }
 
   /** Serialize calls on the single connection. */
-  #call<T>(method: BrokerMethod, params: unknown, timeoutMs?: number): Promise<T> {
+  #call<T>(method: BrokerMethod | BrokerMethodV2, params: unknown, timeoutMs?: number): Promise<T> {
     const run = async () => {
       if (!this.connected || !this.handshakeResult) throw new BrokerError("BROKER_UNAVAILABLE", "broker not connected; handshake first");
       return (await this.#send(method, params, timeoutMs)) as T;
@@ -259,6 +273,38 @@ export class BrokerClient {
   }
   restoreComplete(machineInstallId: string, restoreRequestId: string) {
     return this.#call<RestoreSession>("restore-complete", { storeUuid: this.opts.storeUuid, machineInstallId, restoreRequestId });
+  }
+
+  // ------------------------------------------------------------ protocol 2: maintenance principal (v0.4)
+
+  /** true when the connected broker speaks protocol 2 */
+  get maintenanceCapable(): boolean {
+    return !!this.handshakeResult?.supportedProtocols?.includes(BROKER_PROTOCOL_V2);
+  }
+  #needV2(): void {
+    if (!this.maintenanceCapable) throw new BrokerError("CAPABILITY_VERSION_UNSUPPORTED", "the broker does not speak protocol 2 (maintenance); no maintenance write is sent");
+  }
+  async maintenancePolicySync(b: MaintenancePolicySyncBody) {
+    this.#needV2();
+    return this.#call<{ policyId: string; policyVersion: number; state: string; seq?: number; replayed?: boolean }>("maintenance-policy-sync", b);
+  }
+  async maintenancePolicyRevoke(identity: BrokerIdentity, policyId: string, policyVersion: number) {
+    this.#needV2();
+    return this.#call<{ policyId: string; policyVersion: number; state: string; revokedSeq: number }>("maintenance-policy-revoke", { identity, policyId, policyVersion });
+  }
+  async maintenanceControl(b: MaintenanceControlBody) {
+    this.#needV2();
+    return this.#call<{ state: string; maintenanceEpoch: number; applied: boolean; targetControlEpoch: number | null; seq: number }>("maintenance-control", b);
+  }
+  async maintenanceState(identity: BrokerIdentity) {
+    this.#needV2();
+    return this.#call<BrokerMaintenanceState>("maintenance-state", { identity });
+  }
+  async maintenanceSubmit(env: MaintenanceWriteEnvelope) {
+    this.#needV2();
+    const why = checkMaintenanceEnvelope(env);
+    if (why) throw new BrokerError("INVALID_SYSTEM_PLAN", why);
+    return this.#call<BrokerOperation>("maintenance-submit", env);
   }
 }
 

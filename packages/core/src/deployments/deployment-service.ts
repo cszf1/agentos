@@ -29,7 +29,7 @@ export interface DeploymentRow {
   target_revision_id: string;
   base_revision_id: string | null;
   expected_app_epoch: number;
-  origin: "agent_prepare" | "user_history";
+  origin: "agent_prepare" | "user_history" | "proposal_accept" | "maintenance";
   owner_run_id: string | null;
   request_key: string;
   request_hash: string;
@@ -90,6 +90,10 @@ export class DeploymentService {
   #draining = new Set<string>();
   /** Called after a user_history deployment becomes ready so it activates without another browser request. */
   autoActivate: ((d: DeploymentRow) => Promise<void>) | null = null;
+
+  /** v0.4: proposal projections commit inside the activation / termination transaction */
+  onCommittedInTx: ((deploymentId: string, revisionId: string) => void) | null = null;
+  onEndedInTx: ((deploymentId: string) => void) | null = null;
 
   constructor(private readonly ctx: RuntimeContext, private readonly runtime: AppRuntimeService) {}
 
@@ -208,6 +212,7 @@ export class DeploymentService {
       s.run("UPDATE runtime_instances SET desired_state = 'removed', observed_state = CASE WHEN observed_state IN ('failed','stopped','absent') THEN observed_state ELSE 'draining' END, updated_at = ? WHERE id = ? AND role = 'preview'", this.now(), d.candidate_instance_id);
     }
     s.event(`deployment.${status}`, { deploymentId: d.id, code: error?.code ?? null }, { appId: d.app_id, runId: d.owner_run_id });
+    if (d.origin === "proposal_accept") this.onEndedInTx?.(d.id);
   }
 
   #fail(id: string, stage: DeploymentStage, code: string, message: string, diagnostics?: unknown[]): void {
@@ -348,7 +353,8 @@ export class DeploymentService {
 
   async #afterReady(id: string): Promise<void> {
     const d = this.get(id);
-    if (d?.status === "ready" && d.origin === "user_history" && this.autoActivate) await this.autoActivate(d);
+    // user-decided deployments (history switch, accepted proposal) activate on their own once ready
+    if (d?.status === "ready" && (d.origin === "user_history" || d.origin === "proposal_accept") && this.autoActivate) await this.autoActivate(d);
   }
 
   /** Candidate checks (spec §14.1): handshake done by launch; main query with empty and default collections; command samples. */
@@ -406,6 +412,11 @@ export class DeploymentService {
       }
     }
     return null;
+  }
+
+  /** v0.4 CandidateService: the same platform fixture checks for a candidate that is not a deployment (spec §19.2). */
+  fixtureChecks(live: LiveInstance, appId: string, revisionId: string, appEpoch: number, bundle: CodeBundle): Promise<{ code: string; message: string; diagnostics?: unknown[] } | null> {
+    return this.#healthChecks(live, { app_id: appId, target_revision_id: revisionId, expected_app_epoch: appEpoch } as DeploymentRow, bundle);
   }
 
   /** Wait (bounded) until the deployment leaves queued/preparing; status reads have no side effects. */
@@ -498,6 +509,7 @@ export class DeploymentService {
     }
     s.run("UPDATE deployments SET status = 'committed', stage = 'cleanup', committed_epoch = ?, committed_at = ?, updated_at = ? WHERE id = ?", r.appEpoch, this.now(), this.now(), id);
     s.event("deployment.committed", { deploymentId: id, revisionId: d.target_revision_id, appEpoch: r.appEpoch, changed: r.changed }, { appId: d.app_id, runId: opts.runId });
+    if (d.origin === "proposal_accept") this.onCommittedInTx?.(id, d.target_revision_id);
     fault("deploy.activate_before_commit");
     return { ...r, deploymentId: id, noOp: !r.changed };
   }

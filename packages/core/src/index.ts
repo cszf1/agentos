@@ -12,6 +12,10 @@ import { ClockGuard } from "./maintenance/clock-guard.js";
 import { IncidentStore, Notifications } from "./health/incidents.js";
 import { MaintenanceService } from "./maintenance/jobs.js";
 import { HealthMonitor } from "./health/health-monitor.js";
+import { LifecycleService } from "./lifecycle/lifecycle-service.js";
+import { ProposalService } from "./proposals/proposal-service.js";
+import { CompactionService } from "./runs/compaction-service.js";
+import { diagnoseHandler, optimizeHandler } from "./maintenance/templates.js";
 
 export * from "./persistence/store.js";
 export { MIGRATIONS } from "./persistence/migrations.js";
@@ -33,6 +37,14 @@ export * from "./maintenance/clock-guard.js";
 export * from "./maintenance/jobs.js";
 export * from "./health/incidents.js";
 export * from "./health/health-monitor.js";
+export * from "./lifecycle/lifecycle-service.js";
+export * from "./proposals/proposal-service.js";
+export * from "./proposals/candidate-service.js";
+export * from "./runs/compaction-service.js";
+export * from "./maintenance/templates.js";
+export * from "./maintenance/app-recovery.js";
+export * from "./maintenance/service-maintenance.js";
+export * from "./builds/online-gc.js";
 
 export interface Core {
   store: Store;
@@ -52,6 +64,9 @@ export interface Core {
     jobs: MaintenanceService;
     health: HealthMonitor;
   };
+  lifecycle: LifecycleService;
+  proposals: ProposalService;
+  compactions: CompactionService;
 }
 
 export function openCore(file: string, opts: { clock?: Clock; runSettings?: Partial<RunSettings>; mono?: () => number } = {}): Core {
@@ -87,7 +102,20 @@ export function openCore(file: string, opts: { clock?: Clock; runSettings?: Part
     }
     return { ok: false, reason: "unknown target kind" };
   };
-  return { store, gateway, apps, records, runs, agentOps, user, budgets, scheduler, maintenance: { policies, clock, incidents, notifications, jobs, health } };
+  const lifecycle = new LifecycleService(store, policies);
+  const proposals = new ProposalService(store, apps, runs);
+  const compactions = new CompactionService(store);
+  agentOps.proposals = proposals;
+  jobs.register("app-diagnose", diagnoseHandler(store, runs, incidents));
+  jobs.register("app-optimize", optimizeHandler(store, runs, incidents));
+  jobs.register("app-archive", lifecycle.handler(incidents));
+  // background runs report back to their job from their completion facts only (spec §10.2)
+  const prevFinal = runs.onFinalizedInTx;
+  runs.onFinalizedInTx = (row) => {
+    prevFinal?.(row);
+    if (row.background === 1) jobs.finishAnalysis(row.id, { reportId: row.report_id, proposalId: row.proposal_id, status: row.status });
+  };
+  return { store, gateway, apps, records, runs, agentOps, user, budgets, scheduler, maintenance: { policies, clock, incidents, notifications, jobs, health }, lifecycle, proposals, compactions };
 }
 export * from "./runtime/driver.js";
 export * from "./runtime/policy.js";

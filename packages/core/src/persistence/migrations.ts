@@ -501,6 +501,16 @@ CREATE TABLE notifications (
 );
 CREATE UNIQUE INDEX notifications_one_open ON notifications (kind, subject) WHERE state = 'open';
 
+CREATE TABLE target_controls (
+  target_kind TEXT NOT NULL CHECK (target_kind IN ('service','app')),
+  target_id TEXT NOT NULL,
+  control_epoch INTEGER NOT NULL CHECK (control_epoch >= 1),
+  user_intent TEXT NOT NULL CHECK (user_intent IN ('none','stopped','running')),
+  root_state TEXT NOT NULL DEFAULT 'none' CHECK (root_state IN ('none','pending','synced','unavailable')),
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (target_kind, target_id)
+);
+
 ALTER TABLE deployments ADD COLUMN proposal_id TEXT;
 ALTER TABLE deployments ADD COLUMN job_id TEXT;
 ALTER TABLE system_actions ADD COLUMN job_id TEXT;
@@ -511,6 +521,9 @@ ALTER TABLE provider_grants ADD COLUMN policy_id TEXT;
 ALTER TABLE provider_grants ADD COLUMN policy_version INTEGER;
 ALTER TABLE artifacts ADD COLUMN gc_generation INTEGER NOT NULL DEFAULT 1 CHECK (gc_generation >= 1);
 ALTER TABLE artifacts ADD COLUMN delete_intent_id TEXT;
+
+CREATE TRIGGER apps_lifecycle_row AFTER INSERT ON apps WHEN NEW.id <> '00000000-0000-4000-8000-0000000005a5'
+BEGIN INSERT OR IGNORE INTO app_lifecycle (app_id, state, last_used_at, control_epoch, updated_at) VALUES (NEW.id, 'active', NEW.created_at, 1, NEW.created_at); END;
 
 INSERT INTO app_lifecycle (app_id, state, last_used_at, control_epoch, updated_at)
   SELECT id, 'active', updated_at, 1, updated_at FROM apps WHERE id <> '00000000-0000-4000-8000-0000000005a5';
@@ -536,6 +549,7 @@ export const V04_MIGRATION: StructuralMigration = {
     { table: "system_actions", replace: [["CHECK (origin IN ('app','agent','compensation'))", "CHECK (origin IN ('app','agent','compensation','maintenance'))"]] },
     { table: "provider_grants", replace: [["CHECK (principal_kind IN ('app','system_action','run'))", "CHECK (principal_kind IN ('app','system_action','run','maintenance'))"]] },
     { table: "artifacts", replace: [["CHECK (gc_state IN ('live','unavailable','marked'))", "CHECK (gc_state IN ('live','unavailable','marked','deleting'))"]] },
+    { table: "resource_observations", replace: [["CHECK (scope_kind IN ('app_call','run','user'))", "CHECK (scope_kind IN ('app_call','run','user','maintenance'))"]] },
   ],
   sql: V04_MIGRATION_SQL,
 };
