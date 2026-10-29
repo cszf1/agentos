@@ -133,8 +133,9 @@ try {
   const p = props[0];
   const before = q("SELECT epoch, active_revision_id FROM apps WHERE id = ?", codeApp)[0];
   const acc = await req("POST", `/api/proposals/${p.proposalId}/accept`, { proposalHash: p.proposalHash, expectedAppEpoch: before.epoch });
+  // accept is queued (202): the proposal_accept deployment prepares, then activates through the normal transaction
+  const dep = await until(async () => q("SELECT status, origin, error_json FROM deployments WHERE app_id = ? ORDER BY created_at DESC LIMIT 1", codeApp)[0], (d) => d && !["queued", "preparing", "ready"].includes(d.status), 900_000, "proposal deployment");
   const after = q("SELECT epoch, active_revision_id FROM apps WHERE id = ?", codeApp)[0];
-  const dep = q("SELECT status, origin FROM deployments WHERE app_id = ? ORDER BY created_at DESC LIMIT 1", codeApp)[0];
   report.steps.publish = { accept: acc.status, before, after, deployment: dep };
   if (acc.status >= 300 || after.active_revision_id !== p.candidateRevisionId || dep?.origin !== "proposal_accept") throw new Error("O01 publication failed");
 
