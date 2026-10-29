@@ -4,7 +4,6 @@ use serde_json::{json, Value};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
-use crate::db;
 use crate::policy::{self, Policy};
 use agentos_protocol::worker::{self, CallError, WorkerRequest};
 
@@ -251,6 +250,3 @@ pub fn digest(v: &Value) -> String {
     agentos_protocol::domain_hash("agentos.resource-identity.v1", v).unwrap_or_default()
 }
 
-pub fn db_path() -> &'static str {
-    db::DB_PATH
-}

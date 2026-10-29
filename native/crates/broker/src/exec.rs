@@ -923,7 +923,7 @@ fn run(b: &Broker, op: &OpRow, res: &CatalogRes, caps: &Value, nonce: &str, atte
 }
 
 /// File evidence: new hash → done; old hash/absent → unchanged; anything else → unknown and quarantined.
-fn reconcile_file(b: &Broker, op: &OpRow, res: &CatalogRes, plan: &Value, why: &str, may_continue: bool) -> Outcome {
+fn reconcile_file(b: &Broker, _op: &OpRow, res: &CatalogRes, plan: &Value, why: &str, may_continue: bool) -> Outcome {
     let path = plan["path"].as_str().unwrap_or("");
     let temp = plan["temp"].as_str().unwrap_or("");
     let parent = plan["parent"].as_str().unwrap_or("");

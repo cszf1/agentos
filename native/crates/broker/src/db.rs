@@ -269,10 +269,6 @@ pub fn meta(c: &Connection, key: &str) -> Option<String> {
     c.query_row("SELECT value FROM broker_meta WHERE key=?1", params![key], |r| r.get(0)).optional().ok().flatten()
 }
 
-pub fn set_meta(c: &Connection, key: &str, value: &str) -> rusqlite::Result<()> {
-    c.execute("INSERT INTO broker_meta(key,value) VALUES (?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value", params![key, value]).map(|_| ())
-}
-
 /// Next global log sequence number (inside the caller's transaction).
 pub fn next_seq(c: &Connection) -> rusqlite::Result<i64> {
     let s: i64 = c.query_row("SELECT CAST(value AS INTEGER) FROM broker_meta WHERE key='seq'", [], |r| r.get(0))?;
