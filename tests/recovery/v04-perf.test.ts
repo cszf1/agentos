@@ -1,7 +1,7 @@
 /**
  * V4-O05 foreground performance under background work (spec §27): the same machine and the same load measured twice,
  * first with no background work, then while background maintenance checks (cache-gc / log-cleanup / app-recovery),
- * a model-backed session compaction and repeated jobs run. The p95 of CRUD and list queries must stay within 1.25 ×
+ * a model-backed session compaction and repeated jobs run. The p95 of CRUD (create/delete) and list queries must stay within 1.25 ×
  * the baseline. The raw samples are written to $AGENTOS_PERF_OUT (default /tmp/agentos-perf-v04.json).
  */
 import fs from "node:fs";
@@ -9,20 +9,29 @@ import { describe, expect, it } from "vitest";
 import { Client, seedFixtures, startHost, stopHost } from "../proc.js";
 import { tmpDir } from "../helpers.js";
 
-const OPS = Number(process.env.AGENTOS_PERF_OPS ?? 200); // per round
+// per round. 600 (was 200 until 2026-10-29): at 200 samples a side, the p95 of a ~1.3 ms operation moved by ±0.2 ms
+// between identical runs (the pre-fix and the fixed tree both ranged 0.94–1.24 over 6 runs each), so the ratio judged
+// noise rather than background load. The threshold (1.25) is unchanged.
+const OPS = Number(process.env.AGENTOS_PERF_OPS ?? 600);
 const p95 = (xs: number[]) => {
   const s = [...xs].sort((a, b) => a - b);
   return s[Math.min(s.length - 1, Math.floor(s.length * 0.95))]!;
 };
 
+const live: string[] = [];
 async function measure(c: Client, appId: string, tag: string): Promise<number[]> {
   const out: number[] = [];
   for (let i = 0; i < OPS; i++) {
     const epoch = (await c.get(`/api/apps/${appId}`)).data.appEpoch;
     const t0 = performance.now();
-    if (i % 2 === 0) {
+    if (i % 4 === 0 || (i % 4 === 2 && live.length === 0)) {
       const w = await c.req("POST", `/api/apps/${appId}/records`, { expectedAppEpoch: epoch, data: { title: `${tag}-${i}` } });
       if (w.status >= 300) throw new Error(`write ${w.status}`);
+      live.push(w.data.id as string);
+    } else if (i % 4 === 2) {
+      // create and delete alternate so the app stays below its record limit however many samples are taken
+      const w = await c.req("DELETE", `/api/apps/${appId}/records/${live.shift()}`, { expectedAppEpoch: epoch, expectedRecordVersion: 1 });
+      if (w.status >= 300) throw new Error(`delete ${w.status}`);
     } else {
       const r = await c.get(`/api/apps/${appId}/records?limit=50`);
       if (r.status !== 200) throw new Error(`query ${r.status}`);
@@ -62,8 +71,11 @@ describe("V4-O05 foreground p95 with and without background work", () => {
               compacted = true;
               await c.req("POST", `/api/conversations/${conv}/compactions`, {}).catch(() => undefined);
             }
-            const open = (await c.get("/api/maintenance/jobs?open=1")).data.items.length as number;
-            if (open === 0) {
+            // A check that ends awaiting approval (log-cleanup proposes a deletion) stays open and would stop the refill
+            // after the first batch, leaving later background rounds idle; it is cancelled here so jobs keep repeating.
+            const items = (await c.get("/api/maintenance/jobs?open=1")).data.items as { jobId: string; state: string }[];
+            for (const j of items.filter((x) => x.state === "awaiting_approval")) await c.req("POST", `/api/maintenance/jobs/${j.jobId}/cancel`, {}).catch(() => undefined);
+            if (items.every((x) => x.state === "awaiting_approval")) {
               for (const [t, target] of tpls) {
                 const jb = await c.req("POST", "/api/maintenance/checks", { templateId: t, target }).catch(() => null);
                 if (jb && jb.status === 202) bgJobs++;
@@ -86,12 +98,14 @@ describe("V4-O05 foreground p95 with and without background work", () => {
       await bg;
       const res = {
         ops: OPS, node: process.version, platform: `${process.platform}/${process.arch}`, at: new Date().toISOString(), backgroundJobsSubmitted: bgJobs, compactedConversation: conv ?? null,
-        baseline: { p50: base.sort((x, y) => x - y)[Math.floor(base.length / 2)], p95: p95(base) }, withBackground: { p50: load.sort((x, y) => x - y)[Math.floor(load.length / 2)], p95: p95(load) },
-        ratio: p95(load) / p95(base), raw: { baseline: base, withBackground: load },
+        baseline: { p50: [...base].sort((x, y) => x - y)[Math.floor(base.length / 2)], p95: p95(base) }, withBackground: { p50: [...load].sort((x, y) => x - y)[Math.floor(load.length / 2)], p95: p95(load) },
+        roundsP95: Array.from({ length: ROUNDS / 2 }, (_, k) => ({ baseline: p95(base.slice(k * OPS, (k + 1) * OPS)), withBackground: p95(load.slice(k * OPS, (k + 1) * OPS)) })),
+        ratio: p95(load) / p95(base), raw: { order: "measurement order, rounds concatenated", baseline: base, withBackground: load },
       };
       fs.writeFileSync(process.env.AGENTOS_PERF_OUT ?? "/tmp/agentos-perf-v04.json", JSON.stringify(res, null, 1));
       console.log(`O05 baseline p95 ${res.baseline.p95.toFixed(2)} ms, with background p95 ${res.withBackground.p95.toFixed(2)} ms, ratio ${res.ratio.toFixed(3)}, background jobs ${bgJobs}`);
-      expect(bgJobs).toBeGreaterThan(0);
+      // background work was really running in every loaded round: more than one batch was submitted
+      expect(bgJobs).toBeGreaterThan(tpls.length);
       expect(res.ratio).toBeLessThanOrEqual(1.25);
     } finally {
       await stopHost(h);

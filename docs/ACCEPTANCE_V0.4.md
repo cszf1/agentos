@@ -15,6 +15,55 @@ Every row names what the evidence ran on:
   (the key never exists on the test machines).
 - **software PTY** — the PTY serial sample, a software protocol test, **not** serial hardware.
 
+## External review of d41d3b0 (2026-10-29) and fixes
+
+An external review of the pushed `d41d3b0` against this spec reproduced 6 logic defects and 1 delivery defect, with 6
+spec assertions that failed on `d41d3b0`. A parallel branch (`cursor/v04-review-fixes-899e`, `bd5ce54`) fixed 6 further
+issues and was merged first. All are fixed on `main`; the new regression tests fail on `d41d3b0` (checked by running them
+against the old core: 6/6 failed) and pass now.
+
+| # | Finding | Fix | Test |
+|---|---|---|---|
+| F1 (P1) | pausing a policy with an enabled v1 and a newer draft v2 paused only v2 (`require(id)` = newest) | `pause` closes every version still able to admit (enabled, syncing, pending, needs review) and registers broker revocation for each synced version; `pauseTargetInTx` uses the same path | `F1 pausing a policy …` (maintenance) |
+| F2 (P1) | the model-analysis branch ran before the observe branch: an observe policy started a background model run | observe ends before any model branch (§13.1); the model permit re-checks the job mode | `F2 an observe-only policy …` |
+| F3 (P1) | background analysis took the app lease; a user change waited for it while foreground priority blocked the background model request | background runs no longer take the app change lease (they read a frozen snapshot); a background run does not start while a user task on the app runs or waits; admitting a user change closes a background optimisation of that app (`target_changed`); candidate writes refuse while a user task on the app is open | `F3 background analysis holds no app lease …` |
+| F4 (P2) | `POST /api/conversations/:id/compactions` created the job before the gateway checked the client epoch: 409 with a job left behind | request split into read-only `prepare` (async Pi reads) and `createInTx` inside the gateway write (epoch, key, hash first, facts re-checked); cancel likewise ends the job inside the write and aborts Pi after it | HTTP test: stale epoch → 409 `CLIENT_EPOCH_STALE`, 0 jobs, then 202 + replay + placed |
+| F5 (P2) | global pause did not cover queued compactions; they later got a model request | the compaction scheduler and its binding transaction refuse while paused; pause cancels open compactions whose request is not out; the permit refuses background requests while paused | `F5 a global pause …`, `F5/F6 the model permit …` |
+| F6 (P1) | cancelling a diagnosing job left its queued run dispatchable | cancel closes the run's fence and model route in the same transaction; `finishAnalysis` ends a cancel-requested job as `cancelled`, keeping any report/proposal already saved; the permit refuses a cancelled job's run | `F6 cancelling an analysing job …` |
+| F7 (P2) | `pnpm typecheck` failed with 36 diagnostics in tests/config | tests project: JSX + DOM lib + web's React types, the web source loaded dynamically (type-checked by its own project), explicit `CodeBundleV2` fixtures, envelope defaults before overrides, removed an unknown vitest option, a deliberately partial label typed as such; no test excluded | `pnpm typecheck` exit 0 |
+
+Merged branch `bd5ce54`: a user stop during verification is no longer a failed recovery (no circuit open); cancelled
+queued tasks no longer fill the 16-deep queue; background run and compaction share the single background slot; a passed
+candidate check is not re-run, and a catalog change forces a new check; a compaction request on another route epoch is
+refused; a job ending in `needs_attention` releases its lease while `indeterminate` stays fenced.
+
+### Rerun on the fixed tree (`a539498` + test fixes, 2026-10-29 21:30–22:30 CST)
+
+Full regression `/data/home/full3.sh` (native release build, install, build, `pnpm typecheck`, every suite, opt-in old-version
+tests, real smoke):
+
+| Command | Result |
+|---|---|
+| `cargo build --release`; `pnpm build`; `pnpm typecheck`; `tsc --noEmit` core/host/agent-pi/web | all exit 0 |
+| unit / agents / maintenance / maintenance-recovery / gc-online / compaction | 80 / 24 / 33 / 4 / 7 / 6, all pass |
+| `vitest --project recovery` (perf excluded) | 32/32 + 3 skipped (opt-in, rerun below) |
+| `vitest --project sandbox` | 60/60 + 1 skipped (opt-in V2-B04, rerun below) |
+| `vitest --project native` | 21/21 |
+| `vitest --project broker-recovery` | first 31/32: V3-R08 cancelled while the broker was still observing the device (before the port opened), and the broker then correctly answered `cancelled_no_effect`/`not_dispatched`. The test only waited for `running`; it now waits until the device simulator has seen the request, which is the case R08 is about. Broker code unchanged. Rerun 3 × 12/12 (broker-kill) |
+| `vitest --project telemetry` | first 1 + 5 skipped (the acceptance guest had hung, so T01–T05 skipped); guest rebooted, rerun 6/6 |
+| `playwright test` | 8/8 |
+| `cargo fmt --check`; Rust warnings | 0; 0 |
+| opt-in: recovery v02-recovery + v03-upgrade with real v0.1 build and live v0.2 workspace copy; sandbox v02-ops offline | 15/15; 7/7 |
+| V4-O05 perf | **not settled**, see Performance (V4-O05) |
+
+Real model on the fixed tree: run 14 failed at O01 (the code-app run used its 3 `app_stage` attempts on invalid bundles:
+RPC schema strings without `maxLength`, then a bundle without `formatVersion`/`manifest`); run 15 passed every step
+(`docs/evidence/v0.4-smoke-real.run15.json`, 21:48–21:52 CST): O01 parallel 152 s overlapped (reading list 5 requests;
+番茄钟 code app 9 requests, one refused `app_stage` corrected inside the budget); O03 compaction `placed` (entry 92, cutoff 57,
+one background attempt, 552 in / 575 out tokens); background optimisation `awaiting_approval` (target_app_get,
+candidate_stage, candidate_check, proposal_submit); publication 202 → deployment `committed`, epoch 1 → 2; diagnosis job
+`succeeded` (maintenance_context, incident_get, maintenance_report). Relay, port 4501 and relay token removed afterwards.
+
 ## Environments
 
 | | Development box `agentos` | Clean box `agentos-clean4` (README install, V4-O04) | Clean box `agentos-clean3` (v0.3 → v0.4 upgrade, V4-O04) | eBPF acceptance guest |
@@ -132,19 +181,29 @@ Fixed: the prompt lists the 8 template ids and the service refuses any other val
 
 ## Performance (V4-O05)
 
-`tests/recovery/v04-perf.test.ts` on the dev box (4 vCPU, 7 GiB, virtio disk; no model in the loop). Same dataset, A/B
-alternating rounds (3 baseline + 3 with background, 200 CRUD/query operations each, warm-up round discarded) while the
-background rounds run 3 maintenance jobs and one conversation compaction (faux). Raw samples:
-`docs/evidence/perf-v04-o05.json`.
+**Status: open (re-audit).** The earlier result for `d41d3b0` (ratio 1.105, `docs/evidence/perf-v04-o05.json`) was a single run. Re-measuring after the review
+showed that this test cannot separate background load from noise on the dev box (4 vCPU, 7 GiB; p95 of a ~1 ms request),
+and that its background was mostly idle:
 
-| | p50 | p95 |
-|---|---|---|
-| no background | 0.783 ms | 1.333 ms |
-| background batch running | 0.795 ms | 1.473 ms |
-| ratio | | **1.105** (limit 1.25) |
+1. Original test (200 ops per round, create + query): fixed tree 13 runs, ratio 0.93–1.33, 2 above 1.25 (1.299, 1.329).
+   Pre-fix tree (`39df919`, same box, interleaved with the fixed tree) 6 runs 0.94–1.24; fixed tree in the same
+   interleaving 1.07–1.24. Per-component runs: no compaction 1.050, cache-gc only 0.927, app-recovery only 1.059.
+2. Test defect found: the background loop refilled only when no job was open, and log-cleanup ends `awaiting_approval`
+   (open), so only the first batch of 3 jobs ever ran; later "background" rounds were idle. Fixed: awaiting jobs are
+   cancelled so batches repeat, and the test asserts more than one batch (12–15 jobs per run now).
+3. 200 create-only writes per round hit the 1000-record app limit at larger sample sizes; the workload is now
+   create / query / delete / query so 600 samples per round fit. The 1.25 threshold is unchanged.
 
-A first version measured sequential blocks and was biased by table growth (even an idle control gave 1.25–1.30); it was
-replaced by the alternating design before this result.
+With the corrected test (600 ops per round, repeated background batches + one compaction), interleaved:
+
+| tree | runs | ratio range | above 1.25 |
+|---|---|---|---|
+| pre-fix `39df919` | 6 | 0.870–1.149 | 0 |
+| fixed `a539498` | 6 | 0.957–1.262 | 1 (1.262) |
+
+Per-round p95 inside one run varies 0.60–1.29 ms under the same condition, larger than the difference between the trees;
+the code the fixes add on this path is one `meta` read per compaction tick and the compaction request split. Raw samples
+of a fixed-tree run: `docs/evidence/perf-v04-o05.fix.json`. O05 is not claimed as passed until it passes reliably.
 
 ## Clean install and upgrade (V4-O04)
 
@@ -249,7 +308,7 @@ Labels say what each row ran on; "faux model" rows use the real Pi Durable 1.4.0
 | V4-O02 | 真维护且模型断网 | tests/sandbox/v04-offline-real.test.ts（box 真 podman，模型未配置）：容器反复被杀至 degraded → 自动 app-recovery 作业 succeeded（generation 2→5），在线 cache-gc no_change，无模型请求，记录不变 | real Podman | pass |
 | V4-O03 | 真实模型压缩 | 同一 smoke run 13：会话 9 摘要真实生成并放置（entry 92，cutoff 57，原始记录保留），后台 1 次请求，用量与 route 记录；run 11 entry 80 / cutoff 71 | real model | pass |
 | V4-O04 | 干净安装与升级 | 新机 agentos-clean4（Debian 13，空机）按 README 安装通过：runtime:doctor 全 ok、broker protocol 1/2、testMode=false、agents/maintenance doctor 全 ✓；agentos-clean3（v0.3 安装）按 README 升级：记录哈希不变、schema 3→4、doctors 通过，暴露并修复空 managed 目录备份失败，修复后备份+恢复（incarnation 2）通过；native:build 在 dev box 与 clean4 六个产物 sha256 完全一致 | real native, clean box | pass |
-| V4-O05 | 前台性能 | tests/recovery/v04-perf.test.ts（box，A/B 交替 3+3 轮×200 次 CRUD/查询）：基线 p95 1.333 ms，后台批处理期间 1.473 ms，比值 1.105；原始数据 docs/evidence/perf-v04-o05.json | real process | pass |
+| V4-O05 | 前台性能 | re-audit open：修正后的测试（600 次/轮，后台批次重复）修复树 6 次 0.957–1.262，1 次超限；见 Performance (V4-O05) | real process | **open** |
 | V4-O06 | 压力与空间 | tests/maintenance/v4-maintenance.test.ts（作业队列 64 上限拒绝新工作不丢旧事实；低于安全落账空间 64 MiB 不启动新效果、作业带原因等待、receipt/作业不删除，空间恢复后继续；诊断证据 ≤64 KiB）+ 既有 queue/compaction/proposal 上限测试 | faux model | pass |
 | V4-O07 | 关键 API 门槛 | packages/agent-pi/test/m0-pi-prototype.test.ts（固定 Pi 1.4.0 实测：两会话路由并发、按会话 abort、原子会话目录、原子压缩登记、重启重建），无替代路径 | in-process | pass |
 | V4-O08 | 证据与遗留项 | ACCEPTANCE_V0.4.md「Scope and what is not claimed」：自动/建议范围、V3-E04 未验收（无串口硬件）、PTY 与 guest eBPF 分列、单一模型、无“全机零维护”结论 | report (separates static, faux, software PTY, guest eBPF, real native, real model) | pass |

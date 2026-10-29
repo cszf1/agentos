@@ -1,0 +1,261 @@
+{
+  "dataDir": "/data/home/smoke-v04/aos-real4-LqVP7c",
+  "model": {
+    "provider": "openai-compatible",
+    "id": "qwen3.8-flash",
+    "baseUrl": "http://127.0.0.1:4500/v1"
+  },
+  "startedAt": "2026-10-29T13:48:19.204Z",
+  "steps": {
+    "parallel": {
+      "a": {
+        "status": "succeeded",
+        "appId": "cb3e92fa-c1e3-416b-a0ef-1d9d7e7a56dc",
+        "conversationId": "9",
+        "errors": [],
+        "tools": [
+          "app_get",
+          "app_stage",
+          "app_validate",
+          "app_prepare",
+          "app_activate"
+        ],
+        "usage": null,
+        "model": "qwen3.8-flash",
+        "attempts": 5,
+        "background": false,
+        "outputTokens": 750
+      },
+      "b": {
+        "status": "succeeded",
+        "appId": "0564a86f-16be-45f0-b037-015c1702bfe2",
+        "conversationId": "18",
+        "errors": [
+          "app_stage: \"{\\\"error\\\":\\\"INVALID_CODE_BUNDLE\\\",\\\"message\\\":\\\"bundle failed schema validation\\\",\\\"errors\\\":[{\\\"path\\\":\\\"/runtimeLockId\\\",\\\"code\\\":\\\"SCHEMA_REQUIRED\\\",\\\"message\\\":\\\"must have required property 'runtimeLockId'\\\"},{\\\"path\\\":\\\"/view\\\",\\\"code\\\":\\\"SCHEMA_REQUIRED\\\",\\\"message\\\":\\\"must have required property 'view'\\\"},{\\\"path\\\":\\\"/queries/runtimeLockId\\\",\\\"code\\\":\\\"SCHEMA_TYPE\\\",\\\"message\\\":\\\"must be "
+        ],
+        "tools": [
+          "app_get",
+          "runtime_catalog",
+          "app_stage",
+          "app_validate",
+          "app_prepare",
+          "app_stage!",
+          "app_stage",
+          "app_validate",
+          "app_prepare",
+          "app_activate"
+        ],
+        "usage": null,
+        "model": "qwen3.8-flash",
+        "attempts": 9,
+        "background": false,
+        "outputTokens": 6494
+      },
+      "overlapped": true,
+      "seconds": 152
+    },
+    "codeApp": "0564a86f-16be-45f0-b037-015c1702bfe2",
+    "compaction": {
+      "state": "placed",
+      "label": "摘要已生成并放置（原始记录保留）",
+      "result": {
+        "instructions": null,
+        "entryId": "92",
+        "sourceCutoff": "57"
+      },
+      "scope": {
+        "conversationId": "9",
+        "runId": "e714d3a1-768e-4b92-ac94-da59c7471f61",
+        "cutoffEntryId": "57",
+        "mode": "build",
+        "providerContentConsent": false,
+        "crossConversation": false
+      },
+      "keepRecentTokens": 2000,
+      "attempts": [
+        {
+          "purpose": "compaction",
+          "background": 1,
+          "state": "completed",
+          "output_tokens": 575,
+          "usage_json": "{\"input\":552,\"output\":575,\"cacheRead\":0,\"cacheWrite\":0,\"reasoning\":172,\"totalTokens\":1127,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}}",
+          "route_id": "79dfa8ab87debd2bbc7c5496"
+        }
+      ]
+    },
+    "optimise": {
+      "job": {
+        "state": "awaiting_approval",
+        "outcome": "{\"proposalId\":\"10fd824f-22d8-4c4c-a0f1-50cd6ceca362\"}"
+      },
+      "run": {
+        "conversationId": "94",
+        "errors": [],
+        "tools": [
+          "target_app_get",
+          "candidate_stage",
+          "candidate_check",
+          "proposal_submit"
+        ],
+        "usage": null,
+        "model": "qwen3.8-flash",
+        "attempts": 4,
+        "background": true,
+        "outputTokens": 2173
+      },
+      "proposals": [
+        {
+          "id": "10fd824f-22d8-4c4c-a0f1-50cd6ceca362",
+          "check": {
+            "baselineHash": "f63f16cddc99fda2bc9015e2cc4d3a348d79f5f7e756e8061fc2e71adff3b722",
+            "candidateHash": "d8710a4ae20d186c0a18fe6b4aaca6ae6c7270865e909685d5c173ccfaeeef57",
+            "checkId": "eeb36f39-ab1d-41ab-a41f-95568856909c",
+            "fixtureSetVersion": "preview-fixtures-v1",
+            "result": {
+              "artifactId": "sha256:2ca1c647b768a11ed6eb513fce57b2bd6453ce0d4025305012885821d1ee9af6",
+              "fixtureSetVersion": "preview-fixtures-v1",
+              "fixtures": "platform preview fixtures only (empty + default collection); never real records",
+              "timing": {
+                "baseline": {
+                  "samplesMs": [
+                    0.447,
+                    0.191,
+                    0.113,
+                    0.091,
+                    0.11,
+                    0.115,
+                    0.111,
+                    0.071,
+                    0.05,
+                    0.126,
+                    0.125,
+                    0.072,
+                    0.05,
+                    0.053,
+                    0.221
+                  ],
+                  "summary": {
+                    "mean": 0.13,
+                    "n": 15,
+                    "p50": 0.111,
+                    "p95": 0.447,
+                    "sd": 0.097
+                  }
+                },
+                "candidate": {
+                  "samplesMs": [
+                    1.96,
+                    0.352,
+                    0.124,
+                    0.088,
+                    0.075,
+                    0.149,
+                    0.131,
+                    0.065,
+                    0.056,
+                    0.101,
+                    0.053,
+                    0.057,
+                    0.062,
+                    0.059,
+                    0.064
+                  ],
+                  "summary": {
+                    "mean": 0.226,
+                    "n": 15,
+                    "p50": 0.075,
+                    "p95": 1.96,
+                    "sd": 0.469
+                  }
+                },
+                "method": "main data-source queries on the default fixture; 3 warm-up rounds, 15 measured rounds; same container limits",
+                "note": "a fixture timing is evidence for this fixture only, not a general claim"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "publish": {
+      "accept": 202,
+      "before": {
+        "epoch": 1,
+        "active_revision_id": "sha256:916125bada9891daf554420a4066ec3023331f807591028ada833c7b1c532ffd"
+      },
+      "after": {
+        "epoch": 2,
+        "active_revision_id": "sha256:9b22d46dfad48507c035e1a5256953397aee3f1e921d06b10712f1842cd27fbc"
+      },
+      "deployment": {
+        "status": "committed",
+        "origin": "proposal_accept",
+        "error_json": null
+      }
+    },
+    "diagnose": {
+      "job": "succeeded",
+      "run": {
+        "conversationId": "121",
+        "errors": [],
+        "tools": [
+          "maintenance_context",
+          "incident_get",
+          "maintenance_report"
+        ],
+        "usage": null,
+        "model": "qwen3.8-flash",
+        "attempts": 2,
+        "background": true,
+        "outputTokens": 1994
+      },
+      "report": {
+        "reportId": "fea8ea53-070f-4afc-ad5a-4945d1d27d21",
+        "runId": "0ce048d8-f736-441f-983e-5759b3e8be75",
+        "incidentId": "880f7b0c-ca34-488a-bdb7-5304576d31cb",
+        "jobId": "dd59d947-7feb-4dcb-9d29-c7fc4cd2d56a",
+        "body": {
+          "evidenceRefs": [
+            "incident:880f7b0c-ca34-488a-bdb7-5304576d31cb",
+            "samples:app:0564a86f-16be-45f0-b037-015c1702bfe2",
+            "runtime:0564a86f-16be-45f0-b037-015c1702bfe2",
+            "app:0564a86f-16be-45f0-b037-015c1702bfe2"
+          ],
+          "hypotheses": [
+            {
+              "confidence": "high",
+              "text": "The app exceeded its configured memory limit (OOM kill, code APP_RESOURCE_LIMIT), causing repeated process exits (app.exit bad) that the watchdog reported as a crash loop. Best-supported by the explicit lastError and the exit→crash_loop ordering."
+            },
+            {
+              "confidence": "medium",
+              "text": "The crash loop is a recurring/sustained state rather than a transient blip: restartCount=3 and runtime generation=4 indicate the process has already been restarted several times and remains degraded, so the memory condition is re-triggering each cycle."
+            },
+            {
+              "confidence": "low",
+              "text": "Root cause of the memory exhaustion is indeterminate from this evidence: it could be a memory leak/growth in the running code, a workload spike, or an undersized memory limit. The empty logs and absent memory metrics prevent confirming which."
+            },
+            {
+              "confidence": "low",
+              "text": "A recently activated revision (activeRevisionId sha256:9b22d46…, appEpoch 2) may have increased the memory footprint and triggered the limit; no prior-revision baseline or deploy time is present to corroborate this."
+            }
+          ],
+          "incidentId": "880f7b0c-ca34-488a-bdb7-5304576d31cb",
+          "missingEvidence": [
+            "Application logs / stderr and stack traces at the time of the kill (details.logs is empty in all snapshots)",
+            "Memory usage metrics/trend before the limit breach (RSS or heap over time) to distinguish a leak from a workload spike",
+            "The configured memory limit value versus observed peak usage (to test whether the limit is undersized)",
+            "Deploy/revision history with timestamps (previous revision id and activation time) to check correlation with the crash onset",
+            "Process exit signal/exit code for the app.exit 'bad' samples beyond the APP_RESOURCE_LIMIT summary",
+            "Host/node-level memory pressure and neighboring-process resource usage at 13:51–13:52"
+          ],
+          "recommendedTemplate": "app-diagnose",
+          "summary": "Incident 880f7b0c (condition app.crash_loop, severity critical, state open) targets app 0564a86f-16be-45f0-b037-015c1702bfe2. The frozen evidence shows a clear sequence: health samples for app.crash_loop were \"ok\" through seq 32–50 (13:50:55–13:51:40), then app.exit samples turn \"bad\" at seq 52–56 (13:51:45–13:51:55), immediately followed by app.crash_loop flipping to \"bad\" at seq 58–60 (13:52:00–13:52:05). runtime_state reports generation 4, health \"degraded\", restartCount 3, and a lastError at 13:51:56.294 with code APP_RESOURCE_LIMIT / message \"the app exceeded its memory limit\". The dominant signal is therefore an OOM-style memory-limit kill driving repeated process exits, which the watchdog classified as a crash loop. Note that details.logs is empty in every snapshot, so there is no application stack trace or memory profile in the evidence to confirm the underlying cause of the memory growth (a leak, a heavy workload, an undersized limit, or a recent revision). activeRevisionId is sha256:9b22d46…, appEpoch/controlEpoch = 2, but no prior-revision baseline or deploy timestamp is included, so a deploy correlation cannot be established from this evidence. This is a hypothesis set, not a repair."
+        },
+        "bodyHash": "d9cb062ca925250f22d9c326b5a7029246be1c81a77af459e6f64e97566f747c",
+        "createdAt": "2026-10-29T13:52:51.594Z",
+        "kind": "diagnosis (hypothesis, not a repair)"
+      }
+    }
+  },
+  "finishedAt": "2026-10-29T13:52:53.454Z",
+  "ok": true
+}

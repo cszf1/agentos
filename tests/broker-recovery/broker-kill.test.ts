@@ -164,8 +164,13 @@ run("broker recovery with real kills", () => {
     simCtl("drop-next"); // the exchange waits its full 2 s deadline
     const g = await b.grant("serial", "serial.exchange", { commands: ["SAMPLE", "ECHO"] });
     const env = b.envelope(g, "serial.exchange", { command: "ECHO", text: "r08" });
+    const before = (JSON.parse(simCtl("status")) as { requests: number }).requests;
     await b.client.submit(env);
     await waitUntil(() => b.client.operationGet(b.identity, env.operationId), (o) => o.state === "running", 5000, 50);
+    // "running" alone is not "dispatched": until the worker has opened the port and the device saw the
+    // request, the broker may still truthfully answer cancelled_no_effect (not_dispatched). Cancel only
+    // once the request reached the device, which is the case this test is about.
+    await waitUntil(async () => (JSON.parse(simCtl("status")) as { requests: number }).requests, (n) => n > before, 5000, 20);
     const c = await b.client.operationCancel(b.identity, env.operationId, "too late");
     expect(c.state).not.toBe("cancelled_no_effect");
     const op = await b.final(env.operationId);
