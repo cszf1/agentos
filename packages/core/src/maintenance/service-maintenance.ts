@@ -67,6 +67,13 @@ export class ServiceMaintenance {
 
   // ------------------------------------------------------------------ install caps (root policy, spec §13.3)
 
+  /**
+   * Target control epochs the broker holds that os.sqlite does not (a host database reset with the same store). The
+   * broker keeps no intent, so a newer root epoch may be a user stop the host never saw: automatic recovery never
+   * adopts it; only an explicit user control does, numbered above it.
+   */
+  #rootTargetEpochs = new Map<string, number>();
+
   #brokerCaps: { unitKey: string; actionFamilies: string[]; perHour: number; per24h: number; cooldownSeconds: number }[] | null = null;
 
   installCaps(kind: string, id: string): InstallCaps {
@@ -88,6 +95,7 @@ export class ServiceMaintenance {
     }
     const s = await this.sys.broker.client.maintenanceState(this.sys.broker.requireWritable());
     this.#brokerCaps = s.installCaps;
+    for (const t of s.targets ?? []) this.#rootTargetEpochs.set(t.resourceId, t.controlEpoch);
     const st = this.jobs.state();
     if (s.state === st.state && s.maintenanceEpoch === st.epoch) this.jobs.rootConfirmed(st.epoch);
     else if (s.maintenanceEpoch >= st.epoch) this.jobs.adoptRootEpoch(s.maintenanceEpoch); // re-sends the local state above the root's epoch
@@ -154,7 +162,7 @@ export class ServiceMaintenance {
   userControl(serviceId: string, intent: "stopped" | "running"): number {
     const epoch = this.store.tx(() => {
       const cur = this.store.get<{ control_epoch: number }>("SELECT control_epoch FROM target_controls WHERE target_kind = 'service' AND target_id = ?", serviceId);
-      const next = (cur?.control_epoch ?? 0) + 1;
+      const next = Math.max(cur?.control_epoch ?? 0, this.#rootTargetEpochs.get(serviceId) ?? 0) + 1;
       this.store.run(
         `INSERT INTO target_controls (target_kind, target_id, control_epoch, user_intent, root_state, updated_at) VALUES ('service', ?, ?, ?, 'pending', ?)
          ON CONFLICT (target_kind, target_id) DO UPDATE SET control_epoch = excluded.control_epoch, user_intent = excluded.user_intent, root_state = 'pending', updated_at = excluded.updated_at`,
@@ -175,7 +183,11 @@ export class ServiceMaintenance {
 
   controlEpoch(serviceId: string): { epoch: number; intent: string; rootState: string } {
     const r = this.store.get<{ control_epoch: number; user_intent: string; root_state: string }>("SELECT * FROM target_controls WHERE target_kind = 'service' AND target_id = ?", serviceId);
-    return { epoch: r?.control_epoch ?? 0, intent: r?.user_intent ?? "none", rootState: r?.root_state ?? "none" };
+    const root = this.#rootTargetEpochs.get(serviceId) ?? 0;
+    const epoch = r?.control_epoch ?? 0;
+    // a root epoch newer than any local control: the intent behind it is unknown here (never treated as "running")
+    if (root > epoch) return { epoch, intent: "unknown_root", rootState: "behind_root" };
+    return { epoch, intent: r?.user_intent ?? "none", rootState: r?.root_state ?? "none" };
   }
 
   start(pollMs = 2000): void {
@@ -311,6 +323,7 @@ export class ServiceMaintenance {
           return { needed: false, reason: "the unit is running (no_change)", evidence: ev, incidentId: ctx.job.incident_id };
         }
         if (ctl.intent === "stopped") return { needed: false, reason: "the user stopped this unit through AgentOS; recovery is paused", evidence: ev };
+        if (ctl.intent === "unknown_root") return { needed: false, reason: "the system executor holds a newer control for this unit than AgentOS knows (possibly a user stop); automatic recovery waits for an explicit start", evidence: ev };
         if (ctx.policy) {
           const c = ctx.policy.target_contract ? (JSON.parse(ctx.policy.target_contract) as { generation?: number; identity?: string | null }) : {};
           if (c.generation !== undefined && pr.generation !== c.generation) return { needed: false, reason: `resource generation changed (${c.generation} → ${pr.generation}); the policy needs re-approval`, evidence: ev };
@@ -450,6 +463,8 @@ export class ServiceMaintenance {
       const be = e as BrokerError;
       if (be.code === "BROKER_UNAVAILABLE") return { state: "unknown", result: { code: be.code, message: be.message, operationId: env.operationId } };
       // Refused before acceptance: provably never executed (no count was reserved).
+      const rootCe = (be.details as { controlEpoch?: number } | undefined)?.controlEpoch;
+      if (be.code === "EXECUTION_EPOCH_STALE" && typeof rootCe === "number") this.#rootTargetEpochs.set(env.resourceId, Math.max(rootCe, this.#rootTargetEpochs.get(env.resourceId) ?? 0));
       this.store.tx(() => {
         this.store.run("UPDATE maintenance_effect_outbox SET dispatch_state = 'final', result_json = ?, updated_at = ? WHERE job_id = ? AND step_id = 'ensure-running'", JSON.stringify({ code: be.code, message: be.message }), this.now(), ctx.job.id);
         this.store.run("UPDATE system_actions SET state = 'failed_no_effect', effect_certainty = 'none', evidence_kind = 'broker_refused', error_json = ?, updated_at = ? WHERE id = ? AND state = 'dispatching'", JSON.stringify({ code: be.code, message: be.message }), this.now(), actionId);

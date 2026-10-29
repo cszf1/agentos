@@ -233,6 +233,27 @@ CPUQuota=100%
 MemoryMax=256M
 TasksMax=64
 EOF
+  # test installs only: a second demo unit whose recovery history is independent of the protocol-2 suite
+  if [ "${test_mode:-false}" = true ]; then
+  cat > $UNITS/agentos-demo2.service <<EOF
+[Unit]
+# Spec §22.1: the broker/workers restart after a crash; never give up after a burst of failures.
+StartLimitIntervalSec=0
+Description=AgentOS second demo service, test installs only (fixed program, managed working directory)
+
+[Service]
+DynamicUser=yes
+WorkingDirectory=/var/lib/agentos-demo
+ExecStart=/usr/bin/python3 -I -m http.server 18081 --bind 127.0.0.1 --directory /var/lib/agentos-demo
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+CPUQuota=100%
+MemoryMax=256M
+TasksMax=64
+EOF
+  else rm -f $UNITS/agentos-demo2.service; fi
   if [ "$serial_pty" = 1 ]; then
     cat > $UNITS/agentos-serial-sim.service <<EOF
 [Unit]
@@ -299,12 +320,13 @@ polkit.addRule(function(action, subject) {
   if (action.id == "org.freedesktop.systemd1.manage-units") {
     var unit = action.lookup("unit");
     var verb = action.lookup("verb");
-    var units = ["agentos-demo.service"];
+    var units = ["agentos-demo.service"@EXTRA_UNITS@];
     if (units.indexOf(unit) >= 0 && (verb == "start" || verb == "stop" || verb == "set-property")) return polkit.Result.YES;
   }
   return polkit.Result.NO;
 });
 EOF
+  sed -i "s/@EXTRA_UNITS@/${POLKIT_EXTRA:-}/" /etc/polkit-1/rules.d/50-agentos.rules
   chmod 0644 /etc/polkit-1/rules.d/50-agentos.rules
 }
 
@@ -345,6 +367,7 @@ do_install() {
   echo "AgentOS demo service" > /var/lib/agentos-demo/index.html
   install -d -m 0700 -o root -g root /var/lib/agentos-broker
   write_units "$host_uid" "$serial_pty"
+  POLKIT_EXTRA=""; [ "$test_mode" = true ] && POLKIT_EXTRA=', "agentos-demo2.service"'
   write_polkit
   local install_id
   if [ -f $POL ]; then install_id=$(python3 -c "import json;print(json.load(open('$POL'))['machineInstallId'])"); else install_id="mi_$(head -c 12 /dev/urandom | od -An -tx1 | tr -d ' \n')"; fi
@@ -360,6 +383,12 @@ do_install() {
   local m_hour=2 m_day=3 m_cool=600
   if [ "$test_mode" = true ] && [ -n "${AGENTOS_MAINT_CAPS:-}" ]; then IFS=: read -r m_hour m_day m_cool <<<"$AGENTOS_MAINT_CAPS"; fi
   local cpu_tmpl; cpu_tmpl=$(sha256sum $UNITS/agentos-demo.service | cut -c1-64)
+  local units_extra="" maint_extra=""
+  if [ "$test_mode" = true ]; then
+    local t2; t2=$(sha256sum $UNITS/agentos-demo2.service | cut -c1-64)
+    units_extra=", {\"key\": \"demo2\", \"storeUuid\": \"$store\", \"unit\": \"agentos-demo2.service\", \"displayName\": \"演示服务 2（测试）\", \"templateHash\": \"sha256:$t2\", \"safeRepeatStart\": true, \"autoConverge\": true, \"cpuQuotaPerSecUSec\": {\"min\": 100000, \"max\": 2000000}, \"memoryMax\": {\"min\": 67108864, \"max\": 1073741824}}"
+    maint_extra=", {\"unitKey\": \"demo2\", \"storeUuid\": \"$store\", \"actionFamilies\": [\"service.ensure_state.running\"], \"perHour\": $m_hour, \"per24h\": $m_day, \"cooldownSeconds\": $m_cool}"
+  fi
   cat > $POL.new <<EOF
 {
   "policyFormat": 1,
@@ -367,10 +396,10 @@ do_install() {
   "hosts": [{"uid": $host_uid, "storeUuid": "$store", "workspacePathId": "$wsid"}],
   "managedRoots": [{"key": "exports", "storeUuid": "$store", "path": "/var/lib/agentos-managed/$store/exports", "displayName": "导出目录（平台管理）", "maxFileBytes": 131072, "quotaBytes": 268435456}],
   "units": [{"key": "demo", "storeUuid": "$store", "unit": "agentos-demo.service", "displayName": "演示服务", "templateHash": "sha256:$cpu_tmpl", "safeRepeatStart": true, "autoConverge": true,
-             "cpuQuotaPerSecUSec": {"min": 100000, "max": 2000000}, "memoryMax": {"min": 67108864, "max": 1073741824}}],
+             "cpuQuotaPerSecUSec": {"min": 100000, "max": 2000000}, "memoryMax": {"min": 67108864, "max": 1073741824}}$units_extra],
   "labNetworks": [{"key": "lab-net", "storeUuid": "$store", "displayName": "测试网络 lab-net", "netnsPath": "/run/netns/agentos-lab", "table": "agentos_lab", "peerAddress": "10.231.0.2", "peerPort": 8080, "maxRules": 32, "profiles": ["local-allow", "local-deny"]}],
   "serial": $serial_json,
-  "maintenance": [{"unitKey": "demo", "storeUuid": "$store", "actionFamilies": ["service.ensure_state.running"], "perHour": $m_hour, "per24h": $m_day, "cooldownSeconds": $m_cool}],
+  "maintenance": [{"unitKey": "demo", "storeUuid": "$store", "actionFamilies": ["service.ensure_state.running"], "perHour": $m_hour, "per24h": $m_day, "cooldownSeconds": $m_cool}$maint_extra],
   "workers": {
     "file": {"socket": "/run/agentos-worker-file/worker.sock", "unit": "agentos-worker-file.service", "uid": $(id -u agentos-file)},
     "service": {"socket": "/run/agentos-worker-service/worker.sock", "unit": "agentos-worker-service.service", "uid": $(id -u agentos-svc)},
@@ -405,7 +434,7 @@ EOF
 do_inspect() {
   $LIB/bin/agentos-broker admin inspect || true
   echo "--- units"
-  for u in agentos-broker agentos-worker-file agentos-worker-service agentos-worker-net agentos-worker-serial agentos-telemetry agentos-labnet agentos-labpeer-echo agentos-demo agentos-serial-sim; do
+  for u in agentos-broker agentos-worker-file agentos-worker-service agentos-worker-net agentos-worker-serial agentos-telemetry agentos-labnet agentos-labpeer-echo agentos-demo agentos-demo2 agentos-serial-sim; do
     printf '%-28s %s\n' "$u" "$(systemctl is-active $u.service 2>/dev/null)"
   done
   echo "--- permissions"
@@ -432,7 +461,7 @@ EOF
 }
 
 do_uninstall() {
-  for u in agentos-broker agentos-worker-file agentos-worker-service agentos-worker-net agentos-worker-serial agentos-telemetry agentos-labpeer-echo agentos-labnet agentos-demo agentos-serial-sim; do
+  for u in agentos-broker agentos-worker-file agentos-worker-service agentos-worker-net agentos-worker-serial agentos-telemetry agentos-labpeer-echo agentos-labnet agentos-demo agentos-demo2 agentos-serial-sim; do
     systemctl disable --now $u.service >/dev/null 2>&1 || true
     rm -f $UNITS/$u.service
   done
