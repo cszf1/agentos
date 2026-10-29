@@ -353,6 +353,19 @@ export class ServiceMaintenance {
       async verify(ctx) {
         const step = self.store.get<StepRow & { updated_at: string }>("SELECT * FROM maintenance_steps WHERE job_id = ? AND step_id = 'ensure-running'", ctx.job.id);
         if (!step || step.state !== "succeeded" && step.state !== "no_change") return { healthy: false, reason: "no successful step to verify" };
+        // Spec §8.3 / §16: a user stop (or a newer control epoch) during the observation window supersedes this
+        // recovery. It is not "the unit crashed again" and must not open the circuit.
+        const ctl = self.controlEpoch(ctx.job.target_id);
+        const stampedEpoch = Number(String(ctx.job.target_version ?? "").split(":")[1]);
+        if (ctl.intent === "stopped" || ctl.intent === "unknown_root" || (Number.isFinite(stampedEpoch) && ctl.epoch !== stampedEpoch)) {
+          self.#attemptOutcome(ctx.job.id, "no_change");
+          const why = ctl.intent === "stopped"
+            ? "the user stopped this unit through AgentOS during verification"
+            : ctl.intent === "unknown_root"
+              ? "the system executor holds a newer control than AgentOS knows"
+              : `control epoch changed (${stampedEpoch} → ${ctl.epoch})`;
+          return { healthy: false, userStopped: true, reason: `${why}; this recovery is superseded and is not a failure` };
+        }
         const res = step.result_json ? (JSON.parse(step.result_json) as { invocationId?: string }) : {};
         const pr = await self.probe(ctx.job.target_id, ctx.job.id);
         ctx.evidence({ verify: pr });
@@ -387,11 +400,12 @@ export class ServiceMaintenance {
     );
   }
 
-  #attemptOutcome(jobId: string, outcome: "succeeded" | "failed"): void {
+  #attemptOutcome(jobId: string, outcome: "succeeded" | "failed" | "no_change"): void {
     this.store.tx(() => {
       const a = this.store.get<{ id: string; target_id: string; outcome: string }>("SELECT id, target_id, outcome FROM maintenance_attempts WHERE job_id = ? AND action_family = ? ORDER BY admitted_at DESC LIMIT 1", jobId, FAMILY);
       if (!a || a.outcome !== "pending") return;
       this.store.run("UPDATE maintenance_attempts SET outcome = ?, verified_at = ? WHERE id = ?", outcome, this.now(), a.id);
+      if (outcome === "no_change") return;
       const c = this.store.get<{ consecutive_failures: number }>("SELECT consecutive_failures FROM maintenance_circuits WHERE target_kind = 'service' AND target_id = ? AND action_family = ?", a.target_id, FAMILY);
       const fails = outcome === "failed" ? (c?.consecutive_failures ?? 0) + 1 : 0;
       const open = fails >= 3;

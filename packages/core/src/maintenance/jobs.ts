@@ -112,8 +112,11 @@ export interface TemplateHandler {
    * an unknown effect or a failed recovery.
    */
   verify?(ctx: JobContext): Promise<{ healthy: boolean | null; reason: string; pending?: boolean; userStopped?: boolean }>;
-  /** background model analysis (diagnose/optimize): returns the run id it started */
-  analyze?(ctx: JobContext): Promise<{ runId: string } | null>;
+  /**
+   * Background model analysis (diagnose/optimize). Synchronous on purpose: the caller records run_id and
+   * state=diagnosing before yielding, so a run that finishes in the same turn still settles the job.
+   */
+  analyze?(ctx: JobContext): { runId: string } | null;
 }
 
 const ACTIVE_EXEC: JobState[] = ["ready", "running", "verifying", "reconciling"];
@@ -367,6 +370,16 @@ export class MaintenanceService {
       if (trig.kind === "manual") return null;
       const open = this.store.get<{ id: string }>("SELECT id FROM maintenance_jobs WHERE incident_id = ? AND state NOT IN ('succeeded','no_change','failed_no_effect','cancelled','expired','indeterminate','needs_attention')", incident.id);
       if (open) return { jobId: open.id, created: false };
+      // Spec §11.2: while the incident is unresolved, new events update its evidence. They must not mint a job on
+      // every health tick after the previous one already ended. The next check waits out the policy cooldown
+      // (at least the minimum schedule interval), then one new job may look again.
+      const last = this.store.get<{ id: string; updated_at: string }>("SELECT id, updated_at FROM maintenance_jobs WHERE incident_id = ? ORDER BY created_at DESC LIMIT 1", incident.id);
+      if (last) {
+        const bounds = JSON.parse(policy.bounds_json) as { cooldownSeconds?: number };
+        const seconds = bounds.cooldownSeconds ?? V4_LIMITS.recoveryCooldownMs / 1000;
+        const gapMs = Math.max(seconds, V4_LIMITS.minIntervalSeconds) * 1000;
+        if (this.nowMs() - Date.parse(last.updated_at) < gapMs) return { jobId: last.id, created: false };
+      }
       if (this.openJobs() >= V4_LIMITS.maxPendingJobs) return null;
       const n = this.store.get<{ n: number }>("SELECT COUNT(*) AS n FROM maintenance_jobs WHERE incident_id = ?", incident.id)!.n;
       return this.#createJobInTx({
@@ -675,11 +688,12 @@ export class MaintenanceService {
             this.finish(id, "no_change", "background model analysis is switched off (enable it in maintenance settings)", "none");
             return;
           }
-          const r = await h.analyze(ctx);
+          const r = h.analyze(ctx);
           if (!r) {
             this.#setState(id, "deferred", { wait_reason: "no background model budget or slot now" });
             return;
           }
+          // Same turn as acceptBackground: finishAnalysis matches state=diagnosing AND run_id.
           this.#setState(id, "diagnosing", { run_id: r.runId, wait_reason: "background analysis running" });
           return;
         }

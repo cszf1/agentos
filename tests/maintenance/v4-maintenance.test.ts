@@ -7,8 +7,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { AppRecovery, CandidateService, CompactionService, buildEvidence, candidateBoundary, openCore, requestHash, type Core, type JobContext, type TemplateHandler } from "@agentos/core";
-import { MAINTENANCE_TEMPLATES, type CodeBundle } from "@agentos/contracts";
+import { AppRecovery, CandidateService, CompactionService, ServiceMaintenance, buildEvidence, candidateBoundary, openCore, requestHash, type Core, type JobContext, type TemplateHandler } from "@agentos/core";
+import { MAINTENANCE_TEMPLATES, V4_LIMITS, type CodeBundle } from "@agentos/contracts";
 import { ManualClock } from "../agent-helpers.js";
 import { codeFixture } from "../fixtures-v02.js";
 import { ROOT, fixture, tmpDir } from "../helpers.js";
@@ -928,5 +928,74 @@ describe("review d41d3b0 F1–F6: authority, cancel, priority and pause boundari
     expect(started).toBe(0);
     expect(core.compactions.get("cmp-q")!.state).toBe("queued");
     expect(core.store.all("SELECT 1 FROM model_attempts")).toHaveLength(0);
+  });
+});
+
+describe("unresolved incidents and superseded service recovery", () => {
+  it("an incident that already has a finished job does not mint another on every event until the cooldown elapses", async () => {
+    const { core, adv } = rig();
+    core.maintenance.jobs.register("cache-gc", {
+      async observe(ctx) {
+        return { needed: false, reason: "no_reclaimable_space", incidentId: ctx.job.incident_id };
+      },
+      async act() {
+        return { certainty: "none", reason: "none", completed: 0 };
+      },
+    });
+    enablePolicy(core, { templateId: "cache-gc", target: { kind: "workspace", id: "workspace" }, mode: "automatic", trigger: { kind: "event" } });
+    const { incident } = core.maintenance.incidents.raise({ targetKind: "workspace", targetId: "workspace", condition: "cache.pressure", value: "bad", quality: "fresh", evidence: { percent: 90 } });
+    const first = core.maintenance.jobs.eventTrigger(incident, "cache-gc")!;
+    expect(first.created).toBe(true);
+    for (let i = 0; i < 4; i++) await core.maintenance.jobs.pass(true);
+    expect(core.maintenance.jobs.requireJob(first.jobId).state).toBe("no_change");
+    for (let i = 0; i < 8; i++) {
+      const again = core.maintenance.jobs.eventTrigger(incident, "cache-gc")!;
+      expect(again.created).toBe(false);
+      expect(again.jobId).toBe(first.jobId);
+    }
+    expect(core.store.get<{ n: number }>("SELECT COUNT(*) AS n FROM maintenance_jobs")!.n).toBe(1);
+    adv(V4_LIMITS.recoveryCooldownMs);
+    const next = core.maintenance.jobs.eventTrigger(incident, "cache-gc")!;
+    expect(next.created).toBe(true);
+    expect(next.jobId).not.toBe(first.jobId);
+  });
+
+  it("a user stop during service verification is not a failed recovery and does not open the circuit", async () => {
+    const { core } = rig();
+    const svc = "res_service_user_stop";
+    const now = new Date(core.store.clock.now()).toISOString();
+    core.store.tx(() => core.store.run(
+      "INSERT INTO system_resources (id, kind, display_name, execution_class, generation, catalog_key, status, created_at, updated_at) VALUES (?, 'service', 'demo', 'broker', 1, 'demo', 'available', ?, ?)",
+      svc, now, now,
+    ));
+    const sm = new ServiceMaintenance(core.store, {
+      resources: { get: (id: string) => (id === svc ? { id, kind: "service", execution_class: "broker", generation: 1, identity_digest: "A", catalog_key: "demo", status: "active" } : undefined) },
+      reads: { read: async () => ({ data: { activeState: "inactive", subState: "dead", invocationId: "later" }, quality: "fresh", resourceGeneration: 1, observationId: "o1" }) },
+      broker: { identity: () => { throw new Error("no broker"); }, client: {} },
+    } as never, core.maintenance.policies, core.maintenance.jobs, core.maintenance.incidents);
+    const created = core.maintenance.jobs.manualCheck("service-ensure-running", { kind: "service", id: svc }, "stop-during-verify");
+    core.store.tx(() => {
+      core.store.run("UPDATE maintenance_jobs SET state = 'verifying', mode = 'automatic', target_version = '1:1', updated_at = ? WHERE id = ?", now, created.jobId);
+      core.store.run(
+        "INSERT INTO maintenance_steps (job_id, step_id, seq, kind, input_hash, input_json, executor, effect_key, state, result_json, created_at, updated_at) VALUES (?, 'ensure-running', 1, 'effect', 'h', '{}', 'broker', ?, 'succeeded', ?, ?, ?)",
+        created.jobId, `eff-${created.jobId}`, JSON.stringify({ invocationId: "i0" }), now, now,
+      );
+      core.store.run(
+        "INSERT INTO maintenance_attempts (id, target_kind, target_id, action_family, job_id, step_id, admitted_at) VALUES (?, 'service', ?, 'service.ensure_state.running', ?, 'ensure-running', ?)",
+        `ma-${created.jobId}`, svc, created.jobId, now,
+      );
+      core.store.run(
+        "INSERT INTO maintenance_circuits (target_kind, target_id, action_family, state, consecutive_failures, reason, updated_at) VALUES ('service', ?, 'service.ensure_state.running', 'closed', 2, 'two earlier failures', ?)",
+        svc, now,
+      );
+    });
+    sm.userControl(svc, "stopped");
+    await core.maintenance.jobs.pass(true);
+    const job = core.maintenance.jobs.requireJob(created.jobId);
+    expect(job.state).toBe("cancelled");
+    expect(job.effect_certainty).not.toBe("unknown");
+    expect(job.outcome_reason).toMatch(/not a failure/);
+    expect(core.store.get<{ outcome: string }>("SELECT outcome FROM maintenance_attempts WHERE job_id = ?", created.jobId)!.outcome).toBe("no_change");
+    expect(core.store.get<{ state: string; consecutive_failures: number }>("SELECT state, consecutive_failures FROM maintenance_circuits WHERE target_id = ?", svc)).toEqual({ state: "closed", consecutive_failures: 2 });
   });
 });

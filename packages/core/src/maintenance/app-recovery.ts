@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { V4_LIMITS } from "@agentos/contracts";
 import { iso, type Store } from "../persistence/store.js";
 import type { AppRuntimeService } from "../runtime/app-runtime.js";
 import type { IncidentStore } from "../health/incidents.js";
@@ -118,9 +119,9 @@ export class AppRecovery {
         const c = self.circuit(appId);
         if (c.state === "open") return { ok: false, circuitOpen: true, reason: c.reason ?? "circuit open" };
         const n = self.#counts(appId);
-        const perHour = ctx.bounds.perHour ?? 2;
-        const per24h = ctx.bounds.per24h ?? 3;
-        const cooldown = (ctx.bounds.cooldownSeconds ?? 600) * 1000;
+        const perHour = ctx.bounds.perHour ?? V4_LIMITS.recoveryPerHour;
+        const per24h = ctx.bounds.per24h ?? V4_LIMITS.recoveryPer24h;
+        const cooldown = (ctx.bounds.cooldownSeconds ?? V4_LIMITS.recoveryCooldownMs / 1000) * 1000;
         if (n.day >= per24h) return { ok: false, circuitOpen: true, reason: `${n.day} recoveries in 24 h reach the limit of ${per24h}` };
         if (n.hour >= perHour) return { ok: false, defer: true, reason: `${n.hour} recoveries in the last hour reach the limit of ${perHour}` };
         if (n.last !== null && self.store.clock.now() - n.last < cooldown) return { ok: false, defer: true, reason: `cooldown until ${iso(n.last + cooldown)}` };
@@ -168,9 +169,9 @@ export class AppRecovery {
         const step = self.store.get<{ result_json: string | null; updated_at: string }>("SELECT result_json, updated_at FROM maintenance_steps WHERE job_id = ? AND step_id = 'converge'", ctx.job.id);
         const res = step?.result_json ? (JSON.parse(step.result_json) as { generationBefore?: number }) : {};
         const since = step ? Date.parse(step.updated_at) : self.store.clock.now();
-        const windowMs = (ctx.bounds.observeSeconds ?? 60) * 1000;
+        const windowMs = (ctx.bounds.observeSeconds ?? V4_LIMITS.recoveryObserveMs / 1000) * 1000;
         const ar = self.#ar(appId);
-        const circuitAfter = ctx.bounds.circuitAfter ?? 3;
+        const circuitAfter = ctx.bounds.circuitAfter ?? V4_LIMITS.circuitAfterFailures;
         const expectEpoch = Number(ctx.job.target_version ?? NaN);
         // User stop (enabled cleared) or any newer control epoch wins. The attempt stays in the rate window, but it is
         // not a failed recovery and the job is not an unknown result (spec §8.3, §15).

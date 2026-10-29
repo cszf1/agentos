@@ -46,7 +46,7 @@ export function diagnoseHandler(store: Store, runs: RunService, incidents: Incid
       if (!inc) return { needed: false, reason: "no open incident to diagnose" };
       return { needed: true, reason: "an incident needs a diagnosis", incidentId: (inc as { id: string }).id };
     },
-    async analyze(ctx) {
+    analyze(ctx) {
       const job = { ...ctx.job, incident_id: ctx.job.incident_id ?? (store.get<{ incident_id: string | null }>("SELECT incident_id FROM maintenance_jobs WHERE id = ?", ctx.job.id)?.incident_id ?? null) };
       const scope = buildEvidence(store, incidents, job);
       const runId = runs.acceptBackground({
@@ -73,7 +73,7 @@ export function optimizeHandler(store: Store, runs: RunService, incidents: Incid
       if (pending >= V4_LIMITS.proposalsPerApp) return { needed: false, reason: "proposals of this app already wait for a decision" };
       return { needed: true, reason: "optimisation requested" };
     },
-    async analyze(ctx) {
+    analyze(ctx) {
       const scope = buildEvidence(store, incidents, ctx.job);
       const runId = runs.acceptBackground({
         mode: "maintenance_refactor", jobId: ctx.job.id, incidentId: ctx.job.incident_id, appId: ctx.job.target_id,
