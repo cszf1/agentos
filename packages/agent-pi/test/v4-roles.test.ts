@@ -46,3 +46,19 @@ describe("bundle strings with a trailing bracket defect", () => {
     expect(undecodableBundle(early)).toMatch(/not valid JSON/);
   });
 });
+
+describe("maintenance_report argument schema", () => {
+  it("is closed: unknown fields, an unlisted template and a free-form confidence fail Pi's validation before the host", async () => {
+    const { validateToolArguments } = await import("@earendil-works/pi-ai");
+    const ext = createRoleExtensions(new Proxy({}, { get: () => () => ({ ok: false }) }) as never);
+    const tools = (ext["maintenance-analyst"] as unknown as { tools?: { name: string; parameters: unknown }[] }).tools ?? [];
+    const t = tools.find((x) => x.name === "maintenance_report");
+    expect(t).toBeTruthy();
+    const v = { Check: (args: unknown) => { try { validateToolArguments(t as never, { name: "maintenance_report", arguments: args } as never); return true; } catch { return false; } } };
+    const good = { summary: "s", hypotheses: [{ text: "h", confidence: "low" }], evidenceRefs: ["incident:1"], recommendedTemplate: "app-recovery" };
+    expect(v.Check(good)).toBe(true);
+    expect(v.Check({ ...good, explanation: "x" })).toBe(false);
+    expect(v.Check({ ...good, recommendedTemplate: "memory_resource_exhaustion" })).toBe(false);
+    expect(v.Check({ ...good, hypotheses: [{ text: "h", confidence: "certain" }] })).toBe(false);
+  });
+});

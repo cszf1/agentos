@@ -67,18 +67,49 @@ on the final tree (second table).
 | `vitest --project telemetry` | real eBPF (guest) + host-unavailable path | 6/6 |
 | `playwright test` (v0.1–v0.3 specs + `v04-centers.spec.ts`) | real browser (Chromium) | 8/8 |
 
-Final-tree reruns (`/data/home/aff.sh`, commit `9459fee`):
+Final-tree reruns (`/data/home/aff.sh`, commit `d8de568`):
 
 | Command | Result |
 |---|---|
 | `pnpm build` | exit 0 |
 | `vitest --project unit` | 80/80 |
 | `vitest --project agents` (adds the trailing-bracket decoding tests) | 23/23 |
-| `vitest --project maintenance` | 21/21 |
+| `vitest --project maintenance` (E08 extended: unlisted recommendedTemplate refused) | 21/21 |
 | `vitest --project compaction` | 6/6 |
 | `vitest --project sandbox tests/sandbox/v04-proposals.test.ts` (faux refactor now sends `files`; candidate differs from the base only in that file) | 3/3 |
 
-__REALMODEL__
+## Real model (V4-O01, V4-O03)
+
+`pnpm smoke:v0.4-real` (`scripts/smoke-v04-real.mjs`) on the dev box against a fresh workspace. Provider
+`openai-compatible` (TokenRhythm), model `qwen3.8-flash`, `AGENTOS_MODEL_REASONING_EFFORT=low`,
+`AGENTOS_COMPACTION_KEEP_RECENT_TOKENS` default 2000. The key never reached the box: the host called the key-less relay
+`scripts/model-relay-box.mjs` on the box, and a forwarder in the development sandbox added the key. Each run starts a new
+host with a new data directory under `/data/home/smoke-v04`; every report is kept (`test-results/smoke-v04-real.runN.json`).
+
+| Run | Result | Cause / change |
+|---|---|---|
+| 1–4 | failed | mostly at O01: the code app's `app_stage` bundle arrived as a JSON string with broken closing brackets; one run reached optimisation and had no checked candidate. O03 compaction was already placed in one of these runs (`entryId 90`, cutoff 61) |
+| 5 | parallel, code app, compaction, optimisation pass; publication check failed | smoke script bug: accept is queued (202) and the script read the app before the `proposal_accept` deployment ended → script now waits for the deployment's terminal state |
+| 6 | failed at optimisation | four `candidate_stage` calls failed on stringified-bundle brackets (two inside Pi's argument parser) → `candidate_stage` accepts `files` (replaced code files; complete bundle rebuilt from the frozen target and validated as before); trailing-only bracket repair |
+| 7 | failed at optimisation | candidate staged, validated and checked (`passed`), but the refactor budget of 6 model requests ran out before `proposal_submit` → `candidate_check` waits for the result in the tool (V4-S09), prompt says staging already validates |
+| 8 | failed (infrastructure) | the sandbox forwarder process died; no model requests reached the provider |
+| 9, 10 | failed at O01 parallel | code-app run of the "看板" intent failed within its 3 stage attempts (bracket error, then RPC schema strings without `maxLength`); the other app succeeded both times |
+| 11 | **all steps pass** | code intent set via `SMOKE_CODE_INTENT` to an explicit code app (番茄钟记录) |
+| 12 | __RUN12__ | final tree (adds the `recommendedTemplate` check found in run 11) |
+
+Run 11 (`docs/evidence/v0.4-smoke-real.run11.json`, 2026-10-29 17:28–17:31 CST):
+
+| Step | Evidence |
+|---|---|
+| O01 two foreground apps in parallel | reading-list app (declarative) and 番茄钟 code app (formatVersion 2) submitted together; both `succeeded`, conversations 9 and 18, runs overlapped (`started_at`/`updated_at` intersect), 38 s total. Tools: app_get, app_stage (1 schema refusal, fixed), app_validate, app_prepare, app_activate; code app also runtime_catalog. Foreground attempts 6 and 5, output tokens 1716 and 2119 |
+| O03 compaction | conversation 9 compacted in the background: state `placed` (摘要已生成并放置（原始记录保留）), summary entry 80, source cutoff 71, scope bound to that conversation/run, providerContentConsent false, no cross-conversation input; one background attempt, input 969 / output 706 (reasoning 83) tokens, route `76ff0f61…` |
+| O01 background optimisation | `app-optimize` job → maintenance_refactor run (background, 4 model requests): target_app_get, candidate_stage (`files`), candidate_check, proposal_submit; job `awaiting_approval`. Proposal pins baseline hash `b5279a04…1c63`, candidate hash `3b24eb5c…135c`, fixture set `preview-fixtures-v1`, real container timings (baseline p50 0.158 ms, candidate 0.050 ms; fixture-only claim) |
+| O01 user publication | accept with exact proposalHash + expectedAppEpoch 1 → 202; deployment `proposal_accept` → `committed`; app epoch 1 → 2, active revision `62b6486c…` → `4f4c36c1…` (the candidate) |
+| O01 background diagnosis | real crash loop of the code app (memory limit) → incident → `app-diagnose` job `succeeded`; maintenance_diagnose run (2 requests): maintenance_context, incident_get, maintenance_report. Report lists 3 hypotheses with confidence, evidence refs only from the job's frozen ids, missing evidence; labeled "diagnosis (hypothesis, not a repair)" |
+
+Finding from run 11: the report carried `recommendedTemplate: "memory_resource_exhaustion"`, which is not a maintenance
+template — the prompt had said "one of the listed templates" without listing them, and the service stored any string.
+Fixed: the prompt lists the 8 template ids and the service refuses any other value (V4-E08 test extended).
 
 ## Performance (V4-O05)
 

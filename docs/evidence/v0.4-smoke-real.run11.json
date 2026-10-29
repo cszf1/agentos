@@ -1,0 +1,253 @@
+{
+  "dataDir": "/data/home/smoke-v04/aos-real4-y6H2zM",
+  "model": {
+    "provider": "openai-compatible",
+    "id": "qwen3.8-flash",
+    "baseUrl": "http://127.0.0.1:4500/v1"
+  },
+  "startedAt": "2026-10-29T09:28:04.299Z",
+  "steps": {
+    "parallel": {
+      "a": {
+        "status": "succeeded",
+        "appId": "ec968494-75ab-4f9a-adbd-c3d46875f657",
+        "conversationId": "9",
+        "errors": [
+          "app_stage: \"{\\\"error\\\":\\\"INVALID_BUNDLE\\\",\\\"message\\\":\\\"bundle failed schema validation\\\",\\\"errors\\\":[{\\\"path\\\":\\\"/data/fields/title/required\\\",\\\"code\\\":\\\"SCHEMA_ADDITIONALPROPERTIES\\\",\\\"message\\\":\\\"must NOT have additional properties\\\"},{\\\"path\\\":\\\"/data/fields/title/maxLength\\\",\\\"code\\\":\\\"SCHEMA_ADDITIONALPROPERTIES\\\",\\\"message\\\":\\\"must NOT have additional properties\\\"},{\\\"path\\\":\\\"/data/fields/title/type\\"
+        ],
+        "tools": [
+          "app_get",
+          "app_stage!",
+          "app_stage",
+          "app_validate",
+          "app_prepare",
+          "app_activate"
+        ],
+        "usage": null,
+        "model": "qwen3.8-flash",
+        "attempts": 6,
+        "background": false,
+        "outputTokens": 1716
+      },
+      "b": {
+        "status": "succeeded",
+        "appId": "28331e9a-79b8-493c-b3bf-e54deb34528d",
+        "conversationId": "18",
+        "errors": [],
+        "tools": [
+          "app_get",
+          "runtime_catalog",
+          "app_stage",
+          "app_validate",
+          "app_prepare",
+          "app_activate"
+        ],
+        "usage": null,
+        "model": "qwen3.8-flash",
+        "attempts": 5,
+        "background": false,
+        "outputTokens": 2119
+      },
+      "overlapped": true,
+      "seconds": 38
+    },
+    "codeApp": "28331e9a-79b8-493c-b3bf-e54deb34528d",
+    "compaction": {
+      "state": "placed",
+      "label": "摘要已生成并放置（原始记录保留）",
+      "result": {
+        "instructions": null,
+        "entryId": "80",
+        "sourceCutoff": "71"
+      },
+      "scope": {
+        "conversationId": "9",
+        "runId": "b283645b-1edb-4ed5-b0e2-cd7483db512c",
+        "cutoffEntryId": "71",
+        "mode": "build",
+        "providerContentConsent": false,
+        "crossConversation": false
+      },
+      "keepRecentTokens": 2000,
+      "attempts": [
+        {
+          "purpose": "compaction",
+          "background": 1,
+          "state": "completed",
+          "output_tokens": 706,
+          "usage_json": "{\"input\":969,\"output\":706,\"cacheRead\":0,\"cacheWrite\":0,\"reasoning\":83,\"totalTokens\":1675,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}}",
+          "route_id": "76ff0f6164ac95b6d7a4b315"
+        }
+      ]
+    },
+    "optimise": {
+      "job": {
+        "state": "awaiting_approval",
+        "outcome": "{\"proposalId\":\"c4ce9829-8eb8-4eba-8919-6c3e7780539d\"}"
+      },
+      "run": {
+        "conversationId": "82",
+        "errors": [],
+        "tools": [
+          "target_app_get",
+          "candidate_stage",
+          "candidate_check",
+          "proposal_submit"
+        ],
+        "usage": null,
+        "model": "qwen3.8-flash",
+        "attempts": 4,
+        "background": true,
+        "outputTokens": 3646
+      },
+      "proposals": [
+        {
+          "id": "c4ce9829-8eb8-4eba-8919-6c3e7780539d",
+          "check": {
+            "baselineHash": "b5279a04c41a28c44a7eb3adda6f6cb31da6da5c0c45d9b6d488106120a51c63",
+            "candidateHash": "3b24eb5cf63f25a8ce44b3f3671eedadef27a0d2700b6f0f1addd28ec557135c",
+            "checkId": "5ae58562-0013-4e42-87c0-350416b83d6a",
+            "fixtureSetVersion": "preview-fixtures-v1",
+            "result": {
+              "artifactId": "sha256:ce003c043329bd0e9605b937c43365b915ae4e5c07e62a4923c040845415c070",
+              "fixtureSetVersion": "preview-fixtures-v1",
+              "fixtures": "platform preview fixtures only (empty + default collection); never real records",
+              "timing": {
+                "baseline": {
+                  "samplesMs": [
+                    0.5,
+                    0.225,
+                    0.153,
+                    0.218,
+                    0.259,
+                    0.158,
+                    0.131,
+                    0.158,
+                    0.085,
+                    0.085,
+                    0.134,
+                    0.706,
+                    0.192,
+                    0.053,
+                    0.098
+                  ],
+                  "summary": {
+                    "mean": 0.21,
+                    "n": 15,
+                    "p50": 0.158,
+                    "p95": 0.706,
+                    "sd": 0.168
+                  }
+                },
+                "candidate": {
+                  "samplesMs": [
+                    0.306,
+                    0.333,
+                    0.158,
+                    0.281,
+                    0.125,
+                    0.073,
+                    0.061,
+                    0.046,
+                    0.049,
+                    0.045,
+                    0.05,
+                    0.046,
+                    0.045,
+                    0.042,
+                    0.049
+                  ],
+                  "summary": {
+                    "mean": 0.114,
+                    "n": 15,
+                    "p50": 0.05,
+                    "p95": 0.333,
+                    "sd": 0.102
+                  }
+                },
+                "method": "main data-source queries on the default fixture; 3 warm-up rounds, 15 measured rounds; same container limits",
+                "note": "a fixture timing is evidence for this fixture only, not a general claim"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "publish": {
+      "accept": 202,
+      "before": {
+        "epoch": 1,
+        "active_revision_id": "sha256:62b6486c1245e15d95f9dbe3ac125fe39f219d561ed5cc21cd6b0e760cb0600d"
+      },
+      "after": {
+        "epoch": 2,
+        "active_revision_id": "sha256:4f4c36c1471a59103f3f7f4f504a6c1b4c44035b48e5f3fe3359aadea7a247c7"
+      },
+      "deployment": {
+        "status": "committed",
+        "origin": "proposal_accept",
+        "error_json": null
+      }
+    },
+    "diagnose": {
+      "job": "succeeded",
+      "run": {
+        "conversationId": "109",
+        "errors": [],
+        "tools": [
+          "maintenance_context",
+          "incident_get",
+          "maintenance_report"
+        ],
+        "usage": null,
+        "model": "qwen3.8-flash",
+        "attempts": 2,
+        "background": true,
+        "outputTokens": 1716
+      },
+      "report": {
+        "reportId": "2dbc0562-b527-4933-9c92-a7e348a9b031",
+        "runId": "ca44b570-fe05-49b1-a303-3d981f59ed95",
+        "incidentId": "85e1d967-efb3-4027-9058-5830d4217416",
+        "jobId": "3afd258d-6bcd-44cb-a616-4d72a90b273b",
+        "body": {
+          "evidenceRefs": [
+            "incident:85e1d967-efb3-4027-9058-5830d4217416",
+            "samples:app:28331e9a-79b8-493c-b3bf-e54deb34528d",
+            "runtime:28331e9a-79b8-493c-b3bf-e54deb34528d",
+            "app:28331e9a-79b8-493c-b3bf-e54deb34528d"
+          ],
+          "hypotheses": [
+            {
+              "confidence": "high",
+              "text": "应用内存限制不足或代码中存在内存泄漏/高内存分配，导致每次启动后迅速 OOM 并被平台杀死，形成 crash_loop。lastError 明确指向 APP_RESOURCE_LIMIT，restartCount=3 且 generation=4 说明已连续崩溃 3 次。"
+            },
+            {
+              "confidence": "medium",
+              "text": "近期一次部署（切换至当前 activeRevisionId sha256:4f4c36c1…）引入了内存用量回归，使原先满足的内存限制不再够用。健康→崩溃的切换窗口极短（≈5 s），与部署/重启事件的时间特征吻合。"
+            },
+            {
+              "confidence": "low",
+              "text": "外部流量或数据负载在 09:30 前后突然增大（如大请求体、并发峰值），导致内存瞬时超限，即使代码本身无回归。因缺少请求日志与流量指标，此假设目前无法证实或排除。"
+            }
+          ],
+          "incidentId": "85e1d967-efb3-4027-9058-5830d4217416",
+          "missingEvidence": [
+            "应用运行日志（logs 字段为空），需查看 OOM 前后 stderr/stdout 以确定具体分配点",
+            "内存使用时间序列指标（RSS / heap / limit），确认是逐步增长（泄漏）还是突然尖峰（负载/请求）",
+            "部署/修订历史时间线：activeRevisionId sha256:4f4c36c1… 何时生效，是否恰在 09:30:11–09:30:16 窗口内",
+            "当前配置的内存限制值（memory limit）及应用正常工作负载下的历史峰值内存",
+            "外部流量/请求速率指标，排除或确认突发负载假设"
+          ],
+          "recommendedTemplate": "memory_resource_exhaustion",
+          "summary": "应用 28331e9a 在 09:30:11 至 09:30:16 之间从健康状态快速转为连续退出（app.exit=bad × 4），随后触发 crash_loop 条件。每次重启均因 APP_RESOURCE_LIMIT（\"the app exceeded its memory limit\"）失败，restartCount=3、generation=4，表明应用在内存不足后反复崩溃、无法稳定运行。日志为空，缺少内存指标与部署时间线，无法区分是代码回归还是外部负载突增。"
+        },
+        "bodyHash": "5e4fff2d29c561d4cadddb9ff77ebc74c212f12ea2a2916a9efd0812cebf6898",
+        "createdAt": "2026-10-29T09:31:15.712Z",
+        "kind": "diagnosis (hypothesis, not a repair)"
+      }
+    }
+  },
+  "finishedAt": "2026-10-29T09:31:16.149Z",
+  "ok": true
+}

@@ -1,7 +1,7 @@
 import { Type } from "@earendil-works/pi-ai";
 import { defineExtension, defineTool, section, type Extension, type ToolExecutionResult } from "@earendil-works/pi-durable";
 import { fault, readSystemInfo, type AgentOps, type ToolOutcome } from "@agentos/core";
-import { AGENT_PROFILES, type AgentProfileId } from "@agentos/contracts";
+import { AGENT_PROFILES, MAINTENANCE_TEMPLATES, type AgentProfileId } from "@agentos/contracts";
 import { MAINTENANCE_RULES, REFACTOR_RULES, SYSTEM_RULES } from "./prompt.js";
 
 export const EXTENSION_NAME = "agentos-app-builder";
@@ -246,7 +246,17 @@ function allTools(ops: AgentOps, toolLog?: ToolLog) {
     defineTool({
       name: "maintenance_report",
       description: "maintenance_diagnose runs: submit ONE report {summary, hypotheses:[{text, confidence: low|medium|high}], evidenceRefs:[evidence ids], recommendedTemplate?, missingEvidence?}. A hypothesis, not a repair. Then finish.",
-      parameters: Type.Object({ summary: Type.String(), hypotheses: Type.Array(Type.Object({ text: Type.String(), confidence: Type.String() })), evidenceRefs: Type.Optional(Type.Array(Type.String())), recommendedTemplate: Type.Optional(Type.String()), missingEvidence: Type.Optional(Type.Array(Type.String())) }),
+      // closed schema: an unknown field is refused by Pi's argument validation before the host counts a report attempt
+      parameters: Type.Object(
+        {
+          summary: Type.String(),
+          hypotheses: Type.Array(Type.Object({ text: Type.String(), confidence: Type.Union([Type.Literal("low"), Type.Literal("medium"), Type.Literal("high")]) }, { additionalProperties: false })),
+          evidenceRefs: Type.Optional(Type.Array(Type.String())),
+          recommendedTemplate: Type.Optional(Type.Union(Object.keys(MAINTENANCE_TEMPLATES).map((k) => Type.Literal(k)))),
+          missingEvidence: Type.Optional(Type.Array(Type.String())),
+        },
+        { additionalProperties: false },
+      ),
       replay: "safe",
       execute: async (a, api) => {
         const out = ops.maintenanceReport(id(api, "maintenance_report"), a);
