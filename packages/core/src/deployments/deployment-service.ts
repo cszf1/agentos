@@ -268,6 +268,14 @@ export class DeploymentService {
 
   async #drive(id: string): Promise<void> {
     const s = this.ctx.store;
+    // A replay of app_prepare calls drive() again after the first pass has finished. #check only continues
+    // queued/preparing rows, so a ready or committed deployment used to fall through into #cleanupCandidate
+    // and destroy the preview the activation still needs. Only a preparation that actually ended is cleaned up.
+    const existing = this.get(id);
+    if (existing && existing.status !== "queued" && existing.status !== "preparing") {
+      if (existing.status === "failed" || existing.status === "cancelled" || existing.status === "superseded") await this.#cleanupCandidate(id);
+      return;
+    }
     let d = this.#check(id, "validate");
     if (!d) return void (await this.#cleanupCandidate(id));
     // 1. structure, semantics, compatibility against the current contract (no state change).
