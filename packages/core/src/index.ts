@@ -5,6 +5,8 @@ import { RunService, DEFAULT_RUN_SETTINGS, type RunSettings } from "./runs/run-s
 import { CapabilityGateway } from "./capabilities/gateway.js";
 import { AgentOps } from "./runs/agent-ops.js";
 import { UserActions } from "./user-actions.js";
+import { ModelBudgets } from "./model-budgets/budgets.js";
+import { RunScheduler } from "./scheduling/run-scheduler.js";
 
 export * from "./persistence/store.js";
 export { MIGRATIONS } from "./persistence/migrations.js";
@@ -18,6 +20,9 @@ export * from "./capabilities/gateway.js";
 export * from "./providers/system-info.js";
 export * from "./faults.js";
 export * from "./user-actions.js";
+export * from "./model-budgets/budgets.js";
+export * from "./scheduling/target-leases.js";
+export * from "./scheduling/run-scheduler.js";
 
 export interface Core {
   store: Store;
@@ -27,6 +32,8 @@ export interface Core {
   runs: RunService;
   agentOps: AgentOps;
   user: UserActions;
+  budgets: ModelBudgets;
+  scheduler: RunScheduler;
 }
 
 export function openCore(file: string, opts: { clock?: Clock; runSettings?: Partial<RunSettings> } = {}): Core {
@@ -37,7 +44,9 @@ export function openCore(file: string, opts: { clock?: Clock; runSettings?: Part
   const runs = new RunService(store, apps, { ...DEFAULT_RUN_SETTINGS, ...(opts.runSettings ?? {}) });
   const agentOps = new AgentOps(store, gateway, apps, runs);
   const user = new UserActions(store, gateway, apps, records, runs);
-  return { store, gateway, apps, records, runs, agentOps, user };
+  const budgets = new ModelBudgets(store, runs);
+  const scheduler = new RunScheduler(store, runs, apps);
+  return { store, gateway, apps, records, runs, agentOps, user, budgets, scheduler };
 }
 export * from "./runtime/driver.js";
 export * from "./runtime/policy.js";

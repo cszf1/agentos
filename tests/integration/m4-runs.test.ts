@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import path from "node:path";
 import { requestHash } from "@agentos/core";
-import { startRig, submit, waitFor, waitRun, type AgentRig } from "../agent-helpers.js";
+import { startRig, submit, waitFor, waitRun, type AgentRig, lastTranscript } from "../agent-helpers.js";
 
 let rig: AgentRig | undefined;
 afterEach(async () => {
@@ -31,7 +31,7 @@ describe("R10 cancel semantics", () => {
     rig = await startRig();
     const body = { intent: "做一个待办应用", targetAppId: null };
     // accept and cancel in the same synchronous turn, before the coordinator can dispatch
-    const accepted = rig.core.user.submitRun({ operationKey: randomUUID(), requestHash: requestHash(body) }, body, true).body;
+    const accepted = rig.core.user.submitRun({ operationKey: randomUUID(), requestHash: requestHash(body) }, body).body;
     const c = rig.core.user.cancelRun(meta(), accepted.runId);
     expect(c.status).toBe(202);
     expect(rig.core.runs.beginDispatch(accepted.runId)).toBe(false);
@@ -44,48 +44,48 @@ describe("R10 cancel semantics", () => {
   });
 });
 
-describe("R12 compaction stays inside its run", () => {
-  it("a long conversation compacts blocking only, and the summary request counts against the run", async () => {
-    rig = await startRig({ fauxContextWindow: 16000, compaction: { reserveTokens: 1000, keepRecentTokens: 600 } });
-    const counts: number[] = [];
-    let appId: string | null = null;
-    for (let i = 0; i < 12; i++) {
-      const r = await submit(rig, i === 0 ? "做一个待办应用" : `修改说明第${i}次 [faux:same]`, appId);
-      const run = await waitRun(rig, r.runId);
+describe("R12 compaction stays inside its run (v0.4: one conversation per run)", () => {
+  it("a run whose own context grows compacts blocking only; the summary request counts against that run", async () => {
+    // a small context window: one run's own tool results exceed it and force a blocking compaction inside the run
+    rig = await startRig({ fauxContextWindow: 6000, compaction: { reserveTokens: 1000, keepRecentTokens: 600 } });
+    const first = await waitRun(rig, (await submit(rig, "做一个待办应用")).runId);
+    expect(first.status, first.error_json ?? "").toBe("succeeded");
+    const appId = first.target_app_id!;
+    let compactedRun: string | null = null;
+    for (let i = 1; i < 4 && !compactedRun; i++) {
+      const run = await waitRun(rig, (await submit(rig, `修改说明第${i}次 [faux:same]`, appId)).runId);
       expect(run.status, run.error_json ?? "").toBe("succeeded");
-      appId = run.target_app_id;
-      counts.push(run.model_request_count);
+      const t = await rig.engine.transcript(run.conversation_id!);
+      if (t.items.some((x) => x.kind === "pi.compaction")) compactedRun = run.id;
       // background compaction is disabled: nothing is left running between runs
       expect(await rig.engine.isIdle()).toBe(true);
     }
-    const t = await rig.engine.transcript();
-    const compacted = t.items.some((i) => i.kind === "pi.compaction");
-    expect(compacted).toBe(true);
-    // v0.2 runs without compaction need 5 admitted requests (get, stage, validate, prepare, activate); a run that
-    // compacted paid more, inside its own budget
-    expect(counts).toContain(5);
-    expect(Math.max(...counts)).toBeGreaterThan(5);
-    expect(Math.max(...counts)).toBeLessThanOrEqual(12);
+    expect(compactedRun, "a run compacted inside its own conversation").not.toBeNull();
+    {
+      const run = rig.core.runs.requireRun(compactedRun!);
+      // the summary request was admitted on THIS run's route (more than the 5 tool-step requests)
+      expect(run.model_request_count).toBeGreaterThan(5);
+      expect(run.model_request_count).toBeLessThanOrEqual(12);
+      const attempts = rig.core.store.all<{ run_id: string }>("SELECT run_id FROM model_attempts WHERE conversation_id = ?", run.conversation_id);
+      expect(attempts.every((a) => a.run_id === compactedRun)).toBe(true);
+    }
+    // every attempt is attributed to the run of its conversation
+    const mixed = rig.core.store.all("SELECT a.attempt_id FROM model_attempts a JOIN runs r ON r.id = a.run_id WHERE a.conversation_id <> r.conversation_id");
+    expect(mixed).toHaveLength(0);
 
-    // Cancel a run on the compacted conversation, then start the next one: until Pi has fully converged the slot
-    // stays taken (RUN_BUSY), and nothing from the cancelled run ever writes under the next run.
+    // Cancel a run, then submit the next one on the same app: it is accepted (queued) and waits for the target until the
+    // cancelled conversation fully converged; nothing from the cancelled run ever writes under the next run.
     const slow = await submit(rig, "修改说明取消 [faux:slow:1500]", appId);
     await waitFor(() => rig!.core.runs.requireRun(slow.runId).dispatch_state === "submitted");
     rig.core.user.cancelRun(meta(), slow.runId);
-    let busy = "";
-    try {
-      await submit(rig, "下一次修改 [faux:same]", appId);
-    } catch (e) {
-      busy = (e as { code?: string }).code ?? "";
-    }
-    expect(busy).toBe("RUN_BUSY");
+    const next = await submit(rig, "下一次修改 [faux:same]", appId);
+    expect(next.status).toBe("queued");
     const cancelled = await waitRun(rig, slow.runId);
     expect(cancelled.status).toBe("cancelled");
     expect(cancelled.applied_revision_id).toBeNull();
-    expect(await rig.engine.isIdle()).toBe(true);
-    const next = await waitRun(rig, (await submit(rig, "下一次修改 [faux:same]", appId)).runId);
-    expect(next.status).toBe("succeeded");
-    expect(next.model_request_count).toBeLessThanOrEqual(6);
+    const done = await waitRun(rig, next.runId);
+    expect(done.status).toBe("succeeded");
+    expect(Date.parse(done.started_at!)).toBeGreaterThanOrEqual(Date.parse(cancelled.updated_at) - 5);
     expect(rig.core.store.all("SELECT id FROM revisions WHERE created_by_run_id = ?", slow.runId)).toHaveLength(0);
   });
 });

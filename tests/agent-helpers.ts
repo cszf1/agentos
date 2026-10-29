@@ -38,13 +38,13 @@ export interface AgentRig {
   close(): Promise<void>;
 }
 
-export async function startRig(opts: { dir?: string; clock?: Clock; runSettings?: Partial<RunSettings>; fauxContextWindow?: number; compaction?: { reserveTokens?: number; keepRecentTokens?: number }; systemAutoStart?: boolean; storeUuid?: string } = {}): Promise<AgentRig> {
+export async function startRig(opts: { dir?: string; clock?: Clock; runSettings?: Partial<RunSettings>; fauxContextWindow?: number; compaction?: { reserveTokens?: number; keepRecentTokens?: number }; systemAutoStart?: boolean; storeUuid?: string; foregroundSlots?: number } = {}): Promise<AgentRig> {
   const dir = opts.dir ?? tmpDir();
   const core = openCore(path.join(dir, "os.sqlite"), { runSettings: opts.runSettings, ...(opts.clock ? { clock: opts.clock } : {}) });
   const engine = new PiAgentEngine({
     agentDbPath: path.join(dir, "agent.sqlite"),
     ops: core.agentOps,
-    runs: core.runs,
+    gate: core.budgets,
     modelConfig: { mode: "faux", provider: "agentos-faux", modelId: "faux-builder" },
     fauxContextWindow: opts.fauxContextWindow,
     compaction: opts.compaction,
@@ -64,8 +64,11 @@ export async function startRig(opts: { dir?: string; clock?: Clock; runSettings?
   const b = await engine.bind(meta.store_uuid, meta.agent_binding_state);
   if (!b.ok) throw new Error(b.reason);
   if (meta.agent_binding_state === "pending") core.store.tx(() => core.store.run("UPDATE meta SET agent_binding_state = 'bound' WHERE id = 1"));
-  const coord = new RunCoordinator(core.runs, engine, undefined, 50);
+  core.budgets.recover();
+  const coord = new RunCoordinator(core.runs, engine, undefined, 50, core.scheduler);
+  coord.onChange = () => core.budgets.pump();
   await coord.recover();
+  core.runs.foregroundSlots = opts.foregroundSlots ?? 2;
   engine.resume();
   coord.start();
   return {
@@ -89,9 +92,15 @@ export async function startRig(opts: { dir?: string; clock?: Clock; runSettings?
 export async function submit(rig: AgentRig, intent: string, targetAppId: string | null = null) {
   const body: { intent: string; targetAppId: string | null; expectedAppEpoch?: number } = { intent, targetAppId };
   if (targetAppId) body.expectedAppEpoch = rig.core.apps.requireApp(targetAppId).epoch;
-  const r = rig.core.user.submitRun({ operationKey: randomUUID(), requestHash: requestHash({ body }) }, body, await rig.engine.isIdle());
+  const r = rig.core.user.submitRun({ operationKey: randomUUID(), requestHash: requestHash({ body }) }, body);
   void rig.coord.kick();
-  return r.body;
+  return r.body as typeof r.body & { targetAppId: string };
+}
+
+/** Transcript of the newest run that has a conversation (v0.4: per-conversation, never the mixed root). */
+export async function lastTranscript(rig: AgentRig) {
+  const row = rig.core.store.get<{ conversation_id: string }>("SELECT conversation_id FROM runs WHERE conversation_id IS NOT NULL ORDER BY created_at DESC, rowid DESC LIMIT 1");
+  return row ? rig.engine.transcript(row.conversation_id) : { items: [] };
 }
 
 export async function waitRun(rig: AgentRig, runId: string, timeoutMs = 20_000) {

@@ -17,7 +17,7 @@ import {
   type RecordDeleteBody,
   type RecordPatchBody,
   type RunCreateBody,
-  type StateView, isCodeBundle } from "@agentos/contracts";
+  type StateView, isCodeBundle, AGENT_PROFILES, V4_LIMITS } from "@agentos/contracts";
 import { fault, readSystemInfo, type AgentEngine, type Core, type RunCoordinator, type RuntimeSystem, type SystemCapabilities, type UserWriteMeta } from "@agentos/core";
 import { registerSystemRoutes } from "./http-system.js";
 import { COOKIE, parseCookies, type SessionAuth } from "./auth.js";
@@ -203,7 +203,8 @@ export function buildServer(rt: HostRuntime): FastifyInstance {
   app.get("/api/state", async (req, reply) => {
     requireSession(req);
     const view: StateView = core.store.read((): StateView => {
-      const active = core.runs.activeRun();
+      const unfinished = core.runs.unfinished();
+      const active = unfinished.find((r) => r.background === 0);
       const last = core.runs.lastRun();
       const v: StateView = {
         clientEpoch: clientEpoch(),
@@ -211,6 +212,8 @@ export function buildServer(rt: HostRuntime): FastifyInstance {
         apps: core.apps.listApps(),
         activeRun: active ? withDeployment(core.runs.view(active)) : null,
         lastRun: last ? withDeployment(core.runs.view(last)) : null,
+        runs: unfinished.map((r) => withDeployment(core.runs.view(r))),
+        foregroundSlots: core.runs.foregroundSlots,
         modelAvailable: rt.model.available && rt.status.agentState === "ready",
         model: rt.model.ref ? { ...rt.model.ref, mode: rt.model.mode } : null,
         agentState: rt.status.agentState,
@@ -282,22 +285,47 @@ export function buildServer(rt: HostRuntime): FastifyInstance {
     return ok(reply, 200, v);
   });
 
+  /**
+   * Spec §22.1: only this task's own conversation (from the host binding), never the mixed legacy root. A v0.3 run
+   * (legacy_root) reads its slice of the old root transcript as before.
+   */
   app.get<{ Params: { runId: string } }>("/api/runs/:runId/transcript", async (req, reply) => {
     requireSession(req);
     const v = UUID.test(req.params.runId) ? runView(req.params.runId) : null;
     if (!v) throw new AgentOsError("NOT_FOUND", "run not found");
-    if (["queued", "running", "cancel_requested", "blocked"].includes(v.status)) {
-      return ok(reply, 200, { final: false, items: [] });
-    }
+    const row = core.runs.requireRun(v.runId);
     if (!rt.engine) return ok(reply, 200, { final: true, items: [] });
-    const t = await rt.engine.transcript();
-    // Only the entries of this run: from its input onwards (the input mentions the run id).
-    const start = t.items.findLastIndex((i) => i.role === "user" && i.text.includes(v.runId));
-    const items = (start >= 0 ? t.items.slice(start) : []).slice(-LIMITS.transcriptMaxItems);
-    let end = items.length;
-    for (let i = 1; i < items.length; i++) if (items[i]!.role === "user") { end = i; break; }
-    const usage = rt.engine.usage ? await rt.engine.usage().catch(() => null) : null;
-    return ok(reply, 200, { final: true, items: items.slice(0, end), sessionUsage: usage });
+    const final = !["queued", "running", "cancel_requested", "blocked"].includes(v.status);
+    if (row.legacy_root === 1) {
+      if (!final) return ok(reply, 200, { final: false, items: [] });
+      const t = await rt.engine.transcript("root");
+      const start = t.items.findLastIndex((i) => i.role === "user" && i.text.includes(v.runId));
+      const items = (start >= 0 ? t.items.slice(start) : []).slice(-LIMITS.transcriptMaxItems);
+      let end = items.length;
+      for (let i = 1; i < items.length; i++) if (items[i]!.role === "user") { end = i; break; }
+      return ok(reply, 200, { final: true, items: items.slice(0, end), legacy: true });
+    }
+    if (!row.conversation_id) return ok(reply, 200, { final, items: [] });
+    const b = core.store.get<{ run_id: string }>("SELECT run_id FROM agent_conversations WHERE conversation_id = ?", row.conversation_id);
+    if (!b || b.run_id !== row.id) throw new AgentOsError("RUN_IDENTITY_MISMATCH", "transcript binding mismatch");
+    const t = await rt.engine.transcript(row.conversation_id);
+    const usage = rt.engine.usage ? await rt.engine.usage(row.conversation_id).catch(() => null) : null;
+    const summaries = core.store.all("SELECT id, state, cutoff_entry_id AS cutoffEntryId, result_json AS result, created_at AS createdAt FROM compaction_jobs WHERE conversation_id = ? ORDER BY created_at", row.conversation_id);
+    return ok(reply, 200, { final, items: t.items.slice(-LIMITS.transcriptMaxItems), conversationId: row.conversation_id, usage, compactions: summaries });
+  });
+
+  /** Spec §22.1: paged task list by status/target (never a single activeRun). */
+  app.get<{ Querystring: Record<string, string> }>("/api/runs", async (req, reply) => {
+    requireSession(req);
+    const q = req.query;
+    const rows = core.runs.list({ status: q.status, targetAppId: q.targetAppId, background: q.background === undefined ? undefined : q.background === "1" || q.background === "true", limit: q.limit ? Number(q.limit) : undefined, before: q.before });
+    return ok(reply, 200, { items: rows.map((r) => withDeployment(core.runs.view(r))), foregroundSlots: core.runs.foregroundSlots, nextBefore: rows.length ? rows[rows.length - 1]!.created_at : null });
+  });
+
+  /** Spec §22.1: fixed role templates, modes, capabilities and default budgets. */
+  app.get("/api/agent-profiles", async (req, reply) => {
+    requireSession(req);
+    return ok(reply, 200, { items: Object.values(AGENT_PROFILES), limits: V4_LIMITS, budgets: core.budgets.limits() });
   });
 
   // ---- writes ----
@@ -319,9 +347,8 @@ export function buildServer(rt: HostRuntime): FastifyInstance {
       const body = parseDto<RunCreateBody>("runCreate", req.body);
       if (rt.status.agentState === "blocked") throw new AgentOsError("RECOVERY_BLOCKED", rt.status.agentDiagnostic ?? "agent recovery is blocked");
       if (!rt.engine || !rt.model.available) throw new AgentOsError("MODEL_UNAVAILABLE", rt.model.diagnostic ?? "no model is configured");
-      const idle = await rt.engine.isIdle();
-      const r = core.user.submitRun(meta, body, idle);
-      log.info("run accepted", { runId: r.body.runId, appId: r.body.targetAppId, replayed: r.replayed });
+      const r = core.user.submitRun(meta, body);
+      log.info("run accepted", { runId: r.body.runId, appId: r.body.targetAppId, queueState: r.body.queueState, replayed: r.replayed });
       fault("run.after_accept");
       void rt.coord?.kick();
       return ok(reply, r.status, r.body);

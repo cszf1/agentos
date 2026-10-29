@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { HOST_VERSION, checkAnyStructure } from "@agentos/contracts";
+import { HOST_VERSION, SCHEDULER_PROTOCOL_VERSION, V4_LIMITS, checkAnyStructure } from "@agentos/contracts";
 import { RunCoordinator, RuntimeSystem, SystemCapabilities, openCore, type Core } from "@agentos/core";
 import { catalogProblems, createDriver, loadCatalog } from "./runtime-setup.js";
 import { PiAgentEngine, TOOLSET_VERSION, modelConfigFromEnv } from "@agentos/agent-pi";
@@ -103,7 +103,7 @@ export async function main(): Promise<void> {
   const engine = new PiAgentEngine({
     agentDbPath: path.join(config.dataDir, "agent.sqlite"),
     ops: core.agentOps,
-    runs: core.runs,
+    gate: core.budgets,
     modelConfig,
     fauxContextWindow: config.testMode && process.env.AGENTOS_TEST_FAUX_CONTEXT ? Number(process.env.AGENTOS_TEST_FAUX_CONTEXT) : undefined,
     onFailure: (error) => {
@@ -175,7 +175,7 @@ export async function main(): Promise<void> {
   {
     const cur = core.store.get<{ v: number }>("SELECT agent_toolset_version AS v FROM meta WHERE id = 1")!.v;
     if (cur !== TOOLSET_VERSION) {
-      const busyRun = core.runs.activeRun();
+      const busyRun = core.runs.unfinished()[0];
       const up = busyRun ? { ok: false as const, reason: `run ${busyRun.id} from tool set v${cur} is unfinished; finish or cancel it with the previous host version first` } : await engine.upgradeToolset(TOOLSET_VERSION);
       if (!up.ok) {
         rt.status.agentState = "blocked";
@@ -188,7 +188,9 @@ export async function main(): Promise<void> {
         core.store.run(
           "INSERT OR IGNORE INTO agent_toolset_migrations (version, description, applied_at) VALUES (?, ?, ?)",
           TOOLSET_VERSION,
-          TOOLSET_VERSION === 3 ? "v0.3 tools: system_resource_list, system_read, system_plan (system_plan mode); formatVersion 3 / isolated-code-v2 / slot-tree-v2 rules" : "v0.2 tools",
+          TOOLSET_VERSION === 4
+            ? "v0.4 tools: role-scoped extensions (builder, system-planner, maintenance-analyst, maintenance-refactor); identity from the conversation binding; operation keys include the conversation"
+            : "v0.3 tools",
           new Date().toISOString(),
         );
         core.store.run("UPDATE meta SET agent_toolset_version = ? WHERE id = 1", TOOLSET_VERSION);
@@ -197,8 +199,17 @@ export async function main(): Promise<void> {
     }
   }
 
-  // 5. bind and reconcile the active run before anything can be scheduled
-  const coord = new RunCoordinator(core.runs, engine, { info: log.info, warn: log.warn, error: log.error });
+  // 5. v0.4 (spec §23.1 step 4): unsettled model attempts of the previous process keep their reservation; every Pi
+  // conversation must map to a run (and back) and every started run's route is re-attached before Pi resumes.
+  const interrupted = core.budgets.recover();
+  if (interrupted > 0) log.warn("model attempts of the previous process marked interrupted (usage unknown, reservation kept)", { interrupted });
+  const coord = new RunCoordinator(core.runs, engine, { info: log.info, warn: log.warn, error: log.error }, 500, core.scheduler);
+  coord.onChange = () => core.budgets.pump();
+  const fgIdle = () =>
+    !core.store.get("SELECT 1 FROM runs WHERE background = 0 AND status = 'queued' AND scheduling_state IN ('waiting_slot','waiting_target','dispatching')") &&
+    !core.store.get("SELECT 1 FROM runs WHERE background = 0 AND scheduling_state = 'waiting_build'");
+  core.budgets.backgroundIdle = fgIdle;
+  core.scheduler.backgroundIdle = fgIdle;
   rt.coord = coord;
   await coord.recover();
   if (coord.recoveryBlocked) {
@@ -209,7 +220,14 @@ export async function main(): Promise<void> {
     return;
   }
 
-  // 6. resume Pi scheduling and the coordinator
+  // 6. the second foreground slot opens only after the v0.4 protocol/identity self-check (spec §3.3): tool set v4 in
+  // both stores, scheduler protocol recorded, every binding reconciled (recover() above did not block).
+  {
+    const m = core.store.get<{ t: number; s: number }>("SELECT agent_toolset_version AS t, scheduler_protocol_version AS s FROM meta WHERE id = 1")!;
+    if (m.t === TOOLSET_VERSION && m.s === SCHEDULER_PROTOCOL_VERSION && !coord.recoveryBlocked) core.runs.foregroundSlots = V4_LIMITS.foregroundSlots;
+    log.info("foreground slots", { slots: core.runs.foregroundSlots });
+  }
+  // resume Pi scheduling and the coordinator
   engine.resume();
   coord.start();
   rt.status.agentState = engine.modelAvailable ? "ready" : "unavailable";

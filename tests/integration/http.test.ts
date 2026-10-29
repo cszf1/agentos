@@ -70,15 +70,22 @@ describe("HTTP host (real process, faux model)", () => {
     expect(s.data.platform).toBe("linux");
     expect(s.data.memory.totalBytes).toBeGreaterThan(0);
     expect(typeof s.data.uptimeSeconds).toBe("number");
-    expect(s.data.hostVersion).toBe("0.3.0");
+    expect(s.data.hostVersion).toBe("0.4.0");
   });
 
   it("full HTTP CRUD with idempotency, CAS, unknown fields and stale epochs", async () => {
     const run = await c.req("POST", "/api/runs", { intent: "做一个待办应用", targetAppId: null });
     expect(run.status).toBe(202);
-    const busy = await c.req("POST", "/api/runs", { intent: "again", targetAppId: null });
-    expect(busy.error?.code).toBe("RUN_BUSY");
+    // v0.4: a second request is accepted into the queue (202), never RUN_BUSY
+    const second = await c.req("POST", "/api/runs", { intent: "again", targetAppId: null });
+    expect(second.status).toBe(202);
+    expect(second.data.status).toBe("queued");
+    expect(typeof second.data.queueState).toBe("string");
+    const listed = await c.get("/api/runs?status=unfinished");
+    expect(listed.status).toBe(200);
+    expect(Array.isArray(listed.data.items)).toBe(true);
     const done = await c.waitRun(run.data.runId);
+    await c.waitRun(second.data.runId);
     expect(done.status).toBe("succeeded");
     const appId = run.data.targetAppId;
     const app = await c.get(`/api/apps/${appId}`);

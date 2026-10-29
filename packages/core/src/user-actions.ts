@@ -52,15 +52,16 @@ export class UserActions {
   /** Manual switch to a previously activated revision; refused while a generation run is active. */
   activateHistorical(meta: UserWriteMeta, appId: string, revisionId: string, expectedAppEpoch: number): WriteResult<ActivateResult> {
     return this.gateway.write("apps.activate.history", { principal: { kind: "user" }, ...meta }, () => {
-      if (this.runs.activeRun() !== undefined) throw new AgentOsError("RUN_BUSY", "wait for the running generation to finish before switching versions");
+      if (this.runs.targetBusy(appId) !== undefined) throw new AgentOsError("TARGET_BUSY", "a task is changing this app; wait for it to finish before switching versions");
       return { status: 200, body: this.apps.activateInTx(appId, revisionId, expectedAppEpoch, { historicalOnly: true, runId: null }) };
     });
   }
 
-  submitRun(meta: UserWriteMeta, body: RunCreateBody, engineIdle: boolean): WriteResult<{ runId: string; targetAppId: string; status: string }> {
+  /** Spec §7.1: a valid request is persisted and queued (202 + runId + queue state); only a full queue refuses it. */
+  submitRun(meta: UserWriteMeta, body: RunCreateBody): WriteResult<{ runId: string; targetAppId: string | null; status: string; queueState: string; waitReason: string | null }> {
     return this.gateway.write("runs.submit", { principal: { kind: "user" }, ...meta }, () => ({
       status: 202,
-      body: this.runs.accept(body, meta.operationKey, meta.requestHash, engineIdle),
+      body: this.runs.accept(body, meta.operationKey, meta.requestHash),
     }));
   }
 

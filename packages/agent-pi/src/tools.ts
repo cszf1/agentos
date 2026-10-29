@@ -1,7 +1,8 @@
 import { Type } from "@earendil-works/pi-ai";
 import { defineExtension, defineTool, section, type Extension, type ToolExecutionResult } from "@earendil-works/pi-durable";
 import { fault, readSystemInfo, type AgentOps, type ToolOutcome } from "@agentos/core";
-import { SYSTEM_RULES } from "./prompt.js";
+import { AGENT_PROFILES, type AgentProfileId } from "@agentos/contracts";
+import { MAINTENANCE_RULES, REFACTOR_RULES, SYSTEM_RULES } from "./prompt.js";
 
 export const EXTENSION_NAME = "agentos-app-builder";
 
@@ -28,7 +29,9 @@ export const TOOL_CAPABILITY: Record<string, string> = {
  * 1 = v0.1 (activate by revisionId). 2 = v0.2 (prepare/status/activate by deploymentId, catalogs).
  * 3 = v0.3 (formatVersion 3 / ABI 2 apps; system_plan mode tools system_resource_list, system_read, system_plan).
  */
-export const TOOLSET_VERSION = 3;
+export const TOOLSET_VERSION = 4;
+/** 4 = v0.4: one Pi extension per role template (builder, system-planner, maintenance-analyst, maintenance-refactor);
+ * tool identity from Pi's trusted conversationId/taskId; operation keys include the conversation. */
 
 function result<T>(out: ToolOutcome<T>, terminateOnSuccess = false): ToolExecutionResult {
   if (out.ok) {
@@ -64,15 +67,17 @@ function parseBundleArg(args: unknown): { bundle: unknown } {
  */
 export type ToolLog = (msg: string, fields: Record<string, unknown>) => void;
 
-export function createBuilderExtension(ops: AgentOps, toolLog?: ToolLog): Extension {
-  const id = (taskId: unknown, toolName: string) => ({ piTaskId: String(taskId), toolName });
+/** All tools, one definition each; the role extensions select from this list (spec §21.3). */
+function allTools(ops: AgentOps, toolLog?: ToolLog) {
+  /** Identity from Pi's trusted ToolExecutionApi only: the model's arguments can never select the run (spec §6.3). */
+  const id = (api: { taskId: unknown; conversationId: unknown }, toolName: string) => ({ piTaskId: String(api.taskId), toolName, conversationId: String(api.conversationId) });
   /** Spec §15: one log line per tool execution (ids, status, duration; never bundle bodies). */
   const withLog = <T extends { name: string; execute: (...args: never[]) => Promise<ToolExecutionResult> }>(tool: T): T => {
     if (!toolLog) return tool;
-    const inner = tool.execute as unknown as (a: unknown, api: { taskId: unknown }, ...rest: unknown[]) => Promise<ToolExecutionResult>;
-    const execute = async (a: unknown, api: { taskId: unknown }, ...rest: unknown[]): Promise<ToolExecutionResult> => {
+    const inner = tool.execute as unknown as (a: unknown, api: { taskId: unknown; conversationId: unknown }, ...rest: unknown[]) => Promise<ToolExecutionResult>;
+    const execute = async (a: unknown, api: { taskId: unknown; conversationId: unknown }, ...rest: unknown[]): Promise<ToolExecutionResult> => {
       const started = performance.now();
-      const call = ops.describeCall(id(api.taskId, tool.name));
+      const call = ops.describeCall(id(api, tool.name));
       const out = await inner(a, api, ...rest);
       let revisionId: unknown = (a as { revisionId?: unknown } | undefined)?.revisionId ?? null;
       let code: unknown = null;
@@ -87,6 +92,7 @@ export function createBuilderExtension(ops: AgentOps, toolLog?: ToolLog): Extens
       toolLog("tool", {
         tool: tool.name,
         piTaskId: String(api.taskId),
+        conversationId: String(api.conversationId),
         runId: call?.runId ?? null,
         operationKey: call?.operationKey ?? null,
         revisionId,
@@ -105,14 +111,14 @@ export function createBuilderExtension(ops: AgentOps, toolLog?: ToolLog): Extens
       parameters: Type.Object({}),
       replay: "safe",
       execute: async (_a, api) =>
-        result(ops.systemInfo(id(api.taskId, "system_info"), () => ({ ...readSystemInfo(), codeRuntimeAvailable: ops.runtime?.runtimeReady ?? false, runtimeProblems: (ops.runtime?.environmentProblems ?? []).slice(0, 3) }))),
+        result(ops.systemInfo(id(api, "system_info"), () => ({ ...readSystemInfo(), codeRuntimeAvailable: ops.runtime?.runtimeReady ?? false, runtimeProblems: (ops.runtime?.environmentProblems ?? []).slice(0, 3) }))),
     }),
     defineTool({
       name: "app_list",
       description: "List the workspace apps (id, title, epoch, active revision, runtime, health). Never returns records.",
       parameters: Type.Object({}),
       replay: "safe",
-      execute: async (_a, api) => result(ops.appList(id(api.taskId, "app_list"))),
+      execute: async (_a, api) => result(ops.appList(id(api, "app_list"))),
     }),
     defineTool({
       name: "app_get",
@@ -121,7 +127,7 @@ export function createBuilderExtension(ops: AgentOps, toolLog?: ToolLog): Extens
       replay: "safe",
       execute: async (_a, api) => {
         fault("tool.app_get");
-        return result(ops.appGet(id(api.taskId, "app_get")));
+        return result(ops.appGet(id(api, "app_get")));
       },
     }),
     defineTool({
@@ -129,14 +135,14 @@ export function createBuilderExtension(ops: AgentOps, toolLog?: ToolLog): Extens
       description: "List the approved runtimeLockIds (profiles core-v1, data-v1), their SDK/ABI and approved modules. Code bundles must use one of them.",
       parameters: Type.Object({}),
       replay: "safe",
-      execute: async (_a, api) => result(ops.runtimeCatalog(id(api.taskId, "runtime_catalog"))),
+      execute: async (_a, api) => result(ops.runtimeCatalog(id(api, "runtime_catalog"))),
     }),
     defineTool({
       name: "service_catalog",
       description: "List read-only services other apps export (names, descriptions, input/output schemas). No data, no grants: the user connects services.",
       parameters: Type.Object({}),
       replay: "safe",
-      execute: async (_a, api) => result(ops.serviceCatalog(id(api.taskId, "service_catalog"))),
+      execute: async (_a, api) => result(ops.serviceCatalog(id(api, "service_catalog"))),
     }),
     defineTool({
       name: "app_stage",
@@ -150,7 +156,7 @@ export function createBuilderExtension(ops: AgentOps, toolLog?: ToolLog): Extens
         // A string argument that is not valid JSON never reaches validation (it is not a stage attempt); the model gets
         // the exact parse position so it can resend the bundle as a JSON object.
         if (bad) return result({ ok: false, code: "INVALID_BUNDLE", message: bad } as never);
-        return result(ops.appStage(id(api.taskId, "app_stage"), decodeBundleArg(raw)));
+        return result(ops.appStage(id(api, "app_stage"), decodeBundleArg(raw)));
       },
     }),
     defineTool({
@@ -158,35 +164,35 @@ export function createBuilderExtension(ops: AgentOps, toolLog?: ToolLog): Extens
       description: "Validate a staged revision against the schema rules and the current data contract. Returns {valid, errors:[{path,code,message}]}.",
       parameters: Type.Object({ revisionId: Type.String() }),
       replay: "safe",
-      execute: async (a, api) => result(ops.appValidate(id(api.taskId, "app_validate"), a.revisionId)),
+      execute: async (a, api) => result(ops.appValidate(id(api, "app_validate"), a.revisionId)),
     }),
     defineTool({
       name: "app_prepare",
       description: "Prepare a validated revision for publication (build in the sandbox, start a candidate, health checks on sample data). Returns {deploymentId, status, stage, error}. Waits up to 30 s.",
       parameters: Type.Object({ revisionId: Type.String() }),
       replay: "safe",
-      execute: async (a, api) => result(await ops.appPrepare(id(api.taskId, "app_prepare"), a.revisionId)),
+      execute: async (a, api) => result(await ops.appPrepare(id(api, "app_prepare"), a.revisionId)),
     }),
     defineTool({
       name: "app_prepare_status",
       description: "Read the status of a deployment you prepared (may wait up to 10 s). Read-only.",
       parameters: Type.Object({ deploymentId: Type.String() }),
       replay: "safe",
-      execute: async (a, api) => result(await ops.appPrepareStatus(id(api.taskId, "app_prepare_status"), a.deploymentId)),
+      execute: async (a, api) => result(await ops.appPrepareStatus(id(api, "app_prepare_status"), a.deploymentId)),
     }),
     defineTool({
       name: "app_activate",
       description: "Publish a ready deployment as the target app's active version. Call once; then finish.",
       parameters: Type.Object({ deploymentId: Type.String() }),
       replay: "safe",
-      execute: async (a, api) => result(await ops.appActivate(id(api.taskId, "app_activate"), a.deploymentId), true),
+      execute: async (a, api) => result(await ops.appActivate(id(api, "app_activate"), a.deploymentId), true),
     }),
     defineTool({
       name: "system_resource_list",
       description: "system_plan runs only: the resources the user chose for this run (id, kind, name, generation, status, install limits) and the capabilities you may read or propose.",
       parameters: Type.Object({}),
       replay: "safe",
-      execute: async (_a, api) => result(ops.systemResourceList(id(api.taskId, "system_resource_list"))),
+      execute: async (_a, api) => result(ops.systemResourceList(id(api, "system_resource_list"))),
     }),
     defineTool({
       name: "system_read",
@@ -196,7 +202,7 @@ export function createBuilderExtension(ops: AgentOps, toolLog?: ToolLog): Extens
       execute: async (a, api) => {
         const bad = undecodableBundle((a as { params?: unknown }).params);
         if (bad) return result({ ok: false, code: "INVALID_REQUEST", message: bad.replace(/bundle/g, "params") } as never);
-        return result(await ops.systemRead(id(api.taskId, "system_read"), { ...(a as object), params: decodeBundleArg((a as { params?: unknown }).params) } as never));
+        return result(await ops.systemRead(id(api, "system_read"), { ...(a as object), params: decodeBundleArg((a as { params?: unknown }).params) } as never));
       },
     }),
     defineTool({
@@ -208,16 +214,41 @@ export function createBuilderExtension(ops: AgentOps, toolLog?: ToolLog): Extens
         // Same provider quirk as app_stage: a JSON-encoded object string is that object; a broken one gets the position.
         const bad = undecodableBundle((a as { params?: unknown }).params);
         if (bad) return result({ ok: false, code: "INVALID_SYSTEM_PLAN", message: bad.replace(/bundle/g, "params") } as never);
-        const out = await ops.systemPlan(id(api.taskId, "system_plan"), { ...(a as object), params: decodeBundleArg((a as { params?: unknown }).params) } as never);
+        const out = await ops.systemPlan(id(api, "system_plan"), { ...(a as object), params: decodeBundleArg((a as { params?: unknown }).params) } as never);
         return result(out, out.ok);
       },
     }),
   ];
-  return defineExtension({
-    name: EXTENSION_NAME,
-    tools: tools.map((t) => withLog(t as never)) as typeof tools,
-    sections: [section("agentos_rules", () => SYSTEM_RULES)],
-  });
+  return tools.map((t) => withLog(t as never)) as typeof tools;
+}
+
+export type RoleExtensions = Record<AgentProfileId, Extension>;
+
+/**
+ * One Pi extension per role template (spec §21.3). A conversation is configured with exactly its role's extension, so
+ * a tool outside the role is not even visible; the host still checks role, scope and epoch on every call.
+ */
+export function createRoleExtensions(ops: AgentOps, toolLog?: ToolLog, extra: { tools?: ReturnType<typeof allTools>; sections?: Partial<Record<AgentProfileId, string>> } = {}): RoleExtensions {
+  const tools = [...allTools(ops, toolLog), ...(extra.tools ?? [])];
+  const byName = new Map(tools.map((t) => [t.name, t]));
+  const make = (profile: AgentProfileId, rules: string) =>
+    defineExtension({
+      name: `${EXTENSION_NAME}.${profile}`,
+      tools: AGENT_PROFILES[profile].tools.map((n) => byName.get(n)).filter((t): t is NonNullable<typeof t> => t !== undefined) as typeof tools,
+      sections: [section("agentos_rules", () => rules)],
+    });
+  return {
+    builder: make("builder", SYSTEM_RULES),
+    "system-planner": make("system-planner", SYSTEM_RULES),
+    "maintenance-analyst": make("maintenance-analyst", extra.sections?.["maintenance-analyst"] ?? MAINTENANCE_RULES),
+    "maintenance-refactor": make("maintenance-refactor", extra.sections?.["maintenance-refactor"] ?? REFACTOR_RULES),
+    compaction: defineExtension({ name: `${EXTENSION_NAME}.compaction`, tools: [] as never, sections: [] }),
+  };
+}
+
+/** v0.3 name kept for callers: the builder role extension. */
+export function createBuilderExtension(ops: AgentOps, toolLog?: ToolLog): Extension {
+  return createRoleExtensions(ops, toolLog).builder;
 }
 
 

@@ -1,4 +1,4 @@
-import { AgentOsError, LIMITS, canonicalJson, sha256Hex, type AnyBundle, type DataContract, type ValidationIssue, isCodeBundle } from "@agentos/contracts";
+import { AGENT_PROFILES, AgentOsError, LIMITS, canonicalJson, sha256Hex, type AgentProfileId, type AnyBundle, type DataContract, type ValidationIssue, isCodeBundle } from "@agentos/contracts";
 import type { Store } from "../persistence/store.js";
 import type { AppService, ActivateResult } from "../apps/app-service.js";
 import { authorize, type CapabilityGateway, type Principal } from "../capabilities/gateway.js";
@@ -8,15 +8,24 @@ import type { RuntimeSystem } from "../runtime/system.js";
 import type { DeploymentDto } from "../deployments/deployment-service.js";
 import type { SystemCapabilities } from "../system/system-capabilities.js";
 
-/** Spec §20.1: build runs never touch system resources; system_plan runs never stage, prepare or publish apps. */
-const BUILD_ONLY = new Set(["app_get", "app_stage", "app_validate", "runtime_catalog", "service_catalog", "app_prepare", "app_prepare_status", "app_activate"]);
-const PLAN_ONLY = new Set(["system_resource_list", "system_read", "system_plan"]);
 import { CODE_LIMITS, COMPONENT_TYPES, COMPONENT_TYPES_V2, UI_LIMITS } from "@agentos/contracts";
 
-/** Identity of one agent tool call, built by the Pi adapter (never by the model). */
+/**
+ * Identity of one agent tool call, built by the Pi adapter from Pi's trusted ToolExecutionApi (never by the model):
+ * the calling conversation and Pi task. The run is derived from the host binding of that conversation (spec §6.3).
+ */
 export interface ToolCallIdentity {
   piTaskId: string;
   toolName: string;
+  conversationId: string;
+}
+
+/** A resolved, checked tool call: the run, its binding epoch and the role template. */
+export interface BoundCall {
+  runId: string;
+  conversationId: string;
+  bindingEpoch: number;
+  profileId: AgentProfileId;
 }
 
 export interface AppGetResult {
@@ -55,36 +64,65 @@ export class AgentOps {
   ) {}
 
   private principal(runId: string, id: ToolCallIdentity): Principal {
-    return { kind: "run", runId, piTaskId: id.piTaskId, toolName: id.toolName };
+    return { kind: "run", runId, piTaskId: id.piTaskId, toolName: id.toolName, conversationId: id.conversationId };
   }
 
-  private opKey(runId: string, id: ToolCallIdentity): string {
-    return `${this.store.meta().store_uuid}/${runId}/${id.piTaskId}/${id.toolName}`;
+  /** Spec §6.3: operation key = storeUUID / runId / conversationId / piTaskId / toolName; a replay returns the same receipt. */
+  opKey(runId: string, id: ToolCallIdentity): string {
+    return `${this.store.meta().store_uuid}/${runId}/${id.conversationId}/${id.piTaskId}/${id.toolName}`;
   }
 
-  /** For logs only: the active run and the host operation key this call maps to (null when no run is active). */
+  /**
+   * Map Pi's trusted conversation id to its single run through the host binding and check the role, mode, store and
+   * execution epoch. Never "the first active run": a call without a valid binding is refused (V4-B05, V4-P01).
+   */
+  resolve(id: ToolCallIdentity): BoundCall | ToolOutcome<never> {
+    const b = this.store.get<{ run_id: string | null; purpose: string; profile_id: AgentProfileId; route_epoch: number; binding_state: string; create_key: string }>(
+      "SELECT run_id, purpose, profile_id, route_epoch, binding_state, create_key FROM agent_conversations WHERE conversation_id = ?",
+      id.conversationId,
+    );
+    if (!b || b.purpose !== "run" || !b.run_id) return { ok: false, code: "RUN_IDENTITY_MISMATCH", message: "this conversation has no task binding" };
+    if (b.binding_state === "quarantined" || b.binding_state === "creating") return { ok: false, code: "RUN_IDENTITY_MISMATCH", message: `conversation binding is ${b.binding_state}` };
+    const run = this.runs.getRow(b.run_id);
+    if (!run || run.conversation_id !== id.conversationId) return { ok: false, code: "RUN_IDENTITY_MISMATCH", message: "binding and run disagree" };
+    if (!b.create_key.startsWith(`${this.store.meta().store_uuid}/`)) return { ok: false, code: "RUN_IDENTITY_MISMATCH", message: "binding belongs to another workspace" };
+    if (run.agent_profile_id !== b.profile_id) return { ok: false, code: "RUN_IDENTITY_MISMATCH", message: "role mismatch" };
+    const profile = AGENT_PROFILES[b.profile_id];
+    if (!profile || !profile.tools.includes(id.toolName)) return { ok: false, code: "FORBIDDEN", message: `${id.toolName} is not a tool of the ${b.profile_id} role` };
+    if (run.dispatch_state === "pending") return { ok: false, code: "FORBIDDEN", message: "the task has not been dispatched" };
+    return { runId: run.id, conversationId: id.conversationId, bindingEpoch: b.route_epoch, profileId: b.profile_id };
+  }
+
+  /** For logs only: the run and the host operation key this call maps to (null when it has no valid binding). */
   describeCall(id: ToolCallIdentity): { runId: string; operationKey: string } | null {
-    try {
-      const run = this.runs.currentToolRun();
-      return { runId: run.id, operationKey: this.opKey(run.id, id) };
-    } catch {
-      return null;
-    }
+    const r = this.resolve(id);
+    if ("ok" in r) return null;
+    return { runId: r.runId, operationKey: this.opKey(r.runId, id) };
   }
 
-  private enter(id: ToolCallIdentity, isStage = false): { runId: string } | ToolOutcome<never> {
-    let run;
-    try {
-      run = this.runs.currentToolRun();
-    } catch (e) {
-      return { ok: false, code: "FORBIDDEN", message: (e as Error).message };
+  /** Last bound call per run (reads that need the epoch). */
+  #epochs = new Map<string, number>();
+  epochOf(runId: string): number | undefined {
+    return this.#epochs.get(runId);
+  }
+
+  /**
+   * Entry of every tool: resolve the binding, refuse closed/stale executions for anything but receipt replays (writes
+   * check the fence again in their transaction), and count the tool task.
+   */
+  enter(id: ToolCallIdentity, isStage = false): { runId: string; bindingEpoch: number } | ToolOutcome<never> {
+    const r = this.resolve(id);
+    if ("ok" in r) return r;
+    const run = this.runs.requireRun(r.runId);
+    const prior = this.store.get("SELECT 1 FROM operations WHERE principal = ? AND operation_key = ?", `run:${r.runId}`, this.opKey(r.runId, id));
+    if (!prior) {
+      if (run.execution_epoch !== r.bindingEpoch) return { ok: false, code: "EXECUTION_EPOCH_STALE", message: "this call belongs to an earlier execution of the task" };
+      if (run.status !== "running" && run.status !== "queued") return { ok: false, code: "FORBIDDEN", message: `run is ${run.status}; no new tool calls` };
     }
-    const mode = run.mode ?? "build";
-    if (mode === "system_plan" && BUILD_ONLY.has(id.toolName)) return { ok: false, code: "FORBIDDEN", message: `${id.toolName} is not available in a system_plan run` };
-    if (mode !== "system_plan" && PLAN_ONLY.has(id.toolName)) return { ok: false, code: "FORBIDDEN", message: `${id.toolName} is only available in a system_plan run` };
+    this.#epochs.set(r.runId, r.bindingEpoch);
     const budget = this.runs.enterTool(run.id, id.piTaskId, id.toolName, isStage);
     if (!budget.ok) return { ok: false, code: "BUDGET_EXCEEDED", message: budget.reason };
-    return { runId: run.id };
+    return { runId: run.id, bindingEpoch: r.bindingEpoch };
   }
 
   private wrap<T>(fn: () => T): ToolOutcome<T> {
@@ -129,6 +167,7 @@ export class AgentOps {
       this.store.read(() => {
         const run = this.runs.requireRun(entered.runId);
         const frozen = this.runs.frozen(run);
+        if (run.target_app_id === null) throw new AgentOsError("FORBIDDEN", "this task has no app target");
         const app = this.apps.requireApp(run.target_app_id);
         return {
           appId: app.id,
@@ -155,7 +194,8 @@ export class AgentOps {
     const principal = this.principal(runId, id);
     const out = this.wrap(() =>
       this.gateway.write("apps.stage", { principal, operationKey: this.opKey(runId, id), requestHash: sha256Hex(canonicalJson({ bundle: bundle ?? null })) }, () => {
-        const run = this.runs.assertWritable(runId);
+        const run = this.runs.assertWritable(runId, entered.bindingEpoch);
+        if (run.target_app_id === null) throw new AgentOsError("FORBIDDEN", "this task has no app target");
         const r = this.apps.stage(run.target_app_id, bundle, runId);
         return { status: 200, body: { revisionId: r.revisionId, valid: r.issues.length === 0, errors: r.issues } };
       }).body,
@@ -173,6 +213,7 @@ export class AgentOps {
     const out = this.wrap(() =>
       this.store.read(() => {
         const run = this.runs.requireRun(runId);
+        if (run.target_app_id === null) throw new AgentOsError("FORBIDDEN", "this task has no app target");
         const r = this.apps.validate(run.target_app_id, revisionId);
         return { revisionId, valid: r.valid, errors: r.issues };
       }),
@@ -213,7 +254,12 @@ export class AgentOps {
     return { ok: true, value: { services: items.map((e) => ({ appId: e.appId, appTitle: e.appTitle, exportName: e.exportName, contractVersion: e.contractVersion, description: e.description, inputSchema: e.inputSchema, outputSchema: e.outputSchema })) } };
   }
 
-  /** app_prepare: idempotent deployment registration, then a bounded wait (≤30 s) outside any transaction. */
+  /**
+   * app_prepare: idempotent deployment registration, then a bounded wait (≤30 s) outside any transaction.
+   * v0.4 (spec §7.2, V4-S07): the single build/Prepare slot is kept; while another task's version change holds it,
+   * this call waits (scheduling_state waiting_build, "waiting for another task to finish its build") instead of failing,
+   * bounded by the run's own execution deadline. Waiting is not a tool error and costs no model request.
+   */
   async appPrepare(id: ToolCallIdentity, revisionId: string): Promise<ToolOutcome<DeploymentDto>> {
     const entered = this.enter(id);
     if ("ok" in entered) return entered;
@@ -222,16 +268,30 @@ export class AgentOps {
     if (!sys) return { ok: false, code: "SANDBOX_UNAVAILABLE", message: "the code runtime is not available on this host" };
     const principal = this.principal(runId, id);
     const opKey = this.opKey(runId, id);
-    const out = this.wrap(() =>
-      this.gateway.write("apps.prepare.agent", { principal, operationKey: opKey, requestHash: sha256Hex(canonicalJson({ revisionId })) }, () => {
-        const run = this.runs.assertWritable(runId);
-        const d = sys.deployments.prepareInTx({
-          appId: run.target_app_id, revisionId, expectedAppEpoch: run.expected_app_epoch, origin: "agent_prepare", ownerRunId: runId,
-          requestKey: opKey, requestHash: sha256Hex(canonicalJson({ revisionId })), deadlineMs: Date.parse(run.deadline_at),
-        });
-        return { status: 202, body: { deploymentId: d.id } };
-      }).body,
-    );
+    let out: ToolOutcome<{ deploymentId: string }>;
+    let waited = false;
+    for (;;) {
+      out = this.wrap(() =>
+        this.gateway.write("apps.prepare.agent", { principal, operationKey: opKey, requestHash: sha256Hex(canonicalJson({ revisionId })) }, () => {
+          const run = this.runs.assertWritable(runId, entered.bindingEpoch);
+          if (run.target_app_id === null) throw new AgentOsError("FORBIDDEN", "this task has no app target");
+          const d = sys.deployments.prepareInTx({
+            appId: run.target_app_id, revisionId, expectedAppEpoch: run.expected_app_epoch, origin: "agent_prepare", ownerRunId: runId,
+            requestKey: opKey, requestHash: sha256Hex(canonicalJson({ revisionId })), deadlineMs: Date.parse(run.deadline_at!),
+          });
+          return { status: 202, body: { deploymentId: d.id } };
+        }).body,
+      );
+      if (out.ok || out.code !== "DEPLOYMENT_BUSY") break;
+      const row = this.runs.getRow(runId);
+      if (!row || row.status !== "running" || row.deadline_at === null || Date.parse(row.deadline_at) - this.store.clock.now() < 2000) break;
+      if (!waited) {
+        waited = true;
+        this.runs.setResourceWait(runId, "waiting_build", "waiting for another task to finish its build");
+      }
+      await sys.deployments.waitSlotFree(1000);
+    }
+    if (waited) this.runs.setResourceWait(runId, "active", null);
     if (!out.ok) return out;
     fault("tool.app_prepare.after_accept");
     // Replays find the same deployment; a finished one is never restarted by its old acceptance receipt.
@@ -276,7 +336,7 @@ export class AgentOps {
     }
     const out = this.wrap(() =>
       this.gateway.write("apps.activate.agent", { principal, operationKey: this.opKey(runId, id), requestHash: sha256Hex(canonicalJson({ deploymentId })) }, () => {
-        this.runs.assertWritable(runId);
+        this.runs.assertWritable(runId, entered.bindingEpoch);
         const r = sys.deployments.activateInTx(deploymentId, { runId });
         this.runs.setApplied(runId, r.revisionId);
         return { status: 200, body: { appId: r.appId, revisionId: r.revisionId, appEpoch: r.appEpoch, changed: r.changed, deploymentId, noOp: r.noOp } };

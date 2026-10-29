@@ -12,5 +12,6 @@ export * from "./v3/providers.js";
 export * from "./v3/broker.js";
 export * from "./v3/bundle-v3.js";
 export * from "./v3/system.js";
-export const HOST_VERSION = "0.3.0";
+export * from "./v4/index.js";
+export const HOST_VERSION = "0.4.0";
 export const PROTOCOL_VERSION = 1;

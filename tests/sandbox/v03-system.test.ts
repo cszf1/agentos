@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import type { CodeBundle } from "@agentos/contracts";
 import { requestHash } from "@agentos/core";
-import { startRig, submit, waitRun, type AgentRig } from "../agent-helpers.js";
+import { startRig, submit, waitRun, type AgentRig, lastTranscript } from "../agent-helpers.js";
 import { publish } from "../sandbox/util.js";
 import { codeFixture } from "../fixtures-v02.js";
 import { Broker, hasBroker, installed, simCtl, storeUUID, systemctl, waitUntil } from "../v03.js";
@@ -195,10 +195,10 @@ run("v0.3 host system path (real broker, real sandbox)", () => {
     systemctl("start", demo.unit);
     const svc = res("service");
     const body = { intent: "将演示服务 CPU 上限设为 30% [faux:try-build]", targetAppId: null, mode: "system_plan" as const, resourceIds: [svc.id], capabilityScopes: ["service.set_limit"] };
-    const r = rig.core.user.submitRun(key(), body as never, await rig.engine.isIdle());
+    const r = rig.core.user.submitRun(key(), body as never);
     void rig.coord.kick();
     const done = await waitRun(rig, r.body.runId, 60_000);
-    const t = await rig.engine.transcript();
+    const t = await lastTranscript(rig);
     fs.writeFileSync("/tmp/a01-transcript.json", JSON.stringify(t.items.slice(-20), null, 1));
     const tools = t.items.filter((i) => i.toolName).map((i) => `${i.toolName}${i.isError ? "!" : ""}`);
     expect(done.status, `${done.error_json} ${JSON.stringify(t.items.slice(-8).map((i) => [i.toolName, i.text.slice(0, 200)]))}`).toBe("succeeded");
@@ -220,7 +220,7 @@ run("v0.3 host system path (real broker, real sandbox)", () => {
   it("V3-A03/A04 at most one plan per run; resources the user did not choose cannot be planned or read", async () => {
     const svc = res("service");
     const body = { intent: "停止演示服务 [faux:plan-twice]", targetAppId: null, mode: "system_plan" as const, resourceIds: [svc.id], capabilityScopes: ["service.ensure_state"] };
-    const r = rig.core.user.submitRun(key(), body as never, await rig.engine.isIdle());
+    const r = rig.core.user.submitRun(key(), body as never);
     void rig.coord.kick();
     await waitRun(rig, r.body.runId, 60_000);
     const plans = rig.core.store.all("SELECT id FROM system_actions WHERE run_id = ?", r.body.runId);
@@ -240,7 +240,7 @@ run("v0.3 host system path (real broker, real sandbox)", () => {
     const other = rig.core.store.get<{ id: string }>("SELECT id FROM resource_observations WHERE scope_kind = 'run' LIMIT 1");
     expect(other).toBeTruthy();
     const body = { intent: "将演示服务 CPU 上限设为 20%", targetAppId: null, mode: "system_plan" as const, resourceIds: [svc.id], capabilityScopes: ["service.set_limit"] };
-    const r = rig.core.user.submitRun(key(), body as never, await rig.engine.isIdle());
+    const r = rig.core.user.submitRun(key(), body as never);
     await expect(caps().runPlan(r.body.runId, "t9", { resourceId: svc.id, capabilityId: "service.set_limit", params: { property: "CPUQuotaPerSecUSec", value: 200000 }, observationIds: [other!.id] })).rejects.toMatchObject({ code: expect.stringMatching(/OBSERVATION|PRECONDITION|FORBIDDEN|INVALID_SYSTEM_PLAN/) });
     await expect(caps().runPlan(r.body.runId, "t9", { resourceId: svc.id, capabilityId: "service.set_limit", params: { property: "CPUQuotaPerSecUSec", value: 200000 }, observationIds: ["obs_ffffffffffffffffffffffff"] })).rejects.toMatchObject({ code: expect.stringMatching(/OBSERVATION|INVALID_SYSTEM_PLAN/) });
     rig.core.user.cancelRun(key(), r.body.runId);
@@ -327,7 +327,7 @@ run("v0.3 host system path (real broker, real sandbox)", () => {
     const other = await plan("setCpu", { percent: 55 });
     // each faux model turn waits 1.5 s, so the run is still active right after its plan was prepared
     const body = { intent: "将演示服务 CPU 上限设为 25% [faux:slow:1500]", targetAppId: null, mode: "system_plan" as const, resourceIds: [svc.id], capabilityScopes: ["service.set_limit"] };
-    const r = rig.core.user.submitRun(key(), body as never, await rig.engine.isIdle());
+    const r = rig.core.user.submitRun(key(), body as never);
     void rig.coord.kick();
     const prepared = await waitUntil(() => rig.core.runs.getRow(r.body.runId)!.prepared_action_id as string | null, (x) => !!x, 30_000, 50);
     const a = caps().actions.require(prepared!);
@@ -338,7 +338,7 @@ run("v0.3 host system path (real broker, real sandbox)", () => {
     await expect(caps().runPlan(r.body.runId, a.tool_task_id!, { resourceId: svc.id, capabilityId: "service.set_limit", params: { ...plan0.params, value: 300000 }, observationIds: [] })).rejects.toMatchObject({ code: "INVALID_SYSTEM_PLAN" });
     await waitRun(rig, r.body.runId, 60_000);
     // cancel another, still running run: the app's pending action and the prepared plan are untouched
-    const r2 = rig.core.user.submitRun(key(), { ...body, intent: "将演示服务 CPU 上限设为 26% [faux:slow:3000]" } as never, await rig.engine.isIdle());
+    const r2 = rig.core.user.submitRun(key(), { ...body, intent: "将演示服务 CPU 上限设为 26% [faux:slow:3000]" } as never);
     void rig.coord.kick();
     await new Promise((x) => setTimeout(x, 500));
     rig.core.user.cancelRun(key(), r2.body.runId);
@@ -359,10 +359,10 @@ run("v0.3 host system path (real broker, real sandbox)", () => {
     const mr = res("managed-root");
     const body = { intent: "看看受管目录里有哪些文件，然后写入 a06-out.txt", targetAppId: null, mode: "system_plan" as const, resourceIds: [mr.id], capabilityScopes: ["file.write_text_atomic"] };
     fs.existsSync(path.join(managedDir(), "a06.txt"));
-    const r = rig.core.user.submitRun(key(), body as never, await rig.engine.isIdle());
+    const r = rig.core.user.submitRun(key(), body as never);
     void rig.coord.kick();
     await waitRun(rig, r.body.runId, 60_000);
-    const t = await rig.engine.transcript();
+    const t = await lastTranscript(rig);
     const text = JSON.stringify(t.items);
     expect(text).not.toContain(secret);
     expect(text).not.toContain("AgentOS 状态报告"); // the report content was never read: only metadata (file.list)

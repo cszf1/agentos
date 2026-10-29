@@ -4,7 +4,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { AppBundle } from "@agentos/contracts";
 import { requestHash } from "@agentos/core";
-import { startRig, submit, waitRun, waitFor, type AgentRig } from "../agent-helpers.js";
+import { startRig, submit, waitRun, waitFor, type AgentRig, lastTranscript } from "../agent-helpers.js";
 
 /**
  * V2-A01/A02/A04 and the generated main path (spec §16, §24): faux Pi drives the real tools against a real rootless
@@ -24,7 +24,7 @@ function stagesOf(rig: AgentRig, runId: string): number {
 }
 
 async function tools(rig: AgentRig, runId: string): Promise<string[]> {
-  const t = await rig.engine.transcript();
+  const t = await lastTranscript(rig);
   const start = t.items.findLastIndex((i) => i.role === "user" && i.text.includes(runId));
   const items = t.items.slice(start + 1);
   const end = items.findIndex((i) => i.role === "user");

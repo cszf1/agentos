@@ -1,11 +1,8 @@
 import {
-  createAssistantMessageEventStream,
   createModels,
   createProvider,
   envApiKeyAuth,
-  fauxAssistantMessage,
   fauxProvider,
-  type AssistantMessageEventStream,
   type Model,
   type MutableModels,
   type Provider,
@@ -21,8 +18,6 @@ export interface ModelConfig {
   baseUrl?: string;
 }
 
-export type Admission = () => { ok: true } | { ok: false; reason: string };
-
 /** Read AGENTOS_MODEL_* without choosing a model for the user. */
 export function modelConfigFromEnv(env: NodeJS.ProcessEnv): ModelConfig | null {
   const mode = env.AGENTOS_MODEL_MODE === "faux" ? "faux" : "real";
@@ -33,35 +28,6 @@ export function modelConfigFromEnv(env: NodeJS.ProcessEnv): ModelConfig | null {
   const cfg: ModelConfig = { mode, provider, modelId };
   if (env.AGENTOS_MODEL_BASE_URL) cfg.baseUrl = env.AGENTOS_MODEL_BASE_URL.trim();
   return cfg;
-}
-
-function errorStream(model: Model<string>, message: string): AssistantMessageEventStream {
-  const s = createAssistantMessageEventStream();
-  const msg = { ...fauxAssistantMessage("", { stopReason: "error", errorMessage: message }), api: model.api, provider: model.provider, model: model.id };
-  queueMicrotask(() => {
-    s.push({ type: "error", reason: "error", error: msg });
-    s.end(msg);
-  });
-  return s;
-}
-
-/**
- * Budget gate at the provider entry: every request (generation, retry, compaction, re-send after restart)
- * must be admitted by os.sqlite before anything connects upstream. Output is capped with maxTokens.
- */
-export function budgetedProvider(inner: Provider, admit: Admission, maxTokens: number = LIMITS.maxOutputTokens): Provider {
-  const wrapped = Object.create(inner) as Provider & Record<string, unknown>;
-  wrapped.stream = ((model: Model<string>, context: unknown, options?: Record<string, unknown>) => {
-    const a = admit();
-    if (!a.ok) return errorStream(model, `AgentOS budget: ${a.reason}`);
-    return inner.stream(model as never, context as never, { ...(options ?? {}), maxTokens } as never);
-  }) as Provider["stream"];
-  wrapped.streamSimple = ((model: Model<string>, context: unknown, options?: Record<string, unknown>) => {
-    const a = admit();
-    if (!a.ok) return errorStream(model, `AgentOS budget: ${a.reason}`);
-    return inner.streamSimple(model as never, context as never, { ...(options ?? {}), maxTokens } as never);
-  }) as Provider["streamSimple"];
-  return wrapped;
 }
 
 /**
@@ -102,15 +68,20 @@ function openAiCompatibleProvider(baseUrl: string, modelId: string): Provider {
 }
 
 export interface BuiltModels {
+  /** Pi's model registry: holds ONLY host route aliases (spec §9.1); the real provider is never registered directly. */
   models: MutableModels;
+  /** the real provider and model every route forwards to */
+  inner: Provider | null;
+  real: Model<string> | null;
   ref: { provider: string; modelId: string };
   available: boolean;
   diagnostic: string | null;
 }
 
-export async function buildModels(cfg: ModelConfig | null, admit: Admission, faux?: { contextWindow?: number }): Promise<BuiltModels> {
+export async function buildModels(cfg: ModelConfig | null, faux?: { contextWindow?: number }): Promise<BuiltModels> {
   const models = createModels();
-  if (cfg === null) return { models, ref: { provider: "none", modelId: "none" }, available: false, diagnostic: "AGENTOS_MODEL_PROVIDER / AGENTOS_MODEL_ID are not configured" };
+  const none = (ref: { provider: string; modelId: string }, diagnostic: string): BuiltModels => ({ models, inner: null, real: null, ref, available: false, diagnostic });
+  if (cfg === null) return none({ provider: "none", modelId: "none" }, "AGENTOS_MODEL_PROVIDER / AGENTOS_MODEL_ID are not configured");
   let inner: Provider | undefined;
   if (cfg.mode === "faux") {
     const handle = fauxProvider({
@@ -123,25 +94,22 @@ export async function buildModels(cfg: ModelConfig | null, admit: Admission, fau
     handle.setResponses(Array.from({ length: 10_000 }, () => step as never));
     inner = handle.provider;
   } else if (cfg.provider === "openai-compatible") {
-    if (!cfg.baseUrl) return { models, ref: cfg, available: false, diagnostic: "AGENTOS_MODEL_BASE_URL is required for openai-compatible" };
+    if (!cfg.baseUrl) return none(cfg, "AGENTOS_MODEL_BASE_URL is required for openai-compatible");
     inner = openAiCompatibleProvider(cfg.baseUrl, cfg.modelId);
   } else {
-    return {
-      models,
-      ref: cfg,
-      available: false,
-      diagnostic: `provider "${cfg.provider}" is not enabled in v0.1 (validated: ${VALIDATED_REAL_PROVIDERS.join(", ")})`,
-    };
+    return none(cfg, `provider "${cfg.provider}" is not enabled (validated: ${VALIDATED_REAL_PROVIDERS.join(", ")})`);
   }
-  models.setProvider(budgetedProvider(inner, admit));
-  const model = models.getModel(cfg.provider === "openai-compatible" ? "openai-compatible" : cfg.provider, cfg.modelId);
-  if (!model) return { models, ref: cfg, available: false, diagnostic: `model "${cfg.modelId}" is not in provider "${cfg.provider}"` };
+  const real = inner.getModels().find((m) => m.id === cfg.modelId) as Model<string> | undefined;
+  if (!real) return none(cfg, `model "${cfg.modelId}" is not in provider "${cfg.provider}"`);
+  // Credential check through a throw-away registry: the real provider must never be reachable from Pi's registry.
   let configured = true;
   try {
-    configured = (await models.getAuth(model)) !== undefined || cfg.mode === "faux";
+    const probe = createModels();
+    probe.setProvider(inner);
+    configured = (await probe.getAuth(real)) !== undefined || cfg.mode === "faux";
   } catch {
     configured = cfg.mode === "faux";
   }
-  if (!configured) return { models, ref: cfg, available: false, diagnostic: `no credentials for provider "${cfg.provider}"` };
-  return { models, ref: { provider: model.provider, modelId: model.id }, available: true, diagnostic: null };
+  if (!configured) return { ...none(cfg, `no credentials for provider "${cfg.provider}"`), inner, real };
+  return { models, inner, real, ref: { provider: real.provider, modelId: real.id }, available: true, diagnostic: null };
 }

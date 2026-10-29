@@ -202,10 +202,11 @@ export interface RunView {
   intent: string;
   mode: "create" | "modify";
   /** v0.3 run mode and, for system_plan, the frozen scope and the prepared action (not an executed one). */
-  runMode?: "build" | "system_plan";
+  runMode?: "build" | "system_plan" | "maintenance_diagnose" | "maintenance_refactor";
   preparedActionId?: string | null;
   systemScope?: unknown;
-  targetAppId: string;
+  /** null for a non-app task (v0.4) */
+  targetAppId: string | null;
   expectedAppEpoch: number;
   appliedRevisionId: string | null;
   modelRequestCount: number;
@@ -214,9 +215,28 @@ export interface RunView {
   error: { code: string; message: string; details?: Record<string, unknown> } | null;
   warning: string | null;
   progress: { stageAttempts: number; toolTasks: number; lastTool: string | null };
-  deadlineAt: string;
+  /** execution deadline (null while queued) */
+  deadlineAt: string | null;
   createdAt: string;
   updatedAt: string;
+  // v0.4 (spec §7, §22.2): queue, role, permissions and budget of THIS task
+  agentProfileId?: string;
+  background?: boolean;
+  schedulingState?: string;
+  waitReason?: string | null;
+  queuePosition?: number | null;
+  queueDeadlineAt?: string | null;
+  startedAt?: string | null;
+  executionEpoch?: number;
+  conversationId?: string | null;
+  reportId?: string | null;
+  proposalId?: string | null;
+  jobId?: string | null;
+  permissions?: string[];
+  budget?: {
+    maxModelRequests: number; maxToolTasks: number; maxStageAttempts: number; deadlineMs: number; maxOutputTokens: number;
+    modelRequests: number; outputTokensReservedOrUsed: number; usageUnknownAttempts: number;
+  };
 }
 
 export interface SystemInfo {
@@ -236,8 +256,12 @@ export interface StateView {
   clientEpoch: number;
   eventSeq: number;
   apps: AppSummary[];
+  /** v0.3 compatibility: the oldest unfinished foreground run (v0.4 shells read `runs`). */
   activeRun: RunView | null;
   lastRun: RunView | null;
+  /** v0.4: every unfinished task (foreground and background) with its queue state */
+  runs?: RunView[];
+  foregroundSlots?: number;
   modelAvailable: boolean;
   model: { provider: string; modelId: string; mode: "real" | "faux" } | null;
   agentState: "ready" | "blocked" | "unavailable";

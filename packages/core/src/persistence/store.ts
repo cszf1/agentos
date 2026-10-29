@@ -1,7 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { AgentOsError } from "@agentos/contracts";
-import { MIGRATIONS } from "./migrations.js";
+import { MIGRATIONS, type StructuralMigration } from "./migrations.js";
 
 export type Row = Record<string, unknown>;
 
@@ -68,8 +68,13 @@ export class Store {
       throw new AgentOsError("STORE_UNAVAILABLE", `os.sqlite schema ${current} is newer than this host (${MIGRATIONS.length}); downgrade is not supported`);
     }
     for (let v = current + 1; v <= MIGRATIONS.length; v++) {
+      const m = MIGRATIONS[v - 1]!;
+      if (typeof m !== "string") {
+        this.#structural(v, m);
+        continue;
+      }
       this.tx(() => {
-        this.db.exec(MIGRATIONS[v - 1]!);
+        this.db.exec(m);
         this.db.prepare("INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)").run(v, iso(this.clock.now()));
         if (v === 1) {
           this.db
@@ -82,6 +87,54 @@ export class Store {
     }
     const ic = this.db.prepare("PRAGMA quick_check").get() as Row;
     if (Object.values(ic)[0] !== "ok") throw new AgentOsError("STORE_UNAVAILABLE", "os.sqlite failed quick_check");
+  }
+
+  /**
+   * v0.4 structural migration (spec §21.1): table rebuilds with foreign keys off (a PRAGMA that cannot change inside a
+   * transaction), every row, index and trigger kept except the listed replacements, then foreign_key_check before commit.
+   */
+  #structural(v: number, m: StructuralMigration): void {
+    if (m.precondition) {
+      const hit = this.db.prepare(m.precondition.sql).get();
+      if (hit) throw new AgentOsError("STORE_UNAVAILABLE", `os.sqlite migration ${v} refused: ${m.precondition.message}`);
+    }
+    this.db.exec("PRAGMA foreign_keys = OFF");
+    try {
+      this.tx(() => {
+        for (const r of m.rebuild) {
+          const t = this.db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?").get(r.table) as { sql: string } | undefined;
+          if (!t) throw new AgentOsError("STORE_UNAVAILABLE", `migration ${v}: table ${r.table} missing`);
+          const extras = this.db.prepare("SELECT type, name, sql FROM sqlite_master WHERE tbl_name = ? AND type IN ('index','trigger') AND sql IS NOT NULL").all(r.table) as { type: string; name: string; sql: string }[];
+          let sql = t.sql;
+          for (const [from, to] of r.replace) {
+            if (!sql.includes(from)) throw new AgentOsError("STORE_UNAVAILABLE", `migration ${v}: ${r.table} definition lacks "${from}"`);
+            sql = sql.replace(from, to);
+          }
+          const tmp = `${r.table}__v${v}`;
+          const createTmp = sql.replace(/^CREATE TABLE\s+("?)(\w+)\1/i, `CREATE TABLE ${tmp}`);
+          this.db.exec(createTmp);
+          const cols = (this.db.prepare(`PRAGMA table_info(${r.table})`).all() as { name: string }[]).map((c) => `"${c.name}"`).join(", ");
+          this.db.exec(`INSERT INTO ${tmp} (${cols}) SELECT ${cols} FROM ${r.table}`);
+          const before = (this.db.prepare(`SELECT COUNT(*) AS n FROM ${r.table}`).get() as { n: number }).n;
+          this.db.exec(`DROP TABLE ${r.table}`);
+          this.db.exec(`ALTER TABLE ${tmp} RENAME TO ${r.table}`);
+          const after = (this.db.prepare(`SELECT COUNT(*) AS n FROM ${r.table}`).get() as { n: number }).n;
+          if (before !== after) throw new AgentOsError("STORE_UNAVAILABLE", `migration ${v}: ${r.table} lost rows`);
+          for (const e of extras) {
+            if (e.type === "index" && r.dropIndexes?.includes(e.name)) continue;
+            if (e.type === "trigger" && r.dropTriggers?.includes(e.name)) continue;
+            this.db.exec(e.sql);
+          }
+        }
+        this.db.exec(m.sql);
+        const fk = this.db.prepare("PRAGMA foreign_key_check").all();
+        if (fk.length > 0) throw new AgentOsError("STORE_UNAVAILABLE", `migration ${v}: foreign key check failed (${JSON.stringify(fk.slice(0, 3))})`);
+        this.db.prepare("INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)").run(v, iso(this.clock.now()));
+        this.db.prepare("UPDATE meta SET schema_version = ? WHERE id = 1").run(v);
+      });
+    } finally {
+      this.db.exec("PRAGMA foreign_keys = ON");
+    }
   }
 
   meta(): MetaRow {

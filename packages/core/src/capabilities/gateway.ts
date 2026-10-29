@@ -7,8 +7,10 @@ import { iso, type Store } from "../persistence/store.js";
  */
 export type Principal =
   | { kind: "user" }
-  | { kind: "run"; runId: string; piTaskId: string; toolName: string }
-  | { kind: "app"; appId: string; viaUser: boolean };
+  | { kind: "run"; runId: string; piTaskId: string; toolName: string; conversationId?: string }
+  | { kind: "app"; appId: string; viaUser: boolean }
+  /** v0.4: host-constructed maintenance principal (spec §8.1, §22); never a user, never from a model. */
+  | { kind: "maintenance"; jobId: string; stepId: string; policyId: string | null; policyVersion: number | null };
 
 export function principalKey(p: Principal): string {
   switch (p.kind) {
@@ -18,6 +20,8 @@ export function principalKey(p: Principal): string {
       return `run:${p.runId}`;
     case "app":
       return p.viaUser ? "user:local" : `app:${p.appId}`;
+    case "maintenance":
+      return `maintenance:${p.jobId}`;
   }
 }
 
@@ -49,6 +53,19 @@ export const CAPABILITY_POLICY: Record<string, ReadonlyArray<Principal["kind"]>>
   "system.actions.plan": ["user", "run"],
   "system.actions.confirm": ["user"],
   "system.actions.manage": ["user"],
+  // v0.4 (spec §8.1, §21.3, §22)
+  "maintenance.policies.manage": ["user"],
+  "maintenance.control": ["user"],
+  "maintenance.checks": ["user"],
+  "maintenance.jobs.manage": ["user"],
+  "maintenance.step": ["maintenance"],
+  "maintenance.report": ["run"],
+  "candidates.write": ["run"],
+  "proposals.submit": ["run"],
+  "proposals.decide": ["user"],
+  "apps.lifecycle": ["user", "maintenance"],
+  "conversations.compact": ["user"],
+  "settings.budgets": ["user"],
 };
 
 export function authorize(capability: string, p: Principal): void {
@@ -92,6 +109,8 @@ const RECEIPT_ERRORS = new Set([
   "DEPLOYMENT_REQUIRED", "SERVICE_CONTRACT_MISMATCH", "PREPARE_FAILED", "PREPARE_EXPIRED", "DATA_EPOCH_STALE",
   "PLAN_HASH_MISMATCH", "PLAN_EXPIRED", "RESOURCE_NOT_BOUND", "PROVIDER_GRANT_REQUIRED", "BROKER_POLICY_DENIED", "COMPENSATION_CONFLICT",
   "INVALID_SYSTEM_PLAN", "MIXED_EFFECTS_FORBIDDEN", "REQUEST_CONFLICT",
+  "TARGET_CHANGED", "RUN_IDENTITY_MISMATCH", "EXECUTION_EPOCH_STALE", "POLICY_VERSION_STALE", "PROPOSAL_STALE", "APP_ARCHIVED",
+  "COMPACTION_SCOPE_DENIED", "MAINTENANCE_DISABLED", "CIRCUIT_OPEN",
 ]);
 
 /**

@@ -27,20 +27,20 @@ describe("review #3: the record limit applies after the whole atomic plan", () =
   });
 });
 
-describe("review #2: a failed abort is retried", () => {
-  it("cancelConversation failing once is attempted again", async () => {
+describe("review #2: a failed abort is retried (v0.4: per-conversation abort)", () => {
+  it("abortConversation failing once is attempted again", async () => {
     let calls = 0;
-    const run = { id: "r1", status: "cancel_requested", stop_reason: "user", pi_submission_id: null };
+    const run = { id: "r1", status: "cancel_requested", stop_reason: "user", pi_submission_id: null, conversation_id: "c1", execution_epoch: 2 };
     const engine = {
-      cancelConversation: async () => {
+      abortConversation: async (conv: string) => {
+        expect(conv).toBe("c1");
         calls++;
         if (calls === 1) throw new Error("transient engine error");
       },
       status: async () => ({ state: "missing" }),
-      inspect: async () => ({ scheduling: "idle", tasks: 0, blocked: [] }),
-      isIdle: async () => false,
+      inspectConversation: async () => ({ scheduling: "running", tasks: 1, submissions: 0, blocked: [] }),
     };
-    const runs = { activeRun: () => run, markBlocked: () => undefined } as never;
+    const runs = { markBlocked: () => undefined, store: {} } as never;
     const c = new RunCoordinator(runs, engine as never, { info() {}, warn() {}, error() {} } as never, 10);
     const watch = (c as unknown as { watch: (r: unknown) => Promise<void> }).watch.bind(c);
     await watch(run).catch(() => undefined);

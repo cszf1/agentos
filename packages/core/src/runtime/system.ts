@@ -86,8 +86,9 @@ export class RuntimeSystem {
     this.deployments.autoActivate = (d) => this.#autoActivate(d);
     this.reconciler.extra = () => this.deployments.retryCleanups();
     // Mutual exclusion between new runs and user version switches; a stopped run cancels its deployments.
-    core.runs.acceptGuard = () => {
-      const open = core.store.get("SELECT 1 FROM deployments WHERE origin = 'user_history' AND status IN ('queued','preparing','ready')");
+    core.runs.acceptGuard = (appId) => {
+      if (appId === null) return;
+      const open = core.store.get("SELECT 1 FROM deployments WHERE app_id = ? AND origin = 'user_history' AND status IN ('queued','preparing','ready')", appId);
       if (open) throw new AgentOsError("DEPLOYMENT_BUSY", "a version switch is in progress; wait for it to finish");
     };
     core.runs.onStopInTx = (runId) => {
@@ -282,7 +283,7 @@ export class RuntimeSystem {
       const b = this.core.apps.revisionBundle(appId, revisionId) as AnyBundle | null;
       if (!b) throw new AgentOsError("NOT_FOUND", "revision not found", { revisionId });
       if (isCodeBundle(b)) throw new AgentOsError("DEPLOYMENT_REQUIRED", "code versions are switched through POST /api/apps/:appId/deployments");
-      if (this.core.runs.activeRun() !== undefined) throw new AgentOsError("RUN_BUSY", "wait for the running generation to finish before switching versions");
+      if (this.core.runs.targetBusy(appId) !== undefined) throw new AgentOsError("TARGET_BUSY", "a task is changing this app; wait for it to finish before switching versions");
       const d = this.deployments.prepareInTx({ appId, revisionId, expectedAppEpoch, origin: "user_history", ownerRunId: null, requestKey: meta.operationKey, requestHash: meta.requestHash });
       const v = this.core.apps.validate(appId, revisionId);
       if (!v.valid) throw new AgentOsError("SCHEMA_INCOMPATIBLE", "revision is not valid for this app", { issues: v.issues });

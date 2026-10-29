@@ -134,6 +134,16 @@ export class DeploymentService {
    * Inside the caller's write transaction (after identity and receipt checks): register a deployment or return the
    * one this request key already created. Mutual exclusion per app and per workspace (spec §13).
    */
+  /** Resolves when no version change holds the single Prepare slot, or after `maxMs` (bounded poll, spec §7.3). */
+  async waitSlotFree(maxMs: number): Promise<void> {
+    const until = Date.now() + maxMs;
+    while (Date.now() < until) {
+      const open = this.ctx.store.get(`SELECT 1 FROM deployments WHERE status IN (${OPEN.map(() => "?").join(",")})`, ...OPEN);
+      if (!open) return;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+  }
+
   prepareInTx(req: PrepareRequest): DeploymentRow {
     const s = this.ctx.store;
     const prior = s.get<DeploymentRow>("SELECT * FROM deployments WHERE origin = ? AND request_key = ?", req.origin, req.requestKey);
@@ -147,8 +157,9 @@ export class DeploymentService {
     if (!rev) throw new AgentOsError("NOT_FOUND", "revision not found", { revisionId: req.revisionId });
     if (req.origin === "user_history") {
       if (rev.first_activated_at === null) throw new AgentOsError("NOT_FOUND", "only previously activated revisions can be switched to", { revisionId: req.revisionId });
-      const run = s.get("SELECT 1 FROM runs WHERE status IN ('queued','running','cancel_requested','blocked')");
-      if (run) throw new AgentOsError("DEPLOYMENT_BUSY", "a generation run is active; wait for it or cancel it first");
+      // v0.4: only a task working on THIS app blocks a user version switch (target conflict, spec §8.3).
+      const run = s.get("SELECT 1 FROM runs WHERE target_app_id = ? AND status IN ('queued','running','cancel_requested','blocked') AND scheduling_state IN ('dispatching','active','waiting_build','waiting_model','draining')", req.appId);
+      if (run) throw new AgentOsError("DEPLOYMENT_BUSY", "a task is changing this app; wait for it or cancel it first");
     }
     const open = s.get<DeploymentRow>(`SELECT * FROM deployments WHERE status IN (${OPEN.map(() => "?").join(",")})`, ...OPEN);
     if (open) {
