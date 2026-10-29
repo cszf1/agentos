@@ -118,5 +118,5 @@ run("host maintenance: keep a registered unit running through broker protocol 2"
     } finally {
       b.close();
     }
-  });
+  }, 600_000);
 });

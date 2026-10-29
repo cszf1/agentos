@@ -30,7 +30,14 @@
     "test:broker-recovery": "pnpm build && vitest run --project broker-recovery",
     "test:telemetry": "pnpm build && vitest run --project telemetry",
     "smoke:v0.3-real": "pnpm build && node scripts/smoke-v03-real.mjs",
-    "contracts:check": "node scripts/export-contracts.mjs --check && node scripts/protocol-vectors.mjs --check"
+    "contracts:check": "node scripts/export-contracts.mjs --check && node scripts/protocol-vectors.mjs --check",
+    "agents:doctor": "node scripts/agents-doctor.mjs",
+    "maintenance:doctor": "node scripts/maintenance-doctor.mjs",
+    "test:maintenance-recovery": "pnpm build && vitest run --project maintenance-recovery",
+    "test:agents": "vitest run --project agents",
+    "test:maintenance": "vitest run --project maintenance",
+    "test:gc-online": "vitest run --project gc-online",
+    "test:compaction": "vitest run --project compaction"
   },
   "devDependencies": {
     "@playwright/test": "1.64.1",
