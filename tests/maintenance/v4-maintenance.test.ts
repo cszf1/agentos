@@ -527,6 +527,9 @@ describe("E/G: lifecycle and candidates", () => {
     // unknown fields (an "action" smuggled into a report) are refused
     const run2 = core.runs.acceptBackground({ mode: "maintenance_diagnose", jobId: "job-e08b", incidentId: null, appId, intent: "diagnose", scope: { evidence: [], evidenceIds: [] } } as never);
     expect(() => core.store.tx(() => core.proposals.submitReportInTx(run2, { summary: "x", hypotheses: [{ text: "y", confidence: "low" }], action: { install: "lodash" } }))).toThrow(/unknown report field/);
+    // a template outside the fixed list is refused (never stored as a recommendation)
+    const run3 = core.runs.acceptBackground({ mode: "maintenance_diagnose", jobId: "job-e08c", incidentId: null, appId, intent: "diagnose", scope: { evidence: [], evidenceIds: [] } } as never);
+    expect(() => core.store.tx(() => core.proposals.submitReportInTx(run3, { summary: "x", hypotheses: [{ text: "y", confidence: "low" }], recommendedTemplate: "memory_resource_exhaustion" }))).toThrow(/recommendedTemplate must be one of/);
     for (let i = 0; i < 3; i++) await core.maintenance.jobs.pass(true);
     expect(core.store.all("SELECT * FROM records")).toEqual(before.records);
     expect(core.store.all("SELECT id FROM deployments")).toEqual(before.deps);

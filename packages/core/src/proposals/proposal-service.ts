@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
   AgentOsError,
+  MAINTENANCE_TEMPLATES,
   V4_LIMITS,
   canonicalJson,
   isCodeBundle,
@@ -113,6 +114,15 @@ function fileDiff(base: CodeBundle, cand: CodeBundle): ProposalBody["diff"] {
  * creates a formal `proposal_accept` deployment that goes through Prepare and the normal activation transaction; a
  * stale base, a changed catalog, a revoked authorization or an expiry never publishes and never reuses the old consent.
  */
+/** A report may name one of the fixed maintenance templates, or none; any other name is refused, never stored. */
+function recommendedTemplateOf(v: unknown): string | null {
+  if (v === undefined || v === null || v === "") return null;
+  if (typeof v !== "string" || !Object.prototype.hasOwnProperty.call(MAINTENANCE_TEMPLATES, v)) {
+    throw new AgentOsError("INVALID_REQUEST", `recommendedTemplate must be one of ${Object.keys(MAINTENANCE_TEMPLATES).join(", ")} or omitted`);
+  }
+  return v;
+}
+
 export class ProposalService {
   /** host runtime: is this runtimeLock still in the approved catalog? */
   lockApproved: ((lockId: string) => boolean) | null = null;
@@ -153,7 +163,7 @@ export class ProposalService {
             return { text: str(o.text, 1000, `hypotheses[${i}].text`), confidence: c as "low" };
           })
         : [],
-      recommendedTemplate: typeof r.recommendedTemplate === "string" ? str(r.recommendedTemplate, 64, "recommendedTemplate") : null,
+      recommendedTemplate: recommendedTemplateOf(r.recommendedTemplate),
       missingEvidence: Array.isArray(r.missingEvidence) ? r.missingEvidence.slice(0, 16).map((x, i) => str(x, 300, `missingEvidence[${i}]`)) : [],
     };
     if (body.hypotheses.length === 0) throw new AgentOsError("INVALID_REQUEST", "a report needs at least one hypothesis");
