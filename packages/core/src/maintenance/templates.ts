@@ -9,6 +9,8 @@ import type { JobContext, TemplateHandler } from "./jobs.js";
 export function scrub(v: unknown, max = 4000): unknown {
   const text = JSON.stringify(v ?? null)
     .replace(/(authorization|cookie|token|secret|api[_-]?key|password)("?\s*[:=]\s*)"[^"]*"/gi, '$1$2"[redacted]"')
+    .replace(/\b(authorization|cookie|token|secret|api[_-]?key|password|passwd)(\s*[:=]\s*)(bearer\s+)?[^\s",;\\]+/gi, "$1$2[redacted]")
+    .replace(/\bbearer\s+[A-Za-z0-9._~+/=-]{8,}/gi, "Bearer [redacted]")
     .replace(/sk-[A-Za-z0-9_-]{8,}/g, "[redacted]");
   return text.length > max ? { truncated: true, head: text.slice(0, max) } : JSON.parse(text);
 }
