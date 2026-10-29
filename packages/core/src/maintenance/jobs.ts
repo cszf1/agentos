@@ -133,6 +133,17 @@ export class MaintenanceService {
   log: (lvl: "info" | "warn" | "error", msg: string, f?: Record<string, unknown>) => void = () => {};
   /** host quiescing (shutdown / backup): no new trigger, no new step */
   quiescing = false;
+  /**
+   * Free bytes where the workspace records facts (host: statfs of the data directory); null = unknown. Below
+   * `minLedgerFreeBytes` no new effect starts (spec §24.1): a job waits instead of deleting receipts, jobs or audit to
+   * make room.
+   */
+  freeBytes: (() => number | null) | null = null;
+  minLedgerFreeBytes = 64 * 1024 * 1024;
+  #lowSpace(): string | null {
+    const f = this.freeBytes?.() ?? null;
+    return f !== null && f < this.minLedgerFreeBytes ? `INSUFFICIENT_SPACE: ${Math.round(f / 2 ** 20)} MiB free; new effects stop until space is recovered` : null;
+  }
 
   constructor(
     private readonly store: Store,
@@ -627,6 +638,7 @@ export class MaintenanceService {
           if (j.state !== "deferred" || j.wait_reason !== "maintenance paused") this.#setState(id, "deferred", { wait_reason: "maintenance paused" });
           return;
         }
+        if (j.wait_reason?.startsWith("INSUFFICIENT_SPACE") && this.#lowSpace()) return;
         this.#setState(id, "observing", { wait_reason: null });
         return this.#advance(id);
       }
@@ -716,6 +728,11 @@ export class MaintenanceService {
         }
         if (this.clock.state === "clock_uncertain") {
           this.#setState(id, "deferred", { wait_reason: "CLOCK_UNCERTAIN: automatic effects stop until the clock is rechecked" });
+          return;
+        }
+        const low = this.#lowSpace();
+        if (low) {
+          this.#setState(id, "deferred", { wait_reason: low });
           return;
         }
         const ctx = this.#context(j);

@@ -1,4 +1,5 @@
 import path from "node:path";
+import { statfsSync } from "node:fs";
 import {
   AppRecovery,
   CandidateService,
@@ -41,6 +42,16 @@ export class MaintenanceHost {
     const jobs = core.maintenance.jobs;
     jobs.log = (l, m, f) => this.log[l](m, f);
     core.maintenance.health.log = (l, m, f) => this.log[l](m, f);
+    core.maintenance.jobs.freeBytes = () => {
+      try {
+        const st = statfsSync(this.dataDir);
+        return Number(st.bavail) * Number(st.bsize);
+      } catch {
+        return null;
+      }
+    };
+    const minLedger = Number(process.env.AGENTOS_MIN_LEDGER_FREE_BYTES ?? "");
+    if (Number.isFinite(minLedger) && minLedger > 0) core.maintenance.jobs.minLedgerFreeBytes = minLedger;
     core.compactions.log = (l, m, f) => this.log[l](m, f);
     if (this.sys) {
       const gc = new OnlineGc(core.store, this.sys.artifacts, path.join(this.dataDir, "logs"));

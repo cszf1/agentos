@@ -562,6 +562,52 @@ describe("E/G: lifecycle and candidates", () => {
     expect(L.holder("app", appId)?.state).toBe("unknown");
   });
 
+  it("V4-O06 queues are bounded and low space stops new effects without deleting jobs, receipts or audit", async () => {
+    const { core } = rig();
+    const effects: string[] = [];
+    core.maintenance.jobs.register("log-cleanup", countingHandler(effects));
+    // the pending job queue is bounded: past the cap, new work is refused (RESOURCE_BUSY), nothing older is dropped
+    const ids: string[] = [];
+    let refused = 0;
+    for (let i = 0; i < 80; i++) {
+      try {
+        ids.push(core.maintenance.jobs.manualCheck("log-cleanup", { kind: "workspace", id: "workspace" }, `o06-${i}`).jobId);
+      } catch (e) {
+        expect((e as { code?: string }).code).toBe("RESOURCE_BUSY");
+        refused++;
+      }
+    }
+    expect(refused).toBeGreaterThan(0);
+    const open = core.store.get<{ n: number }>("SELECT COUNT(*) AS n FROM maintenance_jobs WHERE state NOT IN ('succeeded','no_change','failed_no_effect','failed_partial','cancelled','expired','needs_attention')")!.n;
+    expect(open).toBeLessThanOrEqual(64);
+    // low space (a fresh workspace with an automatic policy): no new effect starts; the job waits with the reason,
+    // and no fact is deleted to make room
+    const { core: c2, adv } = rig();
+    const fx: string[] = [];
+    c2.maintenance.jobs.register("log-cleanup", countingHandler(fx));
+    enablePolicy(c2, { templateId: "log-cleanup", target: { kind: "workspace", id: "workspace" }, mode: "automatic", trigger: { kind: "interval", intervalSeconds: 3600 } });
+    c2.maintenance.jobs.tickSchedules();
+    adv(3600_000 + 10);
+    expect(c2.maintenance.jobs.tickSchedules()).toBe(1);
+    const receipts = c2.store.get<{ n: number }>("SELECT COUNT(*) AS n FROM trigger_receipts")!.n;
+    const jobsN = c2.store.get<{ n: number }>("SELECT COUNT(*) AS n FROM maintenance_jobs")!.n;
+    c2.maintenance.jobs.freeBytes = () => 8 * 1024 * 1024;
+    for (let i = 0; i < 4; i++) await c2.maintenance.jobs.pass(true);
+    expect(fx).toHaveLength(0);
+    expect(c2.store.get<{ n: number }>("SELECT COUNT(*) AS n FROM maintenance_jobs WHERE state = 'deferred' AND wait_reason LIKE 'INSUFFICIENT_SPACE%'")!.n).toBe(1);
+    expect(c2.store.get<{ n: number }>("SELECT COUNT(*) AS n FROM trigger_receipts")!.n).toBe(receipts);
+    expect(c2.store.get<{ n: number }>("SELECT COUNT(*) AS n FROM maintenance_jobs")!.n).toBe(jobsN);
+    // space comes back: the waiting job continues and takes its effect
+    c2.maintenance.jobs.freeBytes = () => 10 * 1024 ** 3;
+    for (let i = 0; i < 8 && fx.length === 0; i++) await c2.maintenance.jobs.pass(true);
+    expect(fx).toHaveLength(1);
+    // evidence for a model analysis is bounded (64 KiB) whatever the incident carries
+    const big = "x".repeat(200_000);
+    const { incident } = core.maintenance.incidents.raise({ targetKind: "workspace", targetId: "workspace", condition: "test.big", value: "bad", quality: "fresh", evidence: { log: big } });
+    const ev = buildEvidence(core.store, core.maintenance.incidents, { id: "j", target_kind: "workspace", target_id: "workspace", incident_id: incident.id });
+    expect(Buffer.byteLength(JSON.stringify(ev.evidence))).toBeLessThanOrEqual(64 * 1024);
+  });
+
   it("V4-U04 notifications for the same incident merge into one", () => {
     const { core } = rig();
     for (let i = 0; i < 50; i++) core.maintenance.notifications.notify("incident", "app:x", "critical", "应用反复崩溃", `#${i}`);
