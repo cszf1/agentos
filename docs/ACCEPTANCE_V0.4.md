@@ -112,7 +112,7 @@ on the final tree (second table).
 | `vitest --project sandbox` (v0.2/v0.3 + v04 proposals, offline real recovery) | real Podman | 60/60 + 1 skipped (opt-in V2-B04 offline — rerun below) |
 | `vitest --project native` | real native | 21/21 |
 | `vitest --project broker-recovery` broker-kill, host-crash, maintenance-v2 (protocol 2), zz-restore | real native | 32/32 |
-| `tests/broker-recovery/host-maintenance.test.ts` (real host + broker, two SIGKILL points; run separately because the root caps of `agentos-demo2` allow 3 recoveries per 24 h) | real native | passed (box run logged in V0.4_PROGRESS 15:10) |
+| `tests/broker-recovery/host-maintenance.test.ts` (real host + broker, two SIGKILL points; run separately because the root caps of `agentos-demo2` allow 3 recoveries per 24 h) | real native | passed on the pre-review tree (V0.4_PROGRESS 15:10) and again on the fixed tree `389628e` 2026-10-29 23:32 / 23:44 CST: both SIGKILL points 1/1 |
 | `vitest --project telemetry` | real eBPF (guest) + host-unavailable path | 6/6 |
 | `playwright test` (v0.1–v0.3 specs + `v04-centers.spec.ts`) | real browser (Chromium) | 8/8 |
 
@@ -221,6 +221,27 @@ Raw samples of the fixed-tree run with the highest ratio (baseline p95 0.893 ms,
   `tests/recovery/v04-upgrade.test.ts` passed: apps, revisions, records, runs, deployments preserved; code app runtime and
   queries work; a new task succeeds.
 
+### Rerun on the fixed tree `389628e` (2026-10-29 23:30–23:50 CST)
+
+The boxes above were deleted after the first run, so both checks were repeated on new empty boxes from the pushed tree.
+The repository is private, so the source reached the boxes as a `git archive` / `git bundle` of `origin/main`
+instead of `git clone` over HTTPS; every other step is the README text.
+
+- `agentos-clean5` (empty Debian 13, kernel 6.18): README install of `389628e`. `runtime:doctor` all ok; `/health/ready`
+  ready; `hostVersion 0.4.0`, broker ready, test mode off, telemetry "不可用" (no BTF, as designed); `agents:doctor`,
+  `maintenance:doctor` all ✓, broker protocols 1 and 2; `native:doctor` rc 0. `native:build` produced the same six
+  sha256 as the development box (table above).
+- `agentos-clean6`: v0.3 README install of git `7b31947` (cloned from the bundle), app + records written, then the
+  README upgrade with a real `git pull --ff-only` to `389628e`. records hash before = after
+  (`a3f48878…`), os.sqlite schema 3 → 4, broker log schema 3, `agents:doctor` / `maintenance:doctor` / `native:doctor`
+  rc 0, a new write succeeds. The pre-upgrade `pnpm backup` runs the **v0.3** tool and still fails on the empty
+  `managed/` directory (the bug fixed in v0.4 `backup-v3.ts`); it is a v0.3 defect that v0.4 cannot reach back
+  into, so the README upgrade section now says so and gives the cold copy of the data directory as the backup in that
+  case.
+- Found while redoing it: extracting a tarball whose file mtimes are older than the existing build makes `tsc -b`
+  treat the v0.3 `dist/` as up to date, and the host keeps running 0.3.0. `git pull` writes fresh mtimes, so the
+  README path is not affected; the README now says to update with git, not by unpacking an archive over the tree.
+
 ## Matrix (§27, 88 items)
 
 Labels say what each row ran on; "faux model" rows use the real Pi Durable 1.4.0 runtime with the deterministic faux model.
@@ -310,7 +331,7 @@ Labels say what each row ran on; "faux model" rows use the real Pi Durable 1.4.0
 | V4-O01 | 真实模型主线 | `pnpm smoke:v0.4-real` run 13（docs/evidence/v0.4-smoke-real.run13.json，qwen3.8-flash，reasoning low，最终代码树）：两前台应用真实并行（会话 9/18 重叠）、后台优化候选（files）→ 平台检查 → 用户精确 hash/epoch 接受 → proposal_accept committed、真实崩溃循环 → 后台诊断报告；run 11 同样全过；失败的 run 1–10、12 及原因全部记录在 ACCEPTANCE_V0.4.md | real model | pass |
 | V4-O02 | 真维护且模型断网 | tests/sandbox/v04-offline-real.test.ts（box 真 podman，模型未配置）：容器反复被杀至 degraded → 自动 app-recovery 作业 succeeded（generation 2→5），在线 cache-gc no_change，无模型请求，记录不变 | real Podman | pass |
 | V4-O03 | 真实模型压缩 | 同一 smoke run 13：会话 9 摘要真实生成并放置（entry 92，cutoff 57，原始记录保留），后台 1 次请求，用量与 route 记录；run 11 entry 80 / cutoff 71 | real model | pass |
-| V4-O04 | 干净安装与升级 | 新机 agentos-clean4（Debian 13，空机）按 README 安装通过：runtime:doctor 全 ok、broker protocol 1/2、testMode=false、agents/maintenance doctor 全 ✓；agentos-clean3（v0.3 安装）按 README 升级：记录哈希不变、schema 3→4、doctors 通过，暴露并修复空 managed 目录备份失败，修复后备份+恢复（incarnation 2）通过；native:build 在 dev box 与 clean4 六个产物 sha256 完全一致 | real native, clean box | pass |
+| V4-O04 | 干净安装与升级 | 新机 agentos-clean4（Debian 13，空机）按 README 安装通过：runtime:doctor 全 ok、broker protocol 1/2、testMode=false、agents/maintenance doctor 全 ✓；agentos-clean3（v0.3 安装）按 README 升级：记录哈希不变、schema 3→4、doctors 通过，暴露并修复空 managed 目录备份失败，修复后备份+恢复（incarnation 2）通过；native:build 在 dev box 与 clean4 六个产物 sha256 完全一致；修复树 389628e 在新空机 agentos-clean5 重装、agentos-clean6 由 v0.3（7b31947）经 git pull 升级复验通过，记录哈希不变、schema 3→4、三个 doctor 通过 | real native, clean box | pass |
 | V4-O05 | 前台性能 | 修正后的测试（ABBA 12 轮×300 次 CRUD/查询，基线前等后台排空，后台批次重复）：修复树 8 次比值 0.967–1.206 全部 ≤1.25；原始数据 docs/evidence/perf-v04-o05.fix.json | real process | pass |
 | V4-O06 | 压力与空间 | tests/maintenance/v4-maintenance.test.ts（作业队列 64 上限拒绝新工作不丢旧事实；低于安全落账空间 64 MiB 不启动新效果、作业带原因等待、receipt/作业不删除，空间恢复后继续；诊断证据 ≤64 KiB）+ 既有 queue/compaction/proposal 上限测试 | faux model | pass |
 | V4-O07 | 关键 API 门槛 | packages/agent-pi/test/m0-pi-prototype.test.ts（固定 Pi 1.4.0 实测：两会话路由并发、按会话 abort、原子会话目录、原子压缩登记、重启重建），无替代路径 | in-process | pass |

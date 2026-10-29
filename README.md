@@ -298,7 +298,11 @@ pairing and old conversations (readable, never written again).
 ```bash
 systemctl --user stop agentos-host
 pnpm backup -- --output ~/agentos-backups/before-v0.4   # cold backup first
+#   v0.3's backup stops with "ENOENT ... before-v0.4/managed" when the managed export directory is empty (a v0.3 bug,
+#   fixed in v0.4). Then keep a cold copy of the whole data directory instead (host stopped):
+#   rm -rf ~/agentos-backups/before-v0.4 && cp -a ~/.local/share/agentos ~/agentos-backups/before-v0.4-data
 git -C ~/agentos pull && cd ~/agentos && pnpm install --frozen-lockfile && pnpm build
+#   update the tree with git, not by unpacking an archive over it: files with old mtimes make `tsc -b` keep the v0.3 dist/
 pnpm native:build
 sudo bash deploy/v0.4/agentos-system-admin install --host-user "$USER" --store-uuid "$STORE" --serial-pty
 #   keeps the broker log and its history (schema 1/2 → 3, rows copied, nothing deleted)
