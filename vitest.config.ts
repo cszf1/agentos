@@ -9,6 +9,9 @@ const alias = {
   "@agentos/host": src("host"),
   "@agentos/runtime-podman": src("runtime-podman"),
   "@agentos/broker-client": src("broker-client"),
+  // the web renderer under test (review #5 List template) resolves React from the web package
+  react: fileURLToPath(new URL("./packages/web/node_modules/react", import.meta.url)),
+  "react-dom": fileURLToPath(new URL("./packages/web/node_modules/react-dom", import.meta.url)),
 };
 
 export default defineConfig({

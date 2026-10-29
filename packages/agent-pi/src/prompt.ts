@@ -61,6 +61,11 @@ ${CAPABILITIES.filter((c) => c.mode === "read").map((c) => `    ${c.capabilityId
   {bindingAlias, capabilityId, params, observationIds, preview} - never mutations, never several effects. The host
   freezes it; the user confirms it in the Shell; the broker executes it. A SystemActionButton {label, action, input?}
   in slot-tree-v2 starts it.
+- slot-tree-v2 (formatVersion 3) also has List {items: Binding(array), rowId?: pointer, maxItems?: 1..100 (default 50),
+  direction?, gap?, emptyText?}: its children are an item template (at most 24 nodes) drawn once per item. Inside it
+  {"$bind":{"from":"item","pointer":"/title"}} reads the current item, and Button/SystemActionButton
+  input.item {pointer, as} passes one field of it (e.g. {"pointer":"/id","as":"id"}). No Form, inputs, selectionId or
+  nested List inside a template; item bindings anywhere else are refused.
 - Write capabilities: file.write_text_atomic {path, content, expectedVersion|expectedAbsent:true} (managed-root),
   service.ensure_state {state: running|stopped}, service.set_limit {property: CPUQuotaPerSecUSec|MemoryMax, value}
   (CPUQuotaPerSecUSec 500000 = 50% of ONE logical CPU), network.apply_profile {profileId: local-allow|local-deny},

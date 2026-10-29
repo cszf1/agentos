@@ -8,7 +8,7 @@ import { ApiError, NetworkError, api, describeError, newKey } from "./api";
  */
 const RESERVED = new Set(["__proto__", "prototype", "constructor"]);
 const POINTER = /^(\/[A-Za-z0-9_-]{1,64}){0,8}$/;
-const KNOWN = new Set(["Stack", "Grid", "Tabs", "Text", "Alert", "Metric", "Table", "Kanban", "Form", "TextInput", "TextArea", "Select", "Checkbox", "Button", "BarChart", "LineChart", "SystemActionButton"]);
+const KNOWN = new Set(["Stack", "Grid", "Tabs", "Text", "Alert", "Metric", "Table", "Kanban", "Form", "TextInput", "TextArea", "Select", "Checkbox", "Button", "BarChart", "LineChart", "SystemActionButton", "List"]);
 const MAX_NODES = 256;
 const MAX_DEPTH = 12;
 
@@ -54,13 +54,16 @@ type FormValues = Record<string, unknown>;
 
 interface Ctx {
   /** v0.3: ask the Shell to plan a system action; the confirmation UI is the Shell's, never the app's. */
-  runSystemAction: (p: Record<string, unknown>) => void;
+  runSystemAction: (p: Record<string, unknown>, item?: unknown) => void;
+  /** Inside a List item template: the current item (`{$bind:{from:"item"}}` and Button `input.item` read it). */
+  item?: unknown;
+  inItem?: boolean;
   sources: Record<string, SourceState>;
   forms: Record<string, FormValues>;
   setField: (formId: string, name: string, value: unknown) => void;
   selections: Record<string, string[]>;
   toggle: (selectionId: string, id: string, on: boolean) => void;
-  runCommand: (btn: Record<string, unknown>) => void;
+  runCommand: (btn: Record<string, unknown>, item?: unknown) => void;
   busy: boolean;
   disabled: boolean;
 }
@@ -75,6 +78,9 @@ function resolve(ctx: Ctx, v: unknown): unknown {
       return readPointer(ctx.forms[b.formId] ?? {}, b.pointer);
     case "selection":
       return ctx.selections[b.selectionId] ?? [];
+    case "item":
+      // Only meaningful inside a List item; elsewhere the validator already refused it.
+      return ctx.inItem ? readPointer(ctx.item, b.pointer) : undefined;
     default:
       return undefined;
   }
@@ -334,22 +340,53 @@ function Node(props: { node: SlotNode; ctx: Ctx; formId: string | null; depth: n
     }
     case "Button":
       return (
-        <button type="button" className={p.variant === "primary" ? "primary" : p.variant === "danger" ? "danger" : ""} disabled={ctx.busy || ctx.disabled} onClick={() => ctx.runCommand(p)}>
+        <button type="button" className={p.variant === "primary" ? "primary" : p.variant === "danger" ? "danger" : ""} disabled={ctx.busy || ctx.disabled} onClick={() => ctx.runCommand(p, ctx.item)}>
           {asText(p.label)}
         </button>
       );
     case "SystemActionButton":
       return (
-        <button type="button" className={`system-action ${p.variant === "danger" ? "danger" : p.variant === "primary" ? "primary" : ""}`} disabled={ctx.busy || ctx.disabled} onClick={() => ctx.runSystemAction(p)} title="系统动作：先生成计划，由 AgentOS 确认后才执行">
+        <button type="button" className={`system-action ${p.variant === "danger" ? "danger" : p.variant === "primary" ? "primary" : ""}`} disabled={ctx.busy || ctx.disabled} onClick={() => ctx.runSystemAction(p, ctx.item)} title="系统动作：先生成计划，由 AgentOS 确认后才执行">
           ⚙ {asText(p.label)}
         </button>
       );
     case "BarChart":
     case "LineChart":
       return <Chart kind={node.type} p={p} ctx={ctx} />;
+    case "List":
+      return <ListView node={node} p={p} ctx={ctx} formId={props.formId} depth={depth} />;
     default:
       return null;
   }
+}
+
+/** slot-tree-v2 List: the children are an item template rendered once per item (at most maxItems, default 50). */
+function ListView(props: { node: SlotNode; p: Record<string, unknown>; ctx: Ctx; formId: string | null; depth: number }) {
+  const { node, p, ctx } = props;
+  const data = resolve(ctx, p.items);
+  const max = Math.min(100, typeof p.maxItems === "number" ? p.maxItems : 50);
+  const items = Array.isArray(data) ? data.slice(0, max) : [];
+  const gap = { sm: "6px", md: "12px", lg: "20px" }[(p.gap as string) ?? "md"] ?? "12px";
+  if (items.length === 0) return <p className="muted">{asText(p.emptyText) || "暂无数据"}</p>;
+  const seen = new Set<string>();
+  return (
+    <div className="slot-list" role="list" style={{ display: "flex", flexDirection: p.direction === "horizontal" ? "row" : "column", gap, flexWrap: "wrap" }}>
+      {items.map((it, i) => {
+        let key = asText(readPointer(it, (p.rowId as string) ?? "/id"));
+        if (key === "" || seen.has(key)) key = `#${i}`;
+        seen.add(key);
+        const itemCtx: Ctx = { ...ctx, item: it, inItem: true };
+        // Each item gets its own node budget (the template is at most 24 nodes, checked at validation).
+        const counter = { n: 0 };
+        return (
+          <div role="listitem" className="slot-list-item" key={key} data-row-id={key}>
+            {(node.children ?? []).map((c, j) => <Node key={j} node={c} ctx={itemCtx} formId={props.formId} depth={props.depth + 1} counter={counter} />)}
+          </div>
+        );
+      })}
+      {Array.isArray(data) && data.length > max && <p className="muted small">仅显示前 {max} 项（共 {data.length} 项）</p>}
+    </div>
+  );
 }
 
 function TabsView(props: { labels: string[]; children: ReactNode[] }) {
@@ -481,18 +518,23 @@ export function CodeAppView(props: { detail: AppDetail; dataEpoch: number | null
         else cur.delete(id);
         return { ...s, [sid]: [...cur] };
       }),
-      runCommand: (p) => void runCommand(p),
-      runSystemAction: (p) => void runSystemAction(p),
+      runCommand: (p, item) => void runCommand(p, item),
+      runSystemAction: (p, item) => void runSystemAction(p, item),
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [sources, forms, selections, busy, props.disabled, staleInput],
   );
 
   /** SystemActionButton: the app's handler only produces a plan; the Shell shows the trusted preview and confirms. */
-  async function runSystemAction(p: Record<string, unknown>) {
+  async function runSystemAction(p: Record<string, unknown>, item?: unknown) {
     const action = p.action as string;
-    const spec = (p.input ?? {}) as { form?: string; selection?: { selectionId: string; as: string }; constant?: Record<string, unknown> };
+    const spec = (p.input ?? {}) as { form?: string; selection?: { selectionId: string; as: string }; item?: { pointer: string; as: string }; constant?: Record<string, unknown> };
     const input: Record<string, unknown> = { ...(spec.constant ?? {}) };
+    if (spec.item) {
+      const v = readPointer(item, spec.item.pointer);
+      if (v === undefined) return setNotice({ kind: "error", text: "该项缺少所需字段" });
+      input[spec.item.as] = v;
+    }
     if (spec.form) {
       const err = validateForm(bundle, spec.form, forms[spec.form] ?? {});
       if (err) return setNotice({ kind: "error", text: err });
@@ -517,10 +559,15 @@ export function CodeAppView(props: { detail: AppDetail; dataEpoch: number | null
     }
   }
 
-  async function runCommand(p: Record<string, unknown>) {
+  async function runCommand(p: Record<string, unknown>, item?: unknown) {
     const command = p.command as string;
-    const spec = (p.input ?? {}) as { form?: string; selection?: { selectionId: string; as: string }; constant?: Record<string, unknown> };
+    const spec = (p.input ?? {}) as { form?: string; selection?: { selectionId: string; as: string }; item?: { pointer: string; as: string }; constant?: Record<string, unknown> };
     const input: Record<string, unknown> = { ...(spec.constant ?? {}) };
+    if (spec.item) {
+      const v = readPointer(item, spec.item.pointer);
+      if (v === undefined) return setNotice({ kind: "error", text: "该项缺少所需字段" });
+      input[spec.item.as] = v;
+    }
     if (spec.form) {
       const err = validateForm(bundle, spec.form, forms[spec.form] ?? {});
       if (err) return setNotice({ kind: "error", text: err });
@@ -609,4 +656,23 @@ export function CodeAppView(props: { detail: AppDetail; dataEpoch: number | null
       </div>
     </section>
   );
+}
+
+/**
+ * Static render of one slot node over fixed query data (no network): used by tests to check what the real renderer
+ * draws, e.g. the List item template and its item bindings (review #5). Commands are reported, never executed.
+ */
+export function SlotPreview(props: { node: SlotNode; sources: Record<string, unknown>; onCommand?: (p: Record<string, unknown>, item: unknown) => void }) {
+  const ctx: Ctx = {
+    sources: Object.fromEntries(Object.entries(props.sources).map(([k, data]) => [k, { data, error: null, loading: false, dataEpoch: 1 }])),
+    forms: {},
+    selections: {},
+    busy: false,
+    disabled: false,
+    setField: () => undefined,
+    toggle: () => undefined,
+    runCommand: (p, item) => props.onCommand?.(p, item),
+    runSystemAction: (p, item) => props.onCommand?.(p, item),
+  };
+  return <Node node={props.node} ctx={ctx} formId={null} depth={1} counter={{ n: 0 }} />;
 }

@@ -1,0 +1,450 @@
+#!/usr/bin/env bash
+# agentos-system-admin — administrator entry for the AgentOS v0.3 privileged side (spec §12.1, §24.2).
+#   install   --host-user U --store-uuid S [--workspace-id W] [--build DIR] [--test-mode] [--serial-pty] [--serial-udev PATH:VID:PID:SERIAL]
+#   inspect
+#   reinstall-log            (broker log lost/corrupt: retire it, issue a NEW machineInstallId; old plans/grants/outbox die)
+#   uninstall
+# v0.4: adds the maintenance install caps (protocol 2). Installs root-owned binaries, policy, units, managed directory, demo unit and the lab network namespace.
+# Nothing here is reachable from the host socket; the model and apps can never call it.
+set -euo pipefail
+umask 022
+[ "$(id -u)" = 0 ] || { echo "run as root" >&2; exit 1; }
+
+LIB=/usr/lib/agentos
+ETC=/etc/agentos
+POL=$ETC/broker/policy.json
+UNITS=/etc/systemd/system
+cmd=${1:-}; shift || true
+
+log() { echo "[agentos-system-admin] $*"; }
+
+ensure_user() { id -u "$1" >/dev/null 2>&1 || useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin "$1"; }
+
+write_units() {
+  local host_uid=$1 serial_pty=$2
+  cat > $UNITS/agentos-broker.service <<EOF
+[Unit]
+# Spec §22.1: the broker/workers restart after a crash; never give up after a burst of failures.
+StartLimitIntervalSec=0
+Description=AgentOS privileged broker (fixed capabilities, execution log)
+After=dbus.service agentos-labnet.service
+Wants=agentos-labnet.service
+
+[Service]
+Type=notify
+NotifyAccess=main
+ExecStart=$LIB/bin/agentos-broker serve
+Environment=
+UMask=0077
+RuntimeDirectory=agentos-broker
+RuntimeDirectoryMode=0755
+StateDirectory=agentos-broker
+StateDirectoryMode=0700
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/agentos-broker /etc/agentos/broker
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+RestrictAddressFamilies=AF_UNIX
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@mount @module @reboot @swap @raw-io @clock @cpu-emulation @obsolete
+CapabilityBoundingSet=CAP_CHOWN CAP_FOWNER CAP_DAC_OVERRIDE
+LimitNOFILE=1024
+MemoryMax=256M
+TasksMax=128
+Restart=on-failure
+RestartSec=1
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  cat > $UNITS/agentos-worker-file.service <<EOF
+[Unit]
+# Spec §22.1: the broker/workers restart after a crash; never give up after a burst of failures.
+StartLimitIntervalSec=0
+Description=AgentOS file worker (sole writer of managed directories)
+
+[Service]
+ExecStart=$LIB/bin/agentos-worker file /run/agentos-worker-file/worker.sock
+User=agentos-file
+Group=agentos-file
+UMask=0022
+RuntimeDirectory=agentos-worker-file
+RuntimeDirectoryMode=0755
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/agentos-managed
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateNetwork=yes
+RestrictAddressFamilies=AF_UNIX
+CapabilityBoundingSet=
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+MemoryMax=128M
+TasksMax=64
+Restart=on-failure
+EOF
+  cat > $UNITS/agentos-worker-service.service <<EOF
+[Unit]
+# Spec §22.1: the broker/workers restart after a crash; never give up after a burst of failures.
+StartLimitIntervalSec=0
+Description=AgentOS service worker (fixed systemd D-Bus calls on catalog units)
+After=dbus.service polkit.service
+
+[Service]
+ExecStart=$LIB/bin/agentos-worker service /run/agentos-worker-service/worker.sock
+User=agentos-svc
+Group=agentos-svc
+RuntimeDirectory=agentos-worker-service
+RuntimeDirectoryMode=0755
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateNetwork=yes
+RestrictAddressFamilies=AF_UNIX
+CapabilityBoundingSet=
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+MemoryMax=128M
+Restart=on-failure
+EOF
+  cat > $UNITS/agentos-worker-net.service <<EOF
+[Unit]
+# Spec §22.1: the broker/workers restart after a crash; never give up after a burst of failures.
+StartLimitIntervalSec=0
+Description=AgentOS network worker (inside the lab namespace, CAP_NET_ADMIN only)
+Requires=agentos-labnet.service
+After=agentos-labnet.service agentos-labpeer-echo.service
+
+[Service]
+ExecStart=$LIB/bin/agentos-worker network /run/agentos-worker-net/worker.sock
+User=agentos-net
+Group=agentos-net
+NetworkNamespacePath=/run/netns/agentos-lab
+AmbientCapabilities=CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_NET_ADMIN
+RuntimeDirectory=agentos-worker-net
+RuntimeDirectoryMode=0755
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+RestrictAddressFamilies=AF_UNIX AF_NETLINK AF_INET AF_INET6
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+MemoryMax=128M
+Restart=on-failure
+EOF
+  cat > $UNITS/agentos-worker-serial.service <<EOF
+[Unit]
+# Spec §22.1: the broker/workers restart after a crash; never give up after a burst of failures.
+StartLimitIntervalSec=0
+Description=AgentOS serial worker (registered device sessions, fixed protocol profile)
+
+[Service]
+ExecStart=$LIB/bin/agentos-worker serial /run/agentos-worker-serial/worker.sock
+User=agentos-serial
+Group=agentos-serial
+SupplementaryGroups=dialout
+RuntimeDirectory=agentos-worker-serial
+RuntimeDirectoryMode=0755
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateNetwork=yes
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
+CapabilityBoundingSet=
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+MemoryMax=64M
+Restart=on-failure
+EOF
+  cat > $UNITS/agentos-telemetry.service <<EOF
+[Unit]
+# Spec §22.1: the broker/workers restart after a crash; never give up after a burst of failures.
+StartLimitIntervalSec=0
+Description=AgentOS telemetry collector (fixed BPF object, registered workloads only)
+
+[Service]
+ExecStart=$LIB/bin/agentos-telemetry
+RuntimeDirectory=agentos-telemetry
+RuntimeDirectoryMode=0755
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateNetwork=yes
+RestrictAddressFamilies=AF_UNIX
+CapabilityBoundingSet=CAP_BPF CAP_PERFMON CAP_SYS_RESOURCE CAP_DAC_READ_SEARCH CAP_SYS_ADMIN CAP_CHOWN
+MemoryMax=256M
+Restart=on-failure
+RestartSec=2
+EOF
+  cat > $UNITS/agentos-labnet.service <<EOF
+[Unit]
+# Spec §22.1: the broker/workers restart after a crash; never give up after a burst of failures.
+StartLimitIntervalSec=0
+Description=AgentOS lab network namespaces (isolated test path, no host bridge)
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=$LIB/labnet up
+ExecStop=$LIB/labnet down
+EOF
+  cat > $UNITS/agentos-labpeer-echo.service <<EOF
+[Unit]
+# Spec §22.1: the broker/workers restart after a crash; never give up after a burst of failures.
+StartLimitIntervalSec=0
+Description=AgentOS lab peer test server (10.231.0.2:8080 inside agentos-labpeer)
+Requires=agentos-labnet.service
+After=agentos-labnet.service
+
+[Service]
+NetworkNamespacePath=/run/netns/agentos-labpeer
+DynamicUser=yes
+ExecStart=/usr/bin/python3 -I $LIB/labpeer-echo.py
+NoNewPrivileges=yes
+ProtectSystem=strict
+Restart=on-failure
+EOF
+  cat > $UNITS/agentos-demo.service <<EOF
+[Unit]
+# Spec §22.1: the broker/workers restart after a crash; never give up after a burst of failures.
+StartLimitIntervalSec=0
+Description=AgentOS demo service (fixed program, managed working directory)
+
+[Service]
+DynamicUser=yes
+WorkingDirectory=/var/lib/agentos-demo
+ExecStart=/usr/bin/python3 -I -m http.server 18080 --bind 127.0.0.1 --directory /var/lib/agentos-demo
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+CPUQuota=100%
+MemoryMax=256M
+TasksMax=64
+EOF
+  if [ "$serial_pty" = 1 ]; then
+    cat > $UNITS/agentos-serial-sim.service <<EOF
+[Unit]
+# Spec §22.1: the broker/workers restart after a crash; never give up after a burst of failures.
+StartLimitIntervalSec=0
+Description=AgentOS PTY serial fixture (software protocol tests only; not hardware)
+Before=agentos-worker-serial.service
+
+[Service]
+ExecStart=$LIB/bin/agentos-serial-sim /run/agentos-serial sim0
+User=agentos-serial
+Group=agentos-serial
+RuntimeDirectory=agentos-serial
+RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=yes
+NoNewPrivileges=yes
+Restart=on-failure
+EOF
+  fi
+}
+
+install_labnet_script() {
+  cat > $LIB/labpeer-echo.py <<'PYEOF'
+# Fixed lab peer: answers one line on 10.231.0.2:8080 inside agentos-labpeer (traffic probe target).
+import socketserver
+class H(socketserver.BaseRequestHandler):
+    def handle(self):
+        self.request.sendall(b"agentos-lab-ok\n")
+socketserver.TCPServer.allow_reuse_address = True
+socketserver.TCPServer(("10.231.0.2", 8080), H).serve_forever()
+PYEOF
+  chmod 0644 $LIB/labpeer-echo.py
+  cat > $LIB/labnet <<'EOF'
+#!/bin/sh
+# Fixed lab namespaces: agentos-lab (worker side, 10.231.0.1) <-> agentos-labpeer (10.231.0.2). No host interface involved.
+set -e
+case "$1" in
+up)
+  ip netns add agentos-lab 2>/dev/null || true
+  ip netns add agentos-labpeer 2>/dev/null || true
+  if ! ip -n agentos-lab link show lab0 >/dev/null 2>&1; then
+    ip -n agentos-lab link add lab0 type veth peer name lab1 netns agentos-labpeer
+  fi
+  ip -n agentos-lab addr replace 10.231.0.1/24 dev lab0
+  ip -n agentos-labpeer addr replace 10.231.0.2/24 dev lab1
+  ip -n agentos-lab link set lo up; ip -n agentos-lab link set lab0 up
+  ip -n agentos-labpeer link set lo up; ip -n agentos-labpeer link set lab1 up
+  ;;
+down)
+  ip netns del agentos-lab 2>/dev/null || true
+  ip netns del agentos-labpeer 2>/dev/null || true
+  ;;
+esac
+EOF
+  chmod 0755 $LIB/labnet
+}
+
+write_polkit() {
+  mkdir -p /etc/polkit-1/rules.d
+  cat > /etc/polkit-1/rules.d/50-agentos.rules <<'EOF'
+// AgentOS: the service worker may only start/stop/set-property on catalog units.
+polkit.addRule(function(action, subject) {
+  if (subject.user != "agentos-svc") return polkit.Result.NOT_HANDLED;
+  if (action.id == "org.freedesktop.systemd1.manage-units") {
+    var unit = action.lookup("unit");
+    var verb = action.lookup("verb");
+    var units = ["agentos-demo.service"];
+    if (units.indexOf(unit) >= 0 && (verb == "start" || verb == "stop" || verb == "set-property")) return polkit.Result.YES;
+  }
+  return polkit.Result.NO;
+});
+EOF
+  chmod 0644 /etc/polkit-1/rules.d/50-agentos.rules
+}
+
+do_install() {
+  local host_user="" store="" wsid="" build="" test_mode=false serial_pty=0 serial_udev=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --host-user) host_user=$2; shift 2;;
+      --store-uuid) store=$2; shift 2;;
+      --workspace-id) wsid=$2; shift 2;;
+      --build) build=$2; shift 2;;
+      --test-mode) test_mode=true; shift;;
+      --serial-pty) serial_pty=1; shift;;
+      --serial-udev) serial_udev=$2; shift 2;;
+      *) echo "unknown option $1" >&2; exit 2;;
+    esac
+  done
+  [ -n "$host_user" ] && [ -n "$store" ] || { echo "--host-user and --store-uuid are required" >&2; exit 2; }
+  [ -n "$build" ] || build=$(cd "$(dirname "$0")/../.." && pwd)
+  local host_uid; host_uid=$(id -u "$host_user")
+  [ -n "$wsid" ] || wsid="ws-$(echo -n "$store" | sha256sum | cut -c1-12)"
+  for p in libnftables1 libudev1 libbpf1 polkitd python3 iproute2; do
+    dpkg -s $p >/dev/null 2>&1 || { log "installing $p"; DEBIAN_FRONTEND=noninteractive apt-get install -y -q $p >/dev/null; }
+  done
+  getent group agentos-broker >/dev/null || groupadd --system agentos-broker
+  for u in agentos-file agentos-svc agentos-net agentos-serial; do ensure_user $u; done
+  usermod -aG agentos-broker "$host_user"
+  install -d -m 0755 -o root -g root $LIB $LIB/bin $LIB/bpf $ETC $ETC/broker
+  for b in agentos-broker agentos-worker agentos-telemetry agentos-serial-sim; do
+    install -m 0755 -o root -g root "$build/native/target/release/$b" $LIB/bin/$b
+  done
+  install -m 0644 -o root -g root "$build/native/bpf/exec_exit.bpf.o" $LIB/bpf/exec_exit.bpf.o
+  install_labnet_script
+  # Managed directory: parents root-owned 0755, the root itself owned by the file worker.
+  install -d -m 0755 -o root -g root /var/lib/agentos-managed "/var/lib/agentos-managed/$store"
+  install -d -m 0755 -o agentos-file -g agentos-file "/var/lib/agentos-managed/$store/exports"
+  install -d -m 0755 -o root -g root /var/lib/agentos-demo
+  echo "AgentOS demo service" > /var/lib/agentos-demo/index.html
+  install -d -m 0700 -o root -g root /var/lib/agentos-broker
+  write_units "$host_uid" "$serial_pty"
+  write_polkit
+  local install_id
+  if [ -f $POL ]; then install_id=$(python3 -c "import json;print(json.load(open('$POL'))['machineInstallId'])"); else install_id="mi_$(head -c 12 /dev/urandom | od -An -tx1 | tr -d ' \n')"; fi
+  local serial_json="[]"
+  if [ "$serial_pty" = 1 ]; then
+    serial_json="[{\"key\":\"sim0\",\"storeUuid\":\"$store\",\"displayName\":\"PTY 串口样机（软件协议测试）\",\"kind\":\"pty-fixture\",\"path\":\"/run/agentos-serial/sim0\",\"profile\":\"telemetry-echo-v1\"}]"
+  elif [ -n "$serial_udev" ]; then
+    IFS=: read -r spath vid pid ser <<<"$serial_udev"
+    serial_json="[{\"key\":\"dev0\",\"storeUuid\":\"$store\",\"displayName\":\"串口设备\",\"kind\":\"udev\",\"path\":\"$spath\",\"udevMatch\":{\"ID_VENDOR_ID\":\"$vid\",\"ID_MODEL_ID\":\"$pid\",\"ID_SERIAL_SHORT\":\"$ser\"},\"profile\":\"telemetry-echo-v1\"}]"
+  fi
+  # v0.4 maintenance install caps for the demo unit (spec §16: default 2/hour, 3/24 h, 10 min cooldown). A dedicated
+  # test install may widen them with AGENTOS_MAINT_CAPS="perHour:per24h:cooldownSeconds" so repeated test runs fit.
+  local m_hour=2 m_day=3 m_cool=600
+  if [ "$test_mode" = true ] && [ -n "${AGENTOS_MAINT_CAPS:-}" ]; then IFS=: read -r m_hour m_day m_cool <<<"$AGENTOS_MAINT_CAPS"; fi
+  local cpu_tmpl; cpu_tmpl=$(sha256sum $UNITS/agentos-demo.service | cut -c1-64)
+  cat > $POL.new <<EOF
+{
+  "policyFormat": 1,
+  "machineInstallId": "$install_id",
+  "hosts": [{"uid": $host_uid, "storeUuid": "$store", "workspacePathId": "$wsid"}],
+  "managedRoots": [{"key": "exports", "storeUuid": "$store", "path": "/var/lib/agentos-managed/$store/exports", "displayName": "导出目录（平台管理）", "maxFileBytes": 131072, "quotaBytes": 268435456}],
+  "units": [{"key": "demo", "storeUuid": "$store", "unit": "agentos-demo.service", "displayName": "演示服务", "templateHash": "sha256:$cpu_tmpl", "safeRepeatStart": true, "autoConverge": true,
+             "cpuQuotaPerSecUSec": {"min": 100000, "max": 2000000}, "memoryMax": {"min": 67108864, "max": 1073741824}}],
+  "labNetworks": [{"key": "lab-net", "storeUuid": "$store", "displayName": "测试网络 lab-net", "netnsPath": "/run/netns/agentos-lab", "table": "agentos_lab", "peerAddress": "10.231.0.2", "peerPort": 8080, "maxRules": 32, "profiles": ["local-allow", "local-deny"]}],
+  "serial": $serial_json,
+  "maintenance": [{"unitKey": "demo", "storeUuid": "$store", "actionFamilies": ["service.ensure_state.running"], "perHour": $m_hour, "per24h": $m_day, "cooldownSeconds": $m_cool}],
+  "workers": {
+    "file": {"socket": "/run/agentos-worker-file/worker.sock", "unit": "agentos-worker-file.service", "uid": $(id -u agentos-file)},
+    "service": {"socket": "/run/agentos-worker-service/worker.sock", "unit": "agentos-worker-service.service", "uid": $(id -u agentos-svc)},
+    "network": {"socket": "/run/agentos-worker-net/worker.sock", "unit": "agentos-worker-net.service", "uid": $(id -u agentos-net)},
+    "serial": {"socket": "/run/agentos-worker-serial/worker.sock", "unit": "agentos-worker-serial.service", "uid": $(id -u agentos-serial)}
+  },
+  "testMode": $test_mode
+}
+EOF
+  python3 -m json.tool $POL.new >/dev/null
+  install -m 0644 -o root -g root $POL.new $POL; rm -f $POL.new
+  local sha; sha=$(sha256sum $LIB/bpf/exec_exit.bpf.o | cut -c1-64)
+  cat > $ETC/telemetry.json <<EOF
+{"objectPath": "$LIB/bpf/exec_exit.bpf.o", "objectSha256": "$sha", "ringBytes": ${AGENTOS_TELEMETRY_RING_BYTES:-4194304}, "hostUids": [$host_uid],
+ "allowedCgroupPrefixes": ["/sys/fs/cgroup/system.slice/agentos-", "/sys/fs/cgroup/user.slice/user-$host_uid.slice/user@$host_uid.service/"], "testMode": $test_mode}
+EOF
+  chmod 0644 $ETC/telemetry.json
+  if [ ! -f /var/lib/agentos-broker/broker.sqlite ]; then $LIB/bin/agentos-broker admin install-db; fi
+  install -m 0755 -o root -g root "$0" /usr/local/sbin/agentos-system-admin 2>/dev/null || true
+  systemctl daemon-reload
+  systemctl enable --now polkit.service >/dev/null 2>&1 || true
+  systemctl restart polkit.service >/dev/null 2>&1 || true
+  systemctl enable agentos-broker.service >/dev/null
+  systemctl restart agentos-labnet.service
+  systemctl restart agentos-labpeer-echo.service
+  [ "$serial_pty" = 1 ] && systemctl restart agentos-serial-sim.service
+  systemctl restart agentos-telemetry.service || true
+  systemctl restart agentos-broker.service
+  log "installed: machineInstallId=$install_id store=$store host=$host_user($host_uid) testMode=$test_mode"
+}
+
+do_inspect() {
+  $LIB/bin/agentos-broker admin inspect || true
+  echo "--- units"
+  for u in agentos-broker agentos-worker-file agentos-worker-service agentos-worker-net agentos-worker-serial agentos-telemetry agentos-labnet agentos-labpeer-echo agentos-demo agentos-serial-sim; do
+    printf '%-28s %s\n' "$u" "$(systemctl is-active $u.service 2>/dev/null)"
+  done
+  echo "--- permissions"
+  stat -c '%U:%G %a %n' $LIB/bin/* $ETC/broker $POL /var/lib/agentos-broker /var/lib/agentos-managed/*/exports 2>/dev/null
+}
+
+do_reinstall_log() {
+  systemctl stop agentos-broker.service || true
+  local ts; ts=$(date +%s)
+  # The retired log is kept whole (with its WAL) for the administrator; it is never reused.
+  for s in "" -wal -shm; do
+    [ -e /var/lib/agentos-broker/broker.sqlite$s ] && mv /var/lib/agentos-broker/broker.sqlite$s "/var/lib/agentos-broker/broker.sqlite.retired-$ts$s"
+  done
+  local new="mi_$(head -c 12 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+  python3 - "$POL" "$new" <<'EOF'
+import json,sys
+p=json.load(open(sys.argv[1])); p["machineInstallId"]=sys.argv[2]
+open(sys.argv[1]+".new","w").write(json.dumps(p, ensure_ascii=False, indent=2))
+EOF
+  install -m 0644 -o root -g root $POL.new $POL; rm -f $POL.new
+  $LIB/bin/agentos-broker admin install-db
+  systemctl start agentos-broker.service
+  log "new machineInstallId=$new; every earlier plan, grant and outbox entry is void and must not be replayed"
+}
+
+do_uninstall() {
+  for u in agentos-broker agentos-worker-file agentos-worker-service agentos-worker-net agentos-worker-serial agentos-telemetry agentos-labpeer-echo agentos-labnet agentos-demo agentos-serial-sim; do
+    systemctl disable --now $u.service >/dev/null 2>&1 || true
+    rm -f $UNITS/$u.service
+  done
+  systemctl daemon-reload
+  rm -f /etc/polkit-1/rules.d/50-agentos.rules
+  log "units removed; /var/lib/agentos-broker (execution history) and managed files are kept"
+}
+
+case "$cmd" in
+  install) do_install "$@";;
+  inspect) do_inspect;;
+  reinstall-log) do_reinstall_log;;
+  uninstall) do_uninstall;;
+  *) echo "usage: agentos-system-admin install|inspect|reinstall-log|uninstall" >&2; exit 2;;
+esac

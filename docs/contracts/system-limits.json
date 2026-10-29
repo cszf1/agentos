@@ -51,7 +51,8 @@
     "Button",
     "BarChart",
     "LineChart",
-    "SystemActionButton"
+    "SystemActionButton",
+    "List"
   ],
   "v03ErrorCodes": [
     "PROVIDER_UNAVAILABLE",

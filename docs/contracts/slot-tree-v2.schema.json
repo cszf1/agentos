@@ -621,6 +621,24 @@
             "constant": {
               "type": "object",
               "maxProperties": 16
+            },
+            "item": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "pointer",
+                "as"
+              ],
+              "properties": {
+                "pointer": {
+                  "type": "string",
+                  "pattern": "^(/[A-Za-z0-9_-]{1,64}){0,8}$"
+                },
+                "as": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+                }
+              }
             }
           }
         }
@@ -684,8 +702,64 @@
             "constant": {
               "type": "object",
               "maxProperties": 16
+            },
+            "item": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "pointer",
+                "as"
+              ],
+              "properties": {
+                "pointer": {
+                  "type": "string",
+                  "pattern": "^(/[A-Za-z0-9_-]{1,64}){0,8}$"
+                },
+                "as": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+                }
+              }
             }
           }
+        }
+      }
+    },
+    "List": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "items"
+      ],
+      "properties": {
+        "items": {
+          "$ref": "#/$defs/binding"
+        },
+        "rowId": {
+          "type": "string",
+          "pattern": "^(/[A-Za-z0-9_-]{1,64}){0,8}$"
+        },
+        "maxItems": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "direction": {
+          "enum": [
+            "vertical",
+            "horizontal"
+          ]
+        },
+        "gap": {
+          "enum": [
+            "sm",
+            "md",
+            "lg"
+          ]
+        },
+        "emptyText": {
+          "type": "string",
+          "maxLength": 200
         }
       }
     }

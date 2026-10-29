@@ -187,12 +187,43 @@ export const COMPONENT_PROPS: Record<string, object> = {
     },
   },
 };
-const V2_ONLY = new Set<string>(["SystemActionButton"]);
+/**
+ * slot-tree-v2 (AppBundle formatVersion 3) list container (review #5): `List` renders its children once per item of
+ * an array binding; inside the template `{$bind:{from:"item", pointer}}` reads the current item and a Button /
+ * SystemActionButton may pass a field of it as `input.item: {pointer, as}`. v1 schemas and their documents are
+ * unchanged (frozen); existing bundles keep their bytes and hashes.
+ */
+export const LIST_LIMITS = { maxItems: 100, defaultItems: 50, maxTemplateNodes: 24 } as const;
+const itemInput = { type: "object", additionalProperties: false, required: ["pointer", "as"], properties: { pointer, as: ident } };
+function withItemInput(schema: object): object {
+  const s = JSON.parse(JSON.stringify(schema)) as { properties: { input: { properties: Record<string, unknown> } } };
+  s.properties.input.properties.item = itemInput;
+  return s;
+}
+const V2_PROPS: Record<string, object> = {
+  ...COMPONENT_PROPS,
+  Button: withItemInput(COMPONENT_PROPS.Button!),
+  SystemActionButton: withItemInput(COMPONENT_PROPS.SystemActionButton!),
+  List: {
+    type: "object",
+    additionalProperties: false,
+    required: ["items"],
+    properties: {
+      items: { $ref: "#/$defs/binding" },
+      rowId: pointer,
+      maxItems: { type: "integer", minimum: 1, maximum: LIST_LIMITS.maxItems },
+      direction: { enum: ["vertical", "horizontal"] },
+      gap,
+      emptyText: text(200),
+    },
+  },
+};
+const V2_ONLY = new Set<string>(["SystemActionButton", "List"]);
 export type ComponentType = keyof typeof COMPONENT_PROPS;
 /** slot-tree-v1 components (frozen); v2 adds SystemActionButton. */
 export const COMPONENT_TYPES = Object.keys(COMPONENT_PROPS).filter((k) => k !== "SystemActionButton") as ComponentType[];
-export const COMPONENT_TYPES_V2 = Object.keys(COMPONENT_PROPS) as ComponentType[];
-const CONTAINERS = new Set<string>(["Stack", "Grid", "Tabs", "Form"]);
+export const COMPONENT_TYPES_V2 = Object.keys(V2_PROPS) as ComponentType[];
+const CONTAINERS = new Set<string>(["Stack", "Grid", "Tabs", "Form", "List"]);
 const INPUTS = new Set<string>(["TextInput", "TextArea", "Select", "Checkbox"]);
 
 const chartSchema = {
@@ -212,11 +243,15 @@ const propValidators: Record<string, ValidateFunction> = {};
 for (const [name, schema] of Object.entries(COMPONENT_PROPS)) {
   propValidators[name] = ajv.compile({ $defs: { binding: bindingSchema, chart: chartSchema }, ...schema });
 }
+const propValidatorsV2: Record<string, ValidateFunction> = { ...propValidators };
+for (const name of ["Button", "SystemActionButton", "List"]) {
+  propValidatorsV2[name] = ajv.compile({ $defs: { binding: bindingSchema, chart: chartSchema }, ...V2_PROPS[name]! });
+}
 const bindingValidator = ajv.compile(bindingSchema);
 
 /** JSON Schema documents for docs/contracts (one per component plus the binding). */
 export function slotTreeSchemaDocument(version: 1 | 2 = 1): object {
-  const props = Object.fromEntries(Object.entries(COMPONENT_PROPS).filter(([k]) => version === 2 || k !== "SystemActionButton"));
+  const props = version === 2 ? V2_PROPS : Object.fromEntries(Object.entries(COMPONENT_PROPS).filter(([k]) => k !== "SystemActionButton"));
   return {
     $schema: "https://json-schema.org/draft/2020-12/schema",
     $id: `urn:agentos:slot-tree:v${version}`,
@@ -328,7 +363,11 @@ export function checkSlotTree(view: unknown, ctx: SlotTreeContext, root = "/view
     if (Array.isArray(value)) value.forEach((x, i) => collectBindings(x, `${path}/${i}`, inItem, formId, depth + 1));
     else if (value !== null && typeof value === "object") for (const [k, x] of Object.entries(value)) collectBindings(x, `${path}/${k}`, inItem, formId, depth + 1);
   };
-  const walk = (node: unknown, path: string, depth: number, formId: string | null) => {
+  /** listPath: the enclosing List (null outside a list item); templateNodes counts the nodes of that template. */
+  let templateNodes = 0;
+  const walk = (node: unknown, path: string, depth: number, formId: string | null, listPath: string | null = null) => {
+    const inItem = listPath !== null;
+    if (inItem && ++templateNodes === LIST_LIMITS.maxTemplateNodes + 1) add(listPath, `a list item template holds at most ${LIST_LIMITS.maxTemplateNodes} nodes`);
     nodes++;
     if (nodes > UI_LIMITS.maxNodes) {
       if (nodes === UI_LIMITS.maxNodes + 1) add(path, `the tree holds at most ${UI_LIMITS.maxNodes} nodes`);
@@ -339,10 +378,10 @@ export function checkSlotTree(view: unknown, ctx: SlotTreeContext, root = "/view
     const n = node as Record<string, unknown>;
     for (const k of Object.keys(n)) if (!["type", "props", "children", "visibleWhen"].includes(k)) add(`${path}/${k}`, `unknown node field "${k}"`);
     const type = n.type;
-    if (typeof type !== "string" || !Object.hasOwn(COMPONENT_PROPS, type)) return add(`${path}/type`, `unknown component "${String(type)}"`);
+    if (typeof type !== "string" || !Object.hasOwn(wantKind === "slot-tree-v2" ? V2_PROPS : COMPONENT_PROPS, type)) return add(`${path}/type`, `unknown component "${String(type)}"`);
     if (V2_ONLY.has(type) && wantKind !== "slot-tree-v2") return add(`${path}/type`, `${type} needs slot-tree-v2 (formatVersion 3)`);
     const props = n.props ?? {};
-    const validate = propValidators[type]!;
+    const validate = (wantKind === "slot-tree-v2" ? propValidatorsV2 : propValidators)[type]!;
     if (!validate(props)) {
       const e = validate.errors?.[0];
       add(`${path}/props${e?.instancePath ?? ""}`, `${type}: ${e?.message ?? "invalid props"}`);
@@ -356,18 +395,21 @@ export function checkSlotTree(view: unknown, ctx: SlotTreeContext, root = "/view
         ((w.op === "exists" && Object.keys(w).length === 2) ||
           (w.op === "eq" && Object.keys(w).length === 3 && (w.equals === null || ["string", "number", "boolean"].includes(typeof w.equals))));
       if (!okShape) add(`${path}/visibleWhen`, "visibleWhen supports {value, op:'exists'} and {value, op:'eq', equals: scalar}");
-      else collectBindings(w!.value, `${path}/visibleWhen/value`, false, formId);
+      else collectBindings(w!.value, `${path}/visibleWhen/value`, inItem, formId);
     }
     const itemScoped = type === "Table" || type === "Kanban";
-    collectBindings(p, `${path}/props`, false, formId);
+    collectBindings(p, `${path}/props`, inItem, formId);
+    if (type === "List" && inItem) add(path, "lists cannot be nested");
     if (itemScoped) {
       // columns/cards read the current item through their pointers (an implicit item binding)
       if (typeof p.selectionId === "string") {
+        if (inItem) add(`${path}/props/selectionId`, "a selection cannot be declared inside a list item (it would repeat per item)");
         if (facts.selections.has(p.selectionId)) add(`${path}/props/selectionId`, `selection "${p.selectionId}" is declared twice`);
         facts.selections.add(p.selectionId);
       }
     }
     if (type === "Form") {
+      if (inItem) add(path, "forms cannot be inside a list item (form ids would repeat per item)");
       if (formId !== null) add(path, "forms cannot be nested");
       const id = p.formId as string;
       if (facts.forms.has(id)) add(`${path}/props/formId`, `form "${id}" is declared twice`);
@@ -375,7 +417,8 @@ export function checkSlotTree(view: unknown, ctx: SlotTreeContext, root = "/view
       formId = id;
     }
     if (INPUTS.has(type)) {
-      if (formId === null) add(path, `${type} must be inside a Form`);
+      if (inItem) add(path, `${type} cannot be inside a list item (input names would repeat per item)`);
+      else if (formId === null) add(path, `${type} must be inside a Form`);
       else {
         const names = facts.forms.get(formId)!;
         const name = p.name as string;
@@ -386,17 +429,19 @@ export function checkSlotTree(view: unknown, ctx: SlotTreeContext, root = "/view
     if (type === "Button") {
       const cmd = p.command as string;
       if (!Object.hasOwn(ctx.commands, cmd)) add(`${path}/props/command`, `command "${cmd}" is not declared`, "UNKNOWN_HANDLER");
-      const input = (p.input ?? {}) as { form?: string; selection?: { selectionId: string } };
+      const input = (p.input ?? {}) as { form?: string; selection?: { selectionId: string }; item?: unknown };
       if (input.form !== undefined) formRefs.push({ id: input.form, path: `${path}/props/input/form` });
       if (input.selection !== undefined) selectionUses.push({ id: input.selection.selectionId, path: `${path}/props/input/selection` });
+      if (input.item !== undefined && !inItem) add(`${path}/props/input/item`, "input.item is only valid inside a list item");
       facts.buttons.push({ command: cmd, form: input.form, path });
     }
     if (type === "SystemActionButton") {
       const act = p.action as string;
       if (!ctx.systemActions || !Object.hasOwn(ctx.systemActions, act)) add(`${path}/props/action`, `system action "${act}" is not declared`, "UNKNOWN_HANDLER");
-      const input = (p.input ?? {}) as { form?: string; selection?: { selectionId: string } };
+      const input = (p.input ?? {}) as { form?: string; selection?: { selectionId: string }; item?: unknown };
       if (input.form !== undefined) formRefs.push({ id: input.form, path: `${path}/props/input/form` });
       if (input.selection !== undefined) selectionUses.push({ id: input.selection.selectionId, path: `${path}/props/input/selection` });
+      if (input.item !== undefined && !inItem) add(`${path}/props/input/item`, "input.item is only valid inside a list item");
     }
     const children = n.children;
     if (children !== undefined) {
@@ -404,8 +449,12 @@ export function checkSlotTree(view: unknown, ctx: SlotTreeContext, root = "/view
       if (!Array.isArray(children)) return add(`${path}/children`, "children must be an array");
       if (children.length > UI_LIMITS.maxChildren) add(`${path}/children`, `at most ${UI_LIMITS.maxChildren} children`);
       if (type === "Tabs" && children.length !== (p.labels as unknown[]).length) add(`${path}/children`, "Tabs needs one child per label");
-      children.forEach((c, i) => walk(c, `${path}/children/${i}`, depth + 1, formId));
+      if (type === "List" && children.length === 0) add(`${path}/children`, "List needs an item template (at least one child)");
+      if (type === "List" && !inItem) templateNodes = 0;
+      const childList = type === "List" ? path : listPath;
+      children.forEach((c, i) => walk(c, `${path}/children/${i}`, depth + 1, formId, childList));
     } else if (type === "Tabs") add(`${path}/children`, "Tabs needs one child per label");
+    else if (type === "List") add(`${path}/children`, "List needs an item template (at least one child)");
   };
   for (const name of SLOT_NAMES) {
     const node = (slots as Record<string, unknown>)[name];
