@@ -246,7 +246,7 @@ d("V2-D08 / A03: command and prepare interruption (real processes)", () => {
     const c2 = await login(h2);
     const st = (await c2.get("/api/state")).data;
     expect(st.agentState).toBe("blocked");
-    expect(st.agentDiagnostic).toMatch(/upgrade v1→v[23] refused/);
+    expect(st.agentDiagnostic).toMatch(/upgrade v1→v[234] refused/);
     expect(q(dir, "SELECT * FROM records")).toEqual(before);
     expect(q<{ v: number }>(dir, "SELECT agent_toolset_version AS v FROM meta")[0]!.v).toBe(1);
     expect(q(dir, "SELECT * FROM agent_toolset_migrations")).toEqual(migBefore);

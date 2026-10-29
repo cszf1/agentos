@@ -179,10 +179,16 @@ describe("R: crash recovery across os.sqlite and agent.sqlite", () => {
     await stopHost(h, "SIGKILL");
     const h2 = await startHost(dir);
     const c2 = await login(h2);
+    // v0.4: an independent new task is queued/accepted (202, never RUN_BUSY) on its own new app and conversation; it
+    // gets no authority over the recovering run's app or conversation
     const second = await c2.req("POST", "/api/runs", { intent: "另一个", targetAppId: null });
-    expect(second.error?.code).toBe("RUN_BUSY");
-    expect(q(os(dir), "SELECT id FROM runs")).toHaveLength(1);
+    expect(second.status).toBe(202);
+    expect(second.data.targetAppId).not.toBe(r.data.targetAppId);
+    expect(q(os(dir), "SELECT id FROM runs")).toHaveLength(2);
     expect((await c2.waitRun(r.data.runId)).status).toBe("succeeded");
+    const convs = q<{ run_id: string; conversation_id: string }>(os(dir), "SELECT run_id, conversation_id FROM agent_conversations WHERE run_id IN (?, ?)", r.data.runId, second.data.runId);
+    expect(new Set(convs.map((x) => x.conversation_id)).size).toBe(convs.length);
+    await c2.waitRun(second.data.runId, 60_000);
     await stopHost(h2);
   });
 
@@ -205,7 +211,10 @@ describe("R: crash recovery across os.sqlite and agent.sqlite", () => {
     const c2 = await login(h);
     const view = await c2.get(`/api/runs/${r.data.runId}`);
     expect(view.data.error.code).toBe("RECOVERY_BLOCKED");
-    expect((await c2.req("POST", "/api/runs", { intent: "x", targetAppId: null })).error?.code).toBe("RUN_BUSY");
+    // v0.4: a parked task holds its own target only; an independent new task is accepted (202), never RUN_BUSY
+    const other = await c2.req("POST", "/api/runs", { intent: "x", targetAppId: null });
+    expect(other.status).toBe(202);
+    expect(other.data.targetAppId).not.toBe(r.data.targetAppId);
     expect((await c2.req("POST", `/api/runs/${r.data.runId}/cancel`, {})).status).toBe(202);
     const done = await c2.waitRun(r.data.runId);
     expect(done.status).toBe("cancelled");
@@ -236,9 +245,12 @@ describe("R: crash recovery across os.sqlite and agent.sqlite", () => {
     const c2 = await login(h);
     const view = await c2.get(`/api/runs/${r.data.runId}`);
     expect(view.data.error.code).toBe("RECOVERY_BLOCKED");
-    expect((await c2.req("POST", "/api/runs", { intent: "x", targetAppId: null })).error?.code).toBe("RUN_BUSY");
     // no business writes happened while blocked
     expect(q<{ n: number }>(os(dir), "SELECT COUNT(*) AS n FROM revisions")[0]!.n).toBe(0);
+    // v0.4: an independent new task is accepted (202) on its own app, never RUN_BUSY, and never touches the parked one
+    const other = await c2.req("POST", "/api/runs", { intent: "x", targetAppId: null });
+    expect(other.status).toBe(202);
+    expect(other.data.targetAppId).not.toBe(r.data.targetAppId);
     expect((await c2.req("POST", `/api/runs/${r.data.runId}/cancel`, {})).status).toBe(202);
     const done = await c2.waitRun(r.data.runId);
     expect(done.status).toBe("cancelled");
