@@ -174,7 +174,7 @@ fn control(b: &Shared, sess: &mut Session, g: &MaintenanceControlParams) -> Resu
     if applied_ws {
         tx.execute(
             "INSERT INTO workspace_maintenance_state(store_uuid, incarnation, state, maintenance_epoch, updated_seq) VALUES (?1,?5,?2,?3,?4)
-             ON CONFLICT(store_uuid) DO UPDATE SET incarnation=excluded.incarnation, state=excluded.state, maintenance_epoch=excluded.maintenance_epoch, updated_seq=excluded.updated_seq",
+             ON CONFLICT(store_uuid, incarnation) DO UPDATE SET state=excluded.state, maintenance_epoch=excluded.maintenance_epoch, updated_seq=excluded.updated_seq",
             params![store, g.state, g.maintenance_epoch as i64, seq, inc],
         )?;
     }
@@ -187,13 +187,13 @@ fn control(b: &Shared, sess: &mut Session, g: &MaintenanceControlParams) -> Resu
         let next = cur_t.map(|e| e.max(t.control_epoch as i64)).unwrap_or(t.control_epoch as i64);
         tx.execute(
             "INSERT INTO target_control_epochs(store_uuid, incarnation, resource_id, control_epoch, updated_seq) VALUES (?1,?5,?2,?3,?4)
-             ON CONFLICT(store_uuid, resource_id) DO UPDATE SET incarnation=excluded.incarnation, control_epoch=CASE WHEN target_control_epochs.incarnation = excluded.incarnation THEN MAX(control_epoch, excluded.control_epoch) ELSE excluded.control_epoch END, updated_seq=excluded.updated_seq",
+             ON CONFLICT(store_uuid, incarnation, resource_id) DO UPDATE SET control_epoch=MAX(control_epoch, excluded.control_epoch), updated_seq=excluded.updated_seq",
             params![store, t.resource_id, next, seq, inc],
         )?;
         target_epoch = Some(next);
     }
     tx.commit()?;
-    let st: (String, i64) = c.query_row("SELECT state, maintenance_epoch FROM workspace_maintenance_state WHERE store_uuid=?1", params![store], |r| Ok((r.get(0)?, r.get(1)?))).unwrap_or(("paused".into(), 0));
+    let st: (String, i64) = c.query_row("SELECT state, maintenance_epoch FROM workspace_maintenance_state WHERE store_uuid=?1 AND incarnation=?2", params![store, inc], |r| Ok((r.get(0)?, r.get(1)?))).unwrap_or(("paused".into(), 0));
     Ok(json!({"state": st.0, "maintenanceEpoch": st.1, "applied": applied_ws, "targetControlEpoch": target_epoch, "seq": seq}))
 }
 

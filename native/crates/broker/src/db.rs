@@ -3,7 +3,7 @@
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::Value;
 
-pub const SCHEMA_VERSION: i64 = 2;
+pub const SCHEMA_VERSION: i64 = 3;
 
 /// v0.4 (spec §21.2): maintenance policies, workspace maintenance state, target control epochs and the rolling
 /// attempt counts (authority for privileged maintenance), plus the maintenance origin of an operation. Additive.
@@ -58,6 +58,33 @@ CREATE TABLE maintenance_attempts (
 CREATE INDEX maintenance_attempts_window ON maintenance_attempts(store_uuid, resource_id, action_family, admitted_at);
 CREATE TRIGGER maintenance_attempts_keep BEFORE DELETE ON maintenance_attempts BEGIN SELECT RAISE(ABORT, 'maintenance attempts are never deleted'); END;
 ALTER TABLE effect_operations ADD COLUMN maintenance_json TEXT;
+"#;
+/// v0.4 rev 3 (spec §21.2, R08): workspace maintenance state and target control epochs are kept per workspace
+/// incarnation, so a restore starts a fresh row and the old incarnation's facts stay readable (never overwritten).
+/// Table rebuild that copies every row; nothing is deleted.
+const SCHEMA_V3: &str = r#"
+CREATE TABLE workspace_maintenance_state_v3 (
+  store_uuid TEXT NOT NULL,
+  incarnation INTEGER NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('running','paused')),
+  maintenance_epoch INTEGER NOT NULL,
+  updated_seq INTEGER NOT NULL,
+  PRIMARY KEY (store_uuid, incarnation)
+) STRICT;
+INSERT INTO workspace_maintenance_state_v3 SELECT store_uuid, incarnation, state, maintenance_epoch, updated_seq FROM workspace_maintenance_state;
+DROP TABLE workspace_maintenance_state;
+ALTER TABLE workspace_maintenance_state_v3 RENAME TO workspace_maintenance_state;
+CREATE TABLE target_control_epochs_v3 (
+  store_uuid TEXT NOT NULL,
+  incarnation INTEGER NOT NULL,
+  resource_id TEXT NOT NULL,
+  control_epoch INTEGER NOT NULL,
+  updated_seq INTEGER NOT NULL,
+  PRIMARY KEY (store_uuid, incarnation, resource_id)
+) STRICT;
+INSERT INTO target_control_epochs_v3 SELECT store_uuid, incarnation, resource_id, control_epoch, updated_seq FROM target_control_epochs;
+DROP TABLE target_control_epochs;
+ALTER TABLE target_control_epochs_v3 RENAME TO target_control_epochs;
 "#;
 pub const DATA_DIR: &str = "/var/lib/agentos-broker";
 pub const DB_PATH: &str = "/var/lib/agentos-broker/broker.sqlite";
@@ -202,8 +229,14 @@ pub fn open_existing(path: &str) -> Result<Connection, String> {
         Some(SCHEMA_VERSION) => Ok(c),
         Some(1) => {
             // v0.3 log → v0.4: additive tables only; history, tombstones and incarnations are untouched.
-            c.execute_batch(&format!("BEGIN IMMEDIATE; {SCHEMA_V2} UPDATE broker_meta SET value='2' WHERE key='schema_version'; COMMIT;"))
-                .map_err(|e| format!("BROKER_HISTORY_MISSING: schema upgrade 1→2 failed: {e}"))?;
+            c.execute_batch(&format!("BEGIN IMMEDIATE; {SCHEMA_V2} {SCHEMA_V3} UPDATE broker_meta SET value='3' WHERE key='schema_version'; COMMIT;"))
+                .map_err(|e| format!("BROKER_HISTORY_MISSING: schema upgrade 1→3 failed: {e}"))?;
+            Ok(c)
+        }
+        Some(2) => {
+            // early v0.4 log: per-incarnation keys; every row is copied.
+            c.execute_batch(&format!("BEGIN IMMEDIATE; {SCHEMA_V3} UPDATE broker_meta SET value='3' WHERE key='schema_version'; COMMIT;"))
+                .map_err(|e| format!("BROKER_HISTORY_MISSING: schema upgrade 2→3 failed: {e}"))?;
             Ok(c)
         }
         Some(n) if n > SCHEMA_VERSION => Err(format!("BROKER_HISTORY_MISSING: log schema {n} is newer than this broker ({SCHEMA_VERSION})")),
@@ -224,6 +257,7 @@ pub fn create(path: &str, install_id: &str, policy_version: &str) -> Result<Conn
     pragmas(&c)?;
     c.execute_batch(SCHEMA).map_err(|e| format!("schema: {e}"))?;
     c.execute_batch(SCHEMA_V2).map_err(|e| format!("schema v2: {e}"))?;
+    c.execute_batch(SCHEMA_V3).map_err(|e| format!("schema v3: {e}"))?;
     let now = agentos_protocol::now_ms() as i64;
     for (k, v) in [("schema_version", SCHEMA_VERSION.to_string()), ("machine_install_id", install_id.to_string()), ("policy_version", policy_version.to_string()), ("seq", "0".into()), ("created_at", now.to_string())] {
         c.execute("INSERT INTO broker_meta(key,value) VALUES (?1,?2)", params![k, v]).map_err(|e| e.to_string())?;
