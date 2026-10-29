@@ -50,6 +50,7 @@ export class RunScheduler {
     const ended: { runId: string; code: string; message: string }[] = [];
     if (this.paused) return { started, ended };
     this.store.tx(() => {
+      this.reclaimLeasesInTx();
       const nowMs = this.now();
       const running = this.store.all<{ background: number; n: number }>(
         "SELECT background, COUNT(*) AS n FROM runs WHERE scheduling_state IN ('dispatching','active','waiting_build','waiting_model','draining') GROUP BY background",
@@ -143,6 +144,26 @@ export class RunScheduler {
   }
 
   /** Metrics (spec §24.2). */
+  /**
+   * V4-R05: a lease past its deadline becomes `reclaiming`; it is released (with a raised epoch) only once its owner is
+   * confirmed to have stopped writing: a run that reached a terminal state, a maintenance job that ended. A live or
+   * unknown owner keeps the target fenced; an `unknown` lease is never released by time.
+   */
+  reclaimLeasesInTx(): number {
+    let n = 0;
+    for (const l of this.leases.expired()) {
+      let stopped = false;
+      if (l.owner_kind === "run") stopped = !!this.store.get("SELECT 1 FROM runs WHERE id = ? AND status IN ('succeeded','failed','cancelled')", l.owner_id) || !this.store.get("SELECT 1 FROM runs WHERE id = ?", l.owner_id);
+      else if (l.owner_kind === "job") stopped = !!this.store.get("SELECT 1 FROM maintenance_jobs WHERE id = ? AND state IN ('succeeded','no_change','failed_no_effect','cancelled','expired')", l.owner_id);
+      if (stopped) {
+        this.leases.reclaim(l.target_kind, l.target_id);
+        this.store.event("lease.reclaimed", { targetKind: l.target_kind, targetId: l.target_id, ownerKind: l.owner_kind, ownerId: l.owner_id });
+        n++;
+      }
+    }
+    return n;
+  }
+
   metrics(): Record<string, unknown> {
     const q = this.store.all<{ background: number; state: string; n: number }>(
       "SELECT background, scheduling_state AS state, COUNT(*) AS n FROM runs WHERE scheduling_state <> 'done' GROUP BY background, scheduling_state",

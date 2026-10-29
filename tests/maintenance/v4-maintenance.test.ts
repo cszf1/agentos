@@ -536,6 +536,32 @@ describe("E/G: lifecycle and candidates", () => {
     expect(core.store.all("SELECT id FROM system_actions")).toHaveLength(0);
   });
 
+  it("V4-R05 a lease past its deadline is reclaimed only after its owner stopped; an unknown lease is never released by time", async () => {
+    const { core, adv } = rig();
+    const appId = seedApp(core);
+    const L = core.scheduler.leases;
+    const job = core.maintenance.jobs.manualCheck("app-recovery", { kind: "app", id: appId }, "k-r05");
+    const e1 = core.store.tx(() => L.acquireOrThrow("app", appId, { kind: "job", id: job.jobId }, 1000));
+    adv(5000);
+    core.scheduler.admit();
+    // past the deadline but the owner (a job) has not ended: fenced, never handed to someone else
+    expect(L.holder("app", appId)?.state).toBe("reclaiming");
+    expect(core.store.tx(() => L.tryAcquire("app", appId, { kind: "run", id: "other" }, 60_000)).ok).toBe(false);
+    // the owner ends: the next pass releases with a raised epoch, and the new holder gets a newer epoch
+    core.maintenance.jobs.finish(job.jobId, "cancelled", "test", "none");
+    core.scheduler.admit();
+    expect(L.holder("app", appId)).toBeUndefined();
+    const next = core.store.tx(() => L.tryAcquire("app", appId, { kind: "run", id: "other" }, 60_000));
+    expect(next.ok && next.epoch).toBeGreaterThan(e1 + 1);
+    // an owner with an unknown outcome keeps its target fenced past any deadline
+    core.store.tx(() => L.release("app", appId, { kind: "run", id: "other" }));
+    core.store.tx(() => L.acquireOrThrow("app", appId, { kind: "job", id: "job-unknown" }, 1000));
+    core.store.tx(() => L.markUnknown({ kind: "job", id: "job-unknown" }));
+    adv(24 * 3600_000);
+    core.scheduler.admit();
+    expect(L.holder("app", appId)?.state).toBe("unknown");
+  });
+
   it("V4-U04 notifications for the same incident merge into one", () => {
     const { core } = rig();
     for (let i = 0; i < 50; i++) core.maintenance.notifications.notify("incident", "app:x", "critical", "应用反复崩溃", `#${i}`);
