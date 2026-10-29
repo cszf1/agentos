@@ -258,11 +258,17 @@ export function registerMaintenanceRoutes(
       const b = obj(req.body, ["proposalHash", "expectedAppEpoch"]);
       if (typeof b.proposalHash !== "string" || !Number.isSafeInteger(b.expectedAppEpoch)) throw new AgentOsError("INVALID_REQUEST", "proposalHash and expectedAppEpoch are required");
       if (!UUID.test(req.params.id)) throw new AgentOsError("NOT_FOUND", "proposal not found");
-      const r = write("proposals.decide", meta, () => {
+      let r: ReturnType<typeof write>;
+      try {
+        r = write("proposals.decide", meta, () => {
         const p = core.proposals.acceptInTx(req.params.id, b.proposalHash as string, b.expectedAppEpoch as number, `proposal:${req.params.id}`, meta.requestHash);
         if (p.job_id) m.jobs.finish(p.job_id, "succeeded", `candidate accepted by the user; publication runs as deployment ${p.deployment_id}`, "none");
         return { status: 202, body: core.proposals.view(p) };
-      });
+        });
+      } catch (e) {
+        core.proposals.applyRefusalMark(req.params.id, e);
+        throw e;
+      }
       return h.ok(reply, r.status, r.body);
     }),
   );

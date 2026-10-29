@@ -290,24 +290,35 @@ export class ProposalService {
     if (p.state === "publishing" || p.state === "published" || p.state === "accepted") return p; // the same decision (replay)
     if (p.state !== "pending") throw new AgentOsError("PROPOSAL_STALE", `the proposal is ${p.state}`);
     if (Date.parse(p.expires_at) <= this.store.clock.now()) {
-      this.store.run("UPDATE proposals SET state = 'expired', updated_at = ? WHERE id = ?", this.now(), id);
-      throw new AgentOsError("PROPOSAL_STALE", "the proposal expired");
+      throw new AgentOsError("PROPOSAL_STALE", "the proposal expired", { mark: "expired" });
     }
     const app = this.apps.requireApp(p.app_id);
     if (app.epoch !== expectedAppEpoch || app.epoch !== p.base_app_epoch || app.active_revision_id !== p.base_revision_id) {
-      this.store.run("UPDATE proposals SET state = 'stale', updated_at = ? WHERE id = ?", this.now(), id);
-      throw new AgentOsError("PROPOSAL_STALE", "the app changed since this candidate was made; it was not published", { appEpoch: app.epoch });
+      throw new AgentOsError("PROPOSAL_STALE", "the app changed since this candidate was made; it was not published", { appEpoch: app.epoch, mark: "stale" });
     }
     const body = JSON.parse(p.body_json) as ProposalBody;
     if (this.lockApproved && !this.lockApproved(body.runtimeLockId)) {
-      this.store.run("UPDATE proposals SET state = 'needs_recheck', updated_at = ? WHERE id = ?", this.now(), id);
-      throw new AgentOsError("PROPOSAL_STALE", "the runtime catalog changed; the candidate needs a new check");
+      throw new AgentOsError("PROPOSAL_STALE", "the runtime catalog changed; the candidate needs a new check", { mark: "needs_recheck" });
     }
     if (!this.startDeploymentInTx) throw new AgentOsError("SANDBOX_UNAVAILABLE", "the code runtime is not available to publish the candidate");
     const depId = this.startDeploymentInTx(p, requestKey, requestHash);
     this.store.run("UPDATE proposals SET state = 'publishing', decided_at = ?, deployment_id = ?, updated_at = ? WHERE id = ?", this.now(), depId, this.now(), id);
     this.store.event("proposal.accepted", { proposalId: id, deploymentId: depId }, { appId: p.app_id });
     return this.get(id)!;
+  }
+
+  /**
+   * A refused decision still records what it found (stale / expired / needs_recheck). The decision's own transaction
+   * rolls back with its error, so the caller applies the mark afterwards in a transaction of its own.
+   */
+  applyRefusalMark(id: string, err: unknown): void {
+    const mark = (err as { details?: { mark?: string } })?.details?.mark;
+    if (mark !== "stale" && mark !== "expired" && mark !== "needs_recheck") return;
+    this.store.tx(() => {
+      const n = this.store.run("UPDATE proposals SET state = ?, updated_at = ? WHERE id = ? AND state = 'pending'", mark, this.now(), id);
+      if (n.changes > 0 && mark !== "needs_recheck") this.releasePin?.("proposal", id);
+      if (n.changes > 0) this.store.event(`proposal.${mark}`, { proposalId: id });
+    });
   }
 
   rejectInTx(id: string): ProposalRow {
