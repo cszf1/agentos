@@ -2,7 +2,7 @@
 
 版本：0.4-draft；编写日期：2026-10-29；承接版本：v0.3；目标文档目录：`E:\agentos\docs`。
 
-本文沿用 [v0.1](AGENTOS_MVP_V0.1.md)、[v0.2](AGENTOS_MVP_V0.2.md) 和 [v0.3](AGENTOS_MVP_V0.3.md) 的实施规格方式，给出下一轮编码的范围、模块、契约、恢复规则、实施顺序与验收要求。本次只新增方案，不实现代码、数据库迁移或部署配置。
+本文是 v0.4 的实施规格。编写时只新增方案、不实现代码；当前仓库已经按本文实现。验收与未在某台机器上跑过的项见 [ACCEPTANCE_V0.4.md](ACCEPTANCE_V0.4.md) 和 [V0.4_CHECKLIST.md](V0.4_CHECKLIST.md)。文中“本次不实现”描述的是写规格时的工作边界，不是当前代码的状态。无串口硬件时 V3-E04 仍未验收；没有模型密钥时不能把真实模型项标成通过。
 
 v0.4 的目标是：让多个用户任务分别拥有会话、权限和预算，同时让后台控制器持续发现问题、执行已经授权的有限维护，并留下可核对的结果。模型参与诊断和生成候选版本；确定性的调度器、运行控制器和 broker 决定任务何时取得执行资格。
 
@@ -951,6 +951,8 @@ M0—M8 可分提交推进。先解除身份与恢复的单槽位假设，再开
 
 ### 28.1 本版必须交付
 
+下面的空勾是规格编写时的清单，不是当前实现状态。对照见 [V0.4_CHECKLIST.md](V0.4_CHECKLIST.md)。无串口、无 BTF 或无模型密钥的机器不能把对应项写成已通过。
+
 - [ ] 真实 v0.3 工作区升级及 v1/v2/v3 旧回归通过。
 - [ ] 两个独立前台会话可并行，身份/权限/预算/取消/完成无单槽位残留。
 - [ ] 持久 queue、target lease、trigger receipt、job/step 与多会话恢复具备真实断点证据。
@@ -974,7 +976,7 @@ M0—M8 可分提交推进。先解除身份与恢复的单槽位假设，再开
 
 实现依据：[固定参考提交](https://github.com/cszf1/agentos/tree/a88021109dbac86fe2355821d4d12d5d7af19da6)、[v0.3 验收报告](https://github.com/cszf1/agentos/blob/a88021109dbac86fe2355821d4d12d5d7af19da6/docs/ACCEPTANCE_V0.3.md)、[RunCoordinator](https://github.com/cszf1/agentos/blob/a88021109dbac86fe2355821d4d12d5d7af19da6/packages/core/src/runs/coordinator.ts)、[模型预算入口](https://github.com/cszf1/agentos/blob/a88021109dbac86fe2355821d4d12d5d7af19da6/packages/agent-pi/src/models.ts)、[原运行控制器](https://github.com/cszf1/agentos/blob/a88021109dbac86fe2355821d4d12d5d7af19da6/packages/core/src/runtime/reconciler.ts)、[原备份实现](https://github.com/cszf1/agentos/blob/a88021109dbac86fe2355821d4d12d5d7af19da6/packages/host/src/backup-v3.ts)。
 
-外部机制依据为文中链接的 Pi 1.4.0 官方文档、SQLite、Linux man-pages 与 systemd 文档。本文未运行上述新原型和验收，也没有修改 GitHub 仓库；下一轮编码从 M0 开始。
+外部机制依据为文中链接的 Pi 1.4.0 官方文档、SQLite、Linux man-pages 与 systemd 文档。上面两句是规格编写时的记录：当时还没有跑新原型。当前实现状态以验收报告为准，不把没跑过的硬件或真实模型写成已通过。
 
 
 
