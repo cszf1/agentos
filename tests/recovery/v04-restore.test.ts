@@ -143,9 +143,9 @@ d("v0.4 backup / restore", () => {
     const c = new Client(h);
     await c.login(target);
     // the business side stays readable
-    const apps = await c.get("/api/apps");
-    expect(apps.status).toBe(200);
-    expect(apps.data.items.length).toBe(1);
+    const st = await c.get("/api/state");
+    expect(st.status).toBe(200);
+    expect(st.data.apps.length).toBe(1);
     // the agent side is closed: no task can start on a mismatched pair, and nothing was "repaired" by clearing it
     const r = await c.req("POST", "/api/runs", { intent: "做一个待办应用", targetAppId: null });
     if (r.status === 202) {

@@ -257,6 +257,7 @@ export const api = {
   maintTemplates: () => call<{ items: { id: string; title: string; targetKind: string; risk: string; usesModel: boolean; defaults: Record<string, number>; bounds: Record<string, [number, number]> }[] }>("GET", "/api/maintenance/templates"),
   maintJobs: (open = false) => call<{ items: MaintJob[] }>("GET", `/api/maintenance/jobs?limit=30${open ? "&open=1" : ""}`),
   maintControl: (action: "pause" | "resume", key: string) => call<MaintState>("POST", "/api/maintenance/control", { action }, key),
+  maintPolicyApprove: (id: string, version: number, policyHash: string, key: string) => call<MaintPolicy>("POST", `/api/maintenance/policies/${id}/approve`, { version, policyHash }, key),
   maintPolicyPause: (id: string, key: string) => call<MaintPolicy>("POST", `/api/maintenance/policies/${id}/pause`, {}, key),
   maintCheck: (templateId: string, target: { kind: string; id: string }, key: string) => call<{ jobId: string }>("POST", "/api/maintenance/checks", { templateId, target }, key),
   maintCancelJob: (id: string, key: string) => call<MaintJob>("POST", `/api/maintenance/jobs/${id}/cancel`, {}, key),
@@ -340,6 +341,9 @@ export interface MaintPolicy {
   approval: { approvedAt: string | null; expiresAt: string | null };
   rootSync: { state: string | null; local: string; root: string };
   risk: string;
+  allowedActions?: string[];
+  automaticActions?: string[];
+  usesModel?: boolean;
 }
 export interface MaintJob {
   jobId: string;

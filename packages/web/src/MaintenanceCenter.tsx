@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, describeError, newKey, type MaintJob, type MaintPolicy, type MaintState } from "./api";
+import { type SysResource, api, describeError, newKey, type MaintJob, type MaintPolicy, type MaintState } from "./api";
 
 /**
  * v0.4 maintenance center (spec §22.2): enabled scope, recent checks, actual changes, cooldown / circuit breaker,
@@ -40,6 +40,7 @@ export function MaintenanceCenter() {
   const [st, setSt] = useState<MaintState | null>(null);
   const [policies, setPolicies] = useState<MaintPolicy[]>([]);
   const [jobs, setJobs] = useState<MaintJob[]>([]);
+  const [targets, setTargets] = useState<Record<string, string>>({});
   const [incidents, setIncidents] = useState<Awaited<ReturnType<typeof api.incidents>>["items"]>([]);
   const [notes, setNotes] = useState<Awaited<ReturnType<typeof api.notifications>>["items"]>([]);
   const [err, setErr] = useState<string | null>(null);
@@ -47,7 +48,11 @@ export function MaintenanceCenter() {
 
   const load = useCallback(async () => {
     try {
-      const [s, p, j, i, n] = await Promise.all([api.maintState(), api.maintPolicies(), api.maintJobs(), api.incidents(), api.notifications()]);
+      const [s, p, j, i, n, sv, rs] = await Promise.all([api.maintState(), api.maintPolicies(), api.maintJobs(), api.incidents(), api.notifications(), api.state(), api.sysResources().catch(() => ({ items: [] as SysResource[], broker: {} }))]);
+      const names: Record<string, string> = {};
+      for (const a of sv.apps as { appId: string; name?: string; title?: string }[]) names[`app:${a.appId}`] = a.name ?? a.title ?? a.appId;
+      for (const r of rs.items) names[`${r.kind}:${r.resourceId}`] = r.displayName;
+      setTargets(names);
       setSt(s);
       setPolicies(p.items);
       setJobs(j.items);
@@ -80,6 +85,7 @@ export function MaintenanceCenter() {
   const paused = st.state === "paused";
   const rootOk = st.root === "synced";
   const enabled = policies.filter((p) => ["enabled", "syncing", "approved"].includes(p.state));
+  const pending = policies.filter((p) => p.state === "pending_approval");
   const last = ((st.budgets?.usage as { last24h?: { requests: number; background: number; backgroundOutputTokens: number; usageUnknown: number } } | undefined)?.last24h) ?? { requests: 0, background: 0, backgroundOutputTokens: 0, usageUnknown: 0 };
   const limits = (st.budgets?.limits ?? {}) as { modelRequestsPer24h?: number; backgroundModelRequestsPer24h?: number; backgroundOutputTokensPer24h?: number };
   return (
@@ -98,6 +104,26 @@ export function MaintenanceCenter() {
           {paused ? "恢复自动维护" : "⏸ 暂停全部自动维护"}
         </button>
       </div>
+
+      {pending.length > 0 && (
+        <>
+          <h4>等待你批准的策略（{pending.length}）</h4>
+          <ul className="policy-approvals" aria-label="待批准策略">
+            {pending.map((p) => (
+              <li key={`${p.policyId}/${p.version}`} className="policy-card" data-policy-id={p.policyId}>
+                <div><strong>{TPL_TEXT[p.templateId] ?? p.templateId}</strong> · 版本 {p.version}</div>
+                <div className="small">目标：{p.target.kind === "workspace" ? "整个工作区" : (targets[`${p.target.kind}:${p.target.id}`] ?? `${p.target.kind} ${p.target.id}`)}</div>
+                <div className="small">自动执行的动作：{p.mode === "automatic" && (p.automaticActions?.length ?? 0) > 0 ? p.automaticActions!.join("、") : "无（只观察或只给建议）"}</div>
+                <div className="small">频率：{p.trigger.kind === "interval" ? `每 ${Math.round((p.trigger.intervalSeconds ?? 0) / 60)} 分钟检查` : p.trigger.kind === "event" ? "事件触发" : "只在手动检查时"}</div>
+                <div className="small">额度：{p.bounds.perHour !== undefined ? `每小时最多 ${p.bounds.perHour} 次 · 24 小时最多 ${p.bounds.per24h} 次 · 冷却 ${Math.round((p.bounds.cooldownSeconds ?? 0) / 60)} 分钟` : "不执行变更"}{p.usesModel ? " · 使用后台模型额度" : ""}</div>
+                <div className="small">期限：到 {p.approval.expiresAt ? p.approval.expiresAt.slice(0, 16).replace("T", " ") : "—"} 为止，不自动续期；参数或版本变化都需要重新批准。</div>
+                <div className="small muted">策略指纹 {p.policyHash.slice(0, 19)}…</div>
+                <button className="primary small" disabled={busy} onClick={() => void act(() => api.maintPolicyApprove(p.policyId, p.version, p.policyHash, newKey()))}>批准此范围</button>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
 
       <h4>已启用的范围（{enabled.length}）</h4>
       {enabled.length === 0 ? (

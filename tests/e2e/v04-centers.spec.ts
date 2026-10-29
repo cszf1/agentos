@@ -61,6 +61,11 @@ test("V4 task center and maintenance center", async ({ page }) => {
     expect(["running", "queued", "succeeded"]).toContain(r.data.status);
   }
 
+  // U03: an accepted (202) task is shown as queued/running, never as a success
+  await expect(center.locator(".slot.busy").first()).not.toContainText("已完成");
+  await expect(center.locator(".slot.busy").first()).not.toContainText("成功");
+
+
   // maintenance center: prominent pause, local vs executor confirmation shown separately
   await page.getByRole("button", { name: /维护中心/ }).click();
   const mc = page.getByRole("region", { name: "维护中心" });
@@ -80,6 +85,22 @@ test("V4 task center and maintenance center", async ({ page }) => {
   await expect(mc.locator(".maint-switch")).toContainText("自动维护运行中");
   expect((await c.get("/api/maintenance/state")).data.state).toBe("running");
 
+
   // the two remaining tasks finish on their own
   for (const id of ids.filter((x) => x !== queuedId)) await c.waitRun(id, 120_000);
+
+  // U02: a policy waiting for approval shows its real target, automatic actions, frequency, limits and expiry
+  const created = await c.req("POST", "/api/maintenance/policies", { templateId: "app-recovery", target: { kind: "app", id: (await c.get(`/api/runs/${ids[0]}`)).data.targetAppId }, mode: "automatic", trigger: { kind: "interval", intervalSeconds: 900 } });
+  expect(created.status, JSON.stringify(created)).toBe(201);
+  const card = mc.getByRole("list", { name: "待批准策略" }).locator(`li[data-policy-id="${created.data.policyId}"]`);
+  await expect(card).toContainText("目标：待办", { timeout: 15_000 });
+  await expect(card).toContainText("自动执行的动作");
+  await expect(card).toContainText("每 15 分钟检查");
+  await expect(card).toContainText("每小时最多");
+  await expect(card).toContainText("不自动续期");
+  await card.getByRole("button", { name: "批准此范围" }).click();
+  await expect(card).toHaveCount(0, { timeout: 15_000 });
+  const pol = (await c.get("/api/maintenance/policies")).data.items.find((p: { policyId: string }) => p.policyId === created.data.policyId);
+  expect(["enabled", "syncing"]).toContain(pol.state);
+  expect(pol.approval.approvedAt).toBeTruthy();
 });
