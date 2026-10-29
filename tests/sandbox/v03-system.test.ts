@@ -402,8 +402,8 @@ run("v0.3 host system path (real broker, real sandbox)", () => {
     const obs = caps().observations.events(0, 50);
     expect(Array.isArray(obs.cursors)).toBe(true);
     for (const c of obs.cursors) expect(["fresh", "stale", "gap", "unavailable"]).toContain(c.quality);
-    // the telemetry cursor is unavailable on this kernel and says so (never "fresh with no events")
-    expect(caps().observations.telemetry.available).toBe(false);
+    // No BTF: unavailable, never "fresh with no events". A kernel with BTF may have a live collector.
+    if (!fs.existsSync("/sys/kernel/btf/vmlinux")) expect(caps().observations.telemetry.available).toBe(false);
   });
 
   it("V3-O07 bounded queues: at most 4 waiting plans per app; more are refused without deleting anything", async () => {

@@ -63,7 +63,9 @@ describe.skipIf(!hasBroker())("V3-T05/T06 on this host (collector unavailable)",
       await waitUntil(() => rig.caps.state().brokerReady, (x) => x === true, 20_000, 200);
       const st = rig.caps.state();
       expect(st.brokerReady).toBe(true);
-      expect(rig.caps.observations.telemetry.available).toBe(false);
+      // No BTF: the collector must say unavailable. With BTF and a loaded collector, available is true.
+      // Either way, telemetry must not create grants or system actions.
+      if (!fs.existsSync("/sys/kernel/btf/vmlinux")) expect(rig.caps.observations.telemetry.available).toBe(false);
       // Telemetry being down does not change what a grant allows: grants still come only from the user.
       expect(rig.caps.grants.list({ principalKind: "app" }).filter((g) => g.state === "active")).toEqual([]);
       const before = rig.core.store.get<{ n: number }>("SELECT COUNT(*) AS n FROM system_actions")!.n;
