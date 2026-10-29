@@ -544,7 +544,7 @@ fn client(sh: Shared, s: UnixStream) {
                     let mut st = sh.0.lock().unwrap();
                     let oldest = st.events.front().and_then(|e| e["sourceSeq"].as_u64()).unwrap_or(st.seq + 1);
                     // A resume from another epoch or from before the retained window is a gap.
-                    if epoch.as_deref().map_or(false, |e| e != st.epoch) || (since > 0 && since + 1 < oldest) {
+                    if epoch.as_deref().is_some_and(|e| e != st.epoch) || (since > 0 && since + 1 < oldest) {
                         let ev = json!({"type": "gap", "reason": "resume_outside_window", "sourceEpoch": st.epoch, "sourceSeq": st.seq, "kernelDrops": st.kernel_drops, "userDrops": st.user_drops});
                         drop(st);
                         if !reply(ev) {

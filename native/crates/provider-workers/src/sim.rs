@@ -159,7 +159,7 @@ fn main() {
                 }
                 let resp = if g.garbage_next {
                     g.garbage_next = false;
-                    format!("<deadbeef:OK:stale\n")
+                    "<deadbeef:OK:stale\n".to_string()
                 } else {
                     match cmd {
                         "SAMPLE" => {

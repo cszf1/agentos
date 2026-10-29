@@ -227,7 +227,7 @@ fn p<T: serde::de::DeserializeOwned>(v: &Value) -> Result<T, BErr> {
     serde_json::from_value(v.clone()).map_err(|e| BErr::new("INVALID_SYSTEM_PLAN", format!("params: {e}")))
 }
 
-fn bound<'a>(sess: &'a Session, store: &str) -> Result<(), BErr> {
+fn bound(sess: &Session, store: &str) -> Result<(), BErr> {
     match &sess.store {
         Some(s) if s == store => Ok(()),
         _ => Err(BErr::new("BROKER_IDENTITY_MISMATCH", "this connection is not bound to that workspace; handshake first")),
@@ -510,7 +510,7 @@ fn history(b: &Shared, sess: &mut Session, h: &HistoryParams) -> Result<Value, B
         "SELECT operation_id, action_id, incarnation, state, completion_kind, effect_certainty, evidence_kind, evidence_json, result_json, error_code, error_message, resolution_json, capability_id, resource_id, resource_generation, accepted_seq, updated_seq, request_hash, plan_hash, compensates_operation_id, deadline_ms, cancel_requested, reconcile_attempts, external_ref, maintenance_json
          FROM effect_operations WHERE machine_install_id=?1 AND store_uuid=?2 AND updated_seq > ?3 ORDER BY updated_seq LIMIT ?4",
     )?;
-    let ops: Vec<Value> = st.query_map(params![b.install_id, h.store_uuid, h.since_seq as i64, limit], |r| row_view(r))?.filter_map(|x| x.ok()).collect();
+    let ops: Vec<Value> = st.query_map(params![b.install_id, h.store_uuid, h.since_seq as i64, limit], row_view)?.filter_map(|x| x.ok()).collect();
     let last: i64 = db::meta(c, "seq").and_then(|s| s.parse().ok()).unwrap_or(0);
     Ok(json!({"operations": ops, "lastSeq": last}))
 }

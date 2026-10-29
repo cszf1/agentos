@@ -118,6 +118,7 @@ impl Broker {
         }
     }
 
+    #[allow(clippy::too_many_arguments)] // one argument per worker-call field; folding them would be a new type for no behavior change
     pub fn call_worker(
         &self,
         kind: &str,
@@ -193,7 +194,7 @@ pub fn op_view(c: &Connection, install: &str, store: &str, inc: i64, op_id: &str
             "SELECT operation_id, action_id, incarnation, state, completion_kind, effect_certainty, evidence_kind, evidence_json, result_json, error_code, error_message, resolution_json, capability_id, resource_id, resource_generation, accepted_seq, updated_seq, request_hash, plan_hash, compensates_operation_id, deadline_ms, cancel_requested, reconcile_attempts, external_ref, maintenance_json
              FROM effect_operations WHERE machine_install_id=?1 AND store_uuid=?2 AND incarnation=?3 AND operation_id=?4",
             params![install, store, inc, op_id],
-            |r| row_view(r),
+            row_view,
         )
         .optional()?;
     let Some(mut v) = row else { return Ok(None) };

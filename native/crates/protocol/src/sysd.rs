@@ -108,10 +108,8 @@ pub fn wait_job(c: &Connection, rx: &mpsc::Receiver<(String, String, String)>, u
                 // Signal not seen yet: if the unit no longer has a job pending, the job is done.
                 if let Ok(d) = describe(c, unit) {
                     let st = d["activeState"].as_str().unwrap_or("");
-                    if st != "activating" && st != "deactivating" && st != "reloading" {
-                        if !job_exists(c, job) {
-                            break;
-                        }
+                    if st != "activating" && st != "deactivating" && st != "reloading" && !job_exists(c, job) {
+                        break;
                     }
                 }
             }

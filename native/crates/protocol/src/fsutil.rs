@@ -150,7 +150,7 @@ pub fn list(root: RawFd, rel: &str, cursor: Option<&str>, limit: usize) -> Resul
     names.sort();
     let mut out = Vec::new();
     let mut next = None;
-    for n in names.into_iter().filter(|n| cursor.map_or(true, |c| n.as_str() > c)) {
+    for n in names.into_iter().filter(|n| cursor.is_none_or(|c| n.as_str() > c)) {
         if out.len() == limit {
             next = out.last().map(|e: &Entry| e.name.clone());
             break;

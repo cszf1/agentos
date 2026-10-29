@@ -406,7 +406,8 @@ impl MaintenanceWriteEnvelope {
             ("policyId", &self.policy_id, 64),
             ("triggerKey", &self.trigger_key, 200),
         ] {
-            if !token_ok(v, max) && !(name == "triggerKey" && v.len() <= 200 && !v.is_empty() && v.bytes().all(|b| b.is_ascii_graphic())) {
+            // triggerKey may contain extra graphic characters that token_ok rejects; everything else must be a token.
+            if !(token_ok(v, max) || (name == "triggerKey" && v.len() <= 200 && !v.is_empty() && v.bytes().all(|b| b.is_ascii_graphic()))) {
                 return Err(format!("{name} is malformed"));
             }
         }

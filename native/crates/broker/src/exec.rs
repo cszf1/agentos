@@ -971,7 +971,7 @@ fn admission(b: &Broker, op: &OpRow) -> Admission {
             "the resource is quarantined until an unknown result is resolved",
         ));
     }
-    if lock.as_deref().map_or(false, |l| l != op.op_id) {
+    if lock.as_deref().is_some_and(|l| l != op.op_id) {
         let _ = tx.commit();
         return Admission::Wait;
     }
