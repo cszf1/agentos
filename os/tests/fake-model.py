@@ -3,7 +3,7 @@
 # streamed text, so the test can watch how many real HTTP model requests the Hosts have in flight at once.
 # The workspace is the first path segment (the Host unit's base URL is http://127.0.0.1:18080/<workspaceId>/v1).
 # State: /run/fake-model/log.jsonl (one line per request start/end) and /run/fake-model/state.json.
-import json, os, threading, time
+import hashlib, json, os, threading, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 D = "/run/fake-model"
@@ -54,7 +54,9 @@ class H(BaseHTTPRequestHandler):
             if tot > peak["total"]:
                 peak["total"] = tot
             peak["pairs"].append(sorted(k for k, v in inflight.items() for _ in range(v)))
-            log({"ev": "start", "ws": ws, "kind": kind, "t": t0, "inflight": dict(inflight), "kinds": dict(kinds)})
+            # which credential the Host used: a short hash of the Authorization header (never the key itself)
+            auth = hashlib.sha256((self.headers.get("authorization") or "").encode()).hexdigest()[:16]
+            log({"ev": "start", "ws": ws, "kind": kind, "t": t0, "inflight": dict(inflight), "kinds": dict(kinds), "auth": auth})
             snapshot()
         try:
             time.sleep(hold())

@@ -30,7 +30,7 @@ pub struct SecretStore {
 
 impl SecretStore {
     pub fn put(&mut self, kind: &str, value: &[u8]) -> R<String> {
-        if !matches!(kind, "password" | "wifi-psk") || value.is_empty() || value.len() > 512 {
+        if !matches!(kind, "password" | "wifi-psk" | "provider-key") || value.is_empty() || value.len() > 512 {
             return Err(MErr::new("INVALID_REQUEST", "bad secret"));
         }
         let id = format!("secret:{}", uuid());
@@ -85,6 +85,88 @@ pub fn nm_device_state(iface: &str) -> R<Value> {
     Ok(json!({ "iface": iface, "state": state, "deviceType": dtype, "activeConnection": ac_id, "connected": state == 100 }))
 }
 
+/// Access points a Wi-Fi device currently sees: (ssid, RsnFlags, WpaFlags, Flags), strongest first, deduplicated.
+pub fn nm_aps(c: &Connection, dev: &OwnedObjectPath) -> Vec<(String, u32, u32, u32)> {
+    let aps: Vec<OwnedObjectPath> = prop(c, "org.freedesktop.NetworkManager", dev.as_str(), "org.freedesktop.NetworkManager.Device.Wireless", "AccessPoints")
+        .ok()
+        .and_then(|v| Vec::<OwnedObjectPath>::try_from(v).ok())
+        .unwrap_or_default();
+    let mut out: Vec<(String, u32, u32, u32, u8)> = vec![];
+    for ap in aps {
+        let g = |n: &str| prop(c, "org.freedesktop.NetworkManager", ap.as_str(), "org.freedesktop.NetworkManager.AccessPoint", n);
+        let ssid: Vec<u8> = g("Ssid").ok().and_then(|v| Vec::<u8>::try_from(v).ok()).unwrap_or_default();
+        let ssid = String::from_utf8_lossy(&ssid).into_owned();
+        if ssid.is_empty() {
+            continue;
+        }
+        let u = |n: &str| g(n).ok().and_then(|v| u32::try_from(v).ok()).unwrap_or(0);
+        let strength: u8 = g("Strength").ok().and_then(|v| u8::try_from(v).ok()).unwrap_or(0);
+        out.push((ssid, u("RsnFlags"), u("WpaFlags"), u("Flags"), strength));
+    }
+    out.sort_by(|a, b| b.4.cmp(&a.4));
+    let mut seen = std::collections::HashSet::new();
+    out.into_iter().filter(|a| seen.insert(a.0.clone())).map(|a| (a.0, a.1, a.2, a.3)).collect()
+}
+
+/// key-mgmt for a personal network (spec §12.1: WPA2/WPA3 Personal only): SAE when the AP offers SAE and not PSK.
+pub fn key_mgmt_for(rsn: u32, wpa: u32, flags: u32) -> Option<&'static str> {
+    const PSK: u32 = 0x100;
+    const SAE: u32 = 0x400;
+    const EAP: u32 = 0x200;
+    if rsn & SAE != 0 && rsn & PSK == 0 {
+        return Some("sae");
+    }
+    if rsn & PSK != 0 || wpa & PSK != 0 {
+        return Some("wpa-psk");
+    }
+    if rsn & EAP != 0 || wpa & EAP != 0 {
+        return None; // enterprise: not offered
+    }
+    if flags & 1 == 0 && rsn == 0 && wpa == 0 {
+        return Some("none"); // open network
+    }
+    None // WEP or unknown: not offered
+}
+
+fn wifi_iface(c: &Connection) -> Option<String> {
+    let devs: Vec<OwnedObjectPath> = c
+        .call_method(Some("org.freedesktop.NetworkManager"), "/org/freedesktop/NetworkManager", Some("org.freedesktop.NetworkManager"), "GetDevices", &())
+        .ok()?
+        .body()
+        .deserialize()
+        .ok()?;
+    devs.iter().find_map(|d| {
+        let t: u32 = prop(c, "org.freedesktop.NetworkManager", d.as_str(), "org.freedesktop.NetworkManager.Device", "DeviceType").ok().and_then(|v| u32::try_from(v).ok()).unwrap_or(0);
+        if t != 2 {
+            return None;
+        }
+        prop(c, "org.freedesktop.NetworkManager", d.as_str(), "org.freedesktop.NetworkManager.Device", "Interface").ok().and_then(|v| String::try_from(v).ok())
+    })
+}
+
+/// Saved NetworkManager connections whose id is `id` (machined names a Wi-Fi connection after its SSID).
+fn nm_connections_named(c: &Connection, id: &str) -> Vec<OwnedObjectPath> {
+    let list: Vec<OwnedObjectPath> = c
+        .call_method(Some("org.freedesktop.NetworkManager"), "/org/freedesktop/NetworkManager/Settings", Some("org.freedesktop.NetworkManager.Settings"), "ListConnections", &())
+        .ok()
+        .and_then(|m| m.body().deserialize().ok())
+        .unwrap_or_default();
+    list.into_iter()
+        .filter(|p| {
+            c.call_method(Some("org.freedesktop.NetworkManager"), p.as_str(), Some("org.freedesktop.NetworkManager.Settings.Connection"), "GetSettings", &())
+                .ok()
+                .and_then(|m| m.body().deserialize::<HashMap<String, HashMap<String, OwnedValue>>>().ok())
+                .and_then(|st| st.get("connection").and_then(|x| x.get("id")).and_then(|v| v.try_clone().ok()).and_then(|v| String::try_from(v).ok()))
+                .map(|x| x == id)
+                .unwrap_or(false)
+        })
+        .collect()
+}
+
+fn nm_delete(c: &Connection, p: &OwnedObjectPath) {
+    let _ = c.call_method(Some("org.freedesktop.NetworkManager"), p.as_str(), Some("org.freedesktop.NetworkManager.Settings.Connection"), "Delete", &());
+}
+
 pub fn nm_overview() -> Value {
     let c = match dbus() {
         Ok(c) => c,
@@ -106,7 +188,13 @@ pub fn nm_overview() -> Value {
         }
     }
     let conn: u32 = prop(&c, "org.freedesktop.NetworkManager", "/org/freedesktop/NetworkManager", "org.freedesktop.NetworkManager", "Connectivity").ok().and_then(|v| u32::try_from(v).ok()).unwrap_or(0);
-    json!({ "available": true, "devices": out, "connectivity": conn })
+    let wifi = wifi_iface(&c);
+    let ssids: Vec<String> = match wifi.as_deref().and_then(|w| nm_device(&c, w).ok()) {
+        Some(d) => nm_aps(&c, &d).into_iter().filter(|a| key_mgmt_for(a.1, a.2, a.3).is_some()).map(|a| a.0).collect(),
+        None => vec![],
+    };
+    let connected = out.iter().find(|d| d["connected"] == true).and_then(|d| d["activeConnection"].as_str()).unwrap_or_default().to_string();
+    json!({ "available": true, "devices": out, "connectivity": conn, "wifiDevice": wifi, "ssids": ssids, "connected": if connected.is_empty() { Value::Null } else { json!(connected) } })
 }
 
 fn logind_call(method: &str, arg: bool) -> R<()> {
@@ -140,8 +228,14 @@ impl Executor for RealExecutor {
     fn probe(&mut self, kind: &str, p: &Value) -> R<(String, i64, Value)> {
         let gen = |v: &Value| -> i64 { i64::from_str_radix(&hash("agentos.machine.resource.v1", v)[7..19], 16).unwrap_or(0) };
         match kind {
-            "network.wifi.connect" | "network.wifi.forget" | "network.device.disconnect" | "network.device.connect" => {
+            "network.wifi.connect" | "network.wifi.forget" | "network.wifi.disconnect" | "network.device.disconnect" | "network.device.connect" => {
                 let iface = p["device"].as_str().ok_or_else(|| MErr::new("INVALID_REQUEST", "device is required"))?;
+                if kind == "network.wifi.connect" {
+                    let ssid = p["ssid"].as_str().unwrap_or_default();
+                    if ssid.is_empty() || ssid.len() > 32 {
+                        return Err(MErr::new("INVALID_REQUEST", "ssid must be 1..32 bytes"));
+                    }
+                }
                 if iface.len() > 15 || !iface.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
                     return Err(MErr::new("INVALID_REQUEST", "bad device name"));
                 }
@@ -193,6 +287,11 @@ impl Executor for RealExecutor {
                 Ok((format!("workspace:{ws}:delete"), 1, json!({ "workspaceId": ws, "dataDisposition": p["dataDisposition"], "exportSetId": p["exportSetId"], "summary": if kind == "workspaces.delete" { "delete the workspace data; its UID and storeUUID stay as a tombstone" } else { "owner confirms deleting this workspace" } })))
             }
             "updates.activate" | "updates.rollback" | "restores.confirm" => Ok((format!("{kind}:{}", p["id"].as_str().unwrap_or_default()), 1, json!({ "id": p["id"] }))),
+            "workspaces.modelCredential.set" => {
+                let ws = p["workspaceId"].as_str().unwrap_or_default();
+                // the plan shows what changes, never the key (it is only a secretRef here)
+                Ok((format!("workspace:{ws}:modelCredential"), 1, json!({ "workspaceId": ws, "provider": p["provider"], "modelId": p["modelId"], "baseUrl": p["baseUrl"], "summary": "set this workspace's model credential (the key goes to the workspace only, never to a log or a backup)" })))
+            }
             _ => Err(MErr::new("INVALID_REQUEST", "unknown kind")),
         }
     }
@@ -210,35 +309,71 @@ impl Executor for RealExecutor {
                 };
                 let c = dbus()?;
                 let dev = nm_device(&c, iface)?;
+                let ap = nm_aps(&c, &dev).into_iter().find(|a| a.0 == ssid).ok_or_else(|| MErr::new("FAILED_NO_EFFECT", "the network is not in range"))?;
+                let km = key_mgmt_for(ap.1, ap.2, ap.3).ok_or_else(|| MErr::new("HARDWARE_UNSUPPORTED", "only open, WPA2 and WPA3 Personal networks are supported"))?;
+                if km != "none" && psk.is_none() {
+                    return Err(MErr::new("FAILED_NO_EFFECT", "this network needs a key"));
+                }
+                // one connection per SSID: an earlier one (maybe with a rejected key) is removed first
+                for old in nm_connections_named(&c, ssid) {
+                    nm_delete(&c, &old);
+                }
+                let cuuid = uuid();
                 let mut conn: HashMap<&str, HashMap<&str, ZValue>> = HashMap::new();
                 let mut s_conn = HashMap::new();
                 s_conn.insert("type", ZValue::from("802-11-wireless"));
                 s_conn.insert("id", ZValue::from(ssid.to_string()));
+                s_conn.insert("uuid", ZValue::from(cuuid.clone()));
                 conn.insert("connection", s_conn);
                 let mut s_wifi = HashMap::new();
                 s_wifi.insert("ssid", ZValue::from(ssid.as_bytes().to_vec()));
                 conn.insert("802-11-wireless", s_wifi);
-                if let Some(k) = &psk {
+                let keys = if let Some(k) = psk {
+                    // agent-owned (psk-flags 1): NetworkManager asks machined's agent and never stores the key
+                    let keys = crate::nmagent::ensure().map_err(|e| MErr::new("HARDWARE_UNSUPPORTED", e))?;
+                    keys.lock().unwrap().put(&cuuid, k);
                     let mut sec = HashMap::new();
-                    sec.insert("key-mgmt", ZValue::from("wpa-psk"));
-                    sec.insert("psk", ZValue::from(String::from_utf8_lossy(k).to_string()));
+                    sec.insert("key-mgmt", ZValue::from(km));
+                    sec.insert("psk-flags", ZValue::from(1u32));
                     conn.insert("802-11-wireless-security", sec);
-                }
+                    Some(keys)
+                } else {
+                    None
+                };
                 let root = OwnedObjectPath::try_from("/").unwrap();
-                c.call_method(Some("org.freedesktop.NetworkManager"), "/org/freedesktop/NetworkManager", Some("org.freedesktop.NetworkManager"), "AddAndActivateConnection", &(conn, &dev, &root))
-                    .map_err(|e| MErr::new("SYSTEM_FAILED", e.to_string()))?;
+                let added = c.call_method(Some("org.freedesktop.NetworkManager"), "/org/freedesktop/NetworkManager", Some("org.freedesktop.NetworkManager"), "AddAndActivateConnection", &(conn, &dev, &root));
+                let conn_path: Option<OwnedObjectPath> = match added {
+                    Ok(m) => m.body().deserialize::<(OwnedObjectPath, OwnedObjectPath)>().ok().map(|x| x.0),
+                    Err(e) => {
+                        if let Some(k) = &keys {
+                            k.lock().unwrap().drop_key(&cuuid);
+                        }
+                        return Err(MErr::new("FAILED_NO_EFFECT", format!("NetworkManager refused the connection: {e}")));
+                    }
+                };
                 // Wait (bounded) for the device to reach a terminal state; the reconcile step reads the real outcome.
-                for _ in 0..60 {
-                    let st = nm_device_state(iface)?;
-                    let s = st["state"].as_u64().unwrap_or(0);
-                    if s == 100 || s == 120 || s == 30 {
-                        return Ok(st);
+                let mut last = nm_device_state(iface)?;
+                for _ in 0..90 {
+                    last = nm_device_state(iface)?;
+                    let st = last["state"].as_u64().unwrap_or(0);
+                    if st == 100 && last["activeConnection"].as_str() == Some(ssid) {
+                        return Ok(last);
+                    }
+                    if st == 120 || (st == 30 && last["activeConnection"].as_str() != Some(ssid)) {
+                        break;
                     }
                     std::thread::sleep(std::time::Duration::from_millis(500));
                 }
-                nm_device_state(iface)
+                // not connected (wrong key, AP gone): remove what was created, forget the key; the state says why
+                if let Some(cp) = &conn_path {
+                    nm_delete(&c, cp);
+                }
+                if let Some(k) = &keys {
+                    k.lock().unwrap().drop_key(&cuuid);
+                }
+                Ok(last)
             }
-            "network.device.disconnect" | "network.device.connect" | "network.wifi.forget" => {
+            "network.device.disconnect" | "network.device.connect" | "network.wifi.forget" | "network.wifi.disconnect" => {
                 let iface = p["device"].as_str().unwrap_or_default();
                 let c = dbus()?;
                 let dev = nm_device(&c, iface)?;
@@ -293,6 +428,24 @@ impl Executor for RealExecutor {
                 m.set_run_when_logged_out(op["initiator"].as_str().unwrap_or_default(), p["workspaceId"].as_str().unwrap_or_default(), enabled)?;
                 Ok(json!({ "runWhenLoggedOut": enabled }))
             }
+            "workspaces.modelCredential.set" => {
+                let ws = p["workspaceId"].as_str().unwrap_or_default();
+                let (role, _) = m.membership(op["initiator"].as_str().unwrap_or_default(), ws)?;
+                if role != crate::dir::Role::Owner {
+                    return Err(MErr::hidden());
+                }
+                let key = self.secrets.lock().unwrap().take(p["secretRef"].as_str().ok_or_else(|| MErr::new("INVALID_REQUEST", "the key is required"))?)?;
+                let row = m.ws_row(ws)?;
+                let uid = row["executionUid"].as_u64().unwrap_or(0) as u32;
+                let r = write_model_credential(ws, uid, p, &key);
+                let mut key = key;
+                key.iter_mut().for_each(|b| *b = 0);
+                r?;
+                Machine::audit(&m.c, op["initiator"].as_str().unwrap_or_default(), "workspace.model_credential", Some(ws), "set", op["operationId"].as_str())?;
+                // the Host reads it at start: restart it if it runs (a stopped workspace picks it up on its next start)
+                let restarted = crate::sys::user_unit_ctl(uid, &["try-restart", &format!("agentos-host@{ws}.service")]).is_ok();
+                Ok(json!({ "written": true, "workspaceId": ws, "hostRestarted": restarted }))
+            }
             "workspaces.deleteConsent" => {
                 let ws = p["workspaceId"].as_str().unwrap_or_default();
                 m.delete_consent_check(op["initiator"].as_str().unwrap_or_default(), ws)?;
@@ -316,7 +469,8 @@ impl Executor for RealExecutor {
                 let st = nm_device_state(p["device"].as_str()?).ok()?;
                 Some(st["state"] == 100 && st["activeConnection"].as_str() == p["ssid"].as_str())
             }
-            "network.device.disconnect" | "network.wifi.forget" => nm_device_state(p["device"].as_str()?).ok().map(|s| s["state"].as_u64().unwrap_or(0) < 40),
+            "network.device.disconnect" | "network.wifi.forget" | "network.wifi.disconnect" => nm_device_state(p["device"].as_str()?).ok().map(|s| s["state"].as_u64().unwrap_or(0) < 40),
+            "workspaces.modelCredential.set" => Some(dispatched["written"] == true),
             "network.device.connect" => nm_device_state(p["device"].as_str()?).ok().map(|s| s["state"] == 100),
             "time.timezone.set" => timezone().ok().map(|z| Some(z.as_str()) == p["zone"].as_str()),
             "time.ntp.enable" => Some(true),
@@ -354,4 +508,97 @@ pub fn upower() -> Value {
     let pct: f64 = prop(&c, "org.freedesktop.UPower", "/org/freedesktop/UPower/devices/DisplayDevice", "org.freedesktop.UPower.Device", "Percentage").ok().and_then(|v| f64::try_from(v).ok()).unwrap_or(-1.0);
     let on_battery: Option<bool> = prop(&c, "org.freedesktop.UPower", "/org/freedesktop/UPower", "org.freedesktop.UPower", "OnBattery").ok().and_then(|v| bool::try_from(v).ok());
     json!({ "available": on_battery.is_some(), "batteryPresent": present, "percentage": if present { json!(pct) } else { Value::Null }, "onBattery": on_battery })
+}
+
+/// Validate the non-secret parts of a model credential (they end up in a systemd EnvironmentFile: no quoting games).
+pub fn model_credential_params(p: &Value) -> R<()> {
+    let ok = |v: &str, max: usize, extra: &str| !v.is_empty() && v.len() <= max && v.chars().all(|c| c.is_ascii_alphanumeric() || extra.contains(c));
+    let prov = p["provider"].as_str().unwrap_or_default();
+    if !ok(prov, 40, "-_") {
+        return Err(MErr::new("INVALID_REQUEST", "provider"));
+    }
+    if !ok(p["modelId"].as_str().unwrap_or_default(), 120, "-_.:/@") {
+        return Err(MErr::new("INVALID_REQUEST", "modelId"));
+    }
+    if let Some(u) = p["baseUrl"].as_str() {
+        if !(u.starts_with("https://") || u.starts_with("http://")) || !ok(u, 300, "-_.:/@%?=&~+") {
+            return Err(MErr::new("INVALID_REQUEST", "baseUrl"));
+        }
+    } else if !p["baseUrl"].is_null() {
+        return Err(MErr::new("INVALID_REQUEST", "baseUrl"));
+    }
+    if p["workspaceId"].as_str().map(crate::util::is_uuid) != Some(true) {
+        return Err(MErr::new("INVALID_REQUEST", "workspaceId"));
+    }
+    Ok(())
+}
+
+/// The workspace's model credential (spec §5.2 "每个工作区拥有自己的…模型凭据"; §21.4 a key is re-entered after an import):
+/// `/var/lib/agentos/workspaces/<ws>/model.env`, 0600, owned by the execution UID, outside `data/` so it is in no
+/// checkpoint or export; the Host unit reads it as an EnvironmentFile. Written atomically.
+pub fn model_credential_text(p: &Value, key: &[u8]) -> R<String> {
+    model_credential_params(p)?;
+    let k = std::str::from_utf8(key).map_err(|_| MErr::new("INVALID_REQUEST", "key"))?;
+    if k.is_empty() || k.len() > 512 || !k.chars().all(|c| c.is_ascii_graphic()) {
+        return Err(MErr::new("INVALID_REQUEST", "the key must be printable ASCII without spaces"));
+    }
+    let mut t = format!("AGENTOS_MODEL_PROVIDER={}\nAGENTOS_MODEL_ID={}\n", p["provider"].as_str().unwrap_or_default(), p["modelId"].as_str().unwrap_or_default());
+    if let Some(u) = p["baseUrl"].as_str() {
+        t.push_str(&format!("AGENTOS_MODEL_BASE_URL={u}\n"));
+    }
+    t.push_str(&format!("AGENTOS_MODEL_API_KEY={k}\n"));
+    Ok(t)
+}
+
+fn write_model_credential(ws: &str, uid: u32, p: &Value, key: &[u8]) -> R<()> {
+    use std::io::Write;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    let mut text = model_credential_text(p, key)?;
+    let root = std::path::Path::new("/var/lib/agentos/workspaces").join(ws);
+    let tmp = root.join(".model.env.tmp");
+    let _ = std::fs::remove_file(&tmp);
+    let res = (|| -> std::io::Result<()> {
+        let mut f = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&tmp)?;
+        f.write_all(text.as_bytes())?;
+        f.sync_all()?;
+        std::os::unix::fs::chown(&tmp, Some(uid), Some(uid))?;
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))?;
+        std::fs::rename(&tmp, root.join("model.env"))?;
+        std::fs::File::open(&root)?.sync_all()
+    })();
+    unsafe { text.as_bytes_mut().iter_mut().for_each(|b| *b = 0) };
+    res.map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        MErr::new("SYSTEM_FAILED", format!("model credential: {e}"))
+    })
+}
+
+#[cfg(test)]
+mod wifi_tests {
+    use super::*;
+
+    #[test]
+    fn i11_personal_networks_only_and_sae_when_psk_is_absent() {
+        assert_eq!(key_mgmt_for(0x188, 0, 1), Some("wpa-psk"));
+        assert_eq!(key_mgmt_for(0x588, 0, 1), Some("wpa-psk")); // transition mode: PSK still offered
+        assert_eq!(key_mgmt_for(0x488, 0, 1), Some("sae"));
+        assert_eq!(key_mgmt_for(0x288, 0, 1), None); // enterprise
+        assert_eq!(key_mgmt_for(0, 0, 1), None); // WEP
+        assert_eq!(key_mgmt_for(0, 0, 0), Some("none"));
+    }
+
+    #[test]
+    fn i11_model_credential_file_is_plain_env_and_refuses_injection() {
+        let p = json!({ "workspaceId": "00000000-0000-4000-8000-000000000001", "provider": "openai-compatible", "modelId": "qwen3.8-flash", "baseUrl": "https://example.invalid/v1" });
+        let t = model_credential_text(&p, b"sk-test123").unwrap();
+        assert!(t.ends_with("AGENTOS_MODEL_API_KEY=sk-test123\n") && t.contains("AGENTOS_MODEL_BASE_URL=https://example.invalid/v1\n"), "{t}");
+        assert!(model_credential_text(&p, b"a b").is_err());
+        assert!(model_credential_text(&p, b"x\nAGENTOS_MODEL_MODE=faux").is_err());
+        let mut q = p.clone();
+        q["modelId"] = json!("m\nAGENTOS_MODEL_MODE=faux");
+        assert!(model_credential_text(&q, b"k").is_err());
+        q = p.clone();
+        q["baseUrl"] = json!("file:///etc/shadow");
+        assert!(model_credential_text(&q, b"k").is_err());
+    }
 }

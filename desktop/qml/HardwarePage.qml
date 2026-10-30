@@ -15,8 +15,10 @@ PageFrame {
         Row { spacing: 8
             ASelect { id: ssid; label: "Wi-Fi 网络"; value: ""; options: (hw.network && hw.network.ssids ? hw.network.ssids : []).map(function(s) { return { value: s, label: s } }) }
             AField { id: wifiPass; objectName: "wifiPassword"; label: "Wi-Fi 密码"; echoMode: TextInput.Password; sensitive: true; width: 180 * shell.uiScale; placeholderText: "密码（只交给系统密钥代理）" }
-            AButton { label: "连接"; onClicked: { shell.hardware("network.wifi.connect", { ssid: ssid.currentValue, secretChannel: "secret-agent" }); wifiPass.text = "" } }
-            AButton { label: "断开"; onClicked: shell.hardware("network.wifi.disconnect", {}) } } }
+            // the key goes to the gateway in the request's separate secret field (never in params); machined hands it
+            // to NetworkManager through its secret agent and keeps only a secretRef in the operation log
+            AButton { label: "连接"; onClicked: { shell.hardwareSecret("network.wifi.connect", { device: hw.network.wifiDevice || "", ssid: ssid.currentValue }, wifiPass.text); wifiPass.text = "" } }
+            AButton { label: "断开"; onClicked: shell.hardware("network.wifi.disconnect", { device: hw.network.wifiDevice || "" }) } } }
     PText { text: "声音"; font.bold: true }
     Unavailable { visible: !av("audio") }
     Row { visible: av("audio"); spacing: 8

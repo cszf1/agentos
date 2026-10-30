@@ -349,6 +349,29 @@ class FlowsTest : public QObject {
     QCOMPARE(h.sent(QStringLiteral("machine.actions.plan")).size(), plansBefore + 1);
   }
 
+  void wifiKeyTravelsOnlyInTheSecretFieldOfOnePlan() {
+    // V1-I11: the Wi-Fi key is in the plan request's `secret` field only — not in params, not in what the Shell keeps
+    Harness h;
+    QVERIFY(h.up());
+    const int before = h.sent(QStringLiteral("machine.actions.plan")).size();
+    const QString key = QStringLiteral("wifi-key-7f3a91");
+    h.shell->hardwareSecret(QStringLiteral("network.wifi.connect"), {{QStringLiteral("device"), QStringLiteral("wlan0")}, {QStringLiteral("ssid"), QStringLiteral("lab")}}, key);
+    QTRY_COMPARE(h.sent(QStringLiteral("machine.actions.plan")).size(), before + 1);
+    const JValue req = h.sent(QStringLiteral("machine.actions.plan")).last();
+    QCOMPARE(req.get(QStringLiteral("body")).get(QStringLiteral("secret")).str(), key);
+    QCOMPARE(req.get(QStringLiteral("body")).get(QStringLiteral("actionKind")).str(), QStringLiteral("network.wifi.connect"));
+    QVERIFY(!req.get(QStringLiteral("body")).get(QStringLiteral("params")).stringify().contains(key));
+    QVERIFY(!h.shell->lastPlanSentForTest().contains(key));
+    // a retry of the same action never re-sends the key (it was not kept)
+    QTRY_VERIFY(h.shell->confirm().value(QStringLiteral("visible")).toBool());
+    for (const auto& v : h.shell->confirm()) QVERIFY(!v.toString().contains(key));
+    h.shell->confirmReject();
+    // a plain hardware() call carries no secret field
+    h.shell->hardware(QStringLiteral("network.wifi.disconnect"), {{QStringLiteral("device"), QStringLiteral("wlan0")}});
+    QTRY_COMPARE(h.sent(QStringLiteral("machine.actions.plan")).size(), before + 2);
+    QVERIFY(h.sent(QStringLiteral("machine.actions.plan")).last().get(QStringLiteral("body")).get(QStringLiteral("secret")).isNullish());
+  }
+
   void systemActionButtonOnlyRequestsAPlan() {
     Harness h;
     QVERIFY(h.up());

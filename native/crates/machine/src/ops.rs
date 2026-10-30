@@ -15,6 +15,7 @@ pub const PLAN_MS: i64 = 10 * 60_000;
 pub const KINDS: &[(&str, bool)] = &[
     ("network.wifi.connect", false),
     ("network.wifi.forget", false),
+    ("network.wifi.disconnect", false),
     ("network.device.disconnect", false),
     ("network.device.connect", false),
     ("time.timezone.set", true),
@@ -32,7 +33,16 @@ pub const KINDS: &[(&str, bool)] = &[
     ("workspaces.deleteConsent", false),
     // Owner setting (spec §9.3, §27.1, V1-W08): owner of the workspace only, checked at plan and again at dispatch.
     ("workspaces.runWhenLoggedOut", false),
+    // Owner setting: the workspace's model credential; the key arrives only as a secretRef (spec §5.2, V1-I11).
+    ("workspaces.modelCredential.set", false),
 ];
+
+/// Parameter names that would carry a secret; a plan never stores one (the gateway puts the secret in machined's
+/// one-time secret store and passes `secretRef`; spec §12.1 "操作日志只保存 secretRef").
+pub fn secret_param(k: &str) -> bool {
+    let k = k.to_ascii_lowercase();
+    ["psk", "password", "passphrase", "secret", "key", "apikey", "api_key", "token"].iter().any(|w| k == *w || (k.contains(w) && k != "secretref"))
+}
 
 pub fn kind_admin(kind: &str) -> R<bool> {
     KINDS.iter().find(|(k, _)| *k == kind).map(|(_, a)| *a).ok_or_else(|| MErr::new("INVALID_REQUEST", "unknown machine action kind"))
@@ -109,6 +119,21 @@ impl Machine {
             // the plan shows the current blocker (if any) so the administrator sees why it would fail
             if let Some(b) = self.delete_blocker(ws)? {
                 return Err(crate::dir::blocker_err(&b));
+            }
+        }
+        if let Some(o) = params_v.as_object() {
+            if let Some(k) = o.keys().find(|k| secret_param(k)) {
+                return Err(MErr::new("INVALID_REQUEST", format!("{k}: a secret never travels in params")));
+            }
+        }
+        if kind == "workspaces.modelCredential.set" {
+            crate::backends::model_credential_params(params_v)?;
+            if !params_v["secretRef"].is_string() {
+                return Err(MErr::new("INVALID_REQUEST", "the key is required"));
+            }
+            let (role, _) = self.membership(&p.user_id, params_v["workspaceId"].as_str().unwrap_or_default())?;
+            if role != crate::dir::Role::Owner {
+                return Err(MErr::hidden());
             }
         }
         if kind == "workspaces.runWhenLoggedOut" {

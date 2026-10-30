@@ -625,11 +625,22 @@ pub fn route(gw: &Gw, conn: u64, uid: u32, pid: u32, dbus: &zbus::blocking::Conn
             }
             Ok((200, st))
         }
-        "machine.capabilities" => gw.machine("machine.capabilities", json!({})).map(|v| (200, v)),
-        "machine.actions.plan" => gw.machine("ops.plan", a(json!({ "idempotencyKey": e.idem, "kind": s(&e.body, "kind")?, "params": e.body.get("params").cloned().unwrap_or(json!({})) }))).map(|v| (201, v)),
-        "machine.actions.get" => gw.machine("ops.get", a(json!({ "operationId": s(&e.params, "operationId")? }))).map(|v| (200, v)),
-        "machine.actions.cancel" => gw.machine("ops.cancel", a(json!({ "operationId": s(&e.body, "operationId")? }))).map(|v| (200, v)),
-        "machine.actions.confirm" => confirm(gw, &p, &e.body),
+        "machine.capabilities" => gw.machine("machine.capabilities", json!({})).map(|v| {
+            // the Shell reads the hardware catalogue under `hardware` (spec §16.1 "有限硬件目录")
+            let mut out = obj(&v);
+            out.insert("hardware".into(), v.clone());
+            (200, Value::Object(out))
+        }),
+        "machine.actions.plan" => plan(gw, e, a(json!({}))),
+        "machine.actions.get" => gw.machine("ops.get", a(json!({ "operationId": field(e, "operationId")? }))).map(|v| (200, v)),
+        "machine.actions.cancel" => gw.machine("ops.cancel", a(json!({ "operationId": field(e, "operationId")? }))).map(|v| (200, v)),
+        "machine.actions.confirm" => {
+            let mut b = obj(&e.body);
+            if !b.contains_key("operationId") {
+                b.insert("operationId".into(), json!(field(e, "operationId")?));
+            }
+            confirm(gw, &p, &Value::Object(b))
+        }
         "machine.users.create" => {
             // Password goes to machined's in-memory secret store first; the plan carries only its reference.
             let mut pw = e.body.get("password").and_then(|x| x.as_str()).ok_or_else(|| err("INVALID_REQUEST", "password"))?.to_string();
@@ -653,6 +664,41 @@ pub fn route(gw: &Gw, conn: u64, uid: u32, pid: u32, dbus: &zbus::blocking::Conn
         "diagnostics.collect" => crate::workers::diagnostics(gw, &p, ws, &e.body),
         _ => Err(err("INVALID_REQUEST", "unknown method")),
     }
+}
+
+/// A field from the body, else from the path params (the Shell sends ids as params, spec §16.1 tables name them only).
+fn field(e: &Envelope, k: &str) -> Result<String, Value> {
+    e.body.get(k).and_then(|x| x.as_str()).or_else(|| e.params.get(k).and_then(|x| x.as_str())).map(String::from).ok_or_else(|| err("INVALID_REQUEST", &format!("{k} is required")))
+}
+
+/// machine.actions.plan: fixed actionKind + params. A secret (Wi-Fi key, model key) comes in the separate `secret`
+/// field of this local request only; it goes straight into machined's one-time in-memory secret store and the plan
+/// carries just its secretRef (spec §12.1, V1-I11). A secret inside params is refused, never stored.
+fn plan(gw: &Gw, e: &Envelope, principal: Value) -> Result<(u16, Value), Value> {
+    let kind = e.body.get("actionKind").or_else(|| e.body.get("kind")).and_then(|x| x.as_str()).ok_or_else(|| err("INVALID_REQUEST", "actionKind is required"))?.to_string();
+    let mut params = e.body.get("params").cloned().unwrap_or(json!({}));
+    if !params.is_object() {
+        return Err(err("INVALID_REQUEST", "params must be an object"));
+    }
+    if let Some(k) = params.as_object().unwrap().keys().find(|k| agentos_machine::ops::secret_param(k)) {
+        return Err(err("INVALID_REQUEST", &format!("{k}: a secret never travels in params; use the secret field")));
+    }
+    if let Some(sec) = e.body.get("secret") {
+        let skind = match kind.as_str() {
+            "network.wifi.connect" => "wifi-psk",
+            "workspaces.modelCredential.set" => "provider-key",
+            _ => return Err(err("INVALID_REQUEST", "this action takes no secret")),
+        };
+        let mut v = sec.as_str().ok_or_else(|| err("INVALID_REQUEST", "secret must be a string"))?.to_string();
+        let r = gw.machine("secrets.put", json!({ "kind": skind, "value": v }));
+        unsafe { v.as_bytes_mut().iter_mut().for_each(|b| *b = 0) };
+        params["secretRef"] = r?["secretRef"].clone();
+    }
+    let mut a = obj(&principal);
+    a.insert("idempotencyKey".into(), json!(e.idem));
+    a.insert("kind".into(), json!(kind));
+    a.insert("params".into(), params);
+    gw.machine("ops.plan", Value::Object(a)).map(|v| (201, v))
 }
 
 fn idem_uuid(e: &Envelope) -> Result<String, Value> {

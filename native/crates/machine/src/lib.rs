@@ -5,6 +5,7 @@ pub mod ckpt;
 pub mod db;
 pub mod dir;
 pub mod err;
+pub mod nmagent;
 pub mod ops;
 pub mod permits;
 pub mod release;

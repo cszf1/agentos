@@ -158,6 +158,11 @@ class ShellController : public QObject, public RequestSink {
   Q_INVOKABLE void submitIntent(const QString& text, const QString& targetAppId);
   Q_INVOKABLE void refreshPage();
   Q_INVOKABLE void hardware(const QString& actionKind, const QVariantMap& params);
+  /** Like hardware(), with a secret (Wi-Fi key) that travels only in this one local request's `secret` field —
+   *  never in params, never kept for retry or display (spec §12.1, V1-I11). */
+  Q_INVOKABLE void hardwareSecret(const QString& actionKind, const QVariantMap& params, const QString& secret);
+  /** The body actually sent for the last machine plan, with any secret replaced (tests only). */
+  QString lastPlanSentForTest() const { return lastPlanSent_; }
   Q_INVOKABLE void keepDisplay();
   Q_INVOKABLE void confirmAccept();
   Q_INVOKABLE void confirmReject();
@@ -190,6 +195,8 @@ class ShellController : public QObject, public RequestSink {
   void scopeCleared(QString reason);
 
  private:
+  QString pendingSecret_;
+  QString lastPlanSent_;
   struct Scope {
     QString ws;
     qint64 clientEpoch = 0;

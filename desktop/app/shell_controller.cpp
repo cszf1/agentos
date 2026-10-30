@@ -620,6 +620,19 @@ QString ShellController::act(const QString& name, const QVariantMap& argsV, cons
   actionKeys_[id] = key;
   actionReqs_[id] = r;
   actionNames_[id] = name;
+  if (name == QLatin1String("machine.plan") && !pendingSecret_.isEmpty()) {
+    // the secret rides only in this request; actionReqs_ (retry) and the action list never see it
+    ShellRequest withSecret = r;
+    JValue b = r.body.isObject() ? r.body : JValue::object();
+    b.set(QStringLiteral("secret"), pendingSecret_);
+    withSecret.body = b;
+    JValue shown = b;
+    shown.set(QStringLiteral("secret"), QStringLiteral("<secret>"));
+    lastPlanSent_ = shown.stringify();
+    sendNative(withSecret, key, [this, id](const RpcReply& rep) { trackReply(id, rep); });
+    return id;
+  }
+  if (name == QLatin1String("machine.plan")) lastPlanSent_ = r.body.stringify();
   sendNative(r, key, [this, id](const RpcReply& rep) { trackReply(id, rep); });
   return id;
 }
@@ -763,6 +776,13 @@ void ShellController::hardware(const QString& kind, const QVariantMap& params) {
         displayPrevious_ = JValue::object({{QStringLiteral("output"), o.get(QStringLiteral("name"))}, {QStringLiteral("mode"), o.get(QStringLiteral("current"))}, {QStringLiteral("scale"), o.get(QStringLiteral("scale"))}});
   }
   act(QStringLiteral("machine.plan"), {{QStringLiteral("actionKind"), kind}, {QStringLiteral("params"), p}}, kind);
+}
+
+void ShellController::hardwareSecret(const QString& kind, const QVariantMap& params, const QString& secret) {
+  pendingSecret_ = secret;
+  hardware(kind, params);
+  pendingSecret_.fill(QLatin1Char('\0'));
+  pendingSecret_.clear();
 }
 
 void ShellController::startDisplayRevert(const JValue& previous) {

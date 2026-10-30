@@ -216,6 +216,9 @@ in {
       path = [ pkgs.podman pkgs.util-linux pkgs.coreutils ];
       serviceConfig = {
         ExecStart = "${node}/bin/agentos-host";
+        # The workspace's model credential (machine action workspaces.modelCredential.set): 0600, execution UID,
+        # outside data/ (no checkpoint/export carries it); settings in it override the defaults above.
+        EnvironmentFile = "-/var/lib/agentos/workspaces/%i/model.env";
         Restart = "on-failure";
         RestartSec = 2;
         # 75: machined refused the start before any database opened (barrier/restore); machined starts it again.
