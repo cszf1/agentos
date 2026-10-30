@@ -8,14 +8,18 @@ pkgs.testers.runNixOSTest {
       imports = modules;
       agentos.enable = true;
       agentos.graphical = false;
-      virtualisation = { memorySize = 3072; inherit cores; diskSize = 6144; };
+      virtualisation = { memorySize = 4096; inherit cores; diskSize = 10240; };
       environment.systemPackages = [ pkgs.python3 pkgs.sqlite pkgs.age ];
       environment.etc."agentos-test/rpc.py".source = ./rpc.py;
+      # both machines run code apps from the release's fixed images; the source generates one with the formal faux
+      # model (test variant only)
+      agentos.releaseImages = pkgs.agentos-oci;
+      systemd.user.services."agentos-host@".environment.AGENTOS_MODEL_MODE = lib.mkForce "faux";
     };
   in {
     machine = node;
     # the target rebuilds its containers from the release's fixed images only (offline; no graphroot travels)
-    target = { lib, ... }: { imports = [ node ]; agentos.releaseImages = pkgs.agentos-oci; virtualisation.diskSize = lib.mkForce 8192; };
+    target = node;
   };
   testScript = builtins.readFile ./lib.py + builtins.readFile ./members_lib.py + builtins.readFile ./m12-clone.py;
 }

@@ -25,6 +25,16 @@ store = sql(f"SELECT store_uuid FROM workspaces WHERE workspace_id='{ws_a}'")
 osa = f"/var/lib/agentos/workspaces/{ws_a}/data/os.sqlite"
 machine.wait_until_succeeds(f"test -s /var/lib/agentos/workspaces/{ws_a}/data/agent.sqlite", timeout=120)
 
+with subtest("source: a code app generated and running before the set is taken (M04)"):
+    r = call(1, [fwd(ws_a, "runs.post", {"intent": "做一个看板应用", "targetAppId": None}, idem="kanban")], "k1")[0]
+    assert r["status"] == 202, r
+    run_k, app_k = r["body"]["runId"], r["body"]["targetAppId"]
+    machine.wait_until_succeeds(f"sqlite3 {osa} \"SELECT status FROM runs WHERE id='{run_k}'\" | grep -qE '^(succeeded|failed|cancelled)$'", timeout=600)
+    st_k = machine.succeed(f"sqlite3 {osa} \"SELECT status FROM runs WHERE id='{run_k}'\"").strip()
+    assert st_k == "succeeded", st_k
+    rev_k = machine.succeed(f"sqlite3 {osa} \"SELECT active_revision_id FROM apps WHERE id='{app_k}'\"").strip()
+    assert rev_k, app_k
+
 with subtest("source: history and old authority in the workspace, one machine set, age export"):
     r = call(1, [{"methodId": "workspaces.stop", "workspaceId": ws_a, "idempotencyKey": str(uuid.uuid4()), "body": {}}], "s1")[0]
     assert r["status"] == 200, r
@@ -126,3 +136,26 @@ with subtest("containers on the new UID come from the fixed release images; the 
     lines = {l.split(":", 1)[0][6:]: l for l in dr.splitlines() if l.startswith(("ok  ", "FAIL"))}
     for n in ["probe container", "no network", "read-only rootfs"]:
         assert n in lines and lines[n].startswith("ok"), (n, lines.get(n))
+
+with subtest("the clone's code app is rebuilt on the new UID from the fixed images and runs (M04)"):
+    osn = f"/var/lib/agentos/workspaces/{ws_n}/data/os.sqlite"
+    assert machine.succeed(f"sqlite3 {osn} \"SELECT active_revision_id FROM apps WHERE id='{app_k}'\"").strip() == rev_k
+    ep = machine.succeed(f"sqlite3 {osn} \"SELECT epoch FROM apps WHERE id='{app_k}'\"").strip()
+    r = call(1, [fwd(ws_n, "apps.runtime.start.post", {"expectedAppEpoch": int(ep)}, params={"appId": app_k}, idem="rt-start")], "rt1")[0]
+    print(r)
+    assert r["status"] in (200, 202), r
+    def rt():
+        v = call(1, [fwd(ws_n, "apps.runtime.list", params={"appId": app_k})], "rt2")[0]
+        return json.dumps(v)
+    for _ in range(60):
+        st = rt()
+        if '"running"' in st or '"ready"' in st:
+            break
+        time.sleep(5)
+    print(st)
+    assert '"running"' in st or '"ready"' in st, st
+    ps = machine.succeed(f"runuser -u {login_n} -- env XDG_RUNTIME_DIR=/run/user/{uid_n} podman ps --format '{{{{.Image}}}} {{{{.Status}}}}'")
+    print(ps)
+    assert "Up" in ps, ps
+    imgs = machine.succeed(f"runuser -u {login_n} -- env XDG_RUNTIME_DIR=/run/user/{uid_n} podman images --format '{{{{.Repository}}}}'")
+    assert "docker.io/library/node" not in imgs, imgs                     # nothing pulled: offline, fixed images only
