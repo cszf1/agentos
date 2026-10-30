@@ -9,8 +9,9 @@ pkgs.testers.runNixOSTest {
     imports = modules;
     agentos.enable = true;
     agentos.softwareRendering = true;
+    agentos.releaseImages = pkgs.agentos-oci;   # the approved images from the release (offline: the VM has no network)
     virtualisation = { memorySize = 4096; inherit cores; diskSize = 8192; qemu.options = [ "-vga none -device virtio-gpu-pci" ]; };
-    environment.systemPackages = [ pkgs.python3 ];
+    environment.systemPackages = [ pkgs.python3 pkgs.sqlite ];
     environment.etc."agentos-test/rpc.py".source = ./rpc.py;
   };
   testScript = builtins.readFile ./lib.py + builtins.readFile ./m5-desktop.py;

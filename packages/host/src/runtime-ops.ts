@@ -113,6 +113,11 @@ export async function doctor(config: HostConfig): Promise<{ ok: boolean; checks:
 r.mem=fs.readFileSync("/sys/fs/cgroup/memory.max","utf8").trim();r.cpu=fs.readFileSync("/sys/fs/cgroup/cpu.max","utf8").trim();r.pids=fs.readFileSync("/sys/fs/cgroup/pids.max","utf8").trim();
 r.ifaces=Object.keys(os.networkInterfaces()).join(",");r.status=fs.readFileSync("/proc/self/status","utf8").split("\\n").filter(l=>/^(CapEff|NoNewPrivs|Seccomp):/.test(l)).join(" ");
 try{fs.writeFileSync("/x","1");r.rootfs="WRITABLE"}catch(e){r.rootfs=e.code}
+const ex=(p)=>{try{fs.lstatSync(p);return true}catch{return false}};const ls=(d)=>{try{return fs.readdirSync(d)}catch{return[]}};const esc=[];
+for(const u of ls("/run/user"))for(const f of ls("/run/user/"+u))if(/^(wayland-|bus$|podman$|pipewire|pulse)/.test(f))esc.push("/run/user/"+u+"/"+f);
+for(const p of ["/tmp/.X11-unix","/run/dbus/system_bus_socket","/var/run/dbus/system_bus_socket","/run/agentos/gateway.sock","/run/agentos/gateway","/run/agentos/machine","/run/agentos-broker","/nix/var/nix/daemon-socket","/nix/store","/var/lib/agentos","/var/lib/agentos-machine","/run/podman","/run/systemd/private"])if(ex(p))esc.push(p);
+for(const k of ["WAYLAND_DISPLAY","DISPLAY","DBUS_SESSION_BUS_ADDRESS","XDG_RUNTIME_DIR","AGENTOS_GATEWAY_SOCKET"])if(process.env[k])esc.push("env:"+k);
+r.escape=esc.join(",");r.bridge=ls("/run/agentos").join(",");
 const s=net.connect({host:"1.1.1.1",port:443,timeout:1500});s.on("error",e=>{r.net=e.code;done()});s.on("connect",()=>{r.net="CONNECTED";done()});s.on("timeout",()=>{r.net="TIMEOUT";done()});
 function done(){console.log(JSON.stringify(r));process.exit(0)}`;
     try {
@@ -135,6 +140,8 @@ function done(){console.log(JSON.stringify(r));process.exit(0)}`;
         add("pids limit", r.pids === String(RUNTIME_POLICY.app.pids), r.pids);
         add("no network", r.ifaces === "lo" && r.net !== "CONNECTED", `interfaces ${r.ifaces}; egress ${r.net}`);
         add("read-only rootfs", r.rootfs === "EROFS", r.rootfs);
+        // V1-W02: no compositor, session/system bus, machine/gateway/broker, Nix or other-workspace surface inside.
+        add("no escape surfaces", r.escape === "", r.escape === "" ? `none (bridge: ${r.bridge || "empty"})` : r.escape);
         add("capabilities / no_new_privs / seccomp", /CapEff:\s+0+\b/.test(r.status) && /NoNewPrivs:\s+1/.test(r.status) && /Seccomp:\s+2/.test(r.status), r.status);
       }
     } catch (e) {
