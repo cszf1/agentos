@@ -137,6 +137,9 @@ with subtest("lock: the accepted run's request completes inside its scope; the l
     rid = run(1, ws_b, "做一个锁屏期间继续的应用", "i10a")
     machine.wait_until_succeeds(f"test $(grep -c '\"ev\": \"start\", \"ws\": \"{ws_b}\"' {FM}/log.jsonl) -gt {s0}", timeout=120)
     sess = user_session("alice", "tty1")
+    # a machine plan made in the session before the lock: its sessionEpoch dies with the lock
+    pre = call(1, [{"methodId": "machine.actions.plan", "idempotencyKey": str(uuid.uuid4()), "body": {"kind": "workspaces.runWhenLoggedOut", "params": {"workspaceId": ws_a, "enabled": True}}}], "i10pre")[0]
+    assert pre["status"] == 201, pre
     tty_run(1, "busctl call org.freedesktop.login1 /org/freedesktop/login1/session/auto org.freedesktop.login1.Session SetLockedHint b true", "/tmp/i10l")
     machine.wait_until_succeeds(f"loginctl show-session {sess} -p LockedHint | grep -q yes")
     out = tty_run(1, f"{RPC} '[{{\"methodId\":\"session.bind\"}}]'", "/tmp/i10b")
@@ -152,6 +155,11 @@ with subtest("lock: the accepted run's request completes inside its scope; the l
     tty_run(1, "busctl call org.freedesktop.login1 /org/freedesktop/login1/session/auto org.freedesktop.login1.Session SetLockedHint b false", "/tmp/i10u")
     out = tty_run(1, f"{RPC} '[{{\"methodId\":\"session.bind\"}}]'", "/tmp/i10c")
     assert '"status": 200' in out, out
+    # after unlock the session has a new epoch: the plan (and any ticket) of the old epoch cannot be confirmed
+    r = call(1, [{"methodId": "machine.actions.confirm", "idempotencyKey": str(uuid.uuid4()), "body": {"operationId": pre["body"]["operationId"], "planHash": pre["body"]["planHash"]}}], "i10prec")[0]
+    print("old-epoch confirm", r)
+    assert r["status"] != 200 and json.dumps(r).count("PLAN_STALE") + json.dumps(r).count("SESSION_STALE") > 0, r
+    assert sql(f"SELECT run_when_logged_out FROM workspaces WHERE workspace_id='{ws_a}'") == "0"
     call(1, [fwd(ws_b, "runs.cancel.post", params={"runId": rid}, idem="i10ac")], "i10ac")
 
 with subtest("logout with run-when-logged-out on: the accepted run continues in its workspace; the ended session is refused (I10)"):
