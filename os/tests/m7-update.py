@@ -42,6 +42,16 @@ with subtest("first boot into known-good from the persistent default"):
     machine.wait_for_unit("multi-user.target")
     assert booted_release() == GOOD, booted_release()
 
+with subtest("space or power not met: nothing is armed, entries and default untouched (U06)"):
+    machine.succeed("mkdir -p /tmp/pw/BAT0 && printf 'Battery\\n' > /tmp/pw/BAT0/type && printf '15\\n' > /tmp/pw/BAT0/capacity && printf 'Discharging\\n' > /tmp/pw/BAT0/status")
+    before = machine.succeed("bootctl status 2>/dev/null | grep -iE 'default|oneshot' ; ls -l /boot/loader/entries/").strip()
+    for extra in ("--power-dir /tmp/pw", "--need-store-bytes 999999999999999"):
+        rc, out = machine.execute(f"{UW} arm --esp /boot --release-id {CAND} --known-good {GOOD} {extra}")
+        print(out)
+        assert rc != 0 and "UPDATE_PRECONDITION" in out, out
+    machine.fail("bootctl status 2>/dev/null | grep -i 'oneshot' | grep -q agentos-")
+    assert machine.succeed("bootctl status 2>/dev/null | grep -iE 'default|oneshot' ; ls -l /boot/loader/entries/").strip() == before
+
 with subtest("one-shot trial boots the candidate exactly once; default unchanged (U08)"):
     r = uw(f"arm --esp /boot --release-id {CAND} --known-good {GOOD}")
     assert r["oneshot"] == f"agentos-{CAND}.conf", r

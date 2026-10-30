@@ -3,4 +3,5 @@
 pub mod boot;
 pub mod content;
 pub mod health;
+pub mod preflight;
 pub mod trial;

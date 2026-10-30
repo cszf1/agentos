@@ -191,3 +191,46 @@ fn closure_content_must_match_the_signed_list_exactly() {
     assert!(content::require_sigs_on("substituters = x\n"));
     assert!(!content::require_sigs_on("require-sigs = false\n"));
 }
+
+#[test]
+fn u06_preflight_refuses_low_space_and_low_battery_and_arms_nothing() {
+    use agentos_update_worker::preflight;
+    let t = tmp("u06");
+    let esp = Esp { root: t.join("esp") };
+    std::fs::create_dir_all(&esp.root).unwrap();
+    write(&esp, &t, GOOD);
+    write(&esp, &t, CAND);
+    let state = t.join("loader.json");
+    // power: a battery at 20 % discharging, no mains → refused; charging or mains online → allowed
+    let pw = t.join("power");
+    std::fs::create_dir_all(pw.join("BAT0")).unwrap();
+    std::fs::write(pw.join("BAT0/type"), "Battery\n").unwrap();
+    std::fs::write(pw.join("BAT0/capacity"), "20\n").unwrap();
+    std::fs::write(pw.join("BAT0/status"), "Discharging\n").unwrap();
+    let e = preflight::check(&esp.root, &t, 0, &pw).unwrap_err();
+    assert_eq!(e.0, "UPDATE_PRECONDITION");
+    std::fs::write(pw.join("BAT0/status"), "Charging\n").unwrap();
+    assert!(preflight::check(&esp.root, &t, 0, &pw).is_ok());
+    std::fs::write(pw.join("BAT0/status"), "Discharging\n").unwrap();
+    std::fs::create_dir_all(pw.join("AC")).unwrap();
+    std::fs::write(pw.join("AC/type"), "Mains\n").unwrap();
+    std::fs::write(pw.join("AC/online"), "1\n").unwrap();
+    assert!(preflight::check(&esp.root, &t, 0, &pw).is_ok());
+    // no power supply at all (desktop/VM) → allowed
+    assert!(preflight::check(&esp.root, &t, 0, &t.join("none")).is_ok());
+    // space: a store need larger than the filesystem → refused
+    let e = preflight::check(&esp.root, &t, u64::MAX / 2, &pw).unwrap_err();
+    assert_eq!(e.0, "UPDATE_PRECONDITION");
+    // the CLI arm path refuses before touching the loader: no one-shot is written
+    std::fs::write(pw.join("AC/online"), "0\n").unwrap();
+    let bin = env!("CARGO_BIN_EXE_agentos-update-worker");
+    let out = Command::new(bin)
+        .args(["arm", "--esp", esp.root.to_str().unwrap(), "--release-id", CAND, "--known-good", GOOD, "--loader-state", state.to_str().unwrap(), "--store", t.to_str().unwrap(), "--power-dir", pw.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let s = String::from_utf8_lossy(&out.stdout);
+    assert!(s.contains("UPDATE_PRECONDITION"), "{s}");
+    let ls = std::fs::read_to_string(&state).unwrap_or_default();
+    assert!(!ls.contains("oneshot") || !ls.contains(CAND), "loader state changed: {ls}");
+    assert!(esp.entry_complete(GOOD) && esp.entry_complete(CAND), "existing entries untouched");
+}

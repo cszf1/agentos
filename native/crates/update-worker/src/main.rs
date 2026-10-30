@@ -1,13 +1,13 @@
 //! CLI (one JSON line out):
 //!   write-entry --esp DIR --release-id RID --kernel F --initrd F --initrd-hash H --init P [--cmdline S] [--title T]
-//!   arm --esp DIR --release-id RID --known-good RID [--loader-state FILE]
+//!   arm --esp DIR --release-id RID --known-good RID [--loader-state FILE] [--store DIR] [--need-store-bytes N] [--power-dir DIR]
 //!   after-boot --facts JSON [--loader-state FILE] --boot-id ID
 //!   commit --release-id RID [--loader-state FILE]      (sets default, reads it back)
 //!   gc --esp DIR --keep RID[,RID...]
 //!   clean --esp DIR
 //!   verify-content --manifest FILE --path-info FILE
 //!   health --state-dir DIR --schema-min N --schema-max N
-use agentos_update_worker::{boot, content, health, trial};
+use agentos_update_worker::{boot, content, health, preflight, trial};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
@@ -34,6 +34,11 @@ fn run(a: &[String]) -> boot::UR<Value> {
         }
         "arm" => {
             let esp = boot::Esp { root: PathBuf::from(r("--esp")?) };
+            // V1-U06: space and power first; a failed precondition arms nothing and leaves the loader untouched.
+            let need: u64 = arg(a, "--need-store-bytes").and_then(|x| x.parse().ok()).unwrap_or(0);
+            let store = arg(a, "--store").unwrap_or_else(|| "/nix/store".into());
+            let power = arg(a, "--power-dir").unwrap_or_else(|| "/sys/class/power_supply".into());
+            preflight::check(&esp.root, Path::new(&store), need, Path::new(&power))?;
             let mut l = loader(a);
             boot::arm(&esp, l.as_mut(), &r("--release-id")?, &r("--known-good")?)
         }
