@@ -108,8 +108,8 @@
 | V1-U01 | 离线空机安装 | 部分 | KVM VM（Actions）（已写，CI 待结果）；实盘需实体机，未验收 | m6-install：离线（无默认路由、无 substituter）安装到 virtio 盘，systemd-boot→LUKS2→Btrfs 启动，首启进入未登记机器。离线 OCI 已进发行闭包（build-oci 通过，见 B04），发行镜像中应用容器启动失败的根因已修（见 B04），m5 重跑待结果。5fd7da2 轮 m6-install（run 41080892538）仍在运行，CI 待结果。实体盘未测：跑法见文末。 |
 | V1-U02 | 磁盘重验/中断 | 部分 | KVM VM（Actions）（已写，CI 待结果）；实盘需实体机，未验收 | m6-install：小盘/系统盘被拒、计划后磁盘变化被拒且不写入、复制中崩溃只在同一盘续作。5fd7da2 轮 m6-install 仍在运行，CI 待结果。真实 WWN/serial 需实体盘。 |
 | V1-U03 | 首启身份 | 部分 | KVM VM（Actions）（已写，CI 待结果） | m6-qcow2：同一模板两个克隆各自替换模板磁盘密钥后首启，machineInstallId 不同；重启后要求新口令且身份保持；m6-install 同一盘重复 firstboot 被拒。5fd7da2 轮 m6-qcow2 与 build-qcow2（run 41080892538）仍在运行，CI 待结果。 |
-| V1-U04 | 签名与内容 | 部分 | 单元/集成 | access.test.ts 发行准入：坏签名/过期/重放/破坏性迁移被拒；update-worker 单元测试校验内容 hash。篡改闭包/OCI 的端到端与 require-sigs 未在 VM 做（发行配置保持 require-sigs=true）。 |
-| V1-U05 | 序列与密钥轮换 | 部分 | 单元/集成 | directory.test.ts：旧 sequence 被拒、known-good 回退不降高水位；密钥轮换未测。 |
+| V1-U04 | 签名与内容 | 部分 | 单元/集成 | machined 发行校验（Rust 单元，agentos-v1 cargo test 通过）：native/crates/machine/src/tests.rs u04_u05_signatures_content_sequence_and_trusted_key_rotation——篡改 manifest（改 baseClosurePath）、错误私钥签名、未知 keyId、缺字段、非法 OCI digest、无可信时间全部 UPDATE_SIGNATURE_INVALID；update-worker tests/update.rs closure_content_must_match_the_signed_list_exactly：闭包 NAR hash 必须与签名清单完全一致（多/少/缺路径均拒绝），require_sigs_on 拒绝 require-sigs=false；发行配置 os/modules/base.nix require-sigs = true。未满足：Host 导入发行 OCI 时只核对名称/recipeHash/label/Env，没有把导入后的镜像 ID 与 manifest ociDigests 比对（OCI 归档在签名闭包内，篡改需破坏 Nix store，但逐镜像 digest 核对未做）；VM 端到端篡改未做。 |
+| V1-U05 | 序列与密钥轮换 | 通过 | 单元/集成 | Rust 单元（agentos-v1 cargo test 通过）：native/crates/machine/src/tests.rs u04_u05_signatures_content_sequence_and_trusted_key_rotation——更低/相同 sequence 与同 releaseId 不同内容为 RELEASE_REPLAYED，过期清单拒绝；轮换声明必须由当前受信密钥签名（伪造签名/未知签名者无效果），受信轮换后新钥可用、旧钥被吊销且其签名的清单被拒；u11_migration_waits_for_commit_and_rollback_needs_a_compatible_generation：known-good 回退不降低 accepted_release_sequence。directory.test.ts 同样覆盖旧 sequence 与高水位。 |
 | V1-U06 | 下载与低空间 | 部分 | KVM VM（Actions）＋单元/集成 | agentos-update-worker arm 先做前置检查（native/crates/update-worker/src/preflight.rs）：ESP 可用 ≥16 MiB、store 可用 ≥ max(候选闭包所需, 256 MiB)、无市电且电池 <40% 未充电则拒绝（UPDATE_PRECONDITION），拒绝时不写 one-shot、不改 default/条目。Rust u06_* 通过；m7-update U06 子测试 KVM 通过（run 41089647759，真实 bootctl：低电/空间不足不 armed、loader 状态与条目不变）。**未满足**：下载断线续传未在 VM 中断网复测（nix copy 以 store 路径为原子单位，已到路径保留）。 |
 | V1-U07 | 启动项写入断电 | 部分 | KVM VM（Actions）＋单元/集成 | m7-update：known-good 与候选条目完整、default 为 known-good；update-worker Rust 测试覆盖各发布点中断。VM 断电未做。 |
 | V1-U08 | 单次试启动 | 通过 | KVM VM（Actions） | m7-update：one-shot 只启动候选一次、default 不变；无 init 的坏候选复位后进入 default，不无限重试。 |
@@ -165,7 +165,7 @@
 
 ## 统计
 
-未通过 18 项，通过 35 项，部分 47 项（共 100 项）。
+未通过 18 项，通过 36 项，部分 46 项（共 100 项）。
 
 ## 回归与偶发失败记录
 
