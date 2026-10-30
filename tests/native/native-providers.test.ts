@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { BrokerClient } from "@agentos/broker-client";
 import { checkProviderParams } from "@agentos/contracts";
@@ -14,10 +14,22 @@ import { Broker, POLICY, ROOT, clearFaults, hasBroker, hostNetFacts, inLab, inst
 const run = hasBroker() ? describe : describe.skip;
 
 describe("V3-C04 Rust protocol crate (cargo test)", () => {
-  it("canonical/hash/DTO/params/depth vectors and real openat2 tests pass in Rust", () => {
-    const r = spawnSync("cargo", ["test", "--release", "--workspace", "--quiet"], { cwd: path.join(ROOT, "native"), encoding: "utf8", env: { ...process.env, PATH: `${process.env.HOME}/.cargo/bin:${process.env.PATH}` }, timeout: 600_000 });
-    expect(r.status, `${r.stdout}\n${r.stderr}`.slice(-3000)).toBe(0);
-    expect(r.stdout + r.stderr).not.toMatch(/FAILED|panicked/);
+  it("canonical/hash/DTO/params/depth vectors and real openat2 tests pass in Rust", async () => {
+    // Asynchronous on purpose: a cold `cargo test --release` takes minutes, and a synchronous spawn would block the
+    // vitest worker's RPC long enough to fail the run with "Timeout calling onTaskUpdate" (seen on a fresh machine).
+    const r = await new Promise<{ status: number | null; out: string }>((resolve) => {
+      const p = spawn("cargo", ["test", "--release", "--workspace", "--quiet"], { cwd: path.join(ROOT, "native"), env: { ...process.env, PATH: `${process.env.HOME}/.cargo/bin:${process.env.PATH}` } });
+      let out = "";
+      p.stdout.on("data", (d) => (out += d));
+      p.stderr.on("data", (d) => (out += d));
+      const t = setTimeout(() => p.kill("SIGKILL"), 600_000);
+      p.on("close", (status) => {
+        clearTimeout(t);
+        resolve({ status, out });
+      });
+    });
+    expect(r.status, r.out.slice(-3000)).toBe(0);
+    expect(r.out).not.toMatch(/FAILED|panicked/);
   }, 620_000);
 });
 
