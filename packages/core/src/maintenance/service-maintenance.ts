@@ -246,6 +246,12 @@ export class ServiceMaintenance {
       } catch (e) {
         const be = e as BrokerError;
         if (be.code === "BROKER_UNAVAILABLE") return; // retry later, same frozen request
+        if (be.code === "REGISTRY_NOT_SYNCED") {
+          // the broker has not applied the directory state yet (a newly registered workspace/member): transient, the
+          // same frozen request is retried. m17 run 41145051472: the control stayed failed and root never synced.
+          this.store.tx(() => this.store.run("UPDATE root_sync_outbox SET dispatch_state = 'pending', broker_result = ?, updated_at = ? WHERE id = ?", JSON.stringify({ code: be.code, message: be.message }), this.now(), o.id));
+          return;
+        }
         this.store.tx(() => {
           this.store.run("UPDATE root_sync_outbox SET dispatch_state = 'failed', broker_result = ?, updated_at = ? WHERE id = ?", JSON.stringify({ code: be.code, message: be.message }), this.now(), o.id);
           if (o.kind === "policy-sync") {
