@@ -33,7 +33,29 @@ hashes = sorted({p["narHash"] for p in paths})
 oci_digests = sorted({i["imageId"] for i in json.load(open(oci_index))["images"]}) if oci_index else []
 sha = lambda f: "sha256:" + hashlib.sha256(open(f, "rb").read()).hexdigest()
 canon = lambda v: json.dumps(v, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-sbom = {"formatVersion": 1, "kind": "agentos-closure-sbom", "root": top, "components": [
+# Firmware list (spec §19.1, V1-B04): every file the system firmware path offers, with the store package it comes
+# from and its content hash. Packages are also closure components, so the list is pinned by the same NAR hashes.
+import os
+narh = {p["path"]: p["narHash"] for p in paths}
+fw_files, fw_pkgs = [], {}
+fw_root = os.path.join(top, "firmware")
+if os.path.isdir(fw_root):
+    for d, _, fs in os.walk(fw_root, followlinks=True):
+        for f in fs:
+            full = os.path.join(d, f)
+            real = os.path.realpath(full)
+            if not os.path.isfile(real):
+                continue
+            pkg = "/".join(real.split("/")[:4])
+            fw_pkgs[pkg] = narh.get(pkg, "not-in-closure")
+            fw_files.append({"path": os.path.relpath(full, fw_root), "package": pkg,
+                             "sha256": hashlib.sha256(open(real, "rb").read()).hexdigest()})
+firmware = {"formatVersion": 1, "kind": "agentos-firmware-list", "root": fw_root,
+            "packages": [{"storePath": k, "narHash": v} for k, v in sorted(fw_pkgs.items())],
+            "files": sorted(fw_files, key=lambda x: x["path"])}
+if any(v == "not-in-closure" for v in fw_pkgs.values()):
+    sys.exit("firmware file outside the release closure")
+sbom = {"formatVersion": 1, "kind": "agentos-closure-sbom", "root": top, "firmware": firmware, "components": [
     {"storePath": p["path"], "name": re.sub(r"^/nix/store/[a-z0-9]{32}-", "", p["path"]), "narHash": p["narHash"], "narSize": p["narSize"]} for p in sorted(paths, key=lambda x: x["path"])]}
 sbom_s = canon(sbom)
 open(f"{out}/sbom.json", "w").write(sbom_s)
@@ -52,5 +74,8 @@ manifest = {
     "migrationClass": "none", "healthProfile": "v1-default", "minRecoveryVersion": "1.0.0", "keyId": "unsigned",
 }
 open(f"{out}/manifest.json", "w").write(canon(manifest))
-open(f"{out}/SHA256SUMS", "w").write(f"{hashlib.sha256(canon(manifest).encode()).hexdigest()}  manifest.json\n{hashlib.sha256(sbom_s.encode()).hexdigest()}  sbom.json\n")
+fw_s = canon(firmware)
+open(f"{out}/firmware.json", "w").write(fw_s)
+open(f"{out}/SHA256SUMS", "w").write(f"{hashlib.sha256(fw_s.encode()).hexdigest()}  firmware.json\n{hashlib.sha256(canon(manifest).encode()).hexdigest()}  manifest.json\n{hashlib.sha256(sbom_s.encode()).hexdigest()}  sbom.json\n")
+print(f"firmware list: {len(fw_pkgs)} packages, {len(fw_files)} files")
 open(f"{out}/UNSIGNED", "w").write("This manifest is not signed. Signing is done in the release environment (spec §20.1).\n")

@@ -9,7 +9,7 @@ can be cut once the remaining evidence exists. Nothing here claims an untested p
 
 | Artifact | Built by | Notes |
 |---|---|---|
-| ReleaseManifest (`manifest.json`), SBOM (`sbom.json`), `SHA256SUMS` | `nix build .#agentos-release` | unsigned in this tree; signed only in the release environment (§20.1). `releaseSequence` monotonic, `expiresAt`/`supportUntil` = publish time + 365 days, `hardwareProfiles = ["qemu-virtio"]`. |
+| ReleaseManifest (`manifest.json`), SBOM (`sbom.json`, with the firmware list), firmware list (`firmware.json`: every file of the system firmware path, its store package and sha256), `SHA256SUMS` | `nix build .#agentos-release` | unsigned in this tree; signed only in the release environment (§20.1). `releaseSequence` monotonic, `expiresAt`/`supportUntil` = publish time + 365 days, `hardwareProfiles = ["qemu-virtio"]`. |
 | Installer ISO | `nix build .#agentos-iso` | carries the whole release closure and the OCI archive: offline install. |
 | VM template | `nix build .#agentos-qcow2` | same toplevel, same installer, public template LUKS key replaced on first boot (`agentos-disk-rekey`). |
 | Approved OCI images | `nix build .#agentos-oci` | built offline from fixed inputs; image IDs must equal the manifest's `ociDigests`. |
