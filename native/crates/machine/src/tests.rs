@@ -671,6 +671,7 @@ fn b07_interrupted_machine_migration_leaves_schema_1_intact() {
         c.execute("INSERT INTO users (user_id, login_uid, login_name, role, state, auth_version, provisioning_id, created_at) VALUES ('u1', 1000, 'ada', 'user', 'active', 1, 'p1', 1)", []).unwrap();
         c.execute("INSERT INTO workspaces (workspace_id, create_id, store_uuid, display_name, owner_user_id, execution_uid, exec_login, subuid_start, subgid_start, range_size, state, instance_epoch, workspace_incarnation, data_path_id, origin, created_at) VALUES ('w1', 'c1', 's1', 'A', 'u1', 60000, 'aows0', 100000, 100000, 65536, 'stopped', 1, 1, 'd', 'created', 1)", []).unwrap();
         // a damaged row (foreign keys were off when it was written): the migration's own check fails half-way
+        c.execute_batch("PRAGMA foreign_keys = OFF;").unwrap();
         c.execute("INSERT INTO workspace_members (workspace_id, user_id, role, member_version, state, changed_at) VALUES ('w-gone', 'u1', 'viewer', 1, 'active', 1)", []).unwrap();
     }
     assert!(crate::db::open(p.to_str().unwrap()).is_err(), "a failed migration is reported, not hidden");
