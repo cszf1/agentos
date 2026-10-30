@@ -40,7 +40,7 @@
 | V1-I08 | 撤销时 | 通过 | KVM VM（Actions） | m3-members：Host 停止时撤销，gateway 立即拒绝，root 侧保持 revoking ≥8 秒，Host 重新启动并 ack 后才 revoked。broker 失联与执行者 fence 未单独做。 KVM 通过（run 41088865318）：根因是此前测试等待语句的 sqlite 查询三重转义、从未被解析，并非缺 ack。 |
 | V1-I09 | owner | 通过 | KVM VM（Actions）＋单元/集成 | m3-members（run 41095505484，KVM）I09 子测试通过：最后 owner 不能被移除/降级（CONFLICT）；禁用唯一 owner bob 被以 CONFLICT 拒绝且无效果；禁用不拥有工作区的 erin 后其会话被结束，shadow 显示口令锁定（L）且账户过期（1970），真实 VT 登录被拒、PAM 未开新会话。Rust 单元 i09_owner_transfer_needs_both_sides_and_current_versions（本轮 agentos-v1 通过）：转移须原 owner 发起、接收方本人确认，任一方 memberVersion 变化则 PLAN_STALE，确认后角色互换并向 gateway/host/broker 各发 owner.changed，重放幂等。 m3-members（run 41124900360，7960f01，KVM）子测试“owner transfer and disable: the old approvals wait for review; a stale memberVersion or plan is refused (I09, I12)”通过：所有权转移与禁用后旧批准策略转 paused_needs_review 已在 VM 中断言。 |
 | V1-I10 | 锁屏/注销后的请求 | 通过 | KVM VM（Actions） | m3-members（run 41095505484，KVM）I10 子测试通过：过期 sessionEpoch 被拒；session.end（带幂等键）后同连接的后续请求被拒；logind LockedHint=yes 时不能绑定，解锁后可以。m5-desktop：锁屏只在 swaylock 确认后 LockedHint=yes（见 H03）。m11-ops（run 41119485473，485a5e9，KVM）两个 I10 子测试通过：锁屏时已接受 run 的在途模型请求在原工作区内正常完成（attempt completed、无 denied、run 未被取消），锁定会话 session.bind 不得 200，解锁后恢复；开启 runWhenLoggedOut 后 alice 注销，已接受 run 在工作区 B 内继续完成、B 保持 running，已注销用户的进程无法绑定。**未满足**：锁屏前的机器计划/ticket 在解锁后失效的 VM 断言已加（m11 run 41121887285），CI 待结果。 m11-ops（run 41121887285，3b033a0，KVM）两个 I10 子测试再次通过，其中锁屏子测试包含：锁屏前会话做出的机器计划在解锁后（新 sessionEpoch）不能确认。m5-desktop（run 41126599816，KVM）锁屏子测试通过。 |
-| V1-I11 | 秘密不外泄 | 部分 | KVM VM（Actions） | m3-members：创建账户期间每 50ms 采样全部进程 argv，四个 PAM 口令均不出现在 argv、journal、/var/lib/agentos*、/var/log、/run/agentos。provider/Wi-Fi 秘密、诊断包、会话备份与 Nix store 未扫描。 CI：run 41088865318 中 I04/I03/W04/I06/I08 通过，I09 子测试失败——禁用 bob 被 machined 以 CONFLICT 拒绝（bob 是工作区 “Bob” 的唯一 owner，须先转移所有权），属正确行为、断言有误；已改为断言该拒绝并禁用一个不拥有工作区的新用户，重跑 run 41090308175，I09/I10/W07/I11 CI 待结果。 m3-members（run 41117119140，KVM）I11 子测试通过：argv/journal/状态目录之外，support bundle、/var/lib/agentos-snapshots、/etc、/home 与运行系统整个 Nix 闭包中都没有四个 PAM 口令。**未满足**：provider 与 Wi-Fi 秘密、模型正文未在 VM 中扫描。 |
+| V1-I11 | 秘密不外泄 | 通过 | KVM VM（Actions） | m3-members：创建账户期间每 50ms 采样全部进程 argv，四个 PAM 口令均不出现在 argv、journal、/var/lib/agentos*、/var/log、/run/agentos。provider/Wi-Fi 秘密、诊断包、会话备份与 Nix store 未扫描。 CI：run 41088865318 中 I04/I03/W04/I06/I08 通过，I09 子测试失败——禁用 bob 被 machined 以 CONFLICT 拒绝（bob 是工作区 “Bob” 的唯一 owner，须先转移所有权），属正确行为、断言有误；已改为断言该拒绝并禁用一个不拥有工作区的新用户，重跑 run 41090308175，I09/I10/W07/I11 CI 待结果。 m3-members（run 41117119140，KVM）I11 子测试通过：argv/journal/状态目录之外，support bundle、/var/lib/agentos-snapshots、/etc、/home 与运行系统整个 Nix 闭包中都没有四个 PAM 口令。 m15-wifi（run 41141975884，7966746，KVM）全部子测试通过：mac80211_hwsim 两个模拟无线电，hostapd 在独立 netns 提供 WPA2 网络；目录列出网络，params 里带口令被拒，错误口令可见失败且不留下任何东西；正确口令经 machined 的 secret agent 连接，NetworkManager 不保存口令（psk-flags agent-owned），断开；owner 在秘密字段设置模型凭据、Host 使用它，除该工作区自己的 model.env 外无处持有；最后对 Wi-Fi 口令、provider key 与 PAM 口令逐一扫描：整个运行期间每 50ms 采样的全部进程 argv、journal、support bundle、机器备份集合、/var/lib/agentos-*、/var/log、/run/agentos、/etc、/home、NetworkManager 状态目录、运行系统整个 Nix 闭包、以及测试模型端点收到的全部模型请求正文，均不含任何一个秘密。规格本行（argv、Nix store、普通日志、诊断、会话备份、模型正文；provider/Wi-Fi/PAM）全部覆盖。上一次失败（run 41140423265）是测试在 systemd-run 下用裸命令名启动 hostapd（瞬态单元没有 PATH），已改为绝对路径。 |
 | V1-I12 | 多版本/旧主体绕过 | 通过 | KVM VM（Actions）＋单元/集成 | m2-identity：forward 携带 principal/URL 被拒；access.test.ts 与 Rust：protocol 1 在 minWriteProtocol=3 后被拒。旧 memberVersion/旧 plan 在 VM 中未单独做。 m3-members（run 41124900360，7960f01，KVM）同一子测试通过：旧 memberVersion 的成员变更与转移前做的旧机器计划在 VM 中被拒（PLAN_STALE/CONFLICT），broker protocol 3 子测试（M3, I12）同轮通过。 |
 
 ## 工作区隔离
@@ -81,7 +81,7 @@
 |---|---|---|---|---|
 | V1-H01 | 真实图形设备 | 未通过 | 需实体机，未验收 | 需要实体设备，跑法见文末。 |
 | V1-H02 | 显示模式与拔插 | 未通过 | 需实体机，未验收 | 需要实体设备，跑法见文末。 |
-| V1-H03 | 真锁屏故障 | 部分 | KVM VM（Actions）（已写，CI 待结果）；真实显卡需实体机，未验收 | m5-desktop（run 41126599816，f2090b8，KVM）两个 H03 子测试通过：锁屏只在 swaylock 确认后 LockedHint=yes、gateway 拒绝；杀掉 swaylock 绝不回到未锁桌面。KVM 部分齐；真实显卡/输出故障需实体机，未验收。 |
+| V1-H03 | 真锁屏故障 | 部分 | KVM VM（Actions）；真实显卡需实体机，未验收 | m5-desktop（run 41126599816，f2090b8，KVM）两个 H03 子测试通过：锁屏只在 swaylock 确认后 LockedHint=yes、gateway 拒绝；杀掉 swaylock 绝不回到未锁桌面。KVM 部分齐；真实显卡/输出故障需实体机，未验收。 |
 | V1-H04 | 网络 | 未通过 | 需实体机，未验收 | 需要实体设备，跑法见文末。 |
 | V1-H05 | 音频/亮度 | 未通过 | 需实体机，未验收 | 需要实体设备，跑法见文末。 |
 | V1-H06 | 休眠唤醒 | 未通过 | 需实体机，未验收 | 需要实体设备，跑法见文末。 |
@@ -165,7 +165,7 @@
 
 ## 统计
 
-未通过 12 项，通过 66 项，部分 22 项（共 100 项）。
+未通过 12 项，通过 67 项，部分 21 项（共 100 项）。
 
 ## 回归与偶发失败记录
 
