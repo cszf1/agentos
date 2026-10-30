@@ -278,6 +278,13 @@ with subtest("PAM passwords given to the gateway are not in argv, logs or machin
         machine.fail(f"journalctl -o cat --no-pager | grep -F -- {pw}")
         machine.fail(f"grep -rF -- {pw} /var/lib/agentos-machine /var/lib/agentos-broker /var/lib/agentos /var/log /run/agentos 2>/dev/null")
     machine.succeed("test $(wc -l < /root/argv.log) -gt 100")
+    # wider scope: a support bundle, the cold backup sets on this machine, and the running system's whole Nix closure
+    machine.succeed("agentosctl support-bundle --out /root/i11-bundle.json && test -s /root/i11-bundle.json")
+    machine.succeed("nix-store -qR /run/current-system > /root/i11-closure && test $(wc -l < /root/i11-closure) -gt 100")
+    for pw in ["alice-pw-1", "bob-pw-1", "carol-pw-1", "dave-secret-pw-9"]:
+        machine.fail(f"grep -aF -- {pw} /root/i11-bundle.json")
+        machine.fail(f"grep -raF -- {pw} /var/lib/agentos-snapshots /etc /home 2>/dev/null")
+        machine.fail(f"xargs -a /root/i11-closure grep -rlaF -- {pw} 2>/dev/null")
 
 with subtest("delete: owner+admin, broker effect verdict, executors; UID and storeUUID stay as a tombstone (W10)"):
     r = call(1, [{"methodId": "workspaces.create", "idempotencyKey": str(uuid.uuid4()), "body": {"displayName": "Doomed"}}], "d0")[0]
@@ -344,6 +351,9 @@ with subtest("delete with exported data only after an age copy of a set holding 
     for w in sql("SELECT workspace_id FROM workspaces WHERE state IN ('starting','running')").split():
         if int(sql("SELECT COUNT(*) FROM workspaces WHERE state IN ('starting','running','quiescing')")) < 2:
             break
+        # a Host stopped while it is still creating its two stores leaves one database without the other, which the
+        # machine backup refuses (one store alone is not a restorable pair): let it finish initializing first
+        machine.wait_until_succeeds(f"test -s /var/lib/agentos/workspaces/{w}/data/os.sqlite && test -s /var/lib/agentos/workspaces/{w}/data/agent.sqlite", timeout=120)
         call(1, [{"methodId": "workspaces.stop", "workspaceId": w, "idempotencyKey": str(uuid.uuid4()), "body": {}}], "xpre")
     machine.wait_until_succeeds("test $(sqlite3 /var/lib/agentos-machine/machine.sqlite \"SELECT COUNT(*) FROM workspaces WHERE state IN ('starting','running','quiescing')\") -lt 2", timeout=60)
     r = call(1, [{"methodId": "workspaces.attach", "workspaceId": ws_x, "idempotencyKey": str(uuid.uuid4()), "body": {}}], "xa")[0]
@@ -382,3 +392,65 @@ with subtest("delete with exported data only after an age copy of a set holding 
     assert set_x in sql(f"SELECT delete_json FROM workspaces WHERE workspace_id='{ws_x}'")
     # the exported copy still restores the deleted workspace's data
     machine.succeed(f"agentos-recovery-worker import --in /media/x/x1/ws-{ws_x}.age --identity /root/x.key --staging /root/xcheck | grep -q '\"ok\":true'")
+
+with subtest("owner transfer and disable: the old approvals wait for review; a stale memberVersion or plan is refused (I09, I12)"):
+    frank = make_user("frank", "frank-pw-1", "uf")
+    gina = make_user("gina", "gina-pw-1", "ug")
+    tty_login(6, "frank", "frank-pw-1")
+    # A runs (an earlier subtest may have stopped it; the machine runs at most two workspaces)
+    for w in sql(f"SELECT workspace_id FROM workspaces WHERE state IN ('starting','running') AND workspace_id != '{ws_a}'").split():
+        call(1, [{"methodId": "workspaces.stop", "workspaceId": w, "idempotencyKey": str(uuid.uuid4()), "body": {}}], "tpre")
+    r = call(1, [{"methodId": "workspaces.attach", "workspaceId": ws_a, "idempotencyKey": str(uuid.uuid4()), "body": {}}], "t0")[0]
+    assert r["status"] == 200, r
+    for who, role, tag in [(frank, "editor", "t1"), (gina, "editor", "t2")]:
+        r = call(1, [{"methodId": "members.setRole", "workspaceId": ws_a, "idempotencyKey": str(uuid.uuid4()), "body": {"userId": who, "role": role}}], tag)[0]
+        assert r["status"] == 200, r
+    # I12: an old memberVersion cannot change a member
+    mv = int(sql(f"SELECT member_version FROM workspace_members WHERE workspace_id='{ws_a}' AND user_id='{frank}'"))
+    r = call(1, [{"methodId": "members.setRole", "workspaceId": ws_a, "idempotencyKey": str(uuid.uuid4()), "body": {"userId": frank, "role": "viewer", "expectedMemberVersion": mv - 1}}], "t3")[0]
+    assert code(r) == "PLAN_STALE", r
+    assert sql(f"SELECT role FROM workspace_members WHERE workspace_id='{ws_a}' AND user_id='{frank}'") == "editor"
+    # I12: an old plan (a transfer begun before the receiver's membership changed) cannot be confirmed
+    r = call(1, [{"methodId": "members.transferOwner", "workspaceId": ws_a, "idempotencyKey": str(uuid.uuid4()), "body": {"toUserId": frank}}], "t4")[0]
+    assert r["status"] == 202, r
+    t_old = r["body"]["transferId"]
+    r = call(1, [{"methodId": "members.setRole", "workspaceId": ws_a, "idempotencyKey": str(uuid.uuid4()), "body": {"userId": frank, "role": "viewer", "expectedMemberVersion": mv}}], "t5")[0]
+    assert r["status"] == 200, r
+    r = call(6, [{"methodId": "members.transferOwner", "workspaceId": ws_a, "idempotencyKey": str(uuid.uuid4()), "body": {"transferId": t_old}}], "t6")[0]
+    assert code(r) == "PLAN_STALE", r
+    assert sql(f"SELECT role FROM workspace_members WHERE workspace_id='{ws_a}' AND user_id='{alice}'") == "owner"
+    # approvals given earlier: one by the owner (alice), one by an editor (gina) — written into the Host database as
+    # the approval flow leaves them (state enabled, approved_user_id), with the Host stopped
+    r = call(1, [{"methodId": "workspaces.stop", "workspaceId": ws_a, "idempotencyKey": str(uuid.uuid4()), "body": {}}], "t7")[0]
+    assert r["status"] == 200, r
+    machine.wait_until_fails(f"pgrep -u {ua} -f packages/host/dist/main.js", timeout=60)
+    login_a = sql(f"SELECT exec_login FROM workspaces WHERE workspace_id='{ws_a}'")
+    hostdb = f"/var/lib/agentos/workspaces/{ws_a}/data/os.sqlite"
+    def hq(q):
+        return machine.succeed(f"runuser -u {login_a} -- sqlite3 {hostdb} \"{q}\"").strip()
+    for pid, who in [("i09-owner", alice), ("i09-editor", gina)]:
+        hq("INSERT INTO maintenance_policies (id, version, template_id, template_version, target_kind, target_id, trigger_json, condition_json, bounds_json, mode, allowed_actions, policy_hash, approved_by, approved_at, approved_hash, maintenance_epoch, expires_at, state, root_sync_state, created_at, updated_at, approved_user_id, approved_member_version) "
+           f"VALUES ('{pid}', 1, 'app-optimize', 1, 'workspace', '{ws_a}', '{{}}', '{{}}', '{{}}', 'suggest', '[]', 'sha256:{pid}', 'user:{who}', '2026-01-01T00:00:00.000Z', 'sha256:{pid}', 1, '2099-01-01T00:00:00.000Z', 'enabled', 'none', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', '{who}', 1)")
+    r = call(1, [{"methodId": "workspaces.attach", "workspaceId": ws_a, "idempotencyKey": str(uuid.uuid4()), "body": {}}], "t8")[0]
+    assert r["status"] == 200, r
+    machine.wait_until_succeeds(f"pgrep -u {ua} -f packages/host/dist/main.js", timeout=90)
+    assert hq("SELECT state FROM maintenance_policies WHERE id='i09-owner'") == "enabled"
+    # I09: transfer to frank (current versions, receiver confirms in his own session)
+    mv = int(sql(f"SELECT member_version FROM workspace_members WHERE workspace_id='{ws_a}' AND user_id='{frank}'"))
+    r = call(1, [{"methodId": "members.setRole", "workspaceId": ws_a, "idempotencyKey": str(uuid.uuid4()), "body": {"userId": frank, "role": "editor", "expectedMemberVersion": mv}}], "t9")[0]
+    assert r["status"] == 200, r
+    r = call(1, [{"methodId": "members.transferOwner", "workspaceId": ws_a, "idempotencyKey": str(uuid.uuid4()), "body": {"toUserId": frank}}], "t10")[0]
+    assert r["status"] == 202, r
+    r = call(6, [{"methodId": "members.transferOwner", "workspaceId": ws_a, "idempotencyKey": str(uuid.uuid4()), "body": {"transferId": r["body"]["transferId"]}}], "t11")[0]
+    assert r["status"] == 200, r
+    assert sql(f"SELECT role FROM workspace_members WHERE workspace_id='{ws_a}' AND user_id='{frank}'") == "owner"
+    assert sql(f"SELECT role FROM workspace_members WHERE workspace_id='{ws_a}' AND user_id='{alice}'") != "owner"
+    machine.wait_until_succeeds(f"runuser -u {login_a} -- sqlite3 {hostdb} \"SELECT state FROM maintenance_policies WHERE id='i09-owner'\" | grep -qx paused_needs_review", timeout=90)
+    assert hq("SELECT state FROM maintenance_policies WHERE id='i09-editor'") == "enabled"
+    # I09: disabling gina (owns nothing) puts her approval up for review as well
+    p = call(1, [{"methodId": "machine.users.disable", "idempotencyKey": str(uuid.uuid4()), "body": {"userId": gina}}], "t12")[0]
+    assert p["status"] == 201, p
+    ok = call(1, [{"methodId": "machine.actions.confirm", "idempotencyKey": str(uuid.uuid4()), "body": {"operationId": p["body"]["operationId"], "planHash": p["body"]["planHash"], "password": "alice-pw-1"}}], "t13")[0]
+    assert '"succeeded"' in json.dumps(ok), ok
+    machine.wait_until_succeeds(f"runuser -u {login_a} -- sqlite3 {hostdb} \"SELECT state FROM maintenance_policies WHERE id='i09-editor'\" | grep -qx paused_needs_review", timeout=90)
+    assert hq("SELECT COUNT(*) FROM maintenance_policies WHERE state IN ('enabled','syncing')") == "0"
