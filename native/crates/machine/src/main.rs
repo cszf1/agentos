@@ -27,7 +27,7 @@ fn main() {
     // V1-R11: the machine directory is gone but this machine was in use. Never answer with an empty directory (that
     // would reopen first boot and let old work replay): stay in recovery mode, without a socket, until the local
     // administrator accepts a new installation identity (`agentosctl recover --new-identity`).
-    if let Some(code) = recovery_gate(&paths) {
+    if let Some(code) = recovery_gate(&paths, &socket) {
         std::process::exit(code);
     }
     let init = arg("--init-program").unwrap_or_else(|| "/run/current-system/sw/bin/agentos-admin".into());
@@ -103,7 +103,7 @@ fn remnants(paths: &Paths) -> Vec<String> {
     out
 }
 
-fn recovery_gate(paths: &Paths) -> Option<i32> {
+fn recovery_gate(paths: &Paths, socket: &str) -> Option<i32> {
     let db = paths.machine_dir.join("machine.sqlite");
     let required = paths.machine_dir.join("recovery-required");
     let accepted = paths.machine_dir.join("recovery-accepted");
@@ -140,6 +140,9 @@ fn recovery_gate(paths: &Paths) -> Option<i32> {
         eprintln!("agentos-machined: recovery accepted; previous state kept in {}", lost.display());
         return None;
     }
+    // A socket file left by the previous instance would look like a live machined to clients and checks: remove it,
+    // so "no socket" is literally true while recovery is pending.
+    let _ = std::fs::remove_file(socket);
     let body = json!({ "state": "recovery_required", "reason": "MACHINE_DIRECTORY_MISSING", "remnants": rem });
     let _ = agentos_machine::dir::write_private(&required, body.to_string().as_bytes());
     eprintln!("agentos-machined: MACHINE_DIRECTORY_MISSING: machine.sqlite is gone but {rem:?} remain; recovery mode (no socket). Run `agentosctl recover --new-identity` as root.");

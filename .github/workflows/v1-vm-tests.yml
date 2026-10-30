@@ -39,6 +39,7 @@ jobs:
   vm:
     needs: plan
     runs-on: ubuntu-latest
+    # Each nix step is capped at 110 min (a hung build VM fails the step with its log instead of eating the job).
     timeout-minutes: 340
     strategy:
       fail-fast: false
@@ -78,7 +79,11 @@ jobs:
         working-directory: os
         run: |
           set -o pipefail
-          nix build ".#checks.x86_64-linux.${{ matrix.test }}.driver" -L --print-out-paths 2>&1 | tee "$RUNNER_TEMP/build-${{ matrix.test }}.log"
+          set +e
+          timeout 110m nix build ".#checks.x86_64-linux.${{ matrix.test }}.driver" -L --print-out-paths 2>&1 | tee "$RUNNER_TEMP/build-${{ matrix.test }}.log" | grep --line-buffered -E '^(vm-test-run|agentos-[a-z0-9-]+>|error|building .*(qcow2|iso|release|vm-test))|!!!'
+          rc=${PIPESTATUS[0]}; set -e
+          tail -n 150 "$RUNNER_TEMP/build-${{ matrix.test }}.log"
+          [ "$rc" = 0 ] || exit "$rc"
 
       - name: Run VM check (KVM)
         if: ${{ !startsWith(matrix.test, 'build-') }}
@@ -86,7 +91,11 @@ jobs:
         run: |
           set -o pipefail
           ls -l /dev/kvm
-          nix build ".#checks.x86_64-linux.${{ matrix.test }}" -L --print-out-paths 2>&1 | tee "$RUNNER_TEMP/vm-${{ matrix.test }}.log"
+          set +e
+          timeout 110m nix build ".#checks.x86_64-linux.${{ matrix.test }}" -L --print-out-paths 2>&1 | tee "$RUNNER_TEMP/vm-${{ matrix.test }}.log" | grep --line-buffered -E '^(vm-test-run|agentos-[a-z0-9-]+>|error|building .*(qcow2|iso|release|vm-test))|!!!'
+          rc=${PIPESTATUS[0]}; set -e
+          tail -n 150 "$RUNNER_TEMP/vm-${{ matrix.test }}.log"
+          [ "$rc" = 0 ] || exit "$rc"
 
       - name: Rebuild and compare (O09 part)
         if: ${{ matrix.test == 'build-repro' }}
@@ -116,7 +125,11 @@ jobs:
         run: |
           set -o pipefail
           A="agentos-${T#build-}"
-          nix build ".#$A" -L --print-out-paths -o "$RUNNER_TEMP/out-$A" 2>&1 | tee "$RUNNER_TEMP/build-$A.log"
+          set +e
+          timeout 110m nix build ".#$A" -L --print-out-paths -o "$RUNNER_TEMP/out-$A" 2>&1 | tee "$RUNNER_TEMP/build-$A.log" | grep --line-buffered -E '^(vm-test-run|agentos-[a-z0-9-]+>|error|building .*(qcow2|iso|release|vm-test))|!!!'
+          rc=${PIPESTATUS[0]}; set -e
+          tail -n 150 "$RUNNER_TEMP/build-$A.log"
+          [ "$rc" = 0 ] || exit "$rc"
           ls -laR "$RUNNER_TEMP"/out-$A* | head -50 | tee -a "$RUNNER_TEMP/build-$A.log"
           if [ "$A" = agentos-release ]; then cp "$RUNNER_TEMP/out-$A"/*.json "$RUNNER_TEMP/out-$A"/SHA256SUMS "$RUNNER_TEMP/" ; fi
           find -L "$RUNNER_TEMP"/out-$A* -maxdepth 3 -type f \( -name '*.iso' -o -name '*.qcow2' \) -exec sha256sum {} \; | tee -a "$RUNNER_TEMP/build-$A.log"

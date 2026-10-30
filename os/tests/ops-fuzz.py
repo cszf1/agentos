@@ -36,8 +36,8 @@ def req(extra=None):
     r.update(extra or {})
     return r
 
-def case(name, payload, raw=False):
-    s = conn()
+def case(name, payload, raw=False, wait=10):
+    s = conn(); s.settimeout(wait)
     s.sendall(payload if raw else frame(payload))
     out = {"case": name, "result": answer(s)}
     s.close()
@@ -49,7 +49,8 @@ case("duplicate-key", b'{"methodId":"session.status","methodId":"workspaces.list
 case("unknown-field", json.dumps(req({"principal": {"userId": "root"}})).encode())
 case("url-forward", json.dumps(req({"methodId": "workspace.forward", "body": {"url": "http://127.0.0.1:8080/api/state"}})).encode())
 case("deep-nesting", ("[" * 100000 + "]" * 100000).encode())
-case("truncated-frame", struct.pack(">I", 100) + b'{"method', raw=True)
+# the gateway gives a started frame 30 s to complete, so wait past that: the stalled frame must be closed, not answered
+case("truncated-frame", struct.pack(">I", 100) + b'{"method', raw=True, wait=40)
 # slow and idle connections must not starve others; a started frame that stalls is closed; connections per UID bounded
 slow = []
 for _ in range(20):

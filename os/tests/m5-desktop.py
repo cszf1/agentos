@@ -58,17 +58,17 @@ with subtest("app container from the release images, offline, with no escape sur
 with subtest("lock: swaylock confirms, logind LockedHint=yes, gateway refuses (I10/H03)"):
     sid = user_session("alice", "tty2")
     machine.succeed(f"loginctl lock-session {sid}")
-    machine.wait_until_succeeds("pgrep -u alice -x swaylock", timeout=60)
+    machine.wait_until_succeeds("pgrep -u alice swaylock", timeout=60)
     machine.wait_until_succeeds(f"loginctl show-session {sid} -p LockedHint | grep -q yes", timeout=60)
     machine.screenshot("locked")
     machine.send_chars("alice-pw-1\n")
     machine.wait_until_succeeds(f"loginctl show-session {sid} -p LockedHint | grep -q no", timeout=60)
-    machine.wait_until_fails("pgrep -u alice -x swaylock", timeout=60)
+    machine.wait_until_fails("pgrep -u alice swaylock", timeout=60)
 
 with subtest("a killed locker never returns to an unlocked desktop (H03)"):
     machine.succeed(f"loginctl lock-session {sid}")
     machine.wait_until_succeeds(f"loginctl show-session {sid} -p LockedHint | grep -q yes", timeout=60)
-    machine.succeed("pkill -KILL -u alice -x swaylock")
+    machine.succeed("pkill -KILL -u alice swaylock")
     # the session agent ends the session (back to the greeter) instead of clearing LockedHint
     machine.wait_until_succeeds(f"! loginctl show-session {sid} -p State 2>/dev/null | grep -q active || loginctl show-session {sid} -p LockedHint | grep -q yes", timeout=60)
     machine.wait_until_fails("pgrep -u alice -f bin/agentos-shell", timeout=90)
