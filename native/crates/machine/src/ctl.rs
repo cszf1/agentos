@@ -13,6 +13,9 @@
 //!   agentosctl update verify --manifest <file> --signature <file> [--trusted-time] [--images <index.json>]
 //!                                                              (root: signature, key, fields, sequence, expiry, closure
 //!                                                               content in the store, OCI image IDs; nothing registered)
+//!   agentosctl update fetch --update-id <id> --from <cache-url> --closure <store path>
+//!                                                              (root: download the candidate closure into the store;
+//!                                                               resumable — paths already present are never fetched again)
 //!   agentosctl update commit --update-id <id>                  (root: health gate → commit intent → persistent default
 //!                                                               read back → committed, deferred migration once)
 //!   agentosctl update reconcile                                (root, every boot: resolves the open update from facts —
@@ -115,6 +118,10 @@ fn main() {
         (Some("update"), Some("verify")) => {
             root_only("update verify");
             update_verify(&mut c, &a);
+        }
+        (Some("update"), Some("fetch")) => {
+            root_only("update fetch");
+            update_fetch(&mut c, &a);
         }
         (Some("update"), Some("commit")) => {
             root_only("update commit");
@@ -764,4 +771,94 @@ fn update_reconcile(c: &mut Client) {
         _ => u.clone(),
     };
     out(&json!({ "updateId": id, "facts": facts, "action": act, "state": done["state"] }));
+}
+
+fn free_bytes(path: &str) -> u64 {
+    let c = match std::ffi::CString::new(path) {
+        Ok(c) => c,
+        Err(_) => return 0,
+    };
+    let mut st: libc::statvfs = unsafe { std::mem::zeroed() };
+    if unsafe { libc::statvfs(c.as_ptr(), &mut st) } != 0 {
+        return 0;
+    }
+    (st.f_bavail as u64).saturating_mul(st.f_frsize as u64)
+}
+
+fn nix(args: &[&str]) -> std::process::Output {
+    std::process::Command::new("nix").args(["--extra-experimental-features", "nix-command"]).args(args).output().unwrap_or_else(|e| die(&format!("nix: {e}")))
+}
+
+/// Paths of the closure as the cache lists them (store path → NAR size).
+fn remote_closure(from: &str, closure: &str) -> Vec<(String, u64)> {
+    let o = nix(&["path-info", "--json", "--recursive", "--store", from, closure]);
+    if !o.status.success() {
+        die(&format!("UPDATE_DOWNLOAD_INTERRUPTED: the release cache did not list the closure: {}", String::from_utf8_lossy(&o.stderr).trim()));
+    }
+    let v: Value = serde_json::from_slice(&o.stdout).unwrap_or(Value::Null);
+    let mut out = vec![];
+    match &v {
+        Value::Object(m) => {
+            for (k, x) in m {
+                out.push((k.clone(), x["narSize"].as_u64().unwrap_or(0)));
+            }
+        }
+        Value::Array(a) => {
+            for x in a {
+                out.push((x["path"].as_str().unwrap_or_default().to_string(), x["narSize"].as_u64().unwrap_or(0)));
+            }
+        }
+        _ => {}
+    }
+    out
+}
+
+fn locally_valid(paths: &[String]) -> Vec<String> {
+    paths.iter().filter(|p| std::process::Command::new("nix-store").args(["--check-validity", p.as_str()]).stderr(std::process::Stdio::null()).status().map(|s| s.success()).unwrap_or(false)).cloned().collect()
+}
+
+/// Download (spec §21.2 step 2, V1-U06). The update moves to `downloading` (re-entrant) before any byte; the
+/// closure comes from the release cache through the Nix daemon with its signature checks (require-sigs); each store
+/// path is imported atomically, so a link loss leaves only complete paths and running the same command again
+/// fetches just the missing ones. Not enough store space for what is still missing: refused before downloading.
+/// The update stays `downloading` with the reason until every path is present; then `staged`. Nothing is armed here.
+fn update_fetch(c: &mut Client, a: &[String]) {
+    let usage = "usage: agentosctl update fetch --update-id <id> --from <cache-url> --closure <store path>";
+    let id = arg(a, "--update-id").unwrap_or_else(|| die(usage));
+    let from = arg(a, "--from").unwrap_or_else(|| die(usage));
+    let closure = arg(a, "--closure").unwrap_or_else(|| die(usage));
+    if !closure.starts_with("/nix/store/") {
+        die("INVALID_REQUEST: --closure must be a store path");
+    }
+    let u = c.call("updates.get", json!({ "updateId": id })).unwrap_or_else(|e| die(&e.to_string()));
+    let st = u["state"].as_str().unwrap_or_default().to_string();
+    if st == "staged" {
+        out(&json!({ "updateId": id, "state": "staged", "fetched": 0 }));
+        return;
+    }
+    if st != "verified" && st != "downloading" {
+        die(&format!("CONFLICT: update {id} is {st}; download needs a verified or downloading update"));
+    }
+    let adv = |c: &mut Client, to: &str, fields: Value| c.call("updates.advance", json!({ "updateId": id, "to": to, "fields": fields })).unwrap_or_else(|e| die(&e.to_string()));
+    adv(c, "downloading", json!({}));
+    let all = remote_closure(&from, &closure);
+    let names: Vec<String> = all.iter().map(|(p, _)| p.clone()).collect();
+    let have = locally_valid(&names);
+    let missing_bytes: u64 = all.iter().filter(|(p, _)| !have.contains(p)).map(|(_, n)| *n).sum();
+    let need = missing_bytes.saturating_add(256 << 20);
+    let free = free_bytes("/nix/store");
+    if free < need {
+        let why = json!({ "reason": "store space", "needBytes": need, "freeBytes": free, "present": have.len(), "total": all.len() });
+        adv(c, "downloading", json!({ "error": why }));
+        die(&format!("UPDATE_PRECONDITION: the store needs {need} free bytes for the missing paths, {free} are free; nothing was downloaded"));
+    }
+    let o = nix(&["copy", "--from", &from, &closure]);
+    let now = locally_valid(&names);
+    if !o.status.success() || now.len() != names.len() {
+        let why = json!({ "reason": "download interrupted", "present": now.len(), "total": names.len(), "detail": String::from_utf8_lossy(&o.stderr).lines().rev().take(3).collect::<Vec<_>>().join(" | ") });
+        adv(c, "downloading", json!({ "error": why }));
+        die(&format!("UPDATE_DOWNLOAD_INTERRUPTED: {} of {} paths present; run the same command again to resume", now.len(), names.len()));
+    }
+    let done = adv(c, "staged", json!({}));
+    out(&json!({ "updateId": id, "state": done["state"], "paths": names.len(), "alreadyPresent": have.len(), "fetched": names.len() - have.len() }));
 }
