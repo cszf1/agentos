@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Minimal native-rpc/1 client for VM tests (spec §9.2): 4-byte big-endian length + UTF-8 JSON over a UDS.
-Usage: rpc.py <socket> '<json request or list of requests>'  -> prints one JSON response per request."""
+Usage: rpc.py <socket> '<json request or list of requests>' | @file  -> prints one JSON response per request."""
 import json, socket, struct, sys, uuid
 
 def frame(o):
@@ -27,7 +27,10 @@ def main():
     s = socket.socket(socket.AF_UNIX)
     s.settimeout(120)
     s.connect(sys.argv[1])
-    reqs = json.loads(sys.argv[2])
+    arg = sys.argv[2]
+    if arg.startswith("@"):   # requests from a file, so secrets in a body never appear in this client's argv
+        arg = open(arg[1:], encoding="utf-8").read()
+    reqs = json.loads(arg)
     if isinstance(reqs, dict):
         reqs = [reqs]
     state = {}

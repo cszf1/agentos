@@ -7,7 +7,7 @@ def call(n, reqs, tag):
     """Run [session.bind, *reqs] inside the tty n login and return the responses after the bind."""
     body = json.dumps([{"methodId": "session.bind"}] + reqs, ensure_ascii=False)
     machine.succeed(f"echo {base64.b64encode(body.encode()).decode()} | base64 -d > /tmp/{tag}.json && chmod 0644 /tmp/{tag}.json")
-    out = tty_run(n, f"{RPC} \"$(cat /tmp/{tag}.json)\"", f"/tmp/{tag}")
+    out = tty_run(n, f"{RPC} @/tmp/{tag}.json", f"/tmp/{tag}")
     lines = [json.loads(l) for l in out.splitlines() if l.startswith("{")]
     assert len(lines) == len(reqs) + 1, out
     assert lines[0]["status"] == 200, lines[0]
@@ -197,3 +197,13 @@ with subtest("stop and archive keep the data; an archived workspace does not sta
     machine.succeed(f"test -s /var/lib/agentos/workspaces/{ws_a}/data/os.sqlite")
     r = call(1, [{"methodId": "workspaces.attach", "workspaceId": ws_a, "idempotencyKey": "att-a3", "body": {}}], "s3")[0]
     assert r["status"] != 200, r
+
+with subtest("PAM passwords given to the gateway are not in argv, logs or machine state (I11)"):
+    machine.succeed("(for i in $(seq 1 400); do cat /proc/[0-9]*/cmdline 2>/dev/null | tr '\\0' ' ' >> /root/argv.log; echo >> /root/argv.log; sleep 0.05; done) >/dev/null 2>&1 &")
+    make_user("dave", "dave-secret-pw-9", "ud")
+    machine.succeed("sleep 21")
+    for pw in ["alice-pw-1", "bob-pw-1", "carol-pw-1", "dave-secret-pw-9"]:
+        machine.fail(f"grep -F -- {pw} /root/argv.log")
+        machine.fail(f"journalctl -o cat --no-pager | grep -F -- {pw}")
+        machine.fail(f"grep -rF -- {pw} /var/lib/agentos-machine /var/lib/agentos-broker /var/lib/agentos /var/log /run/agentos 2>/dev/null")
+    machine.succeed("test $(wc -l < /root/argv.log) -gt 100")
