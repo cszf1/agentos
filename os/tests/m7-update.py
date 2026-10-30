@@ -201,3 +201,14 @@ with subtest("release verification: tampered manifest/closure/OCI/signature, unk
     # nothing above registered a release, and the store keeps require-sigs
     assert machine.succeed("sqlite3 /var/lib/agentos-machine/machine.sqlite 'SELECT COUNT(*) FROM releases' 2>/dev/null || echo 0").strip() == "0"
     machine.succeed("nix --extra-experimental-features nix-command config show require-sigs 2>/dev/null | grep -qx true || nix show-config 2>/dev/null | grep -q '^require-sigs = true'")
+
+with subtest("a commit behind a failing health gate leaves the persistent default on known-good (U09)"):
+    efi = "/sys/firmware/efi/efivars/LoaderEntryDefault-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f"
+    before = machine.succeed(f"tail -c +5 {efi} | tr -d '\\000'").strip()
+    assert before == f"agentos-{CAND}.conf", before
+    # headless node: no greeter, no Shell frame -> the gate cannot pass
+    rc, out = machine.execute(f"{UW} commit --release-id {GOOD} --health-gate --state-dir /var/lib/agentos-machine")
+    print(out)
+    v = json.loads(out.strip().splitlines()[-1])
+    assert not v["ok"] and v["error"]["code"] == "NEEDS_ATTENTION" and "greeter_frame" in v["error"]["message"], v
+    assert machine.succeed(f"tail -c +5 {efi} | tr -d '\\000'").strip() == before

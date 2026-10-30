@@ -104,3 +104,45 @@ with subtest("a killed locker never returns to an unlocked desktop (H03)"):
     machine.wait_until_succeeds(f"! loginctl show-session {sid} -p State 2>/dev/null | grep -q active || loginctl show-session {sid} -p LockedHint | grep -q yes", timeout=60)
     machine.wait_until_fails("pgrep -u alice -f bin/agentos-shell", timeout=90)
     machine.fail(f"loginctl show-session {sid} -p LockedHint 2>/dev/null | grep -q '=no'")
+
+with subtest("health gate: false ready, SSH only, no Qt frame and an incompatible workspace each fail; a healthy system passes (U09)"):
+    machine.wait_for_unit("greetd.service")
+    HG = "agentos-update-worker health --state-dir /var/lib/agentos-machine"
+    def gate(prefix="", extra="", bg=None):
+        cmd = f"{prefix} {HG} {extra}"
+        if bg:
+            machine.succeed(f"({cmd} > {bg} 2>&1; echo done >> {bg}) >/dev/null 2>&1 &")
+            return None
+        out = machine.succeed(cmd + " 2>&1")
+        return json.loads(out.strip().splitlines()[-1])["result"]
+    def bg_result(f):
+        machine.wait_until_succeeds(f"grep -q '^done$' {f}", timeout=400)
+        return json.loads(machine.succeed(f"grep '^{{' {f} | tail -1"))["result"]
+    st = json.loads(machine.succeed("agentosctl status"))
+    print("workspaceList", st.get("workspaceList"))
+    assert any(w["workspaceId"] == ws and w["schemaVersion"] is not None for w in st["workspaceList"]), st
+    # positive control first: every probe green for 60 s
+    ok = gate()
+    print("healthy run", ok)
+    assert ok["healthy"] is True, ok
+    # Qt renders no frame (the probe's canvas process fails) and a workspace outside the release's schema range:
+    # independent, run side by side
+    machine.succeed("mkdir -p /tmp/noqt && printf '#!/bin/sh\\nexit 1\\n' > /tmp/noqt/agentos-shell && chmod +x /tmp/noqt/agentos-shell")
+    gate(prefix="PATH=/tmp/noqt:$PATH", bg="/tmp/hg-noqt")
+    gate(extra="--schema-min 6 --schema-max 6", bg="/tmp/hg-schema")
+    r1, r2 = bg_result("/tmp/hg-noqt"), bg_result("/tmp/hg-schema")
+    print(r1, r2)
+    assert r1["healthy"] is False and "shell_canvas" in json.dumps(r1["failing"]), r1
+    assert r2["healthy"] is False and "workspaces_compatible" in json.dumps(r2["failing"]), r2
+    # false ready: the broker unit stays active (systemd says ready) but its identity socket is gone
+    machine.succeed("mv /run/agentos-broker/broker.sock /run/agentos-broker/broker.sock.hidden")
+    machine.succeed("systemctl is-active agentos-broker.service")
+    r3 = gate()
+    machine.succeed("mv /run/agentos-broker/broker.sock.hidden /run/agentos-broker/broker.sock")
+    print(r3)
+    assert r3["healthy"] is False and "broker_identity" in json.dumps(r3["failing"]), r3
+    # SSH only: the system answers a remote shell but no greeter and no machined
+    machine.succeed("systemctl stop greetd.service agentos-machine.service")
+    r4 = gate()
+    print(r4)
+    assert r4["healthy"] is False and "greeter_frame" in json.dumps(r4["failing"]) and "machine_identity" in json.dumps(r4["failing"]), r4
