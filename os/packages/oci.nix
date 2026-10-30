@@ -104,7 +104,9 @@ vm.runInLinuxVM (pkgs.runCommand "agentos-oci" {
     labels=$(jq -r '.labels | to_entries[] | "--label=\(.key)=\(.value)"' $m)
     # --timestamp 0: image config "created" and every layer file mtime fixed, so two clean builds give the same archive
     # (build-repro run 41116526465 found images.tar differing between two builds of the same inputs).
-    $P build --network=none --pull=never --layers=false --rm --force-rm --timestamp 0 \
+    # The Nix builder exports SOURCE_DATE_EPOCH and Podman refuses it together with --timestamp
+    # ("timestamp and source-date-epoch would be ambiguous", m5/m12 run 41124923054 build VM panic), so drop it here.
+    env -u SOURCE_DATE_EPOCH $P build --network=none --pull=never --layers=false --rm --force-rm --timestamp 0 \
       --build-arg BASE="$(jq -r .base $m)" $labels -t "$name" \
       -v /tmp/oci/npm:/npmcache:rw -v /tmp/oci/npmrc:/usr/local/etc/npmrc:ro \
       -f ${contexts}/$i/Containerfile ${contexts}/$i
