@@ -168,3 +168,41 @@ with subtest("the machine's 24-hour model budget stops a real Host's run before 
     call(1, [fwd(ws_a, "runs.cancel.post", params={"runId": rid}, idem="day-c1")], "dayc")
     run(1, ws_a, "做一个预算恢复后的应用", "day2")
     machine.wait_until_succeeds(f"test $(grep -c '\"ev\": \"start\"' {FM}/log.jsonl) -gt {n0}", timeout=180)
+
+with subtest("machined SIGKILL while permits are reserved/in use: nothing is freed or reserved twice; held slots end with their holder (S05)"):
+    machine.succeed(f"echo 45 > {FM}/hold")
+    machine.wait_until_succeeds(f"python3 -c \"import json,sys;sys.exit(sum(json.load(open('{FM}/state.json'))['inflight'].values()))\"", timeout=180)
+    n_start0 = len([e for e in fm_log() if e["ev"] == "start"])
+    s1 = run(1, ws_a, "做一个借书记录应用", "s5a")
+    s2 = run(1, ws_b, "做一个植物浇水应用", "s5b")
+    machine.wait_until_succeeds(f"test \"$(python3 -c \"import json;print(sum(json.load(open('{FM}/state.json'))['inflight'].values()))\")\" = 2", timeout=180)
+    held = sql("SELECT permit_id || ':' || state FROM machine_permits WHERE resource_class='model' AND state IN ('reserved','in_use','reconciling') ORDER BY permit_id").split()
+    print("held before kill", held)
+    assert len(held) == 2 and all(h.endswith(":in_use") for h in held), held
+    s3 = run(1, ws_a, "做一个第三个应用", "s5c")                       # waits behind the two busy slots
+    machine.wait_until_succeeds("test $(sqlite3 /var/lib/agentos-machine/machine.sqlite \"SELECT COUNT(*) FROM machine_permits WHERE resource_class='model' AND state='queued'\") -ge 1", timeout=120)
+    rows_before = int(sql("SELECT COUNT(*) FROM machine_permits"))
+    pid = machine.succeed("systemctl show -p MainPID --value agentos-machine.service").strip()
+    machine.succeed(f"kill -KILL {pid}")
+    machine.wait_until_succeeds(f"test \"$(systemctl show -p MainPID --value agentos-machine.service)\" != {pid} && systemctl is-active agentos-machine.service", timeout=60)
+    print(machine.succeed("journalctl -u agentos-machine.service -o cat --no-pager | grep 'permits reconciled' | tail -1"))
+    # the holders (both Hosts' execution UIDs) are alive: the two permits are kept (reconciling or back in use), never freed
+    after = sql("SELECT permit_id || ':' || state FROM machine_permits WHERE permit_id IN (" + ",".join("'" + h.split(':')[0] + "'" for h in held) + ") ORDER BY permit_id").split()
+    print("held after restart", after)
+    assert all(a.split(":")[1] in ("reconciling", "in_use") for a in after) and len(after) == 2, after
+    time.sleep(10)
+    assert int(sql("SELECT COUNT(*) FROM machine_permits WHERE resource_class='model' AND state IN ('reserved','in_use','reconciling')")) <= 2
+    assert int(sql("SELECT COUNT(*) FROM machine_permits WHERE resource_class='model' AND state='queued'")) >= 1   # the waiter did not get a freed slot
+    st = fm_state()
+    assert sum(st["inflight"].values()) <= 2, st
+    # no duplicate reservation: one permit row per model attempt (attempt_id unique among the rows written since)
+    dup = sql("SELECT COUNT(*) FROM (SELECT attempt_id FROM machine_permits WHERE resource_class='model' GROUP BY attempt_id HAVING COUNT(*) > 1)")
+    assert dup == "0", dup
+    # the held requests finish: their Hosts release them with the real usage, and only then the waiter starts
+    machine.wait_until_succeeds(f"test $(grep -c '\"ev\": \"start\"' {FM}/log.jsonl) -gt {n_start0 + 2}", timeout=240)
+    fin = sql("SELECT permit_id || ':' || state || ':' || IFNULL(usage_status,'') FROM machine_permits WHERE permit_id IN (" + ",".join("'" + h.split(':')[0] + "'" for h in held) + ")").split()
+    print("held permits at the end", fin)
+    assert all(f.split(":")[1] in ("released", "reconciling", "in_use") and f.split(":")[2] != "unused" for f in fin), fin   # never handed back as unused
+    assert fm_state()["peak"]["total"] <= 2, fm_state()
+    for rid, ws in ((s1, ws_a), (s2, ws_b), (s3, ws_a)):
+        call(1, [fwd(ws, "runs.cancel.post", params={"runId": rid}, idem="s5c-" + rid)], "s5x" + rid[:6])
