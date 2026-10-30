@@ -12,7 +12,6 @@ pkgs.testers.runNixOSTest {
     virtualisation = { memorySize = 4096; inherit cores; diskSize = 6144; };
     boot.kernelModules = [ "mac80211_hwsim" ];
     boot.extraModprobeConfig = "options mac80211_hwsim radios=2";
-    networking.wireless.enable = lib.mkForce false;
     networking.networkmanager.unmanaged = [ "wlan1" ];
     environment.systemPackages = [ pkgs.python3 pkgs.sqlite pkgs.hostapd pkgs.iw ];
     environment.etc."agentos-test/rpc.py".source = ./rpc.py;
