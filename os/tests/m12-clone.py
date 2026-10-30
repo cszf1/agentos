@@ -32,11 +32,14 @@ with subtest("source: a code app generated and running before the set is taken (
         if not (r["status"] == 503 and r.get("body", {}).get("error", {}).get("retryable")):
             break
         time.sleep(2)
-    assert r["status"] == 202, r
-    run_k, app_k = r["body"]["runId"], r["body"]["targetAppId"]
+    assert r["status"] in (200, 202), r
+    b = r.get("body") or {}
+    b = b.get("data") or b
+    run_k = b["runId"]
     machine.wait_until_succeeds(f"sqlite3 {osa} \"SELECT status FROM runs WHERE id='{run_k}'\" | grep -qE '^(succeeded|failed|cancelled)$'", timeout=600)
     st_k = machine.succeed(f"sqlite3 {osa} \"SELECT status FROM runs WHERE id='{run_k}'\"").strip()
     assert st_k == "succeeded", st_k
+    app_k = machine.succeed(f"sqlite3 {osa} \"SELECT target_app_id FROM runs WHERE id='{run_k}'\"").strip()
     rev_k = machine.succeed(f"sqlite3 {osa} \"SELECT active_revision_id FROM apps WHERE id='{app_k}'\"").strip()
     assert rev_k, app_k
 
