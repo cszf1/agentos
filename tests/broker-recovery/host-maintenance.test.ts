@@ -5,6 +5,7 @@ import os from "node:os";
 import { DatabaseSync } from "node:sqlite";
 import { Client, seedFixtures, startHost, stopHost, type HostProc } from "../proc.js";
 import { Broker, hasBroker, installed, storeUUID, sudo, unitActive, waitUntil } from "../v03.js";
+import { historyAll } from "../../packages/host/src/backup-v3.js";
 
 /**
  * V4-H06 / V4-R03 on the real host + real broker: the user enables a bounded "keep running" policy for the demo unit
@@ -105,13 +106,7 @@ run("host maintenance: keep a registered unit running through broker protocol 2"
     expect(unitActive(DEMO)).toBe("active");
     const b = await new Broker().open();
     try {
-      const ops = [];
-      for (let since = 0; ; ) {
-        const page = await b.client.historySync(b.identity.machineInstallId, since, 500);
-        ops.push(...page.operations.filter((o) => o.maintenance?.jobId === jobId));
-        if (page.operations.length === 0 || page.lastSeq <= since) break;
-        since = page.lastSeq;
-      }
+      const ops = (await historyAll(b.client, b.identity.machineInstallId)).ops.filter((o) => o.maintenance?.jobId === jobId);
       expect(ops).toHaveLength(1);
       expect(ops[0]!.state).toBe("succeeded");
       expect(ops[0]!.maintenance).toMatchObject({ protocolVersion: 2, policyId: created.data.policyId });

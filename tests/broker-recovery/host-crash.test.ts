@@ -6,6 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import { randomBytes } from "node:crypto";
 import { Client, seedFixtures, startHost, stopHost, type HostProc } from "../proc.js";
 import { Broker, hasBroker, installed, storeUUID, waitUntil } from "../v03.js";
+import { historyAll } from "../../packages/host/src/backup-v3.js";
 
 /**
  * V3-R02 / R03 / R06 on the HOST side: the real host process is SIGKILLed at fixed points around the system outbox
@@ -34,7 +35,7 @@ run("host crashes around the system outbox", () => {
   const opsOf = async (actionId: string) => {
     const b = await new Broker().open();
     try {
-      return (await b.client.historySync(b.identity.machineInstallId, 0, 500)).operations.filter((o) => o.actionId === actionId);
+      return (await historyAll(b.client, b.identity.machineInstallId)).ops.filter((o) => o.actionId === actionId);
     } finally {
       b.close();
     }
