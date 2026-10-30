@@ -86,6 +86,7 @@
         m13-native = test "m13" ./tests/m13-native.nix { };
         m14-create = test "m14" ./tests/m14-create.nix { };
         m15-wifi = test "m15" ./tests/m15-wifi.nix { };
+        m16-fetch = test "m16" ./tests/m16-fetch.nix { };
         m5-desktop = import ./tests/m5-desktop.nix { inherit pkgs; modules = [ ./modules/base.nix ./modules/graphics.nix ./modules/agentos.nix ]; };
       };
     };
