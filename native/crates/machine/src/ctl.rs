@@ -6,6 +6,8 @@
 //!   agentosctl backup export --set <dir> --recipient <age1…> --out <dir>  (root: age copy off the machine, read back)
 //!   agentosctl restore --set <dir> [--restore-id <id>]         (root: same-machine restore journal, resumable)
 //!   agentosctl recover --new-identity                          (root: accept a new install identity after loss)
+//!   agentosctl clone --set <dir> --owner <login>               (root: a machine set from ANOTHER machine becomes new
+//!                                                               workspaces here; history kept as evidence, no authority)
 //!   agentosctl update digest --manifest <file>                 (the digest a release key signs)
 //!   agentosctl update trust-key --key-id <id> --public-key <hex> (root: add a release verification key, audited)
 //!   agentosctl update verify --manifest <file> --signature <file> [--trusted-time] [--images <index.json>]
@@ -149,6 +151,7 @@ fn main() {
         (Some("support-bundle"), _) => support_bundle(&mut c, &a),
         (Some("backup"), _) => backup(&mut c, &a),
         (Some("restore"), _) => restore(&mut c, &a),
+        (Some("clone"), _) => clone(&mut c, &a),
         _ => die("usage: agentosctl status | doctor | workspace list | workspace status <id> | update status | firstboot --admin <login> | support-bundle --out <file>"),
     }
 }
@@ -300,7 +303,7 @@ fn backup(c: &mut Client, a: &[String]) {
         }
         fault("backup.after_first_workspace");
         let members = call(c, "workspaces.memberSnapshot", json!({ "workspaceId": id })).unwrap_or(Value::Null);
-        parts.push(json!({ "workspaceId": id, "storeUUID": w["storeUUID"], "executionUid": w["executionUid"], "workspaceIncarnation": w["workspaceIncarnation"], "members": members["members"], "checkpoint": r["result"] }));
+        parts.push(json!({ "workspaceId": id, "displayName": w["displayName"], "storeUUID": w["storeUUID"], "executionUid": w["executionUid"], "workspaceIncarnation": w["workspaceIncarnation"], "members": members["members"], "checkpoint": r["result"] }));
     }
     let manifest = json!({ "formatVersion": 1, "kind": "agentos-machine-set", "setId": set_id, "machineInstallId": mid, "barrierId": barrier,
         "machineControlEpoch": st["meta"]["machineControlEpoch"], "workspaces": parts });
@@ -384,6 +387,86 @@ fn export(c: &mut Client, a: &[String]) {
     let after = c.call("checkpoints.get", json!({ "setId": set_id })).unwrap_or(Value::Null);
     out(&json!({ "ok": true, "setId": set_id, "files": files.iter().map(|(f, h)| json!({ "path": f, "sha256": h })).collect::<Vec<_>>(),
         "exportState": after["exportState"], "offMachineCopy": after["offMachineCopy"] }));
+}
+
+/// A UUID derived from stable inputs, so a repeated or resumed clone names the same workspace and journal.
+fn derived_uuid(parts: &[&str]) -> String {
+    let h = sha256_hex(parts.join("\u{1f}").as_bytes());
+    format!("{}-{}-4{}-8{}-{}", &h[0..8], &h[8..12], &h[13..16], &h[17..20], &h[20..32])
+}
+
+/// Cross-machine clone (spec §24.2, V1-R10). The set comes from ANOTHER machine (a same-machine set is restored, not
+/// cloned). Every part becomes a NEW workspace here: machined allocates a new execution UID, sub-ID range and account
+/// for the named local owner (the source machine's users, passwords and sessions do not exist here); the part's
+/// tree is restored into it, owned by the new UID, and a clone marker makes the Host reconcile before it opens
+/// anything (grants revoked, outboxes never dispatched, devices quarantined, policies need review, membership from
+/// this machine only). The source machine's history stays in the data as evidence. Resumable: the same set gives the
+/// same create ids and journal ids.
+fn clone(c: &mut Client, a: &[String]) {
+    root_only("clone");
+    let usage = "usage: agentosctl clone --set <dir> --owner <login>";
+    let dir = arg(a, "--set").unwrap_or_else(|| die(usage));
+    let owner_login = arg(a, "--owner").unwrap_or_else(|| die(usage));
+    let bytes = std::fs::read(format!("{dir}/machine-set.json")).unwrap_or_else(|_| die("not a machine set (machine-set.json missing)"));
+    let set: Value = serde_json::from_slice(&bytes).unwrap_or_else(|_| die("machine-set.json is not JSON"));
+    let set_id = set["setId"].as_str().unwrap_or_else(|| die("machine-set.json has no setId")).to_string();
+    let src_mid = set["machineInstallId"].as_str().unwrap_or_default().to_string();
+    let call = |c: &mut Client, op: &str, args: Value| c.call(op, args).unwrap_or_else(|e| die(&format!("{op}: {e}")));
+    let st = call(c, "status", json!({}));
+    if st["meta"]["machineInstallId"].as_str() == Some(src_mid.as_str()) {
+        die("CONFLICT: this set was taken on this machine; use `agentosctl restore`, a clone is for another machine");
+    }
+    let users = call(c, "users.list", json!({}));
+    let owner = users["users"].as_array().cloned().unwrap_or_default().into_iter().find(|u| u["loginName"].as_str() == Some(owner_login.as_str()) && u["state"] == "active")
+        .unwrap_or_else(|| die(&format!("no active local user {owner_login} on this machine")));
+    let owner_id = owner["userId"].as_str().unwrap_or_default().to_string();
+    let parts = set["workspaces"].as_array().cloned().unwrap_or_default();
+    // every part is verified before anything is created
+    for p in &parts {
+        let id = p["workspaceId"].as_str().unwrap_or_default();
+        let v = rw(&["verify", "--set", &format!("{dir}/ws/{id}")]);
+        if v["ok"] != true {
+            die(&format!("set part {id} failed verification: {}", v["error"]));
+        }
+        if v["result"]["storeUUID"].is_string() && v["result"]["storeUUID"] != p["storeUUID"] {
+            die(&format!("set part {id}: storeUUID differs from machine-set.json"));
+        }
+    }
+    let mut report = vec![];
+    for p in &parts {
+        let old = p["workspaceId"].as_str().unwrap_or_default().to_string();
+        let create_id = derived_uuid(&["clone-create", &set_id, &old]);
+        let name = p["displayName"].as_str().map(String::from).unwrap_or_else(|| format!("Cloned {}", &old[..8.min(old.len())]));
+        let w = call(c, "workspaces.createFor", json!({ "createId": create_id, "ownerUserId": owner_id, "displayName": name, "storeUUID": p["storeUUID"], "origin": "cloned" }));
+        let ws = w["workspaceId"].as_str().unwrap_or_else(|| die("machined did not return the new workspace")).to_string();
+        let _ = c.call("workspaces.rootStop", json!({ "workspaceId": ws }));
+        let row = call(c, "workspaces.row", json!({ "workspaceId": ws }));
+        let uid = row["executionUid"].as_i64().unwrap_or(-1);
+        if uid <= 0 {
+            die(&format!("workspace {ws} has no execution UID"));
+        }
+        let root = format!("/var/lib/agentos/workspaces/{ws}");
+        let rid = derived_uuid(&["clone-restore", &set_id, &old]);
+        let v = rw(&["restore", "--set", &format!("{dir}/ws/{old}"), "--ws-root", &root, "--restore-id", &rid, "--uid", &uid.to_string(), "--gid", &uid.to_string()]);
+        if v["ok"] != true {
+            die(&format!("clone of {old} into {ws} failed: {} (run the same command again to resume)", v["error"]));
+        }
+        let marker = format!("{root}/data/clone-reconcile-pending");
+        let body = json!({ "workspaceId": ws, "sourceWorkspaceId": old, "sourceMachineInstallId": src_mid, "setId": set_id }).to_string();
+        // a resumed run writes the marker only while the Host has not started since the swap (the restore marker is
+        // still there); a clone the Host already reconciled is never reconciled twice
+        if v["result"]["resumed"] != true || std::path::Path::new(&format!("{root}/data/restore-reconcile-pending")).exists() {
+            agentos_machine::dir::write_private(std::path::Path::new(&marker), body.as_bytes()).unwrap_or_else(|e| die(&e.to_string()));
+            unsafe {
+                let cpath = std::ffi::CString::new(marker.clone()).unwrap();
+                if libc::chown(cpath.as_ptr(), uid as u32, uid as u32) != 0 {
+                    die("cannot hand the clone marker to the execution UID");
+                }
+            }
+        }
+        report.push(json!({ "sourceWorkspaceId": old, "workspaceId": ws, "executionUid": uid, "storeUUID": p["storeUUID"], "owner": owner_login }));
+    }
+    out(&json!({ "ok": true, "setId": set_id, "sourceMachineInstallId": src_mid, "machineInstallId": st["meta"]["machineInstallId"], "workspaces": report }));
 }
 
 fn bail(c: &mut Client, set_id: &str, barrier: &str, msg: String, begun: bool, was_running: &[String]) -> ! {

@@ -12,6 +12,7 @@ import { buildServer, type HostRuntime } from "./http.js";
 import { MaintenanceHost } from "./maintenance-host.js";
 import { MachineCallError, MachineLink, MachineMode, machineModeFromEnv } from "./machine-mode.js";
 import { applyV04Restore } from "./backup-v4.js";
+import { CLONE_RECONCILE, applyClone, readCloneMarker } from "./clone-v1.js";
 
 export const RESTORE_MARKER = "restore-in-progress";
 /** Written into a workspace tree by the machine restore (recovery worker) and consumed once by the next Host start. */
@@ -63,7 +64,24 @@ export async function main(): Promise<void> {
   // gone become `unavailable` (rebuilt from their fixed lock, never reported present), old jobs/outboxes/routes are
   // fenced and policies need review. The marker goes only after that transaction committed.
   const reconcile = path.join(config.dataDir, RESTORE_RECONCILE);
-  if (fs.existsSync(reconcile)) {
+  let cloned = false;
+  try {
+    const info = readCloneMarker(config.dataDir);
+    if (info) {
+      if (preCfg && info.workspaceId !== preCfg.workspaceId) throw new Error("the clone marker names another workspace");
+      const r = applyClone(config.dataDir, info);
+      fs.rmSync(reconcile, { force: true }); // the clone applied the restore rules too
+      fs.rmSync(path.join(config.dataDir, CLONE_RECONCILE));
+      const d = fs.openSync(config.dataDir, "r");
+      fs.fsyncSync(d);
+      fs.closeSync(d);
+      cloned = true;
+      log.info("cloned workspace reconciled before opening", { from: info.sourceMachineInstallId, ...r });
+    }
+  } catch (e) {
+    fail(log, "the cloned workspace could not be reconciled; not opening it and not deleting anything", { error: (e as Error).message });
+  }
+  if (!cloned && fs.existsSync(reconcile)) {
     let id = "unknown";
     try {
       id = String((JSON.parse(fs.readFileSync(reconcile, "utf8")) as { restoreId?: string }).restoreId ?? "unknown");

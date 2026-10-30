@@ -1,0 +1,106 @@
+# M9 clone (spec §24.2; V1-R10) on two NixOS VMs: `machine` is the source, `target` a second machine with its own
+# install identity, users and passwords. Helpers from lib.py act on the global `machine`; the script rebinds it to
+# the target half-way. Results are "KVM VM" evidence.
+SNAP = "/var/lib/agentos-snapshots"
+source, dest = machine, target
+
+def ctl(args, ok=True):
+    rc, out = machine.execute(f"agentosctl {args} 2>&1")
+    if ok:
+        assert rc == 0, (args, out)
+        return json.loads(out[out.index("{"):])
+    return rc, out
+
+start_all()
+machine.wait_for_unit("agentos-session-gateway.service")
+out = json.loads(must("printf 'alice-pw-1' | agentosctl firstboot --admin alice --workspace A"))
+ws_a, mid_src = out["workspaceId"], out["machineInstallId"]
+machine.wait_for_unit("agentos-broker.service")
+tty_login(1, "alice", "alice-pw-1")
+alice = sql("SELECT user_id FROM users WHERE login_name='alice'")
+r = call(1, [{"methodId": "workspaces.attach", "workspaceId": ws_a, "idempotencyKey": str(uuid.uuid4()), "body": {}}], "a1")[0]
+assert r["status"] == 200, r
+uid_src = int(sql(f"SELECT execution_uid FROM workspaces WHERE workspace_id='{ws_a}'"))
+store = sql(f"SELECT store_uuid FROM workspaces WHERE workspace_id='{ws_a}'")
+osa = f"/var/lib/agentos/workspaces/{ws_a}/data/os.sqlite"
+machine.wait_until_succeeds(f"test -s /var/lib/agentos/workspaces/{ws_a}/data/agent.sqlite", timeout=120)
+
+with subtest("source: history and old authority in the workspace, one machine set, age export"):
+    r = call(1, [{"methodId": "workspaces.stop", "workspaceId": ws_a, "idempotencyKey": str(uuid.uuid4()), "body": {}}], "s1")[0]
+    assert r["status"] == 200, r
+    machine.wait_until_fails(f"pgrep -u {uid_src} -f packages/host/dist/main.js", timeout=60)
+    asu = f"setpriv --reuid {uid_src} --regid {uid_src} --clear-groups sqlite3 {osa}"
+    # history (kept as evidence) and authority of the source machine (must not act on the target)
+    machine.succeed(f"{asu} \"INSERT INTO events (kind, payload_json, created_at) VALUES ('test.history', '{{\\\"n\\\":42}}', '2026-10-31T00:00:00Z')\"")
+    machine.succeed(f"{asu} \"INSERT INTO gc_delete_intents (id, object_kind, object_id, gc_generation, source_path, phase, created_at, updated_at) VALUES ('old-intent','staging','.staging-old',1,'.staging-old','unknown','2026-10-31T00:00:00Z','2026-10-31T00:00:00Z')\"")
+    assert machine.succeed(f"{asu} \"SELECT COUNT(*) FROM membership_mirror WHERE user_id='{alice}'\"").strip() == "1"
+    v = ctl(f"backup --out {SNAP}/c1")
+    set_id = v["setId"]
+    machine.succeed("age-keygen -o /root/c.key 2>/root/c.pub")
+    rec = machine.succeed("grep -o 'age1[a-z0-9]*' /root/c.pub").strip()
+    e = ctl(f"backup export --set {SNAP}/c1 --recipient {rec} --out /root/carry")
+    assert e["exportState"] == "verified", e
+    machine.succeed("cp /root/c.key /root/carry/ && tar -C /root -cf /root/carry.tar carry")
+    machine.copy_from_vm("/root/carry.tar", "")
+    # a same-machine set is restored, never cloned
+    rc, o = ctl(f"clone --set {SNAP}/c1 --owner alice", ok=False)
+    assert rc != 0 and "CONFLICT" in o, o
+
+# ---- second machine ----
+machine = dest
+machine.wait_for_unit("agentos-session-gateway.service")
+out = json.loads(must("printf 'bea-pw-2' | agentosctl firstboot --admin bea"))
+mid_dst = out["machineInstallId"]
+assert mid_dst != mid_src
+machine.wait_for_unit("agentos-broker.service")
+machine.copy_from_host(str(source.out_dir / "carry.tar"), "/root/carry.tar")
+machine.succeed("tar -C /root -xf /root/carry.tar")
+
+with subtest("target: the copy is decrypted and verified; a damaged part refuses the whole clone"):
+    machine.succeed(f"agentos-recovery-worker import --in /root/carry/ws-{ws_a}.age --identity /root/carry/c.key --staging /root/cset/ws/{ws_a} | grep -q '\"ok\":true'")
+    machine.succeed("age -d -i /root/carry/c.key -o /root/cset/machine-set.json /root/carry/machine-set.json.age")
+    machine.succeed("cp -a /root/cset /root/cbad && f=$(ls /root/cbad/ws/*/data/os.sqlite) && printf 'x' >> $f")
+    rc, o = ctl("clone --set /root/cbad --owner bea", ok=False)
+    assert rc != 0 and "verification" in o, o
+    assert sql("SELECT COUNT(*) FROM workspaces WHERE origin='cloned'") == "0"
+    rc, o = ctl("clone --set /root/cset --owner alice", ok=False)       # alice does not exist here
+    assert rc != 0, o
+
+with subtest("clone: new workspace, new execution account under the local owner; old users, sessions and authority do not travel (R10)"):
+    v = ctl("clone --set /root/cset --owner bea")
+    [w] = v["workspaces"]
+    ws_n = w["workspaceId"]
+    assert ws_n != ws_a and w["storeUUID"] == store, w
+    assert v["sourceMachineInstallId"] == mid_src and v["machineInstallId"] == mid_dst
+    uid_n = int(sql(f"SELECT execution_uid FROM workspaces WHERE workspace_id='{ws_n}'"))
+    assert sql(f"SELECT origin || ' ' || state FROM workspaces WHERE workspace_id='{ws_n}'") in ("cloned stopped", "cloned created"), sql(f"SELECT origin, state FROM workspaces WHERE workspace_id='{ws_n}'")
+    bea = sql("SELECT user_id FROM users WHERE login_name='bea'")
+    assert sql(f"SELECT owner_user_id FROM workspaces WHERE workspace_id='{ws_n}'") == bea
+    machine.succeed(f"test \"$(find /var/lib/agentos/workspaces/{ws_n}/data ! -uid {uid_n} | wc -l)\" = 0")
+    machine.fail("id alice")                                        # source accounts and passwords do not exist here
+    # repeated clone of the same set: same workspace, no second writable copy of the store
+    v2 = ctl("clone --set /root/cset --owner bea")
+    assert v2["workspaces"][0]["workspaceId"] == ws_n, v2
+    assert sql(f"SELECT COUNT(*) FROM workspaces WHERE store_uuid='{store}'") == "1"
+    tty_login(1, "bea", "bea-pw-2")
+    r = call(1, [{"methodId": "workspaces.attach", "workspaceId": ws_n, "idempotencyKey": str(uuid.uuid4()), "body": {}}], "t1")[0]
+    assert r["status"] == 200, r
+    machine.wait_until_succeeds(f"pgrep -u {uid_n} -f packages/host/dist/main.js", timeout=120)
+    osn = f"/var/lib/agentos/workspaces/{ws_n}/data/os.sqlite"
+    machine.wait_until_succeeds(f"test ! -e /var/lib/agentos/workspaces/{ws_n}/data/clone-reconcile-pending", timeout=120)
+    q = lambda s: machine.succeed(f"setpriv --reuid {uid_n} --regid {uid_n} --clear-groups sqlite3 {osn} \"{s}\"").strip()
+    assert q("SELECT workspace_id FROM meta") == ws_n
+    assert q("SELECT COUNT(*) FROM events WHERE kind='test.history'") == "1"            # history kept as evidence
+    assert q("SELECT COUNT(*) FROM events WHERE kind='workspace.cloned'") == "1"
+    assert mid_src in q("SELECT payload_json FROM events WHERE kind='workspace.cloned'")
+    assert q("SELECT phase FROM gc_delete_intents WHERE id='old-intent'") == "aborted"  # old intents never act
+    assert q("SELECT COUNT(*) FROM provider_grant_outbox WHERE dispatch_state IN ('pending','sent')") == "0"
+    assert q("SELECT COUNT(*) FROM maintenance_policies WHERE state IN ('enabled','syncing')") == "0"
+    for _ in range(60):
+        if q("SELECT group_concat(user_id) FROM membership_mirror") == bea:
+            break
+        time.sleep(1)
+    assert q("SELECT group_concat(user_id) FROM membership_mirror") == bea
+    assert q(f"SELECT COUNT(*) FROM membership_mirror WHERE user_id='{alice}'") == "0"
+    # the clone's broker on this machine knows only this machine's registration
+    machine.wait_until_succeeds(f"sqlite3 /var/lib/agentos-broker/broker.sqlite \"SELECT COUNT(*) FROM machine_hosts WHERE store_uuid='{store}'\" | grep -qx 1", timeout=60)
