@@ -775,6 +775,17 @@ impl Machine {
             return Err(MErr::hidden());
         }
         self.tx(|c| {
+            // Machine quota (spec §9.3, §27.1): at most as many logged-out workspaces as may run at once.
+            if enabled {
+                let others: i64 = c.query_row(
+                    "SELECT COUNT(*) FROM workspaces WHERE run_when_logged_out = 1 AND workspace_id != ?1 AND state NOT IN ('archived','creating')",
+                    [ws],
+                    |r| r.get(0),
+                )?;
+                if others >= MAX_RUNNING {
+                    return Err(MErr::new("MACHINE_CAPACITY", "the machine already lets the maximum number of workspaces run while logged out"));
+                }
+            }
             c.execute("UPDATE workspaces SET run_when_logged_out = ?2 WHERE workspace_id = ?1", params![ws, enabled as i64])?;
             Self::enqueue(c, &[("host", ws)], "workspace.settings", &json!({ "workspaceId": ws, "runWhenLoggedOut": enabled }))?;
             Self::audit(c, actor, "workspace.run_when_logged_out", Some(ws), if enabled { "on" } else { "off" }, None)

@@ -247,3 +247,29 @@ fn r02_barrier_freezes_starts_and_host_joins() {
     t.m.release_barrier(&b).unwrap();
     t.m.start_workspace(&a.0).unwrap();
 }
+
+#[test]
+fn w08_run_when_logged_out_default_off_owner_only_and_machine_quota() {
+    let (mut t, w) = setup();
+    let (a, b) = (&w[0], &w[1]);
+    assert_eq!(t.m.ws_row(&a.0).unwrap()["runWhenLoggedOut"], serde_json::json!(false));
+    // a non-member (and so any non-owner) cannot turn it on; the answer does not reveal the workspace
+    assert!(t.m.set_run_when_logged_out(&b.1, &a.0, true).is_err());
+    t.m.set_run_when_logged_out(&a.1, &a.0, true).unwrap();
+    t.m.set_run_when_logged_out(&b.1, &b.0, true).unwrap();
+    let c = t.m.create_workspace(&uuid(), &a.1, "third", None, "created").unwrap();
+    let c = c["workspaceId"].as_str().unwrap().to_string();
+    assert_eq!(t.m.set_run_when_logged_out(&a.1, &c, true).unwrap_err().code, "MACHINE_CAPACITY");
+    t.m.set_run_when_logged_out(&b.1, &b.0, false).unwrap();
+    t.m.set_run_when_logged_out(&a.1, &c, true).unwrap();
+}
+
+#[test]
+fn r02_host_precheck_refused_under_a_barrier() {
+    let (mut t, w) = setup();
+    let b = t.m.hold_barrier("checkpoint", &uuid(), &serde_json::json!({})).unwrap();
+    assert_eq!(t.m.require_no_barrier().unwrap_err().code, "CHECKPOINT_INCOMPLETE");
+    t.m.release_barrier(&b).unwrap();
+    t.m.require_no_barrier().unwrap();
+    let _ = w;
+}
