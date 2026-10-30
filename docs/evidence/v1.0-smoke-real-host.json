@@ -6,58 +6,58 @@
     "baseUrl": "https://tokenrhythm.studio/v1"
   },
   "level": "host (development mode, two Host processes, no native UI, no machined)",
-  "startedAt": "2026-10-30T15:51:42.575Z",
+  "startedAt": "2026-10-30T16:02:24.730Z",
   "steps": {
     "parallelCreate": {
       "a": {
-        "runId": "b1ac4837-806f-4061-8db9-be792d79d6df",
+        "runId": "1bf4f2d6-6d3f-44e0-a320-536805f0ecd5",
         "status": "succeeded",
-        "appId": "a68406a4-a29e-48d5-ab56-7e10061e65f3",
+        "appId": "d0cd6bdf-be5a-4e2d-b4df-a5e9086434e7",
         "error": null,
         "modelRequests": 5,
         "usage": null,
         "conversationId": "9"
       },
       "b": {
-        "runId": "53239a27-3f47-4578-b733-93bd4cc1f1e1",
+        "runId": "265abe21-4666-4177-b28e-27bb265167af",
         "status": "succeeded",
-        "appId": "39fd59c8-6e85-491a-a16d-833b7fb283a7",
+        "appId": "b3d79c3c-8daf-4c3e-beaa-4049767e1756",
         "error": null,
         "modelRequests": 5,
         "usage": null,
         "conversationId": "9"
       },
-      "seconds": 35
+      "seconds": 26
     },
     "overlap": {
       "attemptsA": 5,
       "attemptsB": 5,
-      "overlappingPairs": 7,
-      "maxOverlapMs": 5088
+      "overlappingPairs": 8,
+      "maxOverlapMs": 6100
     },
     "isolation": {
-      "recordA": "a105c891-91e9-4133-8c38-95d49512e79c",
-      "recordB": "9635f5b2-545a-4d39-90e9-dbf31c2ddff4",
+      "recordA": "823bf0f8-088a-4f94-838d-0344b8ea0f21",
+      "recordB": "18f1fd02-3ab9-459a-8ef1-7a3524899567",
       "aSeesB": 0,
       "bSeesA": 0,
       "textLeakAtoB": false,
       "textLeakBtoA": false
     },
     "upgrade": {
-      "runId": "d270dc77-afbe-4ea8-b29e-1c10a7ab702d",
+      "runId": "3d4865de-cdaf-48b2-82ea-95cbfdaae63b",
       "status": "succeeded",
-      "appId": "a68406a4-a29e-48d5-ab56-7e10061e65f3",
+      "appId": "d0cd6bdf-be5a-4e2d-b4df-a5e9086434e7",
       "error": null,
-      "modelRequests": 5,
+      "modelRequests": 6,
       "usage": null,
       "conversationId": "41"
     },
     "versions": {
-      "rev1": "sha256:72f79a86a2c64dfd9f962fc2fb17fadcc38492956b43a970e6a5a633d0611eab",
-      "rev2": "sha256:72f79a86a2c64dfd9f962fc2fb17fadcc38492956b43a970e6a5a633d0611eab",
-      "priorityField": "priority",
+      "rev1": "sha256:13daf729c74267597150cced1bfbf8119d007a1faec69aa87b1f39969906a4df",
+      "rev2": "sha256:74dfd99f02f44ad18fe544a558b0f19761ad544e4758995d0a5b9475a404c83b",
+      "newField": "tag",
       "switchBack": 200,
-      "activeAfter": "sha256:72f79a86a2c64dfd9f962fc2fb17fadcc38492956b43a970e6a5a633d0611eab",
+      "activeAfter": "sha256:13daf729c74267597150cced1bfbf8119d007a1faec69aa87b1f39969906a4df",
       "records": 1
     },
     "compaction": {
@@ -68,16 +68,16 @@
           "purpose": "compaction",
           "background": 1,
           "state": "completed",
-          "output_tokens": 475
+          "output_tokens": 654
         }
       ]
     },
     "usageA": {
-      "attempts": 11,
+      "attempts": 12,
       "states": {
-        "completed": 11
+        "completed": 12
       },
-      "outputTokens": 2194,
+      "outputTokens": 4723,
       "unknown": 0
     },
     "usageB": {
@@ -85,10 +85,10 @@
       "states": {
         "completed": 5
       },
-      "outputTokens": 777,
+      "outputTokens": 918,
       "unknown": 0
     }
   },
-  "finishedAt": "2026-10-30T15:52:54.415Z",
+  "finishedAt": "2026-10-30T16:04:10.855Z",
   "ok": true
 }
