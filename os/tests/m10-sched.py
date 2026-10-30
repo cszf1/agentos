@@ -257,6 +257,35 @@ with subtest("machined SIGKILL while permits are reserved/in use: nothing is fre
     for rid, ws in ((s1, ws_a), (s2, ws_b), (s3, ws_a)):
         call(1, [fwd(ws, "runs.cancel.post", params={"runId": rid}, idem="s5c-" + rid)], "s5x" + rid[:6])
 
+with subtest("Host SIGKILL with a model permit in use: held until the successor Host says hello, then charged unknown, never handed back unused (S05 Host, S06)"):
+    machine.succeed(f"echo 60 > {FM}/hold")
+    machine.wait_until_succeeds(f"python3 -c \"import json,sys;sys.exit(sum(json.load(open('{FM}/state.json'))['inflight'].values()))\"", timeout=240)
+    k1 = run(1, ws_a, "做一个记账应用", "s6a")
+    machine.wait_until_succeeds(f"test \"$(python3 -c \"import json;print(json.load(open('{FM}/state.json'))['inflight'].get('{ws_a}',0))\")\" = 1", timeout=180)
+    machine.wait_until_succeeds(f"test -n \"$(sqlite3 /var/lib/agentos-machine/machine.sqlite \"SELECT permit_id FROM machine_permits WHERE owner_id='{k1}' AND state='in_use'\")\"", timeout=60)
+    P = sql(f"SELECT permit_id FROM machine_permits WHERE workspace_id='{ws_a}' AND owner_id='{k1}' AND resource_class='model' AND state='in_use'").split()
+    assert len(P) == 1, P
+    P = P[0]
+    ua = machine.succeed(f"stat -c %u /var/lib/agentos/workspaces/{ws_a}/data").strip()
+    old = machine.succeed(f"pgrep -u {ua} -f packages/host/dist/main.js").split()[0]
+    inst_old = sql(f"SELECT instance_id FROM machine_permits WHERE permit_id='{P}'")
+    machine.succeed(f"kill -KILL {old}")
+    machine.wait_until_fails(f"kill -0 {old}", timeout=30)
+    # the successor Host (systemd restart) says hello with a new instance; only then is the slot given up, as unknown
+    machine.wait_until_succeeds(f"pgrep -u {ua} -f packages/host/dist/main.js | grep -vqx {old}", timeout=120)
+    machine.wait_until_succeeds(f"test \"$(sqlite3 /var/lib/agentos-machine/machine.sqlite \"SELECT state || ':' || usage_status FROM machine_permits WHERE permit_id='{P}'\")\" = released:unknown", timeout=120)
+    new_inst = sql(f"SELECT instance_id FROM workspace_instances WHERE workspace_id='{ws_a}' AND state='running'")
+    assert new_inst and new_inst != inst_old, (new_inst, inst_old)
+    assert sql(f"SELECT state FROM workspace_instances WHERE instance_id='{inst_old}'") == "lost"
+    # charged: the machine's day budget counts it (used or unknown); it was never returned as unused
+    assert sql(f"SELECT COUNT(*) FROM machine_permits WHERE permit_id='{P}' AND usage_status IN ('used','unknown')") == "1"
+    att = machine.succeed(f"sqlite3 /var/lib/agentos/workspaces/{ws_a}/data/os.sqlite \"SELECT state FROM model_attempts WHERE run_id='{k1}'\"").split()
+    print("attempts of the killed Host's run", att)
+    assert "completed" not in att, att                                 # the cut request is never reported completed
+    assert fm_state()["peak"]["total"] <= 2, fm_state()
+    call(1, [fwd(ws_a, "runs.cancel.post", params={"runId": k1}, idem="s6x")], "s6x")
+    machine.succeed(f"echo 0 > {FM}/hold")
+
 with subtest("rollback only to a release whose compatibility covers the live data; records and revocations stay (U11)"):
     machine.succeed("cat > /root/mcall.py <<'PY'\nimport json, socket, struct, sys\ns = socket.socket(socket.AF_UNIX); s.connect('/run/agentos/machine/machine.sock')\nb = json.dumps({'op': sys.argv[1], 'args': json.loads(sys.argv[2])}).encode()\ns.sendall(struct.pack('>I', len(b)) + b)\nn = struct.unpack('>I', s.recv(4, socket.MSG_WAITALL))[0]\nprint(s.recv(n, socket.MSG_WAITALL).decode())\nPY")
     def mcall(op, args):
