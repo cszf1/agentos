@@ -16,7 +16,11 @@ def tty_login(n, user, pw):
 def tty_run(n, cmd, out):
     # Run inside the real tty login session (seat0); results go to a file the test reads back.
     machine.send_chars(f"{cmd} > {out} 2>&1; echo done >> {out}\n")
-    machine.wait_until_succeeds(f"grep -q '^done$' {out}", timeout=180)
+    try:
+        machine.wait_until_succeeds(f"grep -q '^done$' {out}", timeout=150)
+    except Exception:
+        print(machine.execute(f"cat {out}; journalctl -u agentos-machine -u agentos-session-gateway --no-pager | tail -40; ps aux | grep -E 'rpc.py|agentos' | head")[1])
+        raise
     return machine.succeed(f"cat {out}")
 
 def must(cmd):

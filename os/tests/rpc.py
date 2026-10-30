@@ -25,6 +25,7 @@ def read(s):
 
 def main():
     s = socket.socket(socket.AF_UNIX)
+    s.settimeout(120)
     s.connect(sys.argv[1])
     reqs = json.loads(sys.argv[2])
     if isinstance(reqs, dict):
