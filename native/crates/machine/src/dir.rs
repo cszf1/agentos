@@ -1185,6 +1185,18 @@ impl Machine {
             let (state, epoch): (String, i64) = c.query_row("SELECT state, instance_epoch FROM workspaces WHERE workspace_id = ?1", [ws], |r| Ok((r.get(0)?, r.get(1)?)))?;
             if c.query_row("SELECT 1 FROM workspace_instances WHERE instance_id = ?1", [instance_id], |_| Ok(())).optional()?.is_none() {
                 c.execute("UPDATE workspace_instances SET state = 'lost' WHERE workspace_id = ?1 AND state IN ('starting','running','stopping')", [ws])?;
+                // A new Host instance can only start once the previous Host process has exited (it holds host.lock for
+                // its whole life), so permits of earlier instances of this workspace have no holder left (spec §13.2,
+                // V1-S05/S06): never-used ones go back unused; anything that may have gone out is charged unknown.
+                // Until this hello they stay held: a dead Host alone frees nothing.
+                c.execute(
+                    "UPDATE machine_permits SET state = 'revoked', usage_status = 'unused' WHERE workspace_id = ?1 AND instance_id != ?2 AND (state = 'reserved' OR (state = 'reconciling' AND used_at IS NULL))",
+                    params![ws, instance_id],
+                )?;
+                c.execute(
+                    "UPDATE machine_permits SET state = 'released', usage_status = 'unknown' WHERE workspace_id = ?1 AND instance_id != ?2 AND state IN ('in_use','reconciling')",
+                    params![ws, instance_id],
+                )?;
                 c.execute(
                     "INSERT INTO workspace_instances (instance_id, workspace_id, instance_epoch, boot_id, host_pid, cgroup_id, state, last_seen_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'running', ?7)",
                     params![instance_id, ws, epoch, boot, pid, format!("pid:{pid}"), now_ms()],
@@ -1197,6 +1209,10 @@ impl Machine {
             }
             let snap = Self::member_snapshot(c, ws)?;
             Ok(json!({ "workspaceId": ws, "instanceEpoch": epoch, "membership": snap }))
+        })
+        .and_then(|v| {
+            self.schedule()?; // slots freed above go to the next waiter in order
+            Ok(v)
         })
     }
 

@@ -775,3 +775,27 @@ fn o06_after_a_power_cut_running_workspaces_without_a_host_on_this_boot_become_s
     t.fake.busy.lock().unwrap().remove(&wss[0].2); // the power cut ended that execution: its cgroup is empty
     t.m.start_workspace(&wss[0].0).unwrap();
 }
+
+#[test]
+fn s05_s06_a_killed_host_frees_its_slots_only_when_its_successor_says_hello_charged_unknown() {
+    let (t, w) = setup();
+    let a = &w[0];
+    let v = mv(&t, a);
+    let p1 = t.m.request_permit(&a.0, &rq(a, v, false)).unwrap();
+    let p2 = t.m.request_permit(&a.0, &rq(a, v, false)).unwrap();
+    t.m.use_permit(&a.0, p1["permitId"].as_str().unwrap(), v).unwrap();
+    let waiter = t.m.request_permit(&w[1].0, &rq(&w[1], mv(&t, &w[1]), false)).unwrap();
+    assert_eq!(state(&waiter), "queued");
+    // the Host died (SIGKILL): nothing is freed by that alone
+    assert_eq!(held(&t), 2);
+    // its successor starts (it could only take host.lock after the old process exited) and says hello
+    t.m.host_hello(&a.0, &uuid(), 5151, "boot").unwrap();
+    let q1 = t.m.permit(p1["permitId"].as_str().unwrap()).unwrap();
+    let q2 = t.m.permit(p2["permitId"].as_str().unwrap()).unwrap();
+    assert_eq!((state(&q1), q1["usageStatus"].as_str().unwrap()), ("released".to_string(), "unknown"), "maybe sent: charged unknown");
+    assert_eq!((state(&q2), q2["usageStatus"].as_str().unwrap()), ("revoked".to_string(), "unused"), "never used: back unused");
+    assert_eq!(state(&t.m.permit(waiter["permitId"].as_str().unwrap()).unwrap()), "reserved", "the waiter gets the freed slot in order");
+    // the same Host saying hello again changes nothing
+    let p3 = t.m.request_permit(&a.0, &rq(a, v, false));
+    assert!(p3.is_ok());
+}
