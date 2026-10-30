@@ -688,3 +688,74 @@ fn b07_interrupted_machine_migration_leaves_schema_1_intact() {
     drop(c);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+fn sk(seed: u8) -> ed25519_dalek::SigningKey { ed25519_dalek::SigningKey::from_bytes(&[seed; 32]) }
+fn pk_hex(k: &ed25519_dalek::SigningKey) -> String { hex::encode(k.verifying_key().to_bytes()) }
+fn sign_digest(k: &ed25519_dalek::SigningKey, digest: &str) -> String {
+    use ed25519_dalek::Signer;
+    hex::encode(k.sign(&hex::decode(digest.strip_prefix("sha256:").unwrap()).unwrap()).to_bytes())
+}
+fn manifest(seq: i64, key: &str, closure: &str) -> serde_json::Value {
+    let now = crate::util::now_ms();
+    let h = |c: char| format!("sha256:{}", std::iter::repeat(c).take(64).collect::<String>());
+    serde_json::json!({
+        "formatVersion": 1, "releaseId": crate::util::uuid(), "releaseSequence": seq, "version": "1.0.0", "channel": "stable",
+        "publishedAt": now - 1000, "expiresAt": now + 86_400_000, "supportUntil": now + 86_400_000 * 30,
+        "sourceCommit": "a".repeat(40), "flakeLockHash": h('1'), "nixpkgsRevision": "b".repeat(40), "platform": "x86_64-linux",
+        "hardwareProfiles": ["qemu-virtio"], "baseClosurePath": closure, "baseClosureHash": h('2'), "closureContentHashes": [h('3')],
+        "kernelVersion": "6.18.59", "initrdHash": h('4'), "ociDigests": [h('5')], "sbomHash": h('6'),
+        "compatibility": { "workspaceSchema": [5, 5], "machineSchema": [1, 2], "brokerSchema": [4, 4], "brokerProtocol": [3, 3], "nativeRpc": [1, 1] },
+        "migrationClass": "none", "healthProfile": "default", "minRecoveryVersion": "1.0.0", "keyId": key,
+    })
+}
+
+#[test]
+fn u04_u05_signatures_content_sequence_and_trusted_key_rotation() {
+    let (t, _) = setup();
+    let (k1, k2, k3) = (sk(1), sk(2), sk(3));
+    t.m.add_trusted_key("k1", &pk_hex(&k1), "test").unwrap();
+    let sig = |k: &ed25519_dalek::SigningKey, m: &serde_json::Value| sign_digest(k, &crate::release::manifest_hash(m));
+    let m5 = manifest(5, "k1", "/nix/store/aaaa-agentos-system");
+    t.m.register_release(&m5, &sig(&k1, &m5), true).unwrap();
+    t.m.adopt_base_release(&m5, &sig(&k1, &m5), true).unwrap();
+    // U04: tampered content, wrong key, unknown key, missing field, no trusted time — all refused
+    let mut tampered = m5.clone();
+    tampered["baseClosurePath"] = serde_json::json!("/nix/store/evil-system");
+    assert_eq!(t.m.verify_release(&tampered, &sig(&k1, &m5), true).unwrap_err().code, "UPDATE_SIGNATURE_INVALID");
+    let m6 = manifest(6, "k1", "/nix/store/bbbb-agentos-system");
+    assert_eq!(t.m.verify_release(&m6, &sig(&k3, &m6), true).unwrap_err().code, "UPDATE_SIGNATURE_INVALID");
+    let mu = manifest(6, "nobody", "/nix/store/bbbb-agentos-system");
+    assert_eq!(t.m.verify_release(&mu, &sig(&k1, &mu), true).unwrap_err().code, "UPDATE_SIGNATURE_INVALID");
+    let mut missing = m6.clone();
+    missing.as_object_mut().unwrap().remove("ociDigests");
+    assert_eq!(t.m.verify_release(&missing, &sig(&k1, &missing), true).unwrap_err().code, "UPDATE_SIGNATURE_INVALID");
+    assert_eq!(t.m.verify_release(&m6, &sig(&k1, &m6), false).unwrap_err().code, "UPDATE_SIGNATURE_INVALID");
+    let mut oci = m6.clone();
+    oci["ociDigests"] = serde_json::json!(["sha256:zz"]);
+    assert_eq!(t.m.verify_release(&oci, &sig(&k1, &oci), true).unwrap_err().code, "UPDATE_SIGNATURE_INVALID");
+    // U05: an old or equal sequence is a replay; an expired manifest is refused
+    let old = manifest(4, "k1", "/nix/store/cccc-agentos-system");
+    assert_eq!(t.m.verify_release(&old, &sig(&k1, &old), true).unwrap_err().code, "RELEASE_REPLAYED");
+    let mut reused = m6.clone();
+    reused["releaseId"] = m5["releaseId"].clone();
+    assert_eq!(t.m.verify_release(&reused, &sig(&k1, &reused), true).unwrap_err().code, "RELEASE_REPLAYED");
+    let mut exp = manifest(7, "k1", "/nix/store/dddd-agentos-system");
+    exp["publishedAt"] = serde_json::json!(1000);
+    exp["expiresAt"] = serde_json::json!(2000);
+    assert_eq!(t.m.verify_release(&exp, &sig(&k1, &exp), true).unwrap_err().code, "UPDATE_SIGNATURE_INVALID");
+    // U05: rotation must be signed by a trusted key; a forged rotation changes nothing
+    let stmt = serde_json::json!({ "newKeyId": "k2", "newPublicKey": pk_hex(&k2), "revokeKeyIds": ["k1"] });
+    let sig_rot = |k: &ed25519_dalek::SigningKey| sign_digest(k, &crate::util::hash(crate::release::ROTATION_DOMAIN, &stmt));
+    assert!(t.m.rotate_key(&stmt, "k1", &sig_rot(&k3)).is_err());
+    assert!(t.m.rotate_key(&stmt, "k3", &sig_rot(&k3)).is_err());
+    t.m.verify_release(&m6, &sig(&k1, &m6), true).unwrap();
+    // the trusted rotation: k2 becomes trusted, k1 is revoked for good
+    t.m.rotate_key(&stmt, "k1", &sig_rot(&k1)).unwrap();
+    assert_eq!(t.m.verify_release(&m6, &sig(&k1, &m6), true).unwrap_err().code, "UPDATE_SIGNATURE_INVALID");
+    let m6b = manifest(6, "k2", "/nix/store/bbbb-agentos-system");
+    t.m.verify_release(&m6b, &sig(&k2, &m6b), true).unwrap();
+    assert!(t.m.add_trusted_key("k1", &pk_hex(&k1), "again").is_err() || t.m.verify_release(&m6, &sig(&k1, &m6), true).is_err(), "a revoked key stays revoked");
+    // the high-water mark is not lowered by a known-good switch (see also U11)
+    let hw: i64 = t.m.c.query_row("SELECT accepted_release_sequence FROM machine_meta", [], |r| r.get(0)).unwrap();
+    assert_eq!(hw, 5);
+}
