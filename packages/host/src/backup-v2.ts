@@ -79,7 +79,7 @@ function dbFacts(osFile: string): DbFacts {
     const hasV2 = !!db.prepare("SELECT 1 FROM sqlite_master WHERE name = 'artifacts'").get();
     if (!hasV2) return { storeUUID: meta.store_uuid, codeApps: 0, artifacts: [] };
     const artifacts = db.prepare("SELECT DISTINCT a.id AS id, a.runtime_lock_id AS lock FROM artifacts a JOIN revision_artifacts ra ON ra.artifact_id = a.id").all() as { id: string; lock: string }[];
-    const codeApps = (db.prepare("SELECT COUNT(*) AS n FROM revisions WHERE json_extract(bundle_json, '$.formatVersion') = 2").get() as { n: number }).n;
+    const codeApps = (db.prepare("SELECT COUNT(*) AS n FROM revisions WHERE json_extract(bundle_json, '$.formatVersion') IN (2, 3)").get() as { n: number }).n;
     return { storeUUID: meta.store_uuid, codeApps, artifacts };
   } finally {
     db.close();

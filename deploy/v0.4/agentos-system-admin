@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# agentos-system-admin — administrator entry for the AgentOS v0.3 privileged side (spec §12.1, §24.2).
+# agentos-system-admin — administrator entry for the AgentOS privileged side (v0.3 spec §12.1, §24.2; v0.4 §13.3, §16).
+# This is the ONE installer. deploy/v0.3/agentos-system-admin only runs it with AGENTOS_SYSADMIN_PROFILE=v0.3,
+# which leaves out everything v0.4 adds (maintenance install caps, the test-only second demo unit).
 #   install   --host-user U --store-uuid S [--workspace-id W] [--build DIR] [--test-mode] [--serial-pty] [--serial-udev PATH:VID:PID:SERIAL]
 #   inspect
 #   reinstall-log            (broker log lost/corrupt: retire it, issue a NEW machineInstallId; old plans/grants/outbox die)
@@ -9,6 +11,10 @@
 set -euo pipefail
 umask 022
 [ "$(id -u)" = 0 ] || { echo "run as root" >&2; exit 1; }
+PROFILE=${AGENTOS_SYSADMIN_PROFILE:-v0.4}
+case "$PROFILE" in v0.3|v0.4) ;; *) echo "unknown AGENTOS_SYSADMIN_PROFILE=$PROFILE (v0.3 or v0.4)" >&2; exit 2;; esac
+# v0.4 test installs only: the second demo unit and widened maintenance caps.
+v04_test() { [ "$PROFILE" = v0.4 ] && [ "${test_mode:-false}" = true ]; }
 
 LIB=/usr/lib/agentos
 ETC=/etc/agentos
@@ -234,7 +240,7 @@ MemoryMax=256M
 TasksMax=64
 EOF
   # test installs only: a second demo unit whose recovery history is independent of the protocol-2 suite
-  if [ "${test_mode:-false}" = true ]; then
+  if v04_test; then
   cat > $UNITS/agentos-demo2.service <<EOF
 [Unit]
 # Spec §22.1: the broker/workers restart after a crash; never give up after a burst of failures.
@@ -367,7 +373,7 @@ do_install() {
   echo "AgentOS demo service" > /var/lib/agentos-demo/index.html
   install -d -m 0700 -o root -g root /var/lib/agentos-broker
   write_units "$host_uid" "$serial_pty"
-  POLKIT_EXTRA=""; [ "$test_mode" = true ] && POLKIT_EXTRA=', "agentos-demo2.service"'
+  POLKIT_EXTRA=""; v04_test && POLKIT_EXTRA=', "agentos-demo2.service"'
   write_polkit
   local install_id
   if [ -f $POL ]; then install_id=$(python3 -c "import json;print(json.load(open('$POL'))['machineInstallId'])"); else install_id="mi_$(head -c 12 /dev/urandom | od -An -tx1 | tr -d ' \n')"; fi
@@ -381,13 +387,18 @@ do_install() {
   # v0.4 maintenance install caps for the demo unit (spec §16: default 2/hour, 3/24 h, 10 min cooldown). A dedicated
   # test install may widen them with AGENTOS_MAINT_CAPS="perHour:per24h:cooldownSeconds" so repeated test runs fit.
   local m_hour=2 m_day=3 m_cool=600
-  if [ "$test_mode" = true ] && [ -n "${AGENTOS_MAINT_CAPS:-}" ]; then IFS=: read -r m_hour m_day m_cool <<<"$AGENTOS_MAINT_CAPS"; fi
+  if v04_test && [ -n "${AGENTOS_MAINT_CAPS:-}" ]; then IFS=: read -r m_hour m_day m_cool <<<"$AGENTOS_MAINT_CAPS"; fi
   local cpu_tmpl; cpu_tmpl=$(sha256sum $UNITS/agentos-demo.service | cut -c1-64)
   local units_extra="" maint_extra=""
-  if [ "$test_mode" = true ]; then
+  if v04_test; then
     local t2; t2=$(sha256sum $UNITS/agentos-demo2.service | cut -c1-64)
     units_extra=", {\"key\": \"demo2\", \"storeUuid\": \"$store\", \"unit\": \"agentos-demo2.service\", \"displayName\": \"演示服务 2（测试）\", \"templateHash\": \"sha256:$t2\", \"safeRepeatStart\": true, \"autoConverge\": true, \"cpuQuotaPerSecUSec\": {\"min\": 100000, \"max\": 2000000}, \"memoryMax\": {\"min\": 67108864, \"max\": 1073741824}}"
     maint_extra=", {\"unitKey\": \"demo2\", \"storeUuid\": \"$store\", \"actionFamilies\": [\"service.ensure_state.running\"], \"perHour\": $m_hour, \"per24h\": $m_day, \"cooldownSeconds\": $m_cool}"
+  fi
+  # v0.3 profile: no maintenance install caps (absent caps = no maintenance recovery, as in v0.3 policies).
+  local maint_json="[]"
+  if [ "$PROFILE" = v0.4 ]; then
+    maint_json="[{\"unitKey\": \"demo\", \"storeUuid\": \"$store\", \"actionFamilies\": [\"service.ensure_state.running\"], \"perHour\": $m_hour, \"per24h\": $m_day, \"cooldownSeconds\": $m_cool}$maint_extra]"
   fi
   cat > $POL.new <<EOF
 {
@@ -399,7 +410,7 @@ do_install() {
              "cpuQuotaPerSecUSec": {"min": 100000, "max": 2000000}, "memoryMax": {"min": 67108864, "max": 1073741824}}$units_extra],
   "labNetworks": [{"key": "lab-net", "storeUuid": "$store", "displayName": "测试网络 lab-net", "netnsPath": "/run/netns/agentos-lab", "table": "agentos_lab", "peerAddress": "10.231.0.2", "peerPort": 8080, "maxRules": 32, "profiles": ["local-allow", "local-deny"]}],
   "serial": $serial_json,
-  "maintenance": [{"unitKey": "demo", "storeUuid": "$store", "actionFamilies": ["service.ensure_state.running"], "perHour": $m_hour, "per24h": $m_day, "cooldownSeconds": $m_cool}$maint_extra],
+  "maintenance": $maint_json,
   "workers": {
     "file": {"socket": "/run/agentos-worker-file/worker.sock", "unit": "agentos-worker-file.service", "uid": $(id -u agentos-file)},
     "service": {"socket": "/run/agentos-worker-service/worker.sock", "unit": "agentos-worker-service.service", "uid": $(id -u agentos-svc)},

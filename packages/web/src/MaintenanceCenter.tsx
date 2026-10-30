@@ -183,7 +183,7 @@ export function MaintenanceCenter() {
                 <div className="small">应用 {targets[`app:${pr.appId}`] ?? pr.appId.slice(0, 12)} · 基线版本代次 {pr.baseAppEpoch}</div>
                 <div className="small">改动文件：{(pr.diff?.files ?? []).map((f) => f.path).join("、") || "—"}</div>
                 {pr.expectedBenefit && <div className="small">预期：{pr.expectedBenefit}</div>}
-                {(pr.reasons ?? []).length > 0 && <div className="small muted">{pr.reasons!.join("；")}</div>}
+                {pr.reasons && <div className="small muted">{pr.reasons}</div>}
                 <div className="small muted">候选指纹 {pr.proposalHash.slice(0, 19)}…{pr.expiresAt ? ` · 到期 ${pr.expiresAt.slice(0, 16).replace("T", " ")}` : ""}</div>
                 {pr.state === "pending" && (
                   <div>

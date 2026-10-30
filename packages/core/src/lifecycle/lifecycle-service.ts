@@ -102,8 +102,9 @@ export class LifecycleService {
       const why = this.blocker(appId, origin, idleDays);
       if (why) throw new AgentOsError("TARGET_BUSY", `cannot archive now: ${why}`, { appId });
       const ar = this.store.get<{ enabled: number; control_epoch: number }>("SELECT enabled, control_epoch FROM app_runtime WHERE app_id = ?", appId);
-      // 1. close new calls + raise the control epoch (late recovery or calls lose)
-      if (ar) this.store.run("UPDATE app_runtime SET enabled = 0, health = 'stopped', next_restart_at = NULL, control_epoch = control_epoch + 1, updated_at = ? WHERE app_id = ?", this.now(), appId);
+      // 1. close new calls + raise the control epoch (late recovery or calls lose); the instance is being
+      //    stopped, so drop the active pointer too or restore/reconcile would never start a new one
+      if (ar) this.store.run("UPDATE app_runtime SET enabled = 0, active_instance_id = NULL, health = 'stopped', next_restart_at = NULL, control_epoch = control_epoch + 1, updated_at = ? WHERE app_id = ?", this.now(), appId);
       // 2. pause this app's maintenance
       this.policies.pauseTargetInTx("app", appId, "app archived");
       // 3. provider grants

@@ -18,7 +18,6 @@ use agentos_protocol::dto::*;
 use agentos_protocol::frame::{parse_strict, read_frame, write_frame, MAX_CONTROL_FRAME};
 use agentos_protocol::peer::peer_cred;
 
-pub const SOCKET_DIR: &str = "/run/agentos-broker";
 pub const SOCKET_PATH: &str = "/run/agentos-broker/broker.sock";
 const LOCK_PATH: &str = "/var/lib/agentos-broker/broker.lock";
 const MAX_CONNECTIONS: usize = 16;
@@ -101,7 +100,6 @@ pub fn serve() -> i32 {
     let gid = group_id("agentos-broker").unwrap_or(0);
     let c = std::ffi::CString::new(SOCKET_PATH).unwrap();
     unsafe { libc::chown(c.as_ptr(), owner, gid) };
-    let _ = SOCKET_DIR;
     notify_ready();
     for s in listener.incoming() {
         let Ok(s) = s else { continue };
@@ -262,7 +260,7 @@ fn dispatch(b: &Shared, sess: &mut Session, req: &Request) -> Result<Value, BErr
     match req.method.as_str() {
         "handshake" => handshake(b, sess, &req.params),
         "describe" => describe(b, sess, &req.params),
-        "read" => exec::read(b, sess.uid, sess.store.as_deref(), &p::<ReadParams>(&req.params)?, |c, id| check_identity_db(b, c, sess, id, false)),
+        "read" => exec::read(b, &p::<ReadParams>(&req.params)?, |c, id| check_identity_db(b, c, sess, id, false)),
         "grant-sync" => grant_sync(b, sess, &p(&req.params)?),
         "grant-revoke" => grant_revoke(b, sess, &p(&req.params)?),
         "submit" => exec::submit(b, &p(&req.params)?, |c, id| check_identity_db(b, c, sess, id, false)),

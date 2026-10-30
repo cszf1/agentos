@@ -64,16 +64,24 @@ export function applyBrokerFacts(osFile: string, ops: BrokerOperation[]): number
   return n;
 }
 
-async function historyAll(client: BrokerClient, installId: string): Promise<{ ops: BrokerOperation[]; lastSeq: number }> {
+/**
+ * Every broker operation for this install. The server's `lastSeq` is the broker's global sequence, not a
+ * page cursor, so pages advance by the last returned operation's `updatedSeq`. Running out of pages before
+ * the history ends is an error: a truncated history would make restore mislabel omitted operations.
+ */
+export async function historyAll(client: BrokerClient, installId: string): Promise<{ ops: BrokerOperation[]; lastSeq: number }> {
+  const PAGE = 200;
   let since = 0;
   const ops: BrokerOperation[] = [];
-  for (let i = 0; i < 100; i++) {
-    const h = await client.historySync(installId, since, 200);
+  for (let i = 0; i < 10_000; i++) {
+    const h = await client.historySync(installId, since, PAGE);
     ops.push(...h.operations);
-    if (h.operations.length < 200 || h.lastSeq <= since) return { ops, lastSeq: h.lastSeq };
-    since = h.lastSeq;
+    if (h.operations.length < PAGE) return { ops, lastSeq: h.lastSeq };
+    const next = h.operations[h.operations.length - 1]!.updatedSeq;
+    if (!(next > since)) throw new Error(`broker history did not advance past seq ${since}`);
+    since = next;
   }
-  return { ops, lastSeq: since };
+  throw new Error("broker history is too long to page through");
 }
 
 function readPolicyManagedRoot(storeUUID: string): string | null {

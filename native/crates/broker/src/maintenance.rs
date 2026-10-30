@@ -90,7 +90,7 @@ fn policy_sync(b: &Shared, sess: &mut Session, g: &MaintenancePolicySyncParams) 
             "caps": {"perHour": caps.per_hour, "per24h": caps.per24h, "cooldownSeconds": caps.cooldown_seconds}
         })));
     }
-    if g.expires_at_ms as i64 <= now() || g.expires_at_ms as i64 > now() + 366 * 86_400_000 {
+    if g.expires_at_ms as i64 <= now() || g.expires_at_ms as i64 > now() + 365 * 86_400_000 {
         return Err(BErr::new("INVALID_SYSTEM_PLAN", "policy expiry must be in the future and at most 365 days away"));
     }
     let gen: i64 = c.query_row("SELECT generation FROM resource_state WHERE resource_id=?1", params![g.resource_id], |r| r.get(0)).unwrap_or(-1);

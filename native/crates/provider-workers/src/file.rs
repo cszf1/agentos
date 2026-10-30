@@ -57,16 +57,18 @@ pub fn handle(req: &WorkerRequest) -> Res {
             }
         }
         "usage" => {
+            const USAGE_MAX_ENTRIES: u64 = 20_000;
             let (_, _, root) = root_of(req)?;
             let mut total = 0u64;
-            let mut n = 0;
+            let mut n: u64 = 0;
             let mut stack = vec![std::path::PathBuf::from(root)];
             while let Some(d) = stack.pop() {
                 if let Ok(rd) = std::fs::read_dir(&d) {
                     for e in rd.flatten() {
                         n += 1;
-                        if n > 20000 {
-                            break;
+                        // Fail closed: a partial total would let the broker's quota check pass a full root.
+                        if n > USAGE_MAX_ENTRIES {
+                            return Err(WErr::none("APP_RESOURCE_LIMIT", format!("managed root has more than {USAGE_MAX_ENTRIES} entries; usage cannot be measured")));
                         }
                         if let Ok(md) = e.metadata() {
                             if md.is_dir() {
@@ -114,7 +116,10 @@ pub fn handle(req: &WorkerRequest) -> Res {
             if has_fault(req, "file.die_before_rename") {
                 die("file.die_before_rename");
             }
-            fsutil::publish(fd.as_raw_fd(), parent, temp, leaf, no_replace).map_err(|e: FsError| WErr::none(e.code, e.message))?;
+            // After the rename the target has changed: a later failure (directory fsync) is an unknown effect, so the
+            // broker reconciles instead of recording "target unchanged".
+            fsutil::publish_phased(fd.as_raw_fd(), parent, temp, leaf, no_replace)
+                .map_err(|(e, renamed): (FsError, bool)| if renamed { WErr::unknown(e.code, e.message) } else { WErr::none(e.code, e.message) })?;
             if has_fault(req, "file.die_after_rename") {
                 die("file.die_after_rename");
             }
