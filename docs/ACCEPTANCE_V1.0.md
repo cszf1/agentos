@@ -17,7 +17,7 @@
 
 | 编号 | 名称 | 结论 | 证据等级 | 证据 / 原因 |
 |---|---|---|---|---|
-| V1-B01 | 已修复 | 部分 | 单元/集成 | 开发树在 v0.4 验收机上：contracts、unit 88、identity 9、machine 7、migration-v1 5、agents 24、maintenance 35、maintenance-recovery 4、gc-online 7、compaction 6 全过；recovery 套件仍有偶发失败（见 R08 记录与“回归”一节）；telemetry 的 eBPF 部分见 O 行与“回归”一节。 B01 broker-recovery 首轮失败根因（本轮读 agentos-b01 日志确认）：run1（b01-brec-1.log）失败点是 host-maintenance.test.ts:99 等待 SIGKILL 超时——故障点从未到达，因为 broker 以 CIRCUIT_OPEN 拒绝了维护准入：W09 修复后（决定见 W09 行）准入计数与冷却按真实资源（resource_id+action_family）跨 store 聚合，测试每次新建的 Host store 不再让计数归零，同一台机器上前一次套件运行（b01-priv-first，19:36–19:50 UTC）留下的 600 秒冷却仍在。证据：99c4ac0 的测试在冷却内等待后 hm1/hm2 均通过（hm2 日志“waiting 538 s for the broker cooldown”）；紧接 maintenance-v2 之后第三次运行 host-maintenance 报“hourly cap exhausted by earlier runs: lastHour=2”（模板每小时上限 2）——这是规格 §12.3 要求的行为，不是恢复缺陷。结论：一小时内同一机器最多跑 2 次该文件；run2/run3 broker-recovery 33/33、native 21/21 ×3。sandbox 套件（b01-sandbox.log）7 个 v03-system 用例连锁报 INSTANCE_NOT_READY “the app is starting”，根因核对（agentos-b01，7960f01 树，b01-r13-sandbox.log 与单独复现）：7 个用例不是各自失败，而是同一个连锁——单独运行 V3-F07 通过；只把 V3-R10/U03/U04（未知串口结果→quarantine→accept_unknown 解除）放在它前面即稳定复现。F07 第一次文件写动作 succeeded 之后，console 应用实例的 bridge 连接关闭（exit_reason “connection closed”，podman 日志显示 Host 随后 stop 该容器时它仍在运行、2 秒后 SIGKILL），app_runtime 置 recovering 并排定重启；该测试 rig 不运行 reconciler 循环，重启永远不发生，之后 6 个用例都在 route() 处得到 INSTANCE_NOT_READY “the app is starting”。连接为何在 R10 之后的下一次文件动作上关闭尚未定位（按“同一问题循环不超过两次”停止），记为未关闭的回归；B01 保持部分。 |
+| V1-B01 | 已修复 | 通过 | 单元/集成 | 开发树（v1.0）在 v0.4 验收机/特权侧 agentos-b01 上：typecheck/build、contracts、unit 88、identity 9、machine 7、migration-v1 5、agents 24、maintenance 35、maintenance-recovery 4、gc-online 7、compaction 6、broker-recovery 33/33、native 21/21 全过；recovery 套件偶发失败根因已修（决定 16、30：端口段与 /tmp 写满），修复后 recovery 5/5、perf 5/5；telemetry 6/6 在 eBPF guest 通过（docs/evidence/v1.0-telemetry-guest.json）。broker-recovery 首轮失败是 W09 按真实资源聚合后同机前一次运行留下的冷却/每小时上限（规格 §12.3 行为，不是恢复缺陷）。sandbox 套件此前 7 个 v03-system 用例连锁 INSTANCE_NOT_READY 的根因：测试 rig 借用机器已安装 store 的 storeUUID（broker policy 只登记它），而机器上自己的 Host（用户单元 agentos-host.service）也拥有这个 store——它的 reconciler 删除所有带该 store 标签、但不在它自己库里的容器（即 rig 的应用容器），rig 的应用中途失去 bridge（“connection closed”）。这是两个 Host 写同一 store（违反 B05 单写者），Host 的行为正确；测试改为 rig 使用该 store 期间停止已安装 Host、结束后再启动（tests/v03.ts pauseInstalledHost，提交 76f86b0）。复跑（agentos-b01，b01-v03fix.log）：完整 sandbox 项目 11 个文件 60 通过、1 跳过（V2-B04 需 AGENTOS_OFFLINE_TEST=1），已安装 Host 前后均 active；随后 AGENTOS_OFFLINE_TEST=1 单独运行 v02-ops 7/7（含 V2-B04 离线，b01-v02off.log）。至此 F1—F7 与后续修复的全部原适用套件在 v1.0 树通过。 |
 | V1-B02 | 应用/ABI | 通过 | 单元/集成 | tests/integration/v02-contracts.test.ts：formatVersion 1/2/3、ABI 1/2、catalog 与冻结 bundle hash（fixtures/todo-v1.json sha256:428df8c7…）不变。 |
 | V1-B03 | 三语言协议 | 通过 | 单元/集成 | fixtures/v1.0/protocol/vectors.json 在 TS（scripts/v1-vectors.mjs --check）、Rust（agentos-protocol v1_vectors/vectors）、C++（desktop v1_vectors，含于 Shell ctest）结果一致。 |
 | V1-B04 | 发行依赖冻结 | 通过 | KVM VM（Actions） | os/flake.lock 固定 nixpkgs nixos-26.05@6f06d204（2026-10-29，26.05 支持期至 2026-12-31）与 rust-overlay@96a0986b；pnpm 依赖为固定输出哈希；仓库与 Nix 文件无 latest。离线 OCI（决定 18）：agentos-oci 在构建 VM 里 --network=none --pull=never 构建 8 个 catalog 镜像，基础镜像为固定输出 skopeo 副本，release manifest ociDigests 填入；build-oci 在 Actions（run 41080892538）构建通过。m5 应用容器启动失败（crun: readlink ``）根因：工作区 home 为 0700，--userns=keep-id 下容器 root 映射的 subuid 无法穿过 home 解析 rootfs（同 podman#27785）；已改为 home 与到 graphroot 的路径 0711（仅穿越），内容目录仍 0700；m5 重跑（run 41090848802，KVM）该子测试通过：无网络下从发行镜像导入 4 个 lock、未拉取任何镜像、探针容器按应用策略启动。**未满足**：固件清单未单列。 m5-desktop（run 41126599816，f2090b8，KVM）离线发行镜像容器子测试在 agentos-oci 回归（决定 31）修复后再次通过。 build-release（run 41130326396，ebdcaf1，Actions）构建通过：发行物新增 firmware.json（并写入 sbom.firmware，计入 sbomHash 与 SHA256SUMS），列出系统固件路径中每个文件、所属 store 包与 sha256，固件文件不在发行闭包内则构建失败；本发行（qemu-virtio 配置）固件清单为 1 个包、2 个文件。至此 nixpkgs/源码/包/OCI/固件清单均固定。 |
@@ -123,7 +123,7 @@
 | 编号 | 名称 | 结论 | 证据等级 | 证据 / 原因 |
 |---|---|---|---|---|
 | V1-R01 | 双库冷备份 | 通过 | KVM VM（Actions） | m8-backup：Host 持 host.lock 时拒绝冷检查点；停止后双库检查点可校验、仅 root 可读；恢复后重新 attach 成功。 |
-| V1-R02 | 多域屏障 | 部分 | KVM VM（Actions） | precheck 修复（决定 23）后 m9-restore（run 41085217261，8df4a6a）两个 R02 子测试通过：一个 barrier 下两个工作区组成一个机器集合、之后都重新启动；备份在 barrier 下死亡时冻结所有工作区，abandon 释放。home 写者/GC/资源冻结未单独断言。 |
+| V1-R02 | 多域屏障 | 通过 | KVM VM（Actions） | m9-restore（run 41131387595，58488d1，KVM）全部子测试通过。两个 R02 子测试：一个 barrier 下两个工作区组成一个机器集合（machine-set.json 同一 barrierId、set complete），之后两个 Host 都重新启动；备份在 barrier 下死亡（故障点 backup.after_first_workspace）时：两个工作区 Host 都已停止、两个执行 UID 下除用户管理器本身（init.scope）与其会话总线外没有任何进程（Host 及其 GC、rootless Podman/pause、home 写者都不在），attach 被拒，用户管理器也拉不起 Host；abandon 后 barrier 释放、集合记为 abandoned。资源冻结：broker 收到 barrier.held 后对任何新资源写入回 CHECKPOINT_INCOMPLETE（native/crates/broker/src/registry.rs），m9 本轮加断言 broker_meta 在 barrier 期间持有 machine_barrier、释放后清除（72536e9，重跑 run 41132929172）。 |
 | V1-R03 | 集合发布中断 | 通过 | KVM VM（Actions）＋单元/集成 | m8-backup：manifest 前强杀不形成可恢复集合；recovery-worker Rust R03。 |
 | V1-R04 | 加密离机往返 | 通过 | KVM VM（Actions）＋单元/集成 | m8-backup：age 导出→读回→解密到空盘→校验；错误密钥/篡改密文被拒。 |
 | V1-R05 | 恢复路径防护 | 通过 | KVM VM（Actions）＋单元/集成 | m8-backup：路径穿越归档不能写出 staging；Rust R05 覆盖 link/设备节点/UID。 |
@@ -165,7 +165,7 @@
 
 ## 统计
 
-未通过 13 项，通过 55 项，部分 32 项（共 100 项）。
+未通过 13 项，通过 57 项，部分 30 项（共 100 项）。
 
 ## 回归与偶发失败记录
 
