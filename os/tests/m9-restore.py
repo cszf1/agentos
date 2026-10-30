@@ -148,14 +148,17 @@ with subtest("machine directory lost: recovery mode, then an explicit new identi
     v = ctl("recover --new-identity")
     assert v["ok"], v
     machine.wait_until_succeeds("test -S /run/agentos/machine/machine.sock", timeout=60)
-    st = ctl("status")
-    assert st["meta"]["machineInstallId"] != mid0 and st["meta"]["firstBootState"] == "open", st
+    # the new identity is an uninstalled machine, exactly like a fresh one before first boot
+    rc, o = machine.execute("agentosctl status 2>&1")
+    assert rc != 0 and "not installed" in o, o
     machine.succeed("ls -d /var/lib/agentos-machine/lost-*/ && test -f /var/lib/agentos-machine/lost-*/machine.secret && test -f /var/lib/agentos-machine/lost-*/broker/broker.sqlite")
     machine.succeed(f"test -d /var/lib/agentos/workspaces/{ws_a}/data")       # old workspace data kept, not registered
     # the broker belongs to the new identity: skipped until it exists, then a fresh log for the new install
     machine.succeed("systemctl restart agentos-broker.service || true")
     machine.succeed("test \"$(systemctl show -p ActiveState --value agentos-broker.service)\" != active")
     machine.execute("printf 'eve-pw-1' | agentosctl firstboot --admin eve --workspace E")
+    st = ctl("status")
+    assert st["meta"]["machineInstallId"] != mid0 and st["meta"]["firstBootState"] == "closed", st   # a new installation identity
     machine.wait_for_unit("agentos-broker.service")
     machine.succeed("test -f /var/lib/agentos-broker/broker.sqlite")
     machine.fail("journalctl -u agentos-broker --since -2min --no-pager | grep -q 'BROKER_IDENTITY_MISMATCH\\|BROKER_HISTORY_MISSING'")

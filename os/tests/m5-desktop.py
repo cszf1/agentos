@@ -25,8 +25,14 @@ with subtest("Shell SIGKILL: the session agent brings it back within 5 s (O06 pa
     machine.succeed(f"kill -KILL {old}")
     machine.wait_until_succeeds(f"pgrep -u alice -f bin/agentos-shell | grep -vx {old}", timeout=10)
     new = machine.succeed("pgrep -u alice -f bin/agentos-shell | head -1").strip()
-    # visible again: the new Shell maps a Wayland toplevel (sway's tree names its app_id)
-    machine.wait_until_succeeds("su - alice -c 'SWAYSOCK=$(ls /run/user/$(id -u)/sway-ipc.*.sock | head -1) swaymsg -t get_tree' | grep -q agentos-shell", timeout=10)
+    # visible again: sway's tree has a mapped view owned by a new Shell process
+    tree = "su - alice -c 'SWAYSOCK=$(ls /run/user/$(id -u)/sway-ipc.*.sock | head -1) swaymsg -t get_tree'"
+    shells = "pgrep -u alice -f bin/agentos-shell | grep -vx " + old
+    try:
+        machine.wait_until_succeeds(f"for p in $({shells}); do {tree} | grep -q \"\\\"pid\\\": $p,\" && exit 0; done; exit 1", timeout=10)
+    except BaseException:
+        print(machine.execute(f"{shells}; {tree} | grep -E '\"(pid|app_id|name|visible)\"' | head -40")[1])
+        raise
     dt = time.time() - t0
     print("shell back after", round(dt, 2), "s; pid", old, "->", new)
     assert new != old and dt <= 5.0, dt
