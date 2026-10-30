@@ -1,3 +1,4 @@
+import { currentIdentity } from "../identity/context.js";
 import fs from "node:fs";
 import path from "node:path";
 import { createHash, randomBytes } from "node:crypto";
@@ -297,7 +298,15 @@ export class SystemActionService {
   // ---------------------------------------------------------------- confirm / admit
 
   /** POST /api/system-actions/:id/confirm (inside the gateway transaction). Same plan → same state, never a second operation. */
+  /** v1.0: record who confirmed (spec §14.3 protocol-3 principal) in the same transaction as the confirmation. */
   confirmInTx(actionId: string, planHash: string, confirmKey: string): ActionRow {
+    const out = this.#confirmInTx0(actionId, planHash, confirmKey);
+    const id = currentIdentity();
+    if (id) this.store.run("UPDATE system_actions SET approved_user_id = COALESCE(approved_user_id, ?), approved_member_version = COALESCE(approved_member_version, ?) WHERE id = ?", id.userId, id.memberVersion, actionId);
+    return out;
+  }
+
+  #confirmInTx0(actionId: string, planHash: string, confirmKey: string): ActionRow {
     const a = this.require(actionId);
     if (a.plan_hash !== planHash) throw new AgentOsError("PLAN_HASH_MISMATCH", "the confirmed plan hash does not match this action; a changed plan is a new plan");
     if (a.state !== "awaiting_approval") return a;

@@ -1,3 +1,4 @@
+import { currentIdentity } from "../identity/context.js";
 import { randomUUID } from "node:crypto";
 import {
   AgentOsError,
@@ -226,14 +227,16 @@ export class PolicyService {
    * install caps are re-checked; a service policy goes through `syncing` until the broker confirmed (POLICY_SYNC_PENDING).
    */
   approve(id: string, version: number, policyHash: string): PolicyRow {
+    const ident = currentIdentity();
     return this.store.tx(() => {
+      if (ident) this.store.run("UPDATE maintenance_policies SET approved_user_id = ?, approved_member_version = ? WHERE id = ? AND version = ?", ident.userId, ident.memberVersion, id, version);
       const p = this.require(id, version);
       if (p.policy_hash !== policyHash) throw new AgentOsError("POLICY_VERSION_STALE", "the approved hash does not match this policy version", { policyHash: p.policy_hash });
       const newest = this.require(id);
       if (newest.version !== version) throw new AgentOsError("POLICY_VERSION_STALE", "a newer version of this policy exists", { version: newest.version });
       if (Date.parse(p.expires_at) <= this.store.clock.now()) throw new AgentOsError("POLICY_VERSION_STALE", "this policy version expired; create a new one");
       if (p.state === "enabled" || p.state === "syncing") return p;
-      if (!["pending_approval", "paused"].includes(p.state)) throw new AgentOsError("POLICY_VERSION_STALE", `policy is ${p.state}`);
+      if (!["pending_approval", "paused", "paused_needs_review"].includes(p.state)) throw new AgentOsError("POLICY_VERSION_STALE", `policy is ${p.state}`);
       const n = this.store.get<{ n: number }>("SELECT COUNT(*) AS n FROM maintenance_policies WHERE state IN ('enabled','syncing') AND id <> ?", id)!.n;
       if (n >= V4_LIMITS.maxEnabledPolicies) throw new AgentOsError("LIMIT_EXCEEDED", `at most ${V4_LIMITS.maxEnabledPolicies} policies can be enabled`);
       if (this.targetCheck) {

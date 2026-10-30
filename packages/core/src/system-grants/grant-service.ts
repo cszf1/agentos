@@ -1,3 +1,4 @@
+import { currentIdentity } from "../identity/context.js";
 import { randomBytes } from "node:crypto";
 import { AgentOsError, capabilityDecl, isV3, paramsHash, sealGrant, type AnyBundle, type BrokerPrincipal, type CodeBundleV3 } from "@agentos/contracts";
 import { BrokerError } from "@agentos/broker-client";
@@ -142,6 +143,10 @@ export class ProviderGrantService {
       "INSERT INTO provider_grants (id, principal_kind, app_id, revision_id, action_id, run_id, binding_alias, capability_id, capability_version, resource_id, resource_generation, limits_json, params_hash, confirmation_policy, grant_version, expires_at, sync_state, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       g.id, g.principal_kind, g.app_id, g.revision_id, g.action_id, g.run_id, g.binding_alias, g.capability_id, g.capability_version, g.resource_id, g.resource_generation, g.limits_json, g.params_hash, g.confirmation_policy, g.grant_version, g.expires_at, g.sync_state, now,
     );
+    {
+      const ident = currentIdentity();
+      if (ident) this.store.run("UPDATE provider_grants SET approved_user_id = ?, approved_member_version = ? WHERE id = ?", ident.userId, ident.memberVersion, g.id);
+    }
     const row = this.get(g.id)!;
     if (g.sync_state === "pending") {
       const principal: BrokerPrincipal =

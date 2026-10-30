@@ -1,3 +1,4 @@
+import { domainHash } from "@agentos/contracts";
 import net from "node:net";
 import { randomBytes } from "node:crypto";
 import {
@@ -92,6 +93,12 @@ export interface BrokerClientOptions {
   timeoutMs?: number;
 }
 
+/** v1.0 protocol-3 workspace envelope (spec §14.3) without its hash; built by the Host's machine mode. */
+export type WorkspaceEnvelopeV3 = Record<string, unknown>;
+export const BROKER_PROTOCOL_V3 = 3;
+export const BROKER_V3_DOMAIN = "agentos.broker.workspace-write.v3";
+export const BROKER_METHODS_V3 = ["grant-sync", "grant-revoke", "submit", "operation-cancel", "operation-resolve", "maintenance-policy-sync", "maintenance-policy-revoke", "maintenance-control", "maintenance-submit"] as const;
+
 export class BrokerClient {
   #sock: net.Socket | null = null;
   #buf: Buffer = Buffer.alloc(0);
@@ -101,6 +108,12 @@ export class BrokerClient {
   #queue: Promise<unknown> = Promise.resolve();
   handshakeResult: HandshakeResult | null = null;
   readonly socketPath: string;
+
+  /**
+   * v1.0: when set (machine mode), every write method travels as protocol 3 wrapped in the workspace envelope this
+   * returns; returning null refuses to send the write at all (never a silent downgrade to protocol 1/2).
+   */
+  v3: ((method: string, params: unknown) => WorkspaceEnvelopeV3 | null) | null = null;
 
   constructor(readonly opts: BrokerClientOptions) {
     this.socketPath = opts.socketPath ?? process.env.AGENTOS_BROKER_SOCKET ?? BROKER_SOCKET;
@@ -179,11 +192,19 @@ export class BrokerClient {
   }
 
   #send(method: BrokerMethod | BrokerMethodV2, params: unknown, timeoutMs?: number): Promise<unknown> {
+    // eslint-disable-next-line no-param-reassign
     const s = this.#sock;
     if (!s) return Promise.reject(new BrokerError("BROKER_UNAVAILABLE", "not connected"));
     const id = String(++this.#seq);
     // Protocol-2 methods always travel as v=2; protocol-1 methods as v=1 (never downgraded, spec §13.3).
-    const v = (BROKER_METHODS_V2 as readonly string[]).includes(method) ? BROKER_PROTOCOL_V2 : BROKER_PROTOCOL_VERSION;
+    let v: number = (BROKER_METHODS_V2 as readonly string[]).includes(method) ? BROKER_PROTOCOL_V2 : BROKER_PROTOCOL_VERSION;
+    if (this.v3 && (BROKER_METHODS_V3 as readonly string[]).includes(method)) {
+      const w = this.v3(method, params);
+      if (!w) return Promise.reject(new BrokerError("MEMBERSHIP_REVOKED", `no current member authority for ${method}; the write is not sent`));
+      const envelopeHash = domainHash(BROKER_V3_DOMAIN, { workspace: w, body: params });
+      params = { workspace: { ...w, envelopeHash }, body: params };
+      v = BROKER_PROTOCOL_V3;
+    }
     const body = JSON.stringify({ v, id, method, params });
     if (Buffer.byteLength(body) > MAX_BROKER_FRAME) return Promise.reject(new BrokerError("LIMIT_EXCEEDED", "broker request exceeds 512 KiB"));
     if (jsonDepth(body) > MAX_JSON_DEPTH) return Promise.reject(new BrokerError("INVALID_SYSTEM_PLAN", "broker request is nested deeper than 8"));

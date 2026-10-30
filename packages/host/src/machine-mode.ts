@@ -267,7 +267,9 @@ export class MachineMode {
     if (!meta || meta.store_uuid !== this.cfg.storeUUID || meta.workspace_id !== this.cfg.workspaceId) {
       throw new Error("os.sqlite does not belong to the registered workspace (storeUUID/workspaceId mismatch)");
     }
-    const hello = await this.link.call<{ membership: { members: MemberRow[] } }>("host.hello", { instanceId: this.instanceId, bootId: this.bootId() });
+    const hello = await this.link.call<{ membership: { members: MemberRow[]; machineControlEpoch?: number; workspaceIncarnation?: number } }>("host.hello", { instanceId: this.instanceId, bootId: this.bootId() });
+    this.controlEpoch = hello.membership.machineControlEpoch ?? 1;
+    this.incarnation = hello.membership.workspaceIncarnation ?? 1;
     applyRegistry(core, this.rt, { registrySeq: 0, kind: "members.snapshot", body: { members: hello.membership.members } }, log);
     core.budgets.machineGate = this.gate();
     this.#ringStoreSeq = core.store.eventSeq();
@@ -285,7 +287,13 @@ export class MachineMode {
         for (const m of r.messages) {
           applyRegistry(core, this.rt, m, log);
           last = m.registrySeq;
+          this.registrySeq = Math.max(this.registrySeq, m.registrySeq);
+          const b = m.body as { machineControlEpoch?: number; workspaceIncarnation?: number };
+          if (typeof b.machineControlEpoch === "number") this.controlEpoch = b.machineControlEpoch;
+          if (typeof b.workspaceIncarnation === "number") this.incarnation = b.workspaceIncarnation;
         }
+        // Protocol-3 broker writes once the system layer exists (spec §14.3).
+        if (this.rt.caps && !this.rt.caps.broker.client.v3) this.rt.caps.broker.client.v3 = (method, params) => this.v3Envelope(method, params);
         if (last) await this.link.call("registry.ack", { registrySeq: last });
       } catch (e) {
         log.warn("machine registry unavailable", { error: (e as Error).message });
@@ -388,6 +396,54 @@ export class MachineMode {
     }
   }
   #ringStoreSeq = 0;
+  /** registry state this Host last applied: the protocol-3 envelope names it (spec §14.3). */
+  registrySeq = 0;
+  controlEpoch = 1;
+  incarnation = 1;
+
+  /**
+   * Protocol-3 principal of a broker write, read from the rows that recorded who decided it: the confirming member of
+   * a system action, the approving member of a grant, the approving owner of a maintenance policy. Unknown → null
+   * (the client then refuses to send).
+   */
+  v3Envelope(method: string, params: unknown): Record<string, unknown> | null {
+    const s = this.rt.core.store;
+    const p = (params ?? {}) as Record<string, unknown>;
+    const base = {
+      workspaceId: this.cfg.workspaceId,
+      storeUuid: this.cfg.storeUUID,
+      executionUid: typeof process.getuid === "function" ? process.getuid() : -1,
+      workspaceIncarnation: this.incarnation,
+      machineControlEpoch: this.controlEpoch,
+      registrySeq: this.registrySeq,
+    };
+    const member = (userId: string | null | undefined, version: number | null | undefined) => {
+      if (!userId || version === null || version === undefined) return null;
+      const m = s.get<{ member_version: number; state: string }>("SELECT member_version, state FROM membership_mirror WHERE user_id = ?", userId);
+      if (!m || m.state !== "active" || m.member_version !== version) return null;
+      return { userId, memberVersion: version };
+    };
+    if (method === "submit" || method === "operation-cancel" || method === "operation-resolve") {
+      const a = method === "submit"
+        ? s.get<{ u: string | null; v: number | null; run: string | null }>("SELECT approved_user_id AS u, approved_member_version AS v, run_id AS run FROM system_actions WHERE id = ?", String(p.actionId ?? ""))
+        : s.get<{ u: string | null; v: number | null; run: string | null }>("SELECT approved_user_id AS u, approved_member_version AS v, run_id AS run FROM system_actions WHERE operation_id = ?", String(p.operationId ?? ""));
+      const cur = identityContext.getStore();
+      const who = cur && method !== "submit" ? member(cur.userId, cur.memberVersion) : member(a?.u, a?.v);
+      return who ? { ...base, principalKind: "user", ...who, approvedByUserId: null, approvedMemberVersion: null } : null;
+    }
+    if (method === "grant-sync" || method === "grant-revoke") {
+      const g = s.get<{ u: string | null; v: number | null }>("SELECT approved_user_id AS u, approved_member_version AS v FROM provider_grants WHERE id = ?", String(p.grantId ?? ""));
+      const who = member(g?.u, g?.v);
+      return who ? { ...base, principalKind: "user", ...who, approvedByUserId: null, approvedMemberVersion: null } : null;
+    }
+    // maintenance-*: the owner who approved the policy (spec §14.3 approvedByUserId/approvedMemberVersion).
+    const pid = String(p.policyId ?? "");
+    const pol = pid
+      ? s.get<{ u: string | null; v: number | null }>("SELECT approved_user_id AS u, approved_member_version AS v FROM maintenance_policies WHERE id = ? ORDER BY version DESC LIMIT 1", pid)
+      : s.get<{ u: string | null; v: number | null }>("SELECT user_id AS u, member_version AS v FROM membership_mirror WHERE role = 'owner' AND state = 'active'");
+    const who = member(pol?.u, pol?.v);
+    return who ? { ...base, principalKind: "maintenance", userId: null, memberVersion: null, approvedByUserId: who.userId, approvedMemberVersion: who.memberVersion } : null;
+  }
 
   gate(): MachineGate {
     const link = this.link;

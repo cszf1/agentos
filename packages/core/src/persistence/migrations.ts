@@ -1056,6 +1056,8 @@ ALTER TABLE proposals ADD COLUMN decided_by_user_id TEXT;
 ALTER TABLE proposals ADD COLUMN decided_member_version INTEGER;
 ALTER TABLE provider_grants ADD COLUMN approved_user_id TEXT;
 ALTER TABLE provider_grants ADD COLUMN approved_member_version INTEGER;
+ALTER TABLE system_actions ADD COLUMN approved_user_id TEXT;
+ALTER TABLE system_actions ADD COLUMN approved_member_version INTEGER;
 CREATE TABLE legacy_principals (
   legacy_key TEXT PRIMARY KEY,
   owner_user_id TEXT NOT NULL,
