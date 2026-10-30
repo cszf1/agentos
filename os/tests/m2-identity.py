@@ -18,6 +18,9 @@ def tty_run(n, cmd, out):
     # Typing long lines through the emulated keyboard drops characters under TCG: type only a short command and
     # let a root-written script (world-readable) carry the payload.
     import base64
+    # send_chars types into the ACTIVE VT: switch to tty n first (and that session becomes the active one on seat0).
+    machine.send_key(f"alt-f{n}")
+    machine.wait_until_succeeds(f"grep -qx tty{n} /sys/class/tty/tty0/active")
     script = f"{cmd} > {out} 2>&1; echo done >> {out}\n"
     machine.succeed(f"echo {base64.b64encode(script.encode()).decode()} | base64 -d > {out}.sh && chmod 0644 {out}.sh && rm -f {out}")
     machine.send_chars(f"sh {out}.sh\n")

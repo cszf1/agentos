@@ -67,15 +67,14 @@ jobs:
             require-sigs = true
 
       - name: Restore Nix store cache
-        uses: nix-community/cache-nix-action@v6
+        uses: nix-community/cache-nix-action/restore@v6
         with:
           primary-key: nix-${{ runner.os }}-${{ matrix.test }}-${{ hashFiles('os/flake.lock', 'native/Cargo.lock', 'pnpm-lock.yaml') }}-${{ github.sha }}
           restore-prefixes-first-match: |
             nix-${{ runner.os }}-${{ matrix.test }}-${{ hashFiles('os/flake.lock', 'native/Cargo.lock', 'pnpm-lock.yaml') }}-
             nix-${{ runner.os }}-${{ matrix.test }}-
             nix-${{ runner.os }}-
-          gc-max-store-size-linux: 9G
-          purge: false
+
 
       - name: Build test driver
         working-directory: os
@@ -87,6 +86,14 @@ jobs:
           set -o pipefail
           ls -l /dev/kvm
           nix build ".#checks.x86_64-linux.${{ matrix.test }}" -L --print-out-paths 2>&1 | tee "$RUNNER_TEMP/vm-${{ matrix.test }}.log"
+
+      - name: Save Nix store cache (also after a failed check, so the next run reuses the builds)
+        if: always()
+        uses: nix-community/cache-nix-action/save@v6
+        with:
+          primary-key: nix-${{ runner.os }}-${{ matrix.test }}-${{ hashFiles('os/flake.lock', 'native/Cargo.lock', 'pnpm-lock.yaml') }}-${{ github.sha }}
+          gc-max-store-size-linux: 9G
+          purge: false
 
       - name: Upload logs
         if: always()
