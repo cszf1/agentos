@@ -21,6 +21,9 @@ pkgs.testers.runNixOSTest {
       AGENTOS_MODEL_ID = "fake";
       AGENTOS_MODEL_BASE_URL = "http://127.0.0.1:18080/%i/v1";
       AGENTOS_MODEL_API_KEY = "test-endpoint-no-secret";
+      # a one-turn task conversation is compactable only with a tiny kept-recent window (Pi's default keeps it all:
+      # run 41132924898 "nothing older than the kept-recent window to summarise" → no background request ever sent)
+      AGENTOS_COMPACTION_KEEP_RECENT_TOKENS = "1";
     };
   };
   testScript = builtins.readFile ./lib.py + builtins.readFile ./members_lib.py + builtins.readFile ./m10-sched.py;

@@ -14,7 +14,7 @@ pkgs.testers.runNixOSTest {
     environment.etc."agentos-test/rpc.py".source = ./rpc.py;
     fonts.packages = [ pkgs.dejavu_fonts pkgs.noto-fonts-cjk-sans ];
     # test-only model switch: EnvironmentFile overrides the unit's Environment= (faux now, "no model" for O03)
-    systemd.user.services."agentos-host@".serviceConfig.EnvironmentFile = [ "-/run/agentos-test/model.env" ];
+    systemd.user.services."agentos-host@".serviceConfig.EnvironmentFile = lib.mkAfter [ "-/run/agentos-test/model.env" ];   # after the workspace model.env: later file wins
     systemd.tmpfiles.rules = [ "d /run/agentos-test 0755 root root -" "f /run/agentos-test/model.env 0644 root root - AGENTOS_MODEL_MODE=faux" ];
   };
   testScript = builtins.readFile ./lib.py + builtins.readFile ./members_lib.py + builtins.readFile ./m13-native.py;
