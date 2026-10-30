@@ -157,7 +157,10 @@ in {
       description = "AgentOS privileged broker";
       wantedBy = [ "multi-user.target" ];
       after = [ "agentos-machine.service" "dbus.service" ];
+      # The broker's log belongs to the machine identity (spec §19.4), which exists only after first boot. Before
+      # that the unit is skipped (not failed); agentos-broker.path starts it when machined writes the identity.
       unitConfig.StartLimitIntervalSec = 0;
+      unitConfig.ConditionPathExists = "/var/lib/agentos-machine/machine.secret";
       serviceConfig = {
         Type = "notify";
         NotifyAccess = "main";
@@ -173,6 +176,12 @@ in {
       };
     };
 
+    };
+
+    systemd.paths.agentos-broker = {
+      description = "Start the AgentOS broker once the machine identity exists";
+      wantedBy = [ "multi-user.target" ];
+      pathConfig.PathExists = "/var/lib/agentos-machine/machine.secret";
     };
 
     # Per-workspace units live in the execution UID's own user manager (spec §17.2). They only start for a UID that

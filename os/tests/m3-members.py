@@ -47,8 +47,9 @@ def make_user(name, pw, tag):
 
 machine.start()
 machine.wait_for_unit("agentos-session-gateway.service")
-machine.wait_for_unit("agentos-broker.service")
+machine.succeed("systemctl show -p ActiveState --value agentos-broker.service | grep -qx inactive")  # no identity yet: skipped
 out = json.loads(must("printf 'alice-pw-1' | agentosctl firstboot --admin alice --workspace A"))
+machine.wait_for_unit("agentos-broker.service")  # started by agentos-broker.path once the identity exists
 ws_a = out["workspaceId"]
 tty_login(1, "alice", "alice-pw-1")
 alice = sql("SELECT user_id FROM users WHERE login_name='alice'")
