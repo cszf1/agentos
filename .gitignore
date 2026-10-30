@@ -9,3 +9,5 @@ packages/web/dist/
 test-results/
 playwright-report/
 .data/
+native/target/
+desktop/build/

@@ -1,0 +1,6 @@
+ts	phase	decision	why	evidence	result
+2026-10-30T10:07:43Z	start	v1 build run on baseline ae92539	the operator asked for the full v1.0 build from the written spec	git ae92539	open
+2026-10-30T10:07:43Z	frame	ship the in-process v1.0 substrate and mark hardware, ISO, and signed release blocked	this VM has Node, Rust, and g++ and has no Nix and no Qt; the spec forbids calling those levels passed	docs/AGENTOS_MVP_V1.0.md	predicate set
+2026-10-30T10:30:23Z	implement	kept the machine directory in TypeScript beside os.sqlite	one writer of the rules, and vitest can open the file; a second Rust state machine would drift	packages/core/src/machine/directory.ts	identity machine migration tests green
+2026-10-30T10:30:23Z	implement	left HOST_VERSION at 0.4.0	the running host is still the v0.4 process; v1.0 is not a release	packages/contracts/src/index.ts	http test still expects 0.4.0
+2026-10-30T10:30:23Z	verify	marked 5 of 100 acceptance rows pass	the other rows need Nix, Qt, a seat, or a kill test this machine did not run	docs/ACCEPTANCE_V1.0.md	5 pass, 95 blocked
