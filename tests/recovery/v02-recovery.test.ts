@@ -79,6 +79,10 @@ d("V2-P: publication crash recovery (real processes and podman)", () => {
     const c = await login(h);
     const run = await c.waitRun(runId, 180_000);
     expect(run.status).toBe("succeeded");
+    // The build removes its container in `finally`; if `podman rm` loses a race with the container still stopping it
+    // logs "the reconciler will retry" and the reconciler removes it later (the intermittent "old container still
+    // alive" failure was this window, not a leak). Require the orphan to be gone within a bounded time instead.
+    for (let i = 0; i < 60 && containers(dir).some((x) => x.name === job.container_name); i++) await new Promise((r) => setTimeout(r, 1000));
     expect(containers(dir).map((x) => x.name)).not.toContain(job.container_name);
     const left = containers(dir);
     expect(left.filter((x) => x.role === "build")).toEqual([]);

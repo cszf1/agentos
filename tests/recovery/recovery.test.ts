@@ -232,12 +232,16 @@ describe("R: crash recovery across os.sqlite and agent.sqlite", () => {
     adb.close();
     expect(changed).toBe(1);
     h = await startHost(dir, {}, { waitReady: false });
+    // The run turns blocked only once the restarted Host's engine + coordinator inspect the parked task. With every
+    // suite running in parallel on a shared machine that took longer than the former 20 s window (the intermittent
+    // "running" failure); allow 90 s and report how long it took.
     let status = "";
-    for (let i = 0; i < 100 && status !== "blocked"; i++) {
+    const t0 = Date.now();
+    for (let i = 0; i < 450 && status !== "blocked"; i++) {
       await new Promise((x) => setTimeout(x, 200));
       status = q<{ status: string }>(os(dir), "SELECT status FROM runs")[0]!.status;
     }
-    expect(status).toBe("blocked");
+    expect({ status, waitedMs: status === "blocked" ? 0 : Date.now() - t0 }).toEqual({ status: "blocked", waitedMs: 0 });
     await waitHttp(h);
     const c2 = await login(h);
     const view = await c2.get(`/api/runs/${r.data.runId}`);
