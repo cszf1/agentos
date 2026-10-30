@@ -26,7 +26,12 @@ osa = f"/var/lib/agentos/workspaces/{ws_a}/data/os.sqlite"
 machine.wait_until_succeeds(f"test -s /var/lib/agentos/workspaces/{ws_a}/data/agent.sqlite", timeout=120)
 
 with subtest("source: a code app generated and running before the set is taken (M04)"):
-    r = call(1, [fwd(ws_a, "runs.post", {"intent": "做一个看板应用", "targetAppId": None}, idem="kanban")], "k1")[0]
+    # the Host answers 503 STORE_UNAVAILABLE (retryable) until it has finished starting; same idempotency key each try
+    for i in range(60):
+        r = call(1, [fwd(ws_a, "runs.post", {"intent": "做一个看板应用", "targetAppId": None}, idem="kanban")], f"k1-{i}")[0]
+        if not (r["status"] == 503 and r.get("body", {}).get("error", {}).get("retryable")):
+            break
+        time.sleep(2)
     assert r["status"] == 202, r
     run_k, app_k = r["body"]["runId"], r["body"]["targetAppId"]
     machine.wait_until_succeeds(f"sqlite3 {osa} \"SELECT status FROM runs WHERE id='{run_k}'\" | grep -qE '^(succeeded|failed|cancelled)$'", timeout=600)

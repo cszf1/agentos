@@ -47,7 +47,8 @@ for d in unit_dirs:
             bad("remote-entry", n)
         for m in re.finditer(r"^ListenStream=(.+)$", t, re.M):
             v = m.group(1).strip()
-            if not v.startswith("/") and not v.startswith("@"):
+            # UNIX socket paths: absolute, abstract (@) or under a systemd path specifier (%t = runtime dir, %h ...)
+            if not v.startswith("/") and not v.startswith("@") and not re.match(r"%[thSCLETgGuU]/", v):
                 bad("tcp-listen", n, v)          # a TCP port/address instead of a UNIX socket
         if re.search(r"AGENTOS_MODEL_MODE=faux", t):
             bad("faux-default", n)
@@ -88,9 +89,12 @@ for root0 in own:
             if PEM.search(b) and "node_modules" not in p and "/test" not in p:
                 bad("private-key", p)
             for t in TOKENS:
-                m = t.search(b)
-                if m:
+                for m in t.finditer(b):
+                    # AWS's documented placeholder access keys (AKIAIOSFODNN7EXAMPLE …) appear in SDK doc comments
+                    if m.group(0).endswith(b"EXAMPLE"):
+                        continue
                     bad("token", p, m.group(0)[:12].decode(errors="replace") + "…")
+                    break
             if "node_modules" not in p and TESTMODE.search(b) and not p.endswith((".ts", ".js.map", ".d.ts")):
                 bad("test-mode", p)
 
