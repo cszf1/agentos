@@ -208,3 +208,31 @@ with subtest("machined SIGKILL while permits are reserved/in use: nothing is fre
     assert fm_state()["peak"]["total"] <= 2, fm_state()
     for rid, ws in ((s1, ws_a), (s2, ws_b), (s3, ws_a)):
         call(1, [fwd(ws, "runs.cancel.post", params={"runId": rid}, idem="s5c-" + rid)], "s5x" + rid[:6])
+
+with subtest("rollback only to a release whose compatibility covers the live data; records and revocations stay (U11)"):
+    machine.succeed("cat > /root/mcall.py <<'PY'\nimport json, socket, struct, sys\ns = socket.socket(socket.AF_UNIX); s.connect('/run/agentos/machine/machine.sock')\nb = json.dumps({'op': sys.argv[1], 'args': json.loads(sys.argv[2])}).encode()\ns.sendall(struct.pack('>I', len(b)) + b)\nn = struct.unpack('>I', s.recv(4, socket.MSG_WAITALL))[0]\nprint(s.recv(n, socket.MSG_WAITALL).decode())\nPY")
+    def mcall(op, args):
+        return json.loads(machine.succeed(f"python3 /root/mcall.py {op} '{json.dumps(args)}'"))
+    # the machine runs the new generation (machine schema 2). Two older generations are registered: one declares only
+    # schema 1, one declares 1..2. Other data versions are inside both ranges.
+    base = {"workspaceSchema": [5, 5], "brokerSchema": [4, 4], "brokerProtocol": [3, 3], "nativeRpc": [1, 1]}
+    seq0 = int(sql("SELECT IFNULL(MAX(release_sequence), 0) FROM releases"))
+    for rid, ms, k in (("u11-old", [1, 1], 1), ("u11-compat", [1, 2], 2)):
+        comp = json.dumps({**base, "machineSchema": ms}).replace('"', '\\"')
+        sql(f"INSERT INTO releases (release_id, manifest_hash, release_sequence, closure_path, compatibility_json, migration_class, verification_state, support_until, created_at) VALUES ('{rid}', 'sha256:{rid}', {seq0 + k}, '/nix/store/{rid}', '{comp}', 'none', 'verified', 4102444800000, 1)")
+    cur0 = sql("SELECT IFNULL(current_release_id,'') || '|' || IFNULL(known_good_release_id,'') || '|' || accepted_release_sequence FROM machine_meta")
+    revs0 = sql("SELECT revocation_id || ':' || state FROM revocations ORDER BY revocation_id")
+    users0 = sql("SELECT COUNT(*) FROM users")
+    r = mcall("releases.setCurrent", {"releaseId": "u11-old", "knownGood": True})
+    print(r)
+    assert not r["ok"] and r["error"]["code"] == "ROLLBACK_INCOMPATIBLE", r                     # refused before anything boots it
+    assert sql("SELECT IFNULL(current_release_id,'') || '|' || IFNULL(known_good_release_id,'') || '|' || accepted_release_sequence FROM machine_meta") == cur0
+    r = mcall("releases.setCurrent", {"releaseId": "u11-compat", "knownGood": True})
+    assert r["ok"], r
+    meta = sql("SELECT current_release_id || '|' || known_good_release_id || '|' || accepted_release_sequence FROM machine_meta")
+    assert meta.startswith("u11-compat|u11-compat|") and meta.split("|")[2] == cur0.split("|")[2], (meta, cur0)   # high water unchanged
+    assert sql("SELECT revocation_id || ':' || state FROM revocations ORDER BY revocation_id") == revs0              # the latest revocations stay
+    assert sql("SELECT COUNT(*) FROM users") == users0
+    assert "revoked" in revs0, revs0                                                                               # bob's revocation (I07) is among them
+    r = call(1, [{"methodId": "workspaces.list"}], "u11l")[0]
+    assert r["status"] == 200, r
