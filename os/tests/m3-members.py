@@ -176,7 +176,19 @@ with subtest("the last owner cannot be removed; a disabled account gets nothing 
     assert sql(f"SELECT state FROM users WHERE user_id='{erin}'") == "disabled"
     # disabling ends the account's sessions and the account can open no new one (expired + locked)
     machine.wait_until_fails("loginctl list-sessions --no-legend | grep -w erin", timeout=60)
-    machine.fail("su - erin -s /bin/sh -c true")
+    # root's su skips the password (pam_rootok), so prove it on the account itself and on a real VT login instead
+    print(machine.succeed("passwd -S erin; chage -l erin"))
+    machine.succeed("passwd -S erin | awk '{print $2}' | grep -qx L")                 # password locked
+    machine.succeed("chage -l erin | grep 'Account expires' | grep -q 1970")          # account expired
+    machine.send_key("alt-f5")
+    machine.succeed("chvt 5; systemctl start getty@tty5.service")
+    machine.wait_until_tty_matches("5", "login: ")
+    machine.send_chars("erin\n")
+    machine.wait_until_tty_matches("5", "Password: ")
+    machine.send_chars("erin-pw-1\n")
+    machine.wait_until_tty_matches("5", "(Login incorrect|expired)")
+    time.sleep(3)
+    machine.fail("loginctl list-sessions --no-legend | grep -w erin")               # PAM opened no new session
 
 with subtest("lock and logout end old session epochs (I10)"):
     # a stale sessionEpoch in an otherwise valid connection is refused

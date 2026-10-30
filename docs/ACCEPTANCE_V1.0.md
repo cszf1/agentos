@@ -99,7 +99,7 @@
 | V1-S05 | permit | 部分 | 单元/集成 | Rust 单元（本轮在 agentos-v1 cargo test 通过）：native/crates/machine/src/tests.rs s05_s06_restart_never_frees_held_slots_until_the_holder_is_gone_unknown_is_charged；directory.test.ts：重启不释放已占槽。VM 中 reserved/in_use 各位置强杀未做。 |
 | V1-S06 | 进程与未知用量 | 部分 | 单元/集成 | Rust 单元（本轮在 agentos-v1 cargo test 通过）：native/crates/machine/src/tests.rs s05_s06_restart_never_frees_held_slots_until_the_holder_is_gone_unknown_is_charged（unknown 按已用计费）。VM 未做。 |
 | V1-S07 | 背景让行 | 部分 | 单元/集成 | Rust 单元（本轮在 agentos-v1 cargo test 通过）：native/crates/machine/src/tests.rs s07_background_yields_to_foreground。VM 未做。 |
-| V1-S08 | 机器不可达 | 未通过 | 未验收（VM 已写，CI 待结果） | m10-sched S08（run 41089904864）失败：停止 machined 时 systemd 因 requires= 连带停止 gateway，客户端得到 ECONNREFUSED 而非可见原因。已改为 wants=，gateway 保持运行并以 STORE_UNAVAILABLE 拒绝；重跑中，CI 待结果。 |
+| V1-S08 | 机器不可达 | 部分 | KVM VM（Actions） | m10-sched（run 41091721080，KVM）S08 子测试通过：停止 machined 后 gateway 保持运行，真实 VT 会话的 session.bind 得到可见原因 STORE_UNAVAILABLE（gateway wants= 而非 requires= machined，提交 4377500）；两个工作区的 Host 进程与数据保留；machined 恢复后 workspaces.list 200，新模型请求重新到达测试端点。**未满足**：machined 不可达期间“已接受 run 不发新模型/构建请求且原因可见”与“不依赖机器的本地只读/确定性流程按规定降级”未单独断言（当前 gateway 在 bind 处即整体拒绝）。 |
 
 ## 安装与更新
 
@@ -160,12 +160,12 @@
 | V1-O06 | 真实故障恢复 | 部分 | KVM VM（Actions） | VM 中已有：machined 重启保身份（m2）、Host SIGKILL 后另一工作区不受影响（m3 W04，CI 通过）、坏候选复位（m7）、检查点强杀（m8）。m11-ops O06：依次 SIGKILL broker/machined/gateway，各自由 systemd 重启、machineInstallId 不变、两个 Host 重连后 forward 可用。m11-ops（os/tests/m11-ops.py，两个真实 Host + 本地保持端点）已写，run 41089329164，CI 待结果。 Shell SIGKILL 与 VM power-cut 窗口未做。 |
 | V1-O07 | 原生入口攻击 | 部分 | 单元/集成（VM 已写，CI 待结果） | access.test.ts：重复键/未知字段/URL 形 forward/超长帧被拒。本轮 gateway 新增：每 UID 32、总计 256 连接上限，已开始的帧须 30 秒内收齐（事件订阅空闲不限）；Rust 单元 o07_connection_slots_are_bounded_per_uid_and_released、o07_a_started_frame_must_complete_in_time_but_idle_is_unbounded 本轮通过。m11-ops O07（os/tests/ops-fuzz.py：超长长度、非 JSON、重复键、未知字段、URL forward、深嵌套、截断帧、20 个慢连接时正常请求 <5 s、停滞帧 35 s 内被关、每 UID 上限、释放后恢复、gateway RSS<200 MB）m11-ops（os/tests/m11-ops.py，两个真实 Host + 本地保持端点）已写，run 41089329164，CI 待结果。 旧票据重放未单独做。 |
 | V1-O08 | 日志与支持包 | 通过 | KVM VM（Actions）＋单元/集成 | agentosctl support-bundle --out <file>（native/crates/machine/src/ctl.rs）：仅 root、0600；只收机器级事实（release、boot、schema/协议、身份摘要 sha256 前 16 位、registry、工作区状态、permit/barrier/restore、boot default）与脱敏服务日志（含 password/psk/secret/token/cookie/authorization/api key/private 的行替换为标记），不收工作区正文。Rust 单元 o08_support_bundle_lines_naming_secrets_are_replaced 本轮通过；m10-sched O08 子测试（非 root 被拒、0600、无 PAM 口令、无完整 machineInstallId、root_audit 不被轮转）KVM 通过（run 41088879793）。 |
-| V1-O09 | 干净构建与安装 | 未通过 | 未验收 | build-repro（Actions 新 job）：agentos-native/node/shell/release 各构建后用 nix build --rebuild 再构建一次逐位比较，不同则列出差异；已写，CI 待结果。ISO 安装/导入/升级/离机恢复的同一候选完整演练未做。 |
+| V1-O09 | 干净构建与安装 | 部分 | Actions 构建（nix --rebuild） | build-repro（run 41091049224）通过：agentos-native、agentos-node、agentos-shell、agentos-release 各构建一次后以 nix build --rebuild 从相同输入再构建，逐位相同（REPRO identical ×4）。ISO/qcow2 未纳入重建比较；同一候选的 ISO 安装/导入/升级/离机恢复文档演练未做。 |
 | V1-O10 | 发布完成条件 | 未通过 | 未验收 | 100 项证据未齐，不能宣称发布完成。 |
 
 ## 统计
 
-未通过 22 项，通过 34 项，部分 44 项（共 100 项）。
+未通过 20 项，通过 34 项，部分 46 项（共 100 项）。
 
 ## 回归与偶发失败记录
 
