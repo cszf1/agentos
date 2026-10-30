@@ -395,6 +395,13 @@ with subtest("delete with exported data only after an age copy of a set holding 
     machine.succeed(f"agentos-recovery-worker import --in /media/x/x1/ws-{ws_x}.age --identity /root/x.key --staging /root/xcheck | grep -q '\"ok\":true'")
 
 with subtest("owner transfer and disable: the old approvals wait for review; a stale memberVersion or plan is refused (I09, I12)"):
+    # the machine holds at most 4 active local accounts (MAX_USERS): disable the two earlier accounts that own nothing
+    # (dave from I11, carol revoked in I08) so frank and gina fit; a disabled account is not counted
+    for who, tag in [(sql("SELECT user_id FROM users WHERE login_name='dave'"), "tdd"), (carol, "tdc")]:
+        p = call(1, [{"methodId": "machine.users.disable", "idempotencyKey": str(uuid.uuid4()), "body": {"userId": who}}], tag + "p")[0]
+        assert p["status"] == 201, p
+        ok = call(1, [{"methodId": "machine.actions.confirm", "idempotencyKey": str(uuid.uuid4()), "body": {"operationId": p["body"]["operationId"], "planHash": p["body"]["planHash"], "password": "alice-pw-1"}}], tag + "c")[0]
+        assert '"succeeded"' in json.dumps(ok), ok
     frank = make_user("frank", "frank-pw-1", "uf")
     gina = make_user("gina", "gina-pw-1", "ug")
     tty_login(6, "frank", "frank-pw-1")
