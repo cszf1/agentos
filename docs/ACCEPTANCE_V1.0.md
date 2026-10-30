@@ -23,7 +23,7 @@
 | V1-B04 | 发行依赖冻结 | 部分 | KVM VM（Actions） | os/flake.lock 固定 nixpkgs nixos-26.05@6f06d204（2026-10-29，26.05 支持期至 2026-12-31）与 rust-overlay@96a0986b；pnpm 依赖为固定输出哈希；仓库与 Nix 文件无 latest。离线 OCI（决定 18）：agentos-oci 在构建 VM 里 --network=none --pull=never 构建 8 个 catalog 镜像，基础镜像为固定输出 skopeo 副本，release manifest ociDigests 填入；build-oci 在 Actions（run 41080892538）构建通过。m5 应用容器启动失败（crun: readlink ``）根因：工作区 home 为 0700，--userns=keep-id 下容器 root 映射的 subuid 无法穿过 home 解析 rootfs（同 podman#27785）；已改为 home 与到 graphroot 的路径 0711（仅穿越），内容目录仍 0700；m5 重跑（run 41090848802，KVM）该子测试通过：无网络下从发行镜像导入 4 个 lock、未拉取任何镜像、探针容器按应用策略启动。**未满足**：固件清单未单列。 |
 | V1-B05 | 单写者和双库 | 部分 | KVM VM（Actions）＋单元/集成 | machined 在旧实例进程仍在时拒绝再次启动（WORKSPACE_FENCED，m8-backup 曾因此暴露并修复 podman 残留）；tests/machine/directory.test.ts 拒绝重复 storeUUID。Pi marker 不匹配阻断新任务未在 v1.0 VM 中重跑。 |
 | V1-B06 | 实施证据边界 | 通过 | 本报告 | 每行标注证据等级；TCG/KVM/单元/实体机分列；继承的 V3-E04 串口仍为未验收。 |
-| V1-B07 | schema | 部分 | 单元/集成 | tests/migration/schema5.test.ts 保留 schema 4→5 旧收据与 v0.1 bundle hash；broker db::tests 保留 schema 3→4 effect 行。崩溃中途写入未做。 |
+| V1-B07 | schema | 部分 | 单元/集成 | tests/migration/schema5.test.ts 保留 schema 4→5 旧收据与 v0.1 bundle hash；broker db::tests 保留 schema 3→4 effect 行。 machine schema 1→2（决定 24）：单事务迁移，中途失败整体回滚为完整 schema 1（无残留 _v2 表、无迁移审计），native/crates/machine/src/tests.rs b07_interrupted_machine_migration_leaves_schema_1_intact、w10_schema_1_database_migrates_to_2_keeping_every_row 通过（agentos-v1）。未做：工作区 schema 4→5 与 broker schema 3→4 的中途崩溃注入。 |
 | V1-B08 | 默认配置 | 部分 | KVM VM（Actions） | 发行模块：broker policy testMode=false、root 口令 "!"、无 sshd、无 TCP 监听（m2/m6 断言 `ss -ltn` 为空）、AGENTOS_MODEL_MODE=real、无预置 token/私钥；安装器在校验阶段拒绝任何有口令/空口令账户（m6 在测试变体上实际触发过“root has an empty password”）。qcow2 模板 LUKS 用公开模板密钥，首启强制替换（见 U03）。完整正式镜像的逐文件审计未做。 |
 
 ## 登录、成员与撤权
