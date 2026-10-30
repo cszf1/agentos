@@ -99,6 +99,43 @@ with subtest("editor writes data but cannot take owner actions; owner can (I04)"
     r = call(2, [fwd(ws_a, "runs.list")], "e5")[0]
     assert r["status"] == 200, r
 
+with subtest("broker protocol 3 end to end: an owner pause reaches the broker as a checked v3 write (M3, I12)"):
+    store_a = sql(f"SELECT store_uuid FROM workspaces WHERE workspace_id='{ws_a}'")
+    hostdb = f"/var/lib/agentos/workspaces/{ws_a}/data/os.sqlite"
+    BDB = "/var/lib/agentos-broker/broker.sqlite"
+    def last_control():
+        return machine.succeed(f"sqlite3 {hostdb} \"SELECT dispatch_state || ' ' || IFNULL(broker_result,'') FROM root_sync_outbox WHERE kind='control' ORDER BY created_at DESC, rowid DESC LIMIT 1\"").strip()
+    def wait_control():
+        machine.wait_until_succeeds(f"sqlite3 {hostdb} \"SELECT dispatch_state FROM root_sync_outbox WHERE kind='control' ORDER BY created_at DESC, rowid DESC LIMIT 1\" | grep -qE '^(confirmed|failed)$'", timeout=120)
+        return last_control()
+    # the owner's pause travels Host → broker (machine mode wraps it in the protocol-3 workspace envelope)
+    r = call(1, [fwd(ws_a, "maintenance.control.post", body={"action": "pause"}, idem="p3-1")], "p31")[0]
+    assert r["status"] == 200, r
+    st = wait_control()
+    assert st.startswith("confirmed"), st
+    assert machine.succeed(f"sqlite3 {BDB} \"SELECT state FROM workspace_maintenance_state WHERE store_uuid='{store_a}' ORDER BY incarnation DESC LIMIT 1\"").strip() == "paused"
+    # the broker checked the principal against its synced directory: a member version it does not know is refused
+    # (protocol 1/2 carry no principal at all, so this refusal can only come from the v3 check)
+    machine.succeed("systemctl stop agentos-broker.service")
+    machine.succeed(f"sqlite3 {BDB} \"UPDATE machine_members SET member_version = member_version + 100 WHERE store_uuid='{store_a}' AND user_id='{alice}'\"")
+    machine.succeed("systemctl start agentos-broker.service")
+    machine.wait_for_unit("agentos-broker.service")
+    r = call(1, [fwd(ws_a, "maintenance.control.post", body={"action": "resume"}, idem="p3-2")], "p32")[0]
+    assert r["status"] == 200, r
+    st = wait_control()
+    assert st.startswith("failed") and "MEMBERSHIP_REVOKED" in st, st
+    assert machine.succeed(f"sqlite3 {BDB} \"SELECT state FROM workspace_maintenance_state WHERE store_uuid='{store_a}' ORDER BY incarnation DESC LIMIT 1\"").strip() == "paused"
+    # directory consistent again: the next owner control is accepted
+    machine.succeed("systemctl stop agentos-broker.service")
+    machine.succeed(f"sqlite3 {BDB} \"UPDATE machine_members SET member_version = member_version - 100 WHERE store_uuid='{store_a}' AND user_id='{alice}'\"")
+    machine.succeed("systemctl start agentos-broker.service")
+    machine.wait_for_unit("agentos-broker.service")
+    r = call(1, [fwd(ws_a, "maintenance.control.post", body={"action": "resume"}, idem="p3-3")], "p33")[0]
+    assert r["status"] == 200, r
+    st = wait_control()
+    assert st.startswith("confirmed"), st
+    assert machine.succeed(f"sqlite3 {BDB} \"SELECT state FROM workspace_maintenance_state WHERE store_uuid='{store_a}' ORDER BY incarnation DESC LIMIT 1\"").strip() == "running"
+
 with subtest("a machine administrator gets no data entry into a workspace they are not a member of (I04, I03)"):
     r = call(2, [{"methodId": "workspaces.create", "idempotencyKey": str(uuid.uuid4()), "body": {"displayName": "Bob"}}], "m1")[0]
     assert r["status"] == 201, r
