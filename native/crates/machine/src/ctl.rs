@@ -2,7 +2,8 @@
 //! database, never skips a plan or confirmation, and prints only bounded, redacted facts.
 //!   agentosctl status | doctor | workspace list | workspace status <id> | update status
 //!   agentosctl firstboot --admin <login> [--workspace <name>]   (root, only while first boot is open; password on stdin)
-//!   agentosctl backup --out <dir> [--pinned]                   (root: machine barrier, every workspace cold, one set)
+//!   agentosctl backup --out <dir> [--pinned] [--include-archived] (root: machine barrier, every workspace cold, one set)
+//!   agentosctl backup export --set <dir> --recipient <age1…> --out <dir>  (root: age copy off the machine, read back)
 //!   agentosctl restore --set <dir> [--restore-id <id>]         (root: same-machine restore journal, resumable)
 //!   agentosctl recover --new-identity                          (root: accept a new install identity after loss)
 use agentos_machine::server::Client;
@@ -180,8 +181,12 @@ fn backup(c: &mut Client, a: &[String]) {
         let _ = c.call("barrier.release", json!({ "barrierId": b["barrierId"] }));
         return out(&json!({ "ok": true, "abandoned": set_id }));
     }
+    if a.get(2).map(|s| s.as_str()) == Some("export") {
+        return export(c, a);
+    }
     let out_dir = arg(a, "--out").unwrap_or_else(|| die("usage: agentosctl backup --out <dir> [--pinned]"));
     let pinned = a.iter().any(|x| x == "--pinned");
+    let with_archived = a.iter().any(|x| x == "--include-archived");
     let set_id = uuid();
     let call = |c: &mut Client, op: &str, args: Value| c.call(op, args);
     let st = call(c, "status", json!({})).unwrap_or_else(|e| die(&e.to_string()));
@@ -189,19 +194,21 @@ fn backup(c: &mut Client, a: &[String]) {
     let barrier = call(c, "barrier.hold", json!({ "ownerKind": "checkpoint", "ownerId": set_id, "scope": { "kind": "machine" } })).unwrap_or_else(|e| die(&e.to_string()));
     let barrier = barrier["barrierId"].as_str().unwrap_or_default().to_string();
     let wss: Vec<Value> = call(c, "workspaces.all", json!({})).map(|v| v["workspaces"].as_array().cloned().unwrap_or_default()).unwrap_or_default();
-    let wss: Vec<Value> = wss.into_iter().filter(|w| !matches!(w["state"].as_str(), Some("archived" | "deleting" | "deleted"))).collect();
+    // archived workspaces are already cold; they are part of the set only when asked (an export before deletion)
+    let wss: Vec<Value> = wss.into_iter().filter(|w| match w["state"].as_str() { Some("deleting" | "deleted") => false, Some("archived") => with_archived, _ => true }).collect();
     let was_running: Vec<String> = wss.iter().filter(|w| matches!(w["state"].as_str(), Some("running" | "starting"))).map(|w| w["workspaceId"].as_str().unwrap_or_default().to_string()).collect();
-    let fail = |c: &mut Client, msg: String, begun: bool| bail(c, &set_id, &barrier, msg, begun);
+    let fail = |c: &mut Client, msg: String, begun: bool| bail(c, &set_id, &barrier, msg, begun, &was_running);
+    // the set is opened first: a full or read-only disk (R12) refuses it before any workspace is stopped
+    if let Err(e) = call(c, "checkpoints.begin", json!({ "setId": set_id, "scope": "machine", "barrierId": barrier })) {
+        fail(c, e.to_string(), false);
+    }
     for w in &wss {
         let id = w["workspaceId"].as_str().unwrap_or_default();
         match call(c, "workspaces.rootStop", json!({ "workspaceId": id })) {
             Ok(r) if r["state"] == "stopped" => {}
-            Ok(r) => fail(c, format!("workspace {id} did not stop cleanly ({})", r["state"]), false),
-            Err(e) => fail(c, format!("workspace {id}: {e}"), false),
+            Ok(r) => fail(c, format!("workspace {id} did not stop cleanly ({})", r["state"]), true),
+            Err(e) => fail(c, format!("workspace {id}: {e}"), true),
         }
-    }
-    if let Err(e) = call(c, "checkpoints.begin", json!({ "setId": set_id, "scope": "machine", "barrierId": barrier })) {
-        fail(c, e.to_string(), false);
     }
     let _ = std::fs::create_dir_all(format!("{out_dir}/ws"));
     let mut parts = vec![];
@@ -237,11 +244,79 @@ fn backup(c: &mut Client, a: &[String]) {
     out(&json!({ "ok": true, "setId": set_id, "manifestHash": mh, "workspaces": wss.len(), "restarted": restarted }));
 }
 
-fn bail(c: &mut Client, set_id: &str, barrier: &str, msg: String, begun: bool) -> ! {
+/// Off-machine copy of a complete machine set (spec §23.3/§24, V1-R12): the set stays labelled `local` until every
+/// part was written as an age archive to the target and read back from there with a matching hash; only then is
+/// the set's export state `exported` and, after the read-back of the manifest copy, `verified`. A failure leaves
+/// the state at `none` (never `exported`).
+fn export(c: &mut Client, a: &[String]) {
+    let usage = "usage: agentosctl backup export --set <dir> --recipient <age1…> --out <dir>";
+    let dir = arg(a, "--set").unwrap_or_else(|| die(usage));
+    let rec = arg(a, "--recipient").unwrap_or_else(|| die(usage));
+    let out_dir = arg(a, "--out").unwrap_or_else(|| die(usage));
+    let bytes = std::fs::read(format!("{dir}/machine-set.json")).unwrap_or_else(|e| die(&format!("machine-set.json: {e}")));
+    let set: Value = serde_json::from_slice(&bytes).unwrap_or_else(|_| die("machine-set.json is not JSON"));
+    let set_id = set["setId"].as_str().unwrap_or_else(|| die("machine-set.json has no setId")).to_string();
+    let rec_set = c.call("checkpoints.get", json!({ "setId": set_id })).unwrap_or_else(|e| die(&e.to_string()));
+    let mh = format!("sha256:{}", sha256_hex(&bytes));
+    if rec_set["state"] != "complete" || rec_set["manifestHash"].as_str() != Some(mh.as_str()) {
+        die("the set on disk is not the complete set machined recorded (manifest hash differs)");
+    }
+    if std::path::Path::new(&out_dir).exists() {
+        die(&format!("{out_dir} exists"));
+    }
+    std::fs::create_dir_all(&out_dir).unwrap_or_else(|e| die(&format!("{out_dir}: {e}")));
+    if rec_set["exportState"] != "exported" && rec_set["exportState"] != "verified" {
+        c.call("checkpoints.exportState", json!({ "setId": set_id, "state": "exporting" })).unwrap_or_else(|e| die(&e.to_string()));
+    }
+    let undo = |c: &mut Client, msg: String| -> ! {
+        let _ = c.call("checkpoints.exportState", json!({ "setId": set_id, "state": "none" }));
+        die(&msg)
+    };
+    let mut files = vec![];
+    for w in set["workspaces"].as_array().cloned().unwrap_or_default() {
+        let id = w["workspaceId"].as_str().unwrap_or_default().to_string();
+        let target = format!("{out_dir}/ws-{id}.age");
+        let r = rw(&["export", "--set", &format!("{dir}/ws/{id}"), "--recipient", &rec, "--out", &target]);
+        if r["ok"] != true {
+            undo(c, format!("export of {id} failed: {}", r["error"]));
+        }
+        files.push((target, r["result"]["ciphertextSha256"].as_str().unwrap_or_default().to_string()));
+    }
+    // the manifest itself (members, epochs) is encrypted to the same recipient
+    let mpath = format!("{out_dir}/machine-set.json.age");
+    let age = std::env::var("AGENTOS_AGE").unwrap_or_else(|_| "age".into());
+    let st = std::process::Command::new(&age).args(["-r", &rec, "-o", &mpath, &format!("{dir}/machine-set.json")]).status();
+    if !matches!(st, Ok(s) if s.success()) {
+        undo(c, "age could not encrypt machine-set.json".into());
+    }
+    let mb = std::fs::read(&mpath).unwrap_or_else(|e| undo(c, format!("{mpath}: {e}")));
+    let msum = sha256_hex(&mb);
+    let _ = std::fs::write(format!("{mpath}.sha256"), format!("{msum}  machine-set.json.age\n"));
+    files.push((mpath, msum));
+    let _ = std::fs::File::open(&out_dir).and_then(|f| f.sync_all());
+    c.call("checkpoints.exportState", json!({ "setId": set_id, "state": "exported" })).unwrap_or_else(|e| die(&e.to_string()));
+    // read every file back from the target and compare with what was written
+    for (f, h) in &files {
+        let b = std::fs::read(f).unwrap_or_else(|e| die(&format!("read back {f}: {e} (set stays exported, not verified)")));
+        if h.is_empty() || &sha256_hex(&b) != h {
+            die(&format!("read back {f}: hash differs (set stays exported, not verified)"));
+        }
+    }
+    c.call("checkpoints.exportState", json!({ "setId": set_id, "state": "verified" })).unwrap_or_else(|e| die(&e.to_string()));
+    let after = c.call("checkpoints.get", json!({ "setId": set_id })).unwrap_or(Value::Null);
+    out(&json!({ "ok": true, "setId": set_id, "files": files.iter().map(|(f, h)| json!({ "path": f, "sha256": h })).collect::<Vec<_>>(),
+        "exportState": after["exportState"], "offMachineCopy": after["offMachineCopy"] }));
+}
+
+fn bail(c: &mut Client, set_id: &str, barrier: &str, msg: String, begun: bool, was_running: &[String]) -> ! {
     if begun {
         let _ = c.call("checkpoints.abandon", json!({ "setId": set_id }));
     }
     let _ = c.call("barrier.release", json!({ "barrierId": barrier }));
+    // a refused or failed backup gives the machine back as it found it
+    for id in was_running {
+        let _ = c.call("workspaces.rootStart", json!({ "workspaceId": id }));
+    }
     die(&msg)
 }
 

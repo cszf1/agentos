@@ -8,7 +8,7 @@ pkgs.testers.runNixOSTest {
     agentos.enable = true;
     agentos.graphical = false;
     virtualisation = { memorySize = 4096; inherit cores; diskSize = 6144; };
-    environment.systemPackages = [ pkgs.python3 pkgs.sqlite ];
+    environment.systemPackages = [ pkgs.python3 pkgs.sqlite pkgs.age ];
     environment.etc."agentos-test/rpc.py".source = ./rpc.py;
   };
   testScript = builtins.readFile ./lib.py + builtins.readFile ./m3-members.py;

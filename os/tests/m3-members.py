@@ -334,3 +334,39 @@ with subtest("delete: owner+admin, broker effect verdict, executors; UID and sto
     assert r["status"] == 201, r
     assert int(sql(f"SELECT execution_uid FROM workspaces WHERE workspace_id='{r['body']['workspaceId']}'")) != ud
     assert sql("SELECT schema_version FROM machine_meta") == "2"
+
+with subtest("delete with exported data only after an age copy of a set holding it was read back (W10, R12)"):
+    r = call(1, [{"methodId": "workspaces.create", "idempotencyKey": str(uuid.uuid4()), "body": {"displayName": "Exported"}}], "x0")[0]
+    assert r["status"] == 201, r
+    ws_x = r["body"]["workspaceId"]
+    r = call(1, [{"methodId": "workspaces.archive", "workspaceId": ws_x, "idempotencyKey": str(uuid.uuid4()), "body": {}}], "x1")[0]
+    assert r["status"] == 200 and r["body"]["state"] == "archived", r
+    rc, o = machine.execute("agentosctl backup --out /var/lib/agentos-snapshots/x1 --include-archived 2>&1")
+    assert rc == 0, o
+    bk = json.loads(o[o.index("{"):])
+    set_x = bk["setId"]
+    assert ws_x in machine.succeed("cat /var/lib/agentos-snapshots/x1/machine-set.json")
+    def plan_x(tag):
+        return call(1, [{"methodId": "machine.actions.plan", "idempotencyKey": str(uuid.uuid4()), "body": {"kind": "workspaces.delete", "params": {"workspaceId": ws_x, "dataDisposition": "exported", "exportSetId": set_x}}}], tag)[0]
+    def confirm_x(p, tag):
+        return call(1, [{"methodId": "machine.actions.confirm", "idempotencyKey": str(uuid.uuid4()), "body": {"operationId": p["body"]["operationId"], "planHash": p["body"]["planHash"], "password": "alice-pw-1"}}], tag)[0]
+    # a local set only: the exported deletion is refused at dispatch and the workspace stays archived with its data
+    p = plan_x("x2")
+    if p["status"] == 201:
+        ok = confirm_x(p, "x3")
+        assert '"succeeded"' not in json.dumps(ok), ok
+    assert sql(f"SELECT state FROM workspaces WHERE workspace_id='{ws_x}'") == "archived"
+    machine.succeed(f"test -d /var/lib/agentos/workspaces/{ws_x}/data")
+    machine.succeed("age-keygen -o /root/x.key 2>/root/x.pub && mkdir -p /media/x")
+    rec = machine.succeed("grep -o 'age1[a-z0-9]*' /root/x.pub").strip()
+    rc, o = machine.execute(f"agentosctl backup export --set /var/lib/agentos-snapshots/x1 --recipient {rec} --out /media/x/x1 2>&1")
+    assert rc == 0 and '"verified"' in o, o
+    p = plan_x("x4")
+    assert p["status"] == 201, p
+    ok = confirm_x(p, "x5")
+    assert '"succeeded"' in json.dumps(ok), ok
+    machine.wait_until_succeeds(f"test $(sqlite3 /var/lib/agentos-machine/machine.sqlite \"SELECT state FROM workspaces WHERE workspace_id='{ws_x}'\") = deleted", timeout=60)
+    machine.fail(f"test -e /var/lib/agentos/workspaces/{ws_x}")
+    assert set_x in sql(f"SELECT delete_json FROM workspaces WHERE workspace_id='{ws_x}'")
+    # the exported copy still restores the deleted workspace's data
+    machine.succeed(f"agentos-recovery-worker import --in /media/x/x1/ws-{ws_x}.age --identity /root/x.key --staging /root/xcheck | grep -q '\"ok\":true'")

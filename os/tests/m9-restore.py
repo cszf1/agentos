@@ -5,7 +5,7 @@
 SNAP = "/var/lib/agentos-snapshots"
 
 def ctl(args, ok=True, env=""):
-    rc, out = machine.execute(f"{env} agentosctl {args}")
+    rc, out = machine.execute(f"{env} agentosctl {args}" + ("" if ok else " 2>&1"))
     if ok:
         assert rc == 0, (args, out)
         return json.loads(out[out.index("{"):])
@@ -72,6 +72,37 @@ with subtest("one machine set over both workspaces, taken under one barrier, bot
     assert sql(f"SELECT state FROM checkpoint_sets WHERE set_id='{v['setId']}'") == "complete"
     machine.wait_until_succeeds(f"pgrep -u {ua} -f packages/host/dist/main.js && pgrep -u {ub} -f packages/host/dist/main.js", timeout=120)
     set_id = v["setId"]
+
+with subtest("a local set is not an off-machine copy until exported and read back; a full/read-only disk stops new sets and workspaces (R12)"):
+    c0 = sql(f"SELECT export_state FROM checkpoint_sets WHERE set_id='{set_id}'")
+    assert c0 == "none", c0
+    machine.succeed("age-keygen -o /root/off.key 2>/root/off.pub")
+    rec = machine.succeed("grep -o 'age1[a-z0-9]*' /root/off.pub").strip()
+    machine.succeed("mkdir -p /media/offsite")
+    e = ctl(f"backup export --set {SNAP}/m1 --recipient {rec} --out /media/offsite/m1")
+    assert e["exportState"] == "verified" and e["offMachineCopy"] is True and len(e["files"]) == 3, e
+    assert sql(f"SELECT export_state FROM checkpoint_sets WHERE set_id='{set_id}'") == "verified"
+    # the copy really is a recoverable set: decrypt one workspace part to an empty staging dir and verify it
+    machine.succeed(f"agentos-recovery-worker import --in /media/offsite/m1/ws-{ws_a}.age --identity /root/off.key --staging /root/offcheck | grep -q '\"ok\":true'")
+    machine.succeed("age -d -i /root/off.key /media/offsite/m1/machine-set.json.age | grep -q agentos-machine-set")
+    # exporting a set that does not match machined's record is refused and changes nothing
+    machine.succeed(f"cp -a {SNAP}/m1 /root/m1-bad && sed -i 's/agentos-machine-set/agentos-machine-sex/' /root/m1-bad/machine-set.json")
+    rc, o = ctl(f"backup export --set /root/m1-bad --recipient {rec} --out /media/offsite/bad", ok=False)
+    assert rc != 0 and "manifest hash" in o, o
+    machine.fail("test -e /media/offsite/bad")
+    # read-only snapshot store: no new set (refused before any workspace is stopped), no new workspace; existing set kept
+    audit0 = int(sql("SELECT COUNT(*) FROM root_audit"))
+    machine.succeed(f"mount --bind {SNAP} {SNAP} && mount -o remount,bind,ro {SNAP}")
+    rc, o = ctl(f"backup --out {SNAP}/full", ok=False)
+    assert rc != 0 and "MACHINE_CAPACITY" in o, o
+    assert sql("SELECT COUNT(*) FROM barriers WHERE state='held'") == "0"
+    assert host_running(ua) and host_running(ub), "a refused backup leaves running workspaces running"
+    r = call(1, [{"methodId": "workspaces.create", "idempotencyKey": str(uuid.uuid4()), "body": {"displayName": "Full"}}], "rf")[0]
+    assert r["status"] != 201 and code(r) == "MACHINE_CAPACITY", r
+    assert sql(f"SELECT state || ' ' || export_state FROM checkpoint_sets WHERE set_id='{set_id}'") == "complete verified"
+    assert int(sql("SELECT COUNT(*) FROM root_audit")) >= audit0
+    machine.succeed(f"umount {SNAP}")
+    machine.succeed(f"touch {SNAP}/.writable && rm {SNAP}/.writable")
 
 with subtest("after the backup: revoke bob, disable carol, leave a machine plan open"):
     r = call(1, [{"methodId": "members.revoke", "workspaceId": ws_a, "idempotencyKey": str(uuid.uuid4()), "body": {"userId": bob}}], "rv")[0]
