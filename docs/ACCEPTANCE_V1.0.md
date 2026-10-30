@@ -113,7 +113,7 @@
 | V1-U06 | 下载与低空间 | 部分 | KVM VM（Actions）＋单元/集成 | agentos-update-worker arm 先做前置检查（native/crates/update-worker/src/preflight.rs）：ESP 可用 ≥16 MiB、store 可用 ≥ max(候选闭包所需, 256 MiB)、无市电且电池 <40% 未充电则拒绝（UPDATE_PRECONDITION），拒绝时不写 one-shot、不改 default/条目。Rust u06_* 通过；m7-update U06 子测试 KVM 通过（run 41089647759，真实 bootctl：低电/空间不足不 armed、loader 状态与条目不变）。**未满足**：下载断线续传未在 VM 中断网复测（nix copy 以 store 路径为原子单位，已到路径保留）。 |
 | V1-U07 | 启动项写入断电 | 部分 | KVM VM（Actions）＋单元/集成 | m7-update：known-good 与候选条目完整、default 为 known-good；update-worker Rust 测试覆盖各发布点中断。VM 断电未做。 |
 | V1-U08 | 单次试启动 | 通过 | KVM VM（Actions） | m7-update：one-shot 只启动候选一次、default 不变；无 init 的坏候选复位后进入 default，不无限重试。 |
-| V1-U09 | 健康门槛 | 部分 | 单元/集成 | update-worker health 单元测试（假 ready、仅 SSH、Qt 不出帧、schema 不兼容）；VM 中未做。 |
+| V1-U09 | 健康门槛 | 通过 | KVM VM（Actions）＋单元/集成 | update-worker health 单元测试（假 ready、仅 SSH、Qt 不出帧、schema 不兼容）。m5-desktop（run 41109619857，7ab4cf1，KVM）U09 子测试通过：agentos-update-worker health 先做正对照（全部探针 60 秒为绿，healthy=true），再分别制造 Qt 不出帧（shell 画布进程失败 → shell_canvas 失败）、工作区 schema 超出发行范围（workspaces_compatible 失败）、假 ready（broker 单元 active 但身份 socket 不在 → broker_identity 失败）、仅 SSH（无 greeter、无 machined → greeter_frame 与 machine_identity 失败），每种都 healthy=false。m7-update（run 41109624800，KVM）U09 子测试通过：健康门槛不过时 commit 以 NEEDS_ATTENTION（greeter_frame）拒绝，持久 default 保持 known-good 条目不变。 |
 | V1-U10 | 提交窗口恢复 | 部分 | KVM VM（Actions）＋单元/集成 | m7-update：commit 写入并读回 default；Rust U10 覆盖各断点对账。 |
 | V1-U11 | 兼容回退 | 部分 | 单元/集成 | 实现（决定 25）：machine schema 迁移只在更新 commit 时执行（试启动期间库保持旧 schema，known-good 回退仍可打开）；任何切换发行（含 known-good 回退）要求目标发行 compatibility 范围包含当前实际数据版本（machineSchema/workspaceSchema/brokerSchema/brokerProtocol/nativeRpc），否则 ROLLBACK_INCOMPATIBLE、不写 current/known-good；回退不做降级迁移、不降低更新高水位、记录与撤权保留；新程序拒绝打开更新的 machine schema。Rust 单元（agentos-v1 cargo test 通过）：native/crates/machine/src/tests.rs u11_migration_waits_for_commit_and_rollback_needs_a_compatible_generation、w10_schema_1_database_migrates_to_2_keeping_every_row。VM 中真实回退到兼容旧代际未做。 |
 | V1-U12 | 保留与回收 | 通过 | KVM VM（Actions）＋单元/集成 | m7-update：GC 只移除未 pin 的登记条目，NixOS 自有条目保留；Rust U12。 |
@@ -165,7 +165,7 @@
 
 ## 统计
 
-未通过 14 项，通过 40 项，部分 46 项（共 100 项）。
+未通过 14 项，通过 41 项，部分 45 项（共 100 项）。
 
 ## 回归与偶发失败记录
 
