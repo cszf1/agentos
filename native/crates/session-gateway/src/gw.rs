@@ -589,8 +589,11 @@ pub fn route(gw: &Gw, conn: u64, uid: u32, pid: u32, dbus: &zbus::blocking::Conn
         return Err(err("SESSION_STALE", "sessionEpoch is stale; bind again"));
     }
     let (user, admin, sess_id) = {
+        // The session can be retired between live() and here (logind watcher, session.end, epoch change on another
+        // thread): answer SESSION_REQUIRED for this request. An unwrap here aborted the whole gateway for every
+        // client (m13 run 41135338891: panic at this line, gateway restarted twice, the Shell's submit was lost).
         let ss = gw.sessions.lock().unwrap();
-        let s = ss.get(&conn).unwrap();
+        let s = ss.get(&conn).ok_or_else(|| err("SESSION_REQUIRED", "the session ended; bind again"))?;
         (s.user_id.clone(), s.admin, s.session_id.clone())
     };
     let p = json!({ "userId": user, "sessionEpoch": epoch, "admin": admin, "locked": false });
