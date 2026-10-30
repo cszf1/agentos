@@ -36,7 +36,7 @@
 | V1-I04 | 角色矩阵 | 通过 | KVM VM（Actions）＋单元/集成 | tests/identity/access.test.ts 角色×动作全矩阵；m3-members：viewer 读 200、写/成员管理 404，editor 写入但 owner 动作（maintenance.control）被 Host 矩阵拒绝，owner 可执行，机器管理员无数据入口。 CI：run 41088865318 中 I04/I03/W04/I06/I08 通过，I09 子测试失败——禁用 bob 被 machined 以 CONFLICT 拒绝（bob 是工作区 “Bob” 的唯一 owner，须先转移所有权），属正确行为、断言有误；已改为断言该拒绝并禁用一个不拥有工作区的新用户，重跑 run 41090308175，I09/I10/W07/I11 CI 待结果。 |
 | V1-I05 | 自身任务和共享任务 | 通过 | KVM VM（Actions）＋单元/集成 | access.test.ts 角色判定；m11-ops（run 41089329164）KVM 通过：editor 读不到/取消不了 owner 的 run transcript，能读并取消自己的；owner 能取消 editor 的 run。 |
 | V1-I06 | 撤销与写提交竞争 | 通过 | KVM VM（Actions） | m3-members：Host 运行中撤销 → 被撤销者的读写立即被拒；revocations 只有在 gateway/host/broker 三方 ack 后才变 revoked。写提交与撤销的精确竞争窗口与 UI 结果一致性未做。 KVM 通过（run 41088865318）：根因是此前测试等待语句的 sqlite 查询三重转义、从未被解析，并非缺 ack。 |
-| V1-I07 | 撤销与模型派发 | 部分 | 单元/集成 | directory.test.ts / admitPermit：等待中的 permit 在 memberVersion 变化后被撤；Rust 单元（本轮在 agentos-v1 cargo test 通过）：native/crates/machine/src/tests.rs s04_final_check_after_waiting_member_version_revocation_and_stop。 m10-sched：run 41088879793 中 S01/S02 子测试失败——测试先连发 A 的两个 run，A 在 B 尚无等待时取得第二个 permit，这是 §13.2 允许的（“无其它等待者可临时使用第二个”），断言有误；已改为交错提交，重跑中，CI 待结果。 |
+| V1-I07 | 撤销与模型派发 | 通过 | KVM VM（Actions）＋单元/集成 | m10-sched（run 41089904864）KVM 通过：bob 的 run 在机器 permit 排队时被撤销 → permit 立即撤回，忙槽释放后不取得 permit，该 run 的 model_attempts 全为 denied/failed/interrupted，没有请求到达模型端点；Rust 单元（本轮在 agentos-v1 cargo test 通过）：native/crates/machine/src/tests.rs s04_final_check_after_waiting_member_version_revocation_and_stop。 |
 | V1-I08 | 撤销时 | 通过 | KVM VM（Actions） | m3-members：Host 停止时撤销，gateway 立即拒绝，root 侧保持 revoking ≥8 秒，Host 重新启动并 ack 后才 revoked。broker 失联与执行者 fence 未单独做。 KVM 通过（run 41088865318）：根因是此前测试等待语句的 sqlite 查询三重转义、从未被解析，并非缺 ack。 |
 | V1-I09 | owner | 部分 | KVM VM（Actions） | m3-members：最后 owner 不能被移除/降级；禁用账户后该账户无法再绑定会话。旧批准策略暂停与 transferOwner 双边确认未在 VM 中断言。 CI：run 41088865318 中 I04/I03/W04/I06/I08 通过，I09 子测试失败——禁用 bob 被 machined 以 CONFLICT 拒绝（bob 是工作区 “Bob” 的唯一 owner，须先转移所有权），属正确行为、断言有误；已改为断言该拒绝并禁用一个不拥有工作区的新用户，重跑 run 41090308175，I09/I10/W07/I11 CI 待结果。 |
 | V1-I10 | 锁屏/注销后的请求 | 部分 | KVM VM（Actions） | m3-members：过期 sessionEpoch 被拒；session.end 后同连接不能继续；logind LockedHint=yes 时不能绑定，解锁后可以。已授权持久 run 在原 scope 内继续未在 VM 中做。 CI：run 41088865318 中 I04/I03/W04/I06/I08 通过，I09 子测试失败——禁用 bob 被 machined 以 CONFLICT 拒绝（bob 是工作区 “Bob” 的唯一 owner，须先转移所有权），属正确行为、断言有误；已改为断言该拒绝并禁用一个不拥有工作区的新用户，重跑 run 41090308175，I09/I10/W07/I11 CI 待结果。 |
@@ -92,14 +92,14 @@
 
 | 编号 | 名称 | 结论 | 证据等级 | 证据 / 原因 |
 |---|---|---|---|---|
-| V1-S01 | 两级额度 | 部分 | 单元/集成 | Rust 单元（本轮在 agentos-v1 cargo test 通过）：native/crates/machine/src/tests.rs s01_two_level_quota_total_two_background_one_and_day_budgets；directory.test.ts：两工作区总并发 ≤2 且一方不能占满。 m10-sched：run 41088879793 中 S01/S02 子测试失败——测试先连发 A 的两个 run，A 在 B 尚无等待时取得第二个 permit，这是 §13.2 允许的（“无其它等待者可临时使用第二个”），断言有误；已改为交错提交，重跑中，CI 待结果。 |
-| V1-S02 | 前台公平性 | 部分 | 单元/集成 | Rust 单元（本轮在 agentos-v1 cargo test 通过）：native/crates/machine/src/tests.rs s02_foreground_round_robin_one_workspace_cannot_monopolise；directory.test.ts gives the waiting workspace the next slot。 m10-sched：run 41088879793 中 S01/S02 子测试失败——测试先连发 A 的两个 run，A 在 B 尚无等待时取得第二个 permit，这是 §13.2 允许的（“无其它等待者可临时使用第二个”），断言有误；已改为交错提交，重跑中，CI 待结果。 |
+| V1-S01 | 两级额度 | 部分 | KVM VM（Actions）＋单元/集成 | m10-sched（run 41089904864）KVM 通过：两个真实 Host、本地保持端点计数真实 HTTP 请求，机器总在途峰值 2、两工作区都等待时各 1，machine_permits reserved/in_use ≤2。Rust 单元（本轮在 agentos-v1 cargo test 通过）：native/crates/machine/src/tests.rs s01_two_level_quota_total_two_background_one_and_day_budgets 覆盖后台 ≤1 与日预算。**未满足**：后台 ≤1 与日预算未在真实 Host 下测。 |
+| V1-S02 | 前台公平性 | 通过 | KVM VM（Actions）＋单元/集成 | m10-sched（run 41089904864）KVM 通过：两工作区持续排队时每次两个在途请求各属一个工作区、释放后交替派发；Rust 单元（本轮在 agentos-v1 cargo test 通过）：native/crates/machine/src/tests.rs s02_foreground_round_robin_one_workspace_cannot_monopolise。 |
 | V1-S03 | 无锁循环 | 未通过 | 未验收 | 未做。 |
-| V1-S04 | 准入最终检查 | 部分 | 单元/集成 | Rust 单元（本轮在 agentos-v1 cargo test 通过）：native/crates/machine/src/tests.rs s04_final_check_after_waiting_member_version_revocation_and_stop。VM 未做。 |
+| V1-S04 | 准入最终检查 | 通过 | KVM VM（Actions）＋单元/集成 | m10-sched I07/S04 子测试 KVM 通过（run 41089904864）：取得 permit 前的最终检查读取撤销；Rust 单元（本轮在 agentos-v1 cargo test 通过）：native/crates/machine/src/tests.rs s04_final_check_after_waiting_member_version_revocation_and_stop。 |
 | V1-S05 | permit | 部分 | 单元/集成 | Rust 单元（本轮在 agentos-v1 cargo test 通过）：native/crates/machine/src/tests.rs s05_s06_restart_never_frees_held_slots_until_the_holder_is_gone_unknown_is_charged；directory.test.ts：重启不释放已占槽。VM 中 reserved/in_use 各位置强杀未做。 |
 | V1-S06 | 进程与未知用量 | 部分 | 单元/集成 | Rust 单元（本轮在 agentos-v1 cargo test 通过）：native/crates/machine/src/tests.rs s05_s06_restart_never_frees_held_slots_until_the_holder_is_gone_unknown_is_charged（unknown 按已用计费）。VM 未做。 |
 | V1-S07 | 背景让行 | 部分 | 单元/集成 | Rust 单元（本轮在 agentos-v1 cargo test 通过）：native/crates/machine/src/tests.rs s07_background_yields_to_foreground。VM 未做。 |
-| V1-S08 | 机器不可达 | 未通过 | 未验收 | m10-sched：run 41088879793 中 S01/S02 子测试失败——测试先连发 A 的两个 run，A 在 B 尚无等待时取得第二个 permit，这是 §13.2 允许的（“无其它等待者可临时使用第二个”），断言有误；已改为交错提交，重跑中，CI 待结果。 |
+| V1-S08 | 机器不可达 | 未通过 | 未验收（VM 已写，CI 待结果） | m10-sched S08（run 41089904864）失败：停止 machined 时 systemd 因 requires= 连带停止 gateway，客户端得到 ECONNREFUSED 而非可见原因。已改为 wants=，gateway 保持运行并以 STORE_UNAVAILABLE 拒绝；重跑中，CI 待结果。 |
 
 ## 安装与更新
 
@@ -165,7 +165,7 @@
 
 ## 统计
 
-未通过 24 项，通过 30 项，部分 46 项（共 100 项）。
+未通过 24 项，通过 33 项，部分 43 项（共 100 项）。
 
 ## 回归与偶发失败记录
 
