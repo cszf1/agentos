@@ -9,10 +9,13 @@
 //                                restore from the pages' own buttons, each to its reconciled state (V1-D08, M06 part 2)
 //   AGENTOS_E2E_PHASE=offline    model unreachable: generation refused with a visible reason, CRUD/query/version
 //                                switch still work (V1-O03)
+//   AGENTOS_E2E_PHASE=switch     real workspaces A and B (AGENTOS_E2E_WS_A/_B): a query in flight in A, then rapid
+//                                A→B→A→B switching; B shows nothing of A (apps, record bodies), A still has it (V1-W05)
 // Each step prints one line "E2E <step> <json>" so the VM script can check the Host's database against it.
 #include "gui_support.hpp"
 #include "json_list_model.hpp"
 
+#include <QDateTime>
 #include <QQuickStyle>
 #include <cstdio>
 
@@ -379,6 +382,71 @@ class E2E : public QObject {
     r.press(sw);
     QTRY_COMPARE_WITH_TIMEOUT(r.actionState(QStringLiteral("app.deploy")), QStringLiteral("reconciled"), 120000);
     report(QStringLiteral("version"), {});
+  }
+  void switching() {
+    if (phase != QLatin1String("switch")) QSKIP("phase");
+    const QString wsA = envOr("AGENTOS_E2E_WS_A", QString()), wsB = envOr("AGENTOS_E2E_WS_B", QString());
+    QVERIFY(!wsA.isEmpty() && !wsB.isEmpty());
+    Real r;
+    QVERIFY(r.up());
+    r.shell->switchWorkspace(wsA);
+    QTRY_VERIFY_WITH_TIMEOUT(r.shell->workspaceId() == wsA && r.shell->hostAvailable(), 60000);
+    r.go(QStringLiteral("home"));
+    QTRY_VERIFY_WITH_TIMEOUT(r.appCount() >= 1, 30000);
+    QSet<QString> appsA;
+    QString todo;
+    for (int i = 0; i < r.appCount(); ++i) {
+      appsA.insert(r.app(i).get(QStringLiteral("appId")).str());
+      if (r.app(i).get(QStringLiteral("title")).str().contains(QStringLiteral("待办"))) todo = r.app(i).get(QStringLiteral("appId")).str();
+    }
+    QVERIFY(!todo.isEmpty());
+    const QString marker = QStringLiteral("A-ONLY-") + QString::number(QDateTime::currentMSecsSinceEpoch());
+    AppViewModel* v = openView(r, todo);
+    QVERIFY(v);
+    const int n = rows(v);
+    v->openCreate();
+    v->setDraft(QStringLiteral("title"), marker);
+    v->submitRecord();
+    QTRY_VERIFY_WITH_TIMEOUT(rows(v) == n + 1, 20000);
+    auto textHas = [&](const QString& needle) {
+      bool hit = false;
+      walkItems(r.view->root(), [&](QQuickItem* i) {
+        if (reallyVisible(i) && i->property("text").toString().contains(needle)) hit = true;
+      });
+      return hit;
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(textHas(marker), 10000);  // A's view really shows the body we look for later
+    const int dropped0 = r.shell->lateDropped();
+    // a query in flight in A, then switch away and back and away again without waiting for anything
+    v->setSearch(marker.left(6));
+    r.shell->switchWorkspace(wsB);
+    r.shell->switchWorkspace(wsA);
+    r.shell->switchWorkspace(wsB);
+    QTRY_VERIFY_WITH_TIMEOUT(r.shell->workspaceId() == wsB && r.shell->hostAvailable(), 60000);
+    QTest::qWait(3000);  // let every answer of the earlier visits arrive
+    r.go(QStringLiteral("home"));
+    QTest::qWait(1000);
+    QStringList leaked;
+    for (int i = 0; i < r.appCount(); ++i)
+      if (appsA.contains(r.app(i).get(QStringLiteral("appId")).str())) leaked << r.app(i).get(QStringLiteral("appId")).str();
+    QVERIFY2(leaked.isEmpty(), qPrintable(leaked.join(',')));
+    QVERIFY2(!textHas(marker), "A's record body is visible in workspace B");
+    QVERIFY(!textHas(QStringLiteral("A-ONLY-")));
+    for (const QString& page : {QStringLiteral("tasks"), QStringLiteral("proposals"), QStringLiteral("policies")}) {
+      r.go(page);
+      QVERIFY2(!textHas(marker), qPrintable(page));
+    }
+    const int bApps = r.appCount();
+    const int dropped = r.shell->lateDropped() - dropped0;
+    // back in A the record is there: the check above looked for something that exists
+    r.shell->switchWorkspace(wsA);
+    QTRY_VERIFY_WITH_TIMEOUT(r.shell->workspaceId() == wsA && r.shell->hostAvailable(), 60000);
+    AppViewModel* v2 = openView(r, todo);
+    QVERIFY(v2);
+    v2->setSearch(marker);
+    QTRY_VERIFY_WITH_TIMEOUT(rows(v2) == 1, 20000);
+    report(QStringLiteral("switch"), {{QStringLiteral("workspaceA"), wsA}, {QStringLiteral("workspaceB"), wsB}, {QStringLiteral("appsInB"), bApps},
+                                      {QStringLiteral("lateDropped"), dropped}, {QStringLiteral("marker"), marker}});
   }
 };
 

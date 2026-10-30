@@ -24,9 +24,9 @@ assert r["status"] == 200, r
 def hsql(q):
     return machine.succeed(f"sqlite3 {OS} \"{q}\"").strip()
 
-def e2e(phase, timeout):
+def e2e(phase, timeout, extra_env=""):
     out = f"/tmp/e2e-{phase}"
-    script = (f"cd /tmp && env QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software AGENTOS_E2E_PHASE={phase} QTEST_FUNCTION_TIMEOUT={timeout * 1000} "
+    script = (f"cd /tmp && env QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software AGENTOS_E2E_PHASE={phase} QTEST_FUNCTION_TIMEOUT={timeout * 1000} {extra_env} "
               f"agentos-shell-e2e -maxwarnings 0 > {out} 2>&1; echo rc=$? >> {out}; echo done >> {out}\n")
     machine.succeed(f"echo {base64.b64encode(script.encode()).decode()} | base64 -d > {out}.sh && chmod 0644 {out}.sh && rm -f {out}")
     machine.send_key("alt-f1")
@@ -86,3 +86,16 @@ with subtest("no model: generation visibly unavailable; CRUD, query and version 
         assert k in s, (k, s)
     assert s["generation"]["modelAvailable"] is False, s
     assert hsql("SELECT COUNT(*) FROM runs") == runs_before
+
+with subtest("real session: a query in flight in A, then rapid A→B→A→B switching shows nothing of A in B; A keeps it (W05)"):
+    r = call(1, [{"methodId": "workspaces.create", "idempotencyKey": str(uuid.uuid4()), "body": {"displayName": "B"}}], "cb")[0]
+    assert r["status"] == 201, r
+    ws_b = r["body"]["workspaceId"]
+    s = e2e("switch", 600, f"AGENTOS_E2E_WS_A={ws} AGENTOS_E2E_WS_B={ws_b}")
+    assert "switch" in s, s
+    print("W05", s["switch"])
+    marker = s["switch"]["marker"]
+    OSB = f"/var/lib/agentos/workspaces/{ws_b}/data/os.sqlite"
+    assert machine.succeed(f"sqlite3 {OSB} \"SELECT COUNT(*) FROM apps\"").strip() == "0"
+    machine.succeed(f"cat {OS} {OS}-wal 2>/dev/null | grep -qa '{marker}'")          # the record is in A's store
+    machine.fail(f"cat {OSB} {OSB}-wal 2>/dev/null | grep -qa '{marker}'")           # and nowhere in B's
