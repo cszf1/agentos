@@ -152,6 +152,9 @@ fn health_gate_rejects_false_ready_ssh_only_no_frame_and_incompatible_stopped_wo
     // a STOPPED workspace with an incompatible schema fails the gate
     let w = health::workspaces_compatible(&[json!({ "workspaceId": "a", "state": "running", "schemaVersion": 5 }), json!({ "workspaceId": "b", "state": "stopped", "schemaVersion": 6 })], (5, 5));
     assert!(!w.ok && w.detail.contains("stopped"));
+    // an unreadable store (schema unknown) is not compatible; a workspace whose Host never created a store has no data
+    assert!(!health::workspaces_compatible(&[json!({ "workspaceId": "c", "state": "stopped", "schemaVersion": null, "initialized": true })], (5, 5)).ok);
+    assert!(health::workspaces_compatible(&[json!({ "workspaceId": "d", "state": "stopped", "schemaVersion": null, "initialized": false })], (5, 5)).ok);
     let r = health::gate(&mut |_| { let mut c = green(); c[5] = w.clone(); c }, 5);
     assert_eq!(r["healthy"], false);
 }

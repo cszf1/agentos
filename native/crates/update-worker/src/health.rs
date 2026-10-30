@@ -29,6 +29,8 @@ pub fn round_ok(checks: &[Check]) -> (bool, Vec<String>) {
 pub fn workspaces_compatible(wss: &[Value], range: (i64, i64)) -> Check {
     let bad: Vec<String> = wss
         .iter()
+        // a workspace whose Host never created its store holds no data that could be incompatible
+        .filter(|w| w["initialized"] != false)
         .filter(|w| w["schemaVersion"].as_i64().map(|s| s < range.0 || s > range.1).unwrap_or(true))
         .map(|w| format!("{} ({}) schema {}", w["workspaceId"].as_str().unwrap_or("?"), w["state"].as_str().unwrap_or("?"), w["schemaVersion"]))
         .collect();
@@ -72,7 +74,8 @@ pub fn probe_system(state_dir: &str, compat: (i64, i64)) -> Vec<Check> {
     v.push(Check { name: "greeter_frame", ok: greeter, detail: "greetd active".into() });
     let canvas = std::process::Command::new("agentos-shell").arg("--health-canvas").env("QT_QPA_PLATFORM", "offscreen").output().map(|o| o.status.success()).unwrap_or(false);
     v.push(Check { name: "shell_canvas", ok: canvas, detail: "agentos-shell --health-canvas".into() });
-    let wss: Vec<Value> = stv["workspaces"].as_array().cloned().unwrap_or_default();
+    // every registered workspace, stopped ones included (status.workspaceList; a missing list is not "all compatible")
+    let wss: Vec<Value> = stv["workspaceList"].as_array().cloned().unwrap_or_else(|| vec![json!({ "workspaceId": "?", "state": "status unreadable", "schemaVersion": null })]);
     v.push(workspaces_compatible(&wss, compat));
     let failed = std::process::Command::new("systemctl").args(["--failed", "--no-legend", "agentos-*"]).output().map(|o| o.stdout.is_empty()).unwrap_or(false);
     v.push(Check { name: "no_root_errors", ok: failed, detail: "failed agentos units".into() });

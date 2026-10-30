@@ -22,6 +22,17 @@ fn loader(a: &[String]) -> Box<dyn boot::Loader> {
     }
 }
 
+fn run_gate(a: &[String], sd: &str) -> Value {
+    let lo = arg(a, "--schema-min").and_then(|x| x.parse().ok()).unwrap_or(5);
+    let hi = arg(a, "--schema-max").and_then(|x| x.parse().ok()).unwrap_or(5);
+    let mut f = |_t: u64| {
+        let c = health::probe_system(sd, (lo, hi));
+        std::thread::sleep(std::time::Duration::from_secs(5));
+        c
+    };
+    health::gate(&mut f, 5)
+}
+
 fn run(a: &[String]) -> boot::UR<Value> {
     let r = |n: &str| arg(a, n).ok_or_else(|| boot::UErr("INVALID_REQUEST", format!("{n} is required")));
     match a.get(1).map(String::as_str).unwrap_or("") {
@@ -57,6 +68,15 @@ fn run(a: &[String]) -> boot::UR<Value> {
             Ok(trial::action_json(&act))
         }
         "commit" => {
+            // --health-gate: the new default is set only after the trial boot passed the health gate (spec §21.3,
+            // V1-U09); a failing gate leaves the persistent default on known-good.
+            if a.iter().any(|x| x == "--health-gate") {
+                let v = run_gate(a, &r("--state-dir")?);
+                if v["healthy"] != true {
+                    let why: Vec<String> = v["failing"].as_array().cloned().unwrap_or_default().iter().filter_map(|x| x.as_str().map(String::from)).collect();
+                    return boot::uerr("NEEDS_ATTENTION", &format!("health gate failed; default unchanged: {}", why.join("; ")));
+                }
+            }
             let mut l = loader(a);
             let id = trial::entry(&r("--release-id")?);
             l.set_default(&id)?;
@@ -77,17 +97,7 @@ fn run(a: &[String]) -> boot::UR<Value> {
             let want: Vec<String> = m["closureContentHashes"].as_array().cloned().unwrap_or_default().iter().filter_map(|x| x.as_str().map(String::from)).collect();
             content::check(&pi, &want).map(|n| json!({ "paths": n })).map_err(|e| boot::UErr("UPDATE_CONTENT_MISMATCH", e))
         }
-        "health" => {
-            let lo = arg(a, "--schema-min").and_then(|x| x.parse().ok()).unwrap_or(5);
-            let hi = arg(a, "--schema-max").and_then(|x| x.parse().ok()).unwrap_or(5);
-            let sd = r("--state-dir")?;
-            let mut f = |_t: u64| {
-                let c = health::probe_system(&sd, (lo, hi));
-                std::thread::sleep(std::time::Duration::from_secs(5));
-                c
-            };
-            Ok(health::gate(&mut f, 5))
-        }
+        "health" => Ok(run_gate(a, &r("--state-dir")?)),
         _ => boot::uerr("INVALID_REQUEST", "unknown command"),
     }
 }

@@ -1220,9 +1220,34 @@ impl Machine {
         let running = opt_i64(&self.c, "SELECT COUNT(*) FROM workspaces WHERE state IN ('starting','running','quiescing')", [])?.unwrap_or(0);
         let users = opt_i64(&self.c, "SELECT COUNT(*) FROM users WHERE state = 'active'", [])?.unwrap_or(0);
         let barrier: Option<String> = self.c.query_row("SELECT owner_kind FROM barriers WHERE state = 'held'", [], |r| r.get(0)).optional()?;
-        Ok(json!({ "meta": meta, "bootId": self.boot, "workspaces": ws, "runningWorkspaces": running, "users": users, "barrier": barrier,
+        // Every registered workspace (stopped and archived ones too) with the data schema of its os.sqlite, read
+        // read-only: the update health gate refuses a release that does not cover one of them (spec §21.3, V1-U09).
+        let mut list = vec![];
+        {
+            let mut q = self.c.prepare("SELECT workspace_id, state FROM workspaces WHERE state NOT IN ('deleting','deleted') ORDER BY created_at")?;
+            let rows: Vec<(String, String)> = q.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<Result<_, _>>()?;
+            for (id, st) in rows {
+                let db = self.paths.ws_data(&id).join("os.sqlite");
+                let initialized = db.exists();
+                let schema = workspace_schema(&db);
+                list.push(json!({ "workspaceId": id, "state": st, "schemaVersion": schema, "initialized": initialized }));
+            }
+        }
+        Ok(json!({ "meta": meta, "bootId": self.boot, "workspaces": ws, "workspaceList": list, "runningWorkspaces": running, "users": users, "barrier": barrier,
             "limits": { "maxUsers": MAX_USERS, "maxWorkspaces": MAX_WORKSPACES, "maxRunningWorkspaces": MAX_RUNNING } }))
     }
+}
+
+/// meta.schema_version of a workspace os.sqlite, opened read-only (immutable when it cannot take the WAL lock).
+fn workspace_schema(db: &std::path::Path) -> Option<i64> {
+    use rusqlite::OpenFlags;
+    if !db.exists() {
+        return None;
+    }
+    let ro = OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI | OpenFlags::SQLITE_OPEN_NO_MUTEX;
+    let q = |uri: String| Connection::open_with_flags(uri, ro).ok().and_then(|c| c.query_row("SELECT schema_version FROM meta WHERE id = 1", [], |r| r.get::<_, i64>(0)).ok());
+    let p = db.to_string_lossy();
+    q(format!("file:{p}?mode=ro")).or_else(|| q(format!("file:{p}?immutable=1")))
 }
 
 fn user_json(r: &rusqlite::Row) -> rusqlite::Result<Value> {
