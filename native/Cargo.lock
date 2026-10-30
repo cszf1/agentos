@@ -16,6 +16,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "agentos-desktop-session"
+version = "0.4.0"
+dependencies = [
+ "agentos-protocol",
+ "libc",
+ "serde_json",
+ "zbus",
+]
+
+[[package]]
 name = "agentos-machine"
 version = "0.4.0"
 dependencies = [
@@ -71,6 +81,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "agentos-recovery-worker"
+version = "0.4.0"
+dependencies = [
+ "agentos-protocol",
+ "hex",
+ "libc",
+ "rusqlite",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
+name = "agentos-session-gateway"
+version = "0.4.0"
+dependencies = [
+ "agentos-machine",
+ "agentos-protocol",
+ "hex",
+ "libc",
+ "serde",
+ "serde_json",
+ "sha2",
+ "zbus",
+]
+
+[[package]]
 name = "agentos-telemetry"
 version = "0.4.0"
 dependencies = [
@@ -78,6 +114,17 @@ dependencies = [
  "libc",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "agentos-update-worker"
+version = "0.4.0"
+dependencies = [
+ "agentos-protocol",
+ "hex",
+ "libc",
+ "serde_json",
+ "sha2",
 ]
 
 [[package]]

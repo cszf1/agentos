@@ -341,9 +341,10 @@ pub struct Envelope {
     pub idem: Option<String>,
 }
 
+/// `workspace.forward` is not listed: the registered route decides (a write route needs a key, see `forward`).
 const WRITE_METHODS: &[&str] = &[
     "session.end", "workspaces.create", "workspaces.start", "workspaces.stop", "workspaces.archive", "workspaces.attach", "members.setRole", "members.revoke",
-    "members.transferOwner", "workspace.forward", "events.ack", "machine.actions.plan", "machine.actions.confirm", "machine.actions.cancel", "machine.users.create",
+    "members.transferOwner", "events.ack", "machine.actions.plan", "machine.actions.confirm", "machine.actions.cancel", "machine.users.create",
     "machine.users.disable", "updates.prepare", "updates.activate", "updates.cancel", "backups.create", "backups.export", "restores.plan", "restores.confirm", "diagnostics.collect",
 ];
 
