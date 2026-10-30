@@ -13,6 +13,9 @@ pkgs.testers.runNixOSTest {
     boot.kernelModules = [ "mac80211_hwsim" ];
     boot.extraModprobeConfig = "options mac80211_hwsim radios=2";
     networking.networkmanager.unmanaged = [ "wlan1" ];
+    # qemu-vm.nix turns wpa_supplicant off with mkVMOverride (priority 10); NetworkManager's own D-Bus-controlled
+    # wpa_supplicant (what the release has on real hardware) needs it back for the simulated radio.
+    networking.wireless.enable = lib.mkOverride 9 true;
     environment.systemPackages = [ pkgs.python3 pkgs.sqlite pkgs.hostapd pkgs.iw ];
     environment.etc."agentos-test/rpc.py".source = ./rpc.py;
     systemd.services.agentos-fake-model = {
