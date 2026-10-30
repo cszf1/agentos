@@ -126,6 +126,16 @@ pub struct Gw {
     pub next: AtomicU64,
     pub pam_service: String,
     pub epoch_seed: AtomicU64,
+    /// Epoch per logind session object (spec §9.1, I10): every connection bound from the same unlocked logind
+    /// session shares it, so a Shell reconnect keeps open plans; a lock, VT switch-away, close or expiry observed
+    /// by the watcher (or by any request) retires it, so every plan, ticket and request of the old epoch is stale.
+    pub lsess: Mutex<HashMap<String, LEpoch>>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct LEpoch {
+    pub epoch: i64,
+    pub retired: bool,
 }
 
 impl Gw {
@@ -141,6 +151,7 @@ impl Gw {
             next: AtomicU64::new(1),
             pam_service: "agentos-admin-auth".into(),
             epoch_seed: AtomicU64::new(1),
+            lsess: Mutex::new(HashMap::new()),
         })
     }
 
@@ -149,6 +160,39 @@ impl Gw {
         c.call(op, args).map_err(|e| err(e.code, &e.message))
     }
 
+    /// Retire the epoch of a logind session (lock / inactive / closing); the next bind gets a fresh epoch.
+    pub fn retire(&self, path: &str) {
+        let mut m = self.lsess.lock().unwrap();
+        if let Some(e) = m.get_mut(path) {
+            if !e.retired {
+                e.retired = true;
+                e.epoch = self.epoch_seed.fetch_add(1, Ordering::SeqCst) as i64;
+            }
+        }
+    }
+
+    pub fn current_epoch(&self, path: &str) -> Option<LEpoch> {
+        self.lsess.lock().unwrap().get(path).copied()
+    }
+}
+
+/// Watch every bound logind session: a lock or loss of foreground retires its epoch even when no request
+/// arrives between lock and unlock (spec §9.1: lock → unlock always yields a new sessionEpoch).
+pub fn lock_watch(gw: Arc<Gw>) {
+    let dbus = match zbus::blocking::Connection::system() {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+    loop {
+        std::thread::sleep(Duration::from_millis(250));
+        let paths: Vec<String> = gw.lsess.lock().unwrap().iter().filter(|(_, e)| !e.retired).map(|(k, _)| k.clone()).collect();
+        for p in paths {
+            match crate::logind::facts(&dbus, &p) {
+                Ok(f) if !f.locked && f.active && f.state != "closing" => {}
+                _ => gw.retire(&p),
+            }
+        }
+    }
 }
 
 /// Re-read the live logind state of the bound session; any change of active/locked/closing raises the epoch.
@@ -165,9 +209,18 @@ fn live(gw: &Gw, conn: u64, dbus: &zbus::blocking::Connection) -> Result<(bool, 
         return Err(err("SESSION_STALE", "the login session is no longer eligible"));
     }
     if f.locked || !f.active {
+        let path = s.logind_path.clone();
+        drop(sessions);
+        gw.retire(&path);
         return Err(err("SESSION_LOCKED", "the session is locked or not in the foreground"));
     }
-    Ok((false, s.epoch))
+    match gw.current_epoch(&s.logind_path) {
+        Some(e) if !e.retired && e.epoch == s.epoch => Ok((false, s.epoch)),
+        _ => {
+            sessions.remove(&conn);
+            Err(err("SESSION_STALE", "the session was locked or changed since bind; bind again"))
+        }
+    }
 }
 
 pub fn handle_client(gw: Arc<Gw>, stream: UnixStream) {
@@ -449,7 +502,17 @@ fn bind(gw: &Gw, conn: u64, uid: u32, pid: u32, dbus: &zbus::blocking::Connectio
         return Err(err("SESSION_REQUIRED", "this account is not an active AgentOS user"));
     }
     let sid = agentos_machine::util::session_id();
-    let epoch = gw.epoch_seed.fetch_add(1, Ordering::SeqCst) as i64;
+    let epoch = {
+        let mut m = gw.lsess.lock().unwrap();
+        match m.get(path.as_str()) {
+            Some(e) if !e.retired => e.epoch,
+            _ => {
+                let e = gw.epoch_seed.fetch_add(1, Ordering::SeqCst) as i64;
+                m.insert(path.as_str().to_string(), LEpoch { epoch: e, retired: false });
+                e
+            }
+        }
+    };
     let s = Session {
         session_id: sid.clone(),
         epoch,
@@ -732,6 +795,8 @@ fn fanout(gw: &Gw, ws: &str, store: &str, v: &Value) {
 pub fn serve(gw: Arc<Gw>, client: UnixListener, host: UnixListener) -> ! {
     let g = gw.clone();
     std::thread::spawn(move || registry_loop(g));
+    let g = gw.clone();
+    std::thread::spawn(move || lock_watch(g));
     let g = gw.clone();
     std::thread::spawn(move || {
         for s in host.incoming().flatten() {
