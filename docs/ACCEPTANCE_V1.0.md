@@ -24,7 +24,7 @@
 | V1-B05 | 单写者和双库 | 部分 | KVM VM（Actions）＋单元/集成 | machined 在旧实例进程仍在时拒绝再次启动（WORKSPACE_FENCED，m8-backup 曾因此暴露并修复 podman 残留）；tests/machine/directory.test.ts 拒绝重复 storeUUID。Pi marker 不匹配阻断新任务未在 v1.0 VM 中重跑。 |
 | V1-B06 | 实施证据边界 | 通过 | 本报告 | 每行标注证据等级；TCG/KVM/单元/实体机分列；继承的 V3-E04 串口仍为未验收。 |
 | V1-B07 | schema | 部分 | 单元/集成 | tests/migration/schema5.test.ts 保留 schema 4→5 旧收据与 v0.1 bundle hash；broker db::tests 保留 schema 3→4 effect 行。 machine schema 1→2（决定 24）：单事务迁移，中途失败整体回滚为完整 schema 1（无残留 _v2 表、无迁移审计），native/crates/machine/src/tests.rs b07_interrupted_machine_migration_leaves_schema_1_intact、w10_schema_1_database_migrates_to_2_keeping_every_row 通过（agentos-v1）。未做：工作区 schema 4→5 与 broker schema 3→4 的中途崩溃注入。 |
-| V1-B08 | 默认配置 | 部分 | KVM VM（Actions） | 发行模块：broker policy testMode=false、root 口令 "!"、无 sshd、无 TCP 监听（m2/m6 断言 `ss -ltn` 为空）、AGENTOS_MODEL_MODE=real、无预置 token/私钥；安装器在校验阶段拒绝任何有口令/空口令账户（m6 在测试变体上实际触发过“root has an empty password”）。qcow2 模板 LUKS 用公开模板密钥，首启强制替换（见 U03）。完整正式镜像的逐文件审计未做。 |
+| V1-B08 | 默认配置 | 通过 | KVM VM（Actions） | 发行模块：broker policy testMode=false、root 口令 "!"、无 sshd、无 TCP 监听（m2/m6 断言 `ss -ltn` 为空）、AGENTOS_MODEL_MODE=real、无预置 token/私钥；安装器在校验阶段拒绝任何有口令/空口令账户（m6 在测试变体上实际触发过“root has an empty password”）。qcow2 模板 LUKS 用公开模板密钥，首启强制替换（见 U03）。完整正式镜像逐文件审计：`agentos-audit`（os/release-audit.py，CI build-audit）对正式 release toplevel 的整个闭包检查全部账户定义（users-groups.json：无 password/initialPassword/hashedPasswordFile，hashed 只允许 !/*）、系统与用户 systemd 全部单元与 socket（无 sshd/telnet、ListenStream 只允许 UNIX 路径（/、@、%t 等说明符）、无 faux 默认、无 autologin、Host 单元必须 AGENTOS_MODEL_MODE=real）、greetd 无 initial_session、broker policy testMode=false，并对每个 AgentOS 自有 store 路径逐文件扫描私钥（PEM）、.pem/.key 文件（仅允许公开模板盘密钥）、OpenAI 式 sk-、GitHub 个人令牌、AWS 访问键、AGENTOS_TOKEN 与模型 key 形式的令牌与 testMode 开关。build-audit（run 41113342133，2e28067）通过：298 个单元、19506 个 AgentOS 文件，findings 为空（此前一轮的 22 条均为误报——%t/… UNIX socket 与 AWS SDK 文档注释里以 EXAMPLE 结尾的官方示例访问键——已在审计器中按规则排除，未放宽其它规则）。范围说明：非 AgentOS 的第三方 store 路径只按账户/单元/socket 规则审计，不逐文件扫令牌。 |
 
 ## 登录、成员与撤权
 
@@ -165,7 +165,7 @@
 
 ## 统计
 
-未通过 14 项，通过 41 项，部分 45 项（共 100 项）。
+未通过 14 项，通过 42 项，部分 44 项（共 100 项）。
 
 ## 回归与偶发失败记录
 
