@@ -10,7 +10,7 @@ let
       "dm_mod" "cbc" "xts" "aesni_intel" "aes_ti" "af_alg" "algif_skcipher" "dm_crypt" "btrfs" "vfat" "nls_cp437" "nls_iso8859_1" ];
   };
   closure = pkgs.closureInfo { rootPaths = [ system ]; };
-  tools = lib.makeBinPath (with pkgs; [ installer util-linux coreutils gptfdisk cryptsetup lvm2 procps btrfs-progs dosfstools nix nixos-install-tools systemd jq e2fsprogs ]);
+  tools = lib.makeBinPath (with pkgs; [ installer util-linux coreutils gptfdisk cryptsetup lvm2 procps btrfs-progs dosfstools mtools libfaketime nix nixos-install-tools systemd jq e2fsprogs ]);
 in
 vm.runInLinuxVM (pkgs.runCommand name {
   memSize = 3072;

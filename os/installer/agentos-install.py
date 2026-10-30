@@ -43,12 +43,12 @@ SH_TIMEOUT = int(os.environ.get("AGENTOS_INSTALL_CMD_TIMEOUT", "600"))
 COPY_TIMEOUT = int(os.environ.get("AGENTOS_INSTALL_COPY_TIMEOUT", "5400"))
 
 
-def sh(*a, input=None, check=True, timeout=None, stream=False):
+def sh(*a, input=None, check=True, timeout=None, stream=False, env=None):
     t0 = time.time()
     lim = timeout or SH_TIMEOUT
     progress(f"run {' '.join(a[:3])}{' …' if len(a) > 3 else ''}")
     try:
-        r = subprocess.run(list(a), input=input, stdout=subprocess.PIPE, stderr=None if stream else subprocess.PIPE, timeout=lim)
+        r = subprocess.run(list(a), input=input, stdout=subprocess.PIPE, stderr=None if stream else subprocess.PIPE, timeout=lim, env=env)
     except subprocess.TimeoutExpired:
         progress(f"TIMEOUT {a[0]} after {lim}s")
         raise Refuse(f"{a[0]} did not finish within {lim}s")
@@ -182,6 +182,9 @@ def cmd_plan(args):
     plan = {"formatVersion": 1, "disk": disk, "identity": identity(d), "medium": medium_identity(), "timezone": tz, "system": SYSTEM,
             "erase": "the whole disk", "layout": {"esp": "2 GiB", "luks2": "rest", "btrfs": SUBVOLS}, "installId": str(uuid.uuid4())}
     if "--template" in args:
+        # the template is one image for many machines and must build bit for bit the same from the same inputs
+        # (V1-O09): every identifier the installer draws itself is derived from the release toplevel instead
+        plan["installId"] = tpl_uuid("install")
         # qcow2 template build only (os/packages/qcow2.nix): same layout and closure, LUKS opened by the public
         # template key that first boot replaces; no per-machine install record.
         if not os.environ.get("AGENTOS_INSTALL_TEMPLATE_BUILD"):
@@ -241,6 +244,44 @@ def step(st, name):
         os.kill(os.getpid(), 9)
 
 
+def tpl_uuid(what):
+    """Deterministic identifiers for the qcow2 template build only (same toplevel → same GPT/ESP identifiers)."""
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"agentos-template:{SYSTEM}:{what}"))
+
+
+TPL_EPOCH = "1980-01-01 00:00:00"   # FAT's first representable time; every template ESP entry carries it
+
+
+def normalize_template_esp(dev):
+    """Rebuild the template's ESP so it is reproducible: same volume id and boot sector (mkfs --invariant), every
+    directory and file written in sorted order by mtools under a fixed clock (FAT stores creation and modification
+    times the kernel driver would take from the build VM's clock), and no loader random seed (a seed shared by every
+    clone of the template is not a seed; the booted machine writes its own)."""
+    esp = part(dev, 1)
+    src = "/run/agentos-install/esp-copy"
+    sh("rm", "-rf", src)
+    sh("mkdir", "-p", src)
+    sh("cp", "-a", f"{MNT}/boot/.", src)
+    sh("umount", f"{MNT}/boot")
+    for seed in ("loader/random-seed",):
+        if os.path.exists(f"{src}/{seed}"):
+            os.remove(f"{src}/{seed}")
+    volid = hashlib.sha256(f"agentos-template:{SYSTEM}:esp".encode()).hexdigest()[:8]
+    sh("mkfs.vfat", "--invariant", "-F", "32", "-n", "AGENTOS-ESP", "-i", volid, esp)
+    env = dict(os.environ, MTOOLS_SKIP_CHECK="1", TZ="UTC")
+    for root, dirs, files in sorted(os.walk(src)):
+        dirs.sort()
+        rel = os.path.relpath(root, src)
+        if rel != ".":
+            sh("faketime", "-f", TPL_EPOCH, "mmd", "-i", esp, "::/" + rel, env=env)
+        for f in sorted(files):
+            p = os.path.join(root, f)
+            sh("touch", "-h", "-d", TPL_EPOCH + " UTC", p)
+            dest = "::/" + (f if rel == "." else f"{rel}/{f}")
+            sh("faketime", "-f", TPL_EPOCH, "mcopy", "-m", "-o", "-i", esp, p, dest, env=env)
+    sh("rm", "-rf", src)
+
+
 def esp_marker(st):
     return {"installId": st["plan"]["installId"], "planHash": st["planHash"], "identity": st["plan"]["identity"]}
 
@@ -277,7 +318,8 @@ def cmd_run(args):
         step(st, "partitioning")
         sh("wipefs", "-a", dev)
         sh("sgdisk", "--zap-all", dev)
-        sh("sgdisk", "-n1:1MiB:+2GiB", "-t1:ef00", "-c1:agentos-esp", "-n2:0:0", "-t2:8309", "-c2:agentos-luks", dev)
+        ids = ["-U", tpl_uuid("disk"), "-u", f"1:{tpl_uuid('esp')}", "-u", f"2:{tpl_uuid('luks')}"] if st["plan"].get("template") else []
+        sh("sgdisk", "-n1:1MiB:+2GiB", "-t1:ef00", "-c1:agentos-esp", "-n2:0:0", "-t2:8309", "-c2:agentos-luks", *ids, dev)
         sh("partprobe", dev, check=False)
         sh("udevadm", "settle")
         wait_for(part(dev, 1))
@@ -368,6 +410,8 @@ def cmd_run(args):
             st["problems"] = problems
             save(st)
             raise Refuse("verification failed: " + "; ".join(problems))
+        if st["plan"].get("template"):
+            normalize_template_esp(dev)
         sh("sync")
         step(st, "installed")
     return {"state": "installed", "installId": st["plan"]["installId"], "hardwareConfigHash": st.get("hardwareConfigHash")}
