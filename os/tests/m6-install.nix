@@ -27,6 +27,34 @@ pkgs.testers.runNixOSTest {
   testScript = ''
     import json, os, shutil
     TOP = "${top}"
+    extra = []
+    import contextlib
+    @contextlib.contextmanager
+    def kill_on_fail():
+        # a failed check must not leave a create_machine() VM running: the driver would wait for it until the CI
+        # step deadline (that, not slowness, is why earlier m6 runs only ended at the 110-minute cap)
+        try:
+            yield
+        except BaseException:
+            for x in extra:
+                if x.booted:
+                    x.crash()
+            raise
+
+    import time as _t
+    def feed(m, text, done, timeout=900):
+        # Console prompts (systemd-ask-password) end without a newline, so the driver only sees them once a later
+        # line arrives (m6-install waited 8.5 min on "assphrase"). Type the answer every 15 s until `done` shows.
+        end = _t.time() + timeout
+        while _t.time() < end:
+            m.send_console(text + "\n")
+            try:
+                m.wait_for_console_text(done, timeout=15)
+                return
+            except Exception:
+                pass
+        raise Exception(f"console never showed {done!r}")
+
     def inst(args, ok=True, stdin=None):
         cmd = f"AGENTOS_INSTALL_ALLOW_PATH=1 agentos-install {args}"
         if stdin is not None:
@@ -76,7 +104,7 @@ pkgs.testers.runNixOSTest {
         machine.succeed("sync; umount -R /mnt; cryptsetup close agentos-root")
     machine.shutdown()
 
-    with subtest("the installed disk boots: systemd-boot → LUKS2 → Btrfs → unregistered machine (U01/U03)"):
+    with subtest("the installed disk boots: systemd-boot → LUKS2 → Btrfs → unregistered machine (U01/U03)"), kill_on_fail():
         disk = os.path.join(machine.state_dir, "empty0.qcow2")
         vars_ = os.path.join(machine.state_dir, "ovmf-vars.fd")
         shutil.copy("${pkgs.OVMF.variables}", vars_)
@@ -85,16 +113,17 @@ pkgs.testers.runNixOSTest {
                  f"-drive if=pflash,format=raw,unit=0,readonly=on,file=${pkgs.OVMF.firmware} "
                  f"-drive if=pflash,format=raw,unit=1,file={vars_} -drive file={disk},if=virtio,format=qcow2")
         target = create_machine(start, name="installed")
+        extra.append(target)
         target.start()
-        target.wait_for_console_text("assphrase", timeout=600)
-        target.send_console("correct horse battery\n")
+        feed(target, "correct horse battery", "Password query on /dev/ttyS0 finished")
         target.wait_for_unit("multi-user.target", timeout=900)
         target.succeed("findmnt -no FSTYPE / | grep -q btrfs && cryptsetup status agentos-root | grep -q LUKS2")
         for sv in ["@nix", "@home", "@machine", "@broker", "@snapshots"]:
             target.succeed(f"findmnt -no OPTIONS -T / | grep -q subvol=/@root && btrfs subvolume list / | grep -q {sv}")
         target.wait_for_unit("agentos-machine.service")
-        st = json.loads(target.succeed("agentosctl status"))
-        assert st["meta"]["firstBootState"] != "closed", st
+        rc, o = target.execute("agentosctl status 2>&1")   # unregistered: no identity exists before first boot
+        assert rc != 0 and "not installed" in o, o
+        target.fail("test -e /var/lib/agentos-machine/first-boot-id")
         out = json.loads(target.succeed("printf 'alice-pw-1' | agentosctl firstboot --admin alice --workspace Home"))
         mid = out["machineInstallId"]
         target.fail("printf x | agentosctl firstboot --admin mallory")
@@ -102,8 +131,7 @@ pkgs.testers.runNixOSTest {
         target.succeed("test \"$(readlink -f /run/current-system)\" = " + TOP)
         target.shutdown()
         target.start()
-        target.wait_for_console_text("assphrase", timeout=600)
-        target.send_console("correct horse battery\n")
+        feed(target, "correct horse battery", "Password query on /dev/ttyS0 finished")
         target.wait_for_unit("agentos-machine.service", timeout=900)
         assert json.loads(target.succeed("agentosctl status"))["meta"]["machineInstallId"] == mid
   '';
