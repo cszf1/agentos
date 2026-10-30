@@ -124,3 +124,55 @@ with subtest("SIGKILL of broker, machined and gateway: each restarts, identity a
             time.sleep(3)
         assert ok, r                                               # the Host reconnected to the restarted gateway
     print("hosts before", hosts, "after", machine.succeed("pgrep -f packages/host/dist/main.js | sort").split())
+
+def starts(ws, ev="start"):
+    return len([e for e in fm_log() if e["ev"] == ev and e["ws"] == ws])
+
+def attempts(ws, rid):
+    return machine.succeed(f"sqlite3 /var/lib/agentos/workspaces/{ws}/data/os.sqlite \"SELECT state FROM model_attempts WHERE run_id='{rid}'\"").split()
+
+with subtest("lock: the accepted run's request completes inside its scope; the locked session gets nothing new (I10)"):
+    machine.succeed(f"echo 20 > {FM}/hold")
+    s0, e0 = starts(ws_b), starts(ws_b, "end")
+    rid = run(1, ws_b, "做一个锁屏期间继续的应用", "i10a")
+    machine.wait_until_succeeds(f"test $(grep -c '\"ev\": \"start\", \"ws\": \"{ws_b}\"' {FM}/log.jsonl) -gt {s0}", timeout=120)
+    sess = user_session("alice", "tty1")
+    tty_run(1, "busctl call org.freedesktop.login1 /org/freedesktop/login1/session/auto org.freedesktop.login1.Session SetLockedHint b true", "/tmp/i10l")
+    machine.wait_until_succeeds(f"loginctl show-session {sess} -p LockedHint | grep -q yes")
+    out = tty_run(1, f"{RPC} '[{{\"methodId\":\"session.bind\"}}]'", "/tmp/i10b")
+    assert '"status": 200' not in out, out                          # no new request from the locked session
+    machine.wait_until_succeeds(f"test $(grep -c '\"ev\": \"end\", \"ws\": \"{ws_b}\"' {FM}/log.jsonl) -gt {e0}", timeout=120)
+    att = attempts(ws_b, rid)
+    print("run attempts during lock", att)
+    assert "completed" in att, att                                  # the in-flight request finished normally
+    assert "denied" not in att, att
+    st = machine.succeed(f"sqlite3 /var/lib/agentos/workspaces/{ws_b}/data/os.sqlite \"SELECT status FROM runs WHERE id='{rid}'\"").strip()
+    assert st != "cancelled", st
+    machine.succeed(f"test $(sqlite3 /var/lib/agentos/workspaces/{ws_b}/data/os.sqlite \"SELECT COUNT(*) FROM events WHERE kind='membership.revoking'\") = 0")
+    tty_run(1, "busctl call org.freedesktop.login1 /org/freedesktop/login1/session/auto org.freedesktop.login1.Session SetLockedHint b false", "/tmp/i10u")
+    out = tty_run(1, f"{RPC} '[{{\"methodId\":\"session.bind\"}}]'", "/tmp/i10c")
+    assert '"status": 200' in out, out
+    call(1, [fwd(ws_b, "runs.cancel.post", params={"runId": rid}, idem="i10ac")], "i10ac")
+
+with subtest("logout with run-when-logged-out on: the accepted run continues in its workspace; the ended session is refused (I10)"):
+    pl = call(1, [{"methodId": "machine.actions.plan", "idempotencyKey": str(uuid.uuid4()), "body": {"kind": "workspaces.runWhenLoggedOut", "params": {"workspaceId": ws_b, "enabled": True}}}], "i10p")[0]
+    assert pl["status"] == 201, pl
+    ok = call(1, [{"methodId": "machine.actions.confirm", "idempotencyKey": str(uuid.uuid4()), "body": {"operationId": pl["body"]["operationId"], "planHash": pl["body"]["planHash"]}}], "i10pc")[0]
+    assert ok["status"] == 200 and ok["body"]["state"] == "succeeded", ok
+    s0, e0 = starts(ws_b), starts(ws_b, "end")
+    rid = run(1, ws_b, "做一个注销后继续的应用", "i10b")
+    machine.wait_until_succeeds(f"test $(grep -c '\"ev\": \"start\", \"ws\": \"{ws_b}\"' {FM}/log.jsonl) -gt {s0}", timeout=120)
+    ub = machine.succeed(f"stat -c %u /var/lib/agentos/workspaces/{ws_b}/data").strip()
+    # alice logs out: every session of hers ends
+    machine.succeed("loginctl terminate-user alice")
+    machine.wait_until_fails("loginctl list-sessions --no-legend | grep -w alice", timeout=60)
+    machine.wait_until_succeeds(f"test $(grep -c '\"ev\": \"end\", \"ws\": \"{ws_b}\"' {FM}/log.jsonl) -gt {e0}", timeout=120)
+    att = attempts(ws_b, rid)
+    print("run attempts after logout", att)
+    assert "completed" in att and "denied" not in att, att
+    machine.succeed(f"pgrep -u {ub} -f packages/host/dist/main.js")   # the workspace keeps running for the accepted run
+    assert sql(f"SELECT state FROM workspaces WHERE workspace_id='{ws_b}'") == "running"
+    # a process of the logged-out user has no session: binding is refused
+    rc, o = machine.execute(f"su -s /bin/sh alice -c '{RPC} \"[{{\\\"methodId\\\":\\\"session.bind\\\"}}]\"' 2>&1")
+    print(o)
+    assert '"status": 200' not in o, o
