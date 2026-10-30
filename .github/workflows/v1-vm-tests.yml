@@ -66,15 +66,12 @@ jobs:
             system-features = nixos-test benchmark big-parallel kvm
             require-sigs = true
 
-      - name: Restore Nix store cache
-        uses: nix-community/cache-nix-action/restore@v6
+      # Path-level binary cache in the GitHub Actions cache, shared and de-duplicated across all matrix jobs.
+      # (nix-community/cache-nix-action restored a whole-store tarball into the daemon-owned /nix/store and failed
+      # with "Cannot mkdir: Permission denied" on every path, so every run rebuilt from zero.)
+      - uses: DeterminateSystems/magic-nix-cache-action@v15
         with:
-          primary-key: nix-${{ runner.os }}-${{ matrix.test }}-${{ hashFiles('os/flake.lock', 'native/Cargo.lock', 'pnpm-lock.yaml') }}-${{ github.sha }}
-          restore-prefixes-first-match: |
-            nix-${{ runner.os }}-${{ matrix.test }}-${{ hashFiles('os/flake.lock', 'native/Cargo.lock', 'pnpm-lock.yaml') }}-
-            nix-${{ runner.os }}-${{ matrix.test }}-
-            nix-${{ runner.os }}-
-
+          use-flakehub: false
 
       - name: Build test driver
         if: ${{ !startsWith(matrix.test, 'build-') }}
@@ -103,14 +100,6 @@ jobs:
           ls -laR "$RUNNER_TEMP"/out-$A* | head -50 | tee -a "$RUNNER_TEMP/build-$A.log"
           if [ "$A" = agentos-release ]; then cp "$RUNNER_TEMP/out-$A"/*.json "$RUNNER_TEMP/out-$A"/SHA256SUMS "$RUNNER_TEMP/" ; fi
           find -L "$RUNNER_TEMP"/out-$A* -maxdepth 3 -type f \( -name '*.iso' -o -name '*.qcow2' \) -exec sha256sum {} \; | tee -a "$RUNNER_TEMP/build-$A.log"
-
-      - name: Save Nix store cache (also after a failed check, so the next run reuses the builds)
-        if: always()
-        uses: nix-community/cache-nix-action/save@v6
-        with:
-          primary-key: nix-${{ runner.os }}-${{ matrix.test }}-${{ hashFiles('os/flake.lock', 'native/Cargo.lock', 'pnpm-lock.yaml') }}-${{ github.sha }}
-          gc-max-store-size-linux: 9G
-          purge: false
 
       - name: Upload logs
         if: always()

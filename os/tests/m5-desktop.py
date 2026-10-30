@@ -39,6 +39,15 @@ with subtest("app container from the release images, offline, with no escape sur
     assert "docker.io/library/node" not in imgs, imgs                               # nothing pulled; only the release images
     rc, dr = machine.execute(f"cd /tmp && runuser -u {login} -- env {env} agentos-runtime doctor")
     print(dr)
+    if "FAIL  probe container" in dr:
+        # isolate engine vs image: the image's own config and a bare run of node with the same rootless engine
+        pe = f"runuser -u {login} -- env XDG_RUNTIME_DIR=/run/user/{uid} podman"
+        for n in [l.split(":", 1)[0] for l in imgs.split()][:1] + [l for l in imgs.split()][:1]:
+            print(machine.execute(f"{pe} image inspect --format 'env={{{{json .Config.Env}}}} cmd={{{{json .Config.Cmd}}}} ep={{{{json .Config.Entrypoint}}}} wd={{{{.Config.WorkingDir}}}}' {n} 2>&1")[1])
+            print(machine.execute(f"cd /tmp && {pe} --log-level=debug run --rm --network=none {n} node -e 'console.log(process.env.PATH)' 2>&1 | tail -40")[1])
+            print(machine.execute(f"cd /tmp && {pe} run --rm --network=none --read-only --userns=keep-id {n} /usr/local/bin/node -v 2>&1 | tail -5")[1])
+        print(machine.execute(f"{pe} info --format '{{{{.Host.OCIRuntime.Path}}}} {{{{.Host.OCIRuntime.Version}}}} conmon={{{{.Host.Conmon.Path}}}}' 2>&1")[1])
+        print(machine.execute("journalctl --no-pager -n 60 _COMM=crun _COMM=conmon 2>&1")[1])
     lines = {l.split(":", 1)[0][6:]: l for l in dr.splitlines() if l.startswith(("ok  ", "FAIL"))}
     for n in ["probe container", "no network", "read-only rootfs", "capabilities / no_new_privs / seccomp", "no escape surfaces"]:
         assert n in lines and lines[n].startswith("ok"), (n, lines.get(n))
