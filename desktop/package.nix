@@ -32,6 +32,11 @@ stdenv.mkDerivation {
     export QML_IMPORT_PATH=${qt6.qtdeclarative}/${qt6.qtbase.qtQmlPrefix}
     export QT_PLUGIN_PATH=${qt6.qtbase}/${qt6.qtbase.qtPluginPrefix}:${qt6.qtdeclarative}/${qt6.qtbase.qtPluginPrefix}
     ctest --output-on-failure -j1
+    # V1-O07 binding fuzz: three more seeds × 2000 rounds besides the default run inside ctest; print the summaries
+    for seed in 1 2 3; do
+      AGENTOS_FUZZ_SEED=$seed AGENTOS_FUZZ_ROUNDS=2000 ./slot_vectors bindingFuzz > fuzz-$seed.log 2>&1 || { cat fuzz-$seed.log; exit 1; }
+      grep -E "binding fuzz:|^Totals" fuzz-$seed.log
+    done
     runHook postCheck
   '';
   meta = { description = "AgentOS v1.0 native Qt Shell"; mainProgram = "agentos-shell"; platforms = lib.platforms.linux; };
