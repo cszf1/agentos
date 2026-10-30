@@ -4,3 +4,4 @@ ts	phase	decision	why	evidence	result
 2026-10-30T10:30:23Z	implement	kept the machine directory in TypeScript beside os.sqlite	one writer of the rules, and vitest can open the file; a second Rust state machine would drift	packages/core/src/machine/directory.ts	identity machine migration tests green
 2026-10-30T10:30:23Z	implement	left HOST_VERSION at 0.4.0	the running host is still the v0.4 process; v1.0 is not a release	packages/contracts/src/index.ts	http test still expects 0.4.0
 2026-10-30T10:30:23Z	verify	marked 5 of 100 acceptance rows pass	the other rows need Nix, Qt, a seat, or a kill test this machine did not run	docs/ACCEPTANCE_V1.0.md	5 pass, 95 blocked
+2026-10-30T10:42:09Z	review	cross-family trail review did not run	Claude, Gemini, and GPT were unavailable in this session, so a second family never read the log	docs/v1.0-decisions.tsv	open
