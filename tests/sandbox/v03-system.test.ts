@@ -8,7 +8,7 @@ import { requestHash } from "@agentos/core";
 import { startRig, submit, waitRun, type AgentRig, lastTranscript } from "../agent-helpers.js";
 import { publish } from "../sandbox/util.js";
 import { codeFixture } from "../fixtures-v02.js";
-import { Broker, hasBroker, installed, simCtl, storeUUID, systemctl, waitUntil } from "../v03.js";
+import { assertTelemetryMatches, Broker, hasBroker, installed, simCtl, storeUUID, systemctl, waitUntil } from "../v03.js";
 
 /**
  * Host + real broker + real rootless sandbox (ABI-2 runner): grants, provider reads, trusted previews, confirmation,
@@ -402,8 +402,9 @@ run("v0.3 host system path (real broker, real sandbox)", () => {
     const obs = caps().observations.events(0, 50);
     expect(Array.isArray(obs.cursors)).toBe(true);
     for (const c of obs.cursors) expect(["fresh", "stale", "gap", "unavailable"]).toContain(c.quality);
-    // No BTF: unavailable, never "fresh with no events". A kernel with BTF may have a live collector.
-    if (!fs.existsSync("/sys/kernel/btf/vmlinux")) expect(caps().observations.telemetry.available).toBe(false);
+    // The host view must match an independent probe of the collector: unavailable (with a reason and a gap) when no
+    // collector is loaded, BTF or not; available when one is.
+    await assertTelemetryMatches(() => caps().observations.telemetry);
   });
 
   it("V3-O07 bounded queues: at most 4 waiting plans per app; more are refused without deleting anything", async () => {

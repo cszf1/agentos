@@ -2,7 +2,7 @@
 
 版本：0.1-draft；编写日期：2026-10-28；目标目录：`E:\agentos`。
 
-本文是 v0.1 的实施规格，编写时作为下一轮编码基线。当前仓库已经实现宿主、界面、接口和测试；当时“尚未实现”指的是写规格的时候，不是现在的代码。验收见 [ACCEPTANCE_V0.1.md](ACCEPTANCE_V0.1.md)。下述 `AgentOS` 接口、表名、状态和限制均为本项目设计，不应误认为 Pi Durable 已经提供。
+本文是下一轮编码的实施基线。本文、JSON Schema 和示例文件是设计交付物；宿主、界面、接口和测试尚未实现。下述 `AgentOS` 接口、表名、状态和限制均为本项目设计，不应误认为 Pi Durable 已经提供。
 
 ## 1. 首版交付与完成条件
 
@@ -519,7 +519,7 @@ WantedBy=default.target
 
 ## 16. 必须实现的脚本与运行入口
 
-以下命令契约已由当前仓库的 `package.json` scripts 实现（编写本文时尚未实现）：
+以下是下一轮代码应提供的命令契约，目前尚未实现：
 
 | 命令 | 必须完成的动作 |
 |---|---|
@@ -616,8 +616,6 @@ WantedBy=default.target
 预算和恢复测试使用可控时钟；强制终止测试仍需真实进程和SQLite。faux来自官方`@earendil-works/pi-ai/providers/faux`，避免自己写一个绕开Pi Durable的假AgentEngine替代核心验收。[Faux实现](https://github.com/earendil-works/pi/blob/v1.4.0/packages/ai/src/providers/faux.ts)
 
 ## 19. 完成交付清单
-
-下面的空勾是写规格时的清单。当前实现状态见 [ACCEPTANCE_V0.1.md](ACCEPTANCE_V0.1.md)。没有模型密钥时，真实 provider 那一项仍然不能算通过。
 
 - [ ] workspace和全部依赖精确锁定，Node版本明确。
 - [ ] schema、语义/兼容校验、两版fixture及协议DTO齐全。

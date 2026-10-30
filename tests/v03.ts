@@ -179,3 +179,39 @@ export function hostNetFacts(): string {
 }
 
 export const telemetry = () => new TelemetryClient("/run/agentos-telemetry/telemetry.sock");
+
+/**
+ * What the host's telemetry view must say on this machine, probed independently of the code under test.
+ * BTF alone does not make telemetry available: only a collector that answers on its socket and reports
+ * itself loaded does. With AGENTOS_EXPECT_TELEMETRY=1 (a BTF host where the collector is deployed) an
+ * unreachable or unloaded collector is a test failure, not a skip.
+ */
+export async function expectedTelemetry(): Promise<{ btf: boolean; available: boolean; reason: string }> {
+  const btf = fs.existsSync("/sys/kernel/btf/vmlinux");
+  const sock = process.env.AGENTOS_TELEMETRY_SOCKET ?? "/run/agentos-telemetry/telemetry.sock";
+  let r: { btf: boolean; available: boolean; reason: string };
+  try {
+    const st = await new TelemetryClient(sock).status();
+    r = { btf, available: st.available === true, reason: st.available ? "collector loaded" : `collector says: ${st.reason}` };
+  } catch (e) {
+    r = { btf, available: false, reason: `collector unreachable: ${(e as Error).message}` };
+  }
+  if (process.env.AGENTOS_EXPECT_TELEMETRY === "1" && !r.available) throw new Error(`AGENTOS_EXPECT_TELEMETRY=1 but ${r.reason}`);
+  return r;
+}
+
+/** Asserts the host view matches the probe in both directions: never "available" without a live collector, never "unavailable" with one. */
+export async function assertTelemetryMatches(view: () => { available: boolean; reason: string | null; gap: boolean }): Promise<void> {
+  const want = await expectedTelemetry();
+  const { expect } = await import("vitest");
+  if (want.available) {
+    // the host connects on its own schedule; give it one retry period
+    const deadline = Date.now() + 15_000;
+    while (!view().available && Date.now() < deadline) await new Promise((r) => setTimeout(r, 250));
+    expect(view().available, `collector is loaded (${want.reason}) but the host says unavailable: ${view().reason}`).toBe(true);
+  } else {
+    expect(view().available, `no live collector (btf=${want.btf}; ${want.reason}) but the host says available`).toBe(false);
+    expect(view().reason, "unavailable telemetry must say why").toBeTruthy();
+    expect(view().gap, "unavailable telemetry is a gap, never fresh with no events").toBe(true);
+  }
+}
