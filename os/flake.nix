@@ -10,7 +10,13 @@
   outputs = { self, nixpkgs, rust-overlay }:
     let
       system = "x86_64-linux";
-      pkgs = import nixpkgs { inherit system; overlays = [ rust-overlay.overlays.default (import ./packages/overlay.nix) ]; };
+      pkgs = import nixpkgs {
+        inherit system;
+        overlays = [ rust-overlay.overlays.default (import ./packages/overlay.nix) ];
+        # Build-time only: pnpm at the repository's packageManager pin (10.34.9). nixpkgs flags the whole pnpm 10
+        # line; the tool never ships in the image. Recorded in docs/v1.0-decisions.tsv.
+        config.permittedInsecurePackages = [ "pnpm-10.34.9" ];
+      };
       lib = nixpkgs.lib;
       mk = modules: lib.nixosSystem {
         inherit system;

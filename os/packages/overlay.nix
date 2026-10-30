@@ -12,6 +12,11 @@ let
   rust = final.rust-bin.stable."1.91.0".minimal;
   rustPlatform = final.makeRustPlatform { cargo = rust; rustc = rust; };
 in {
+  # Repository pin (package.json packageManager = pnpm@10.34.9).
+  pnpm_10 = prev.pnpm_10.overrideAttrs (_: rec {
+    version = "10.34.9";
+    src = final.fetchurl { url = "https://registry.npmjs.org/pnpm/-/pnpm-${version}.tgz"; hash = "sha512-9JtajqD97bRLs8DB1ldQkqU8KVDZW3rRXfEfF5dId6LeOgHAfpNOmyjOcW5RwJqUlixzBtCb4uHksYqMh2L9Mg=="; };
+  });
   agentos-src = src;
   agentos-native = final.callPackage ./native.nix { inherit src rustPlatform; };
   agentos-node = final.callPackage ./node.nix { inherit src; };
