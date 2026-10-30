@@ -385,3 +385,34 @@ fn w03_each_creation_breakpoint_resumes_to_exactly_one_workspace_without_takeove
     assert_eq!(acc.users.lock().unwrap()[0].gecos, "someone else");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn i09_owner_transfer_needs_both_sides_and_current_versions() {
+    let (t, w) = setup();
+    let (ws, ada, _) = w[0].clone();
+    let bea = w[1].1.clone();
+    // bea joins ada's workspace as viewer
+    t.m.set_role(&ada, &ws, &bea, "viewer", None).unwrap();
+    // only the owner can begin; the receiver must already be a member
+    assert!(t.m.begin_transfer(&bea, &uuid(), &ws, &ada).is_err());
+    let tid = uuid();
+    assert_eq!(t.m.begin_transfer(&ada, &tid, &ws, &bea).unwrap()["state"], "pending");
+    // nothing changed yet: the owner still owns, and the owner cannot confirm on the receiver's behalf
+    assert_eq!(t.m.membership(&ada, &ws).unwrap().0.as_str(), "owner");
+    assert!(t.m.confirm_transfer(&ada, &tid).is_err());
+    // the receiver's role changed after the transfer began → the confirmation is stale
+    let mvb = t.m.membership(&bea, &ws).unwrap().1;
+    t.m.set_role(&ada, &ws, &bea, "editor", Some(mvb)).unwrap();
+    assert_eq!(t.m.confirm_transfer(&bea, &tid).unwrap_err().code, "PLAN_STALE");
+    // a fresh transfer, confirmed by the receiver: roles swap, versions move, every side is told
+    let tid2 = uuid();
+    t.m.begin_transfer(&ada, &tid2, &ws, &bea).unwrap();
+    assert_eq!(t.m.confirm_transfer(&bea, &tid2).unwrap()["state"], "confirmed");
+    assert_eq!(t.m.membership(&bea, &ws).unwrap().0.as_str(), "owner");
+    assert_eq!(t.m.membership(&ada, &ws).unwrap().0.as_str(), "editor");
+    let n: i64 = t.m.c.query_row("SELECT COUNT(DISTINCT target_kind) FROM registry_outbox WHERE kind = 'owner.changed' AND state = 'pending'", [], |r| r.get(0)).unwrap();
+    assert_eq!(n, 3, "gateway, host and broker each get owner.changed");
+    // replaying the confirmation is idempotent; the last owner cannot be dropped by demotion
+    assert_eq!(t.m.confirm_transfer(&bea, &tid2).unwrap()["state"], "confirmed");
+    assert!(t.m.set_role(&bea, &ws, &bea, "viewer", None).is_err());
+}
