@@ -69,7 +69,7 @@
 | V1-D05 | 纯数据边界 | 部分 | 单元/集成 | desktop/tests 9 个 ctest 套件（Qt offscreen，nix 构建 checkPhase 中在 Actions 通过）覆盖渲染/绑定/纯数据/限额等规则；没有在真实会话中对 Host 完整流程验收。 |
 | V1-D06 | 大列表与图表 | 部分 | 单元/集成 | desktop/tests 9 个 ctest 套件（Qt offscreen，nix 构建 checkPhase 中在 Actions 通过）覆盖渲染/绑定/纯数据/限额等规则；没有在真实会话中对 Host 完整流程验收。 |
 | V1-D07 | 系统确认隔离 | 部分 | 单元/集成 | desktop/tests 9 个 ctest 套件（Qt offscreen，nix 构建 checkPhase 中在 Actions 通过）覆盖渲染/绑定/纯数据/限额等规则；没有在真实会话中对 Host 完整流程验收。 |
-| V1-D08 | v0.4 | 未通过 | 未验收 | v0.4 全部页面在原生 UI 上的端到端流程未做。 |
+| V1-D08 | v0.4 | 未通过 | 未验收 | m13-native 的 daily 阶段（任务中心取消、会话压缩、proposal 接受、维护暂停、应用归档/恢复，均经原生 UI 按钮）已写好；由于 mainline 阶段先失败（见 M06），本轮尚未跑到，无证据。 |
 | V1-D09 | 事件断线 | 部分 | 单元/集成 | desktop/tests 9 个 ctest 套件（Qt offscreen，nix 构建 checkPhase 中在 Actions 通过）覆盖渲染/绑定/纯数据/限额等规则；没有在真实会话中对 Host 完整流程验收。 |
 | V1-D10 | 中文与键盘 | 未通过 | 需实体机，未验收 | 真实 Fcitx5 组合输入需要实体显示与输入法；跑法见文末。 |
 | V1-D11 | 崩溃与降级 | 部分 | 单元/集成 | desktop/tests 9 个 ctest 套件（Qt offscreen，nix 构建 checkPhase 中在 Actions 通过）覆盖渲染/绑定/纯数据/限额等规则；没有在真实会话中对 Host 完整流程验收。 |
@@ -144,7 +144,7 @@
 | V1-M03 | legacy | 通过 | 真实旧备份（v0.4 验收机）＋单元/集成 | user:local 历史显式映射到 owner，不重算收据，未完成任务不获新权利。（tests/migration/import-v04.test.ts，AGENTOS_V04_BACKUP 指向真实备份。） |
 | V1-M04 | 容器与文件身份 | 通过 | KVM VM（Actions） | m12-clone（run 41116258388，27c07e5，KVM）M04 子测试通过：源机生成并运行代码应用后取集合；集合里没有任何 Podman 存储（无 containers/overlay），克隆后新执行 UID 下 /var/lib/agentos-runtime/<ws> 全部归新 UID；断网（删除默认路由）后由发行 OCI（AGENTOS_RELEASE_IMAGES）在新 UID 的 rootless 存储 prefetch 4 个 lock、未拉取 docker.io 镜像，doctor 探针容器、无网络、只读根均 ok；克隆后的代码应用（同一 active revision）经 apps.runtime.start 在新 UID 下从固定镜像重建并运行（podman ps Up），仍未拉取任何镜像。 m12-clone（run 41128197346，d88572a，KVM）复核：全部子测试通过（源机代码应用 → 集合 → 目标机解密校验 → 新 UID 从发行镜像建容器、源 graphroot 不随集合 → 克隆的代码应用在新 UID 重建并运行）。 |
 | V1-M05 | 旧授权处理 | 通过 | 真实旧备份（v0.4 验收机）＋单元/集成 | 自动策略暂停、provider 密钥未带入、旧 grants 需重新确认。（tests/migration/import-v04.test.ts，AGENTOS_V04_BACKUP 指向真实备份。） |
-| V1-M06 | 原生回归主线 | 未通过 | 未验收 | 原生端完成旧主线未做。 |
+| V1-M06 | 原生回归主线 | 部分 | KVM VM（Actions） | m13-native（os/tests/m13-native.py + desktop/tests/e2e_test.cpp：真实 agentos-shell 在 VM 里以 alice 的 PAM 会话经真实 gateway/machined/Host 操作，模型为发行 Host 的 faux 模式）。run 41131676224（76f86b0，KVM）：声明式应用生成、CRUD/查询（2 行）、修改（appEpoch 2）均在原生端完成；版本切换 POST deployments 409（打开的应用视图 appEpoch 落后于列表，发送了过期 expectedAppEpoch）→ 105c507 修复（列表更新时重读落后的视图），重跑 run 41134613014。**未满足**：版本切换、代码应用、系统应用尚未在原生端跑通。 |
 | V1-M07 | 导入失败恢复 | 通过 | 真实旧备份（v0.4 验收机）＋单元/集成 | hash/配对失败只影响 staging；重复导入不产生第二个可写 storeUUID。（tests/migration/import-v04.test.ts，AGENTOS_V04_BACKUP 指向真实备份。） |
 | V1-M08 | 退回旧环境边界 | 通过 | 真实旧备份（v0.4 验收机）＋单元/集成 | v0.4 程序拒绝打开 schema 5。（tests/migration/import-v04.test.ts，AGENTOS_V04_BACKUP 指向真实备份。） |
 
@@ -160,12 +160,12 @@
 | V1-O06 | 真实故障恢复 | 部分 | KVM VM（Actions） | VM 中已有：machined 重启保身份（m2）、Host SIGKILL 后另一工作区不受影响（m3 W04）、坏候选复位（m7）、检查点强杀（m8）。m11-ops（run 41093836725，KVM）O06 子测试通过：依次 SIGKILL broker/machined/gateway，各自由 systemd 重启、machineInstallId 不变、两个 Host 重连后 forward 可用。**未满足**：Shell SIGKILL（≤5 秒可见）与 VM power-cut 各窗口未做。 m11-ops（run 41129828092，a066ef5，KVM）全部子测试通过，含“VM power cut with a model request in flight”：QEMU 直接终止后身份不变、在用 permit 按 unknown 结算、工作区重新启动（此前 “workspace host did not come up” 的根因是新一次启动时仍标记 running 却没有本次 boot 的 Host 的工作区——f7c36fd 已改为 stopped 再由 attach 启动）。Shell SIGKILL：m5-desktop（run 41126599816）。**未满足**：ESP 发布点断电（m7 U07）在本轮修复后重跑中（run 41133427331）。 |
 | V1-O07 | 原生入口攻击 | 部分 | KVM VM（Actions）＋单元/集成 | m11-ops（run 41093836725，KVM）O07 子测试全部通过（os/tests/ops-fuzz.py 对真实 gateway socket）：超长长度/非 JSON/重复键/深嵌套被关闭连接，未知字段 INVALID_REQUEST，URL 形 forward 未绑定会话即 SESSION_REQUIRED，截断帧在 30 秒帧期限后被关闭（不应答），20 个慢连接时正常请求 0.01 s 得到应答，20 个停滞帧 35 s 内全部被关，每 UID 连接上限 32（多余 8 个被拒），释放后恢复服务，gateway 保持 active、RSS<200 MB。access.test.ts 与 Rust 单元 o07_connection_slots_are_bounded_per_uid_and_released、o07_a_started_frame_must_complete_in_time_but_idle_is_unbounded。**未满足**：旧票据/旧 sessionEpoch 重放与 Qt binding fuzz 只在其它条目（I10/D05）中部分覆盖，未在本项内对 gateway 做系统性重放。 |
 | V1-O08 | 日志与支持包 | 通过 | KVM VM（Actions）＋单元/集成 | agentosctl support-bundle --out <file>（native/crates/machine/src/ctl.rs）：仅 root、0600；只收机器级事实（release、boot、schema/协议、身份摘要 sha256 前 16 位、registry、工作区状态、permit/barrier/restore、boot default）与脱敏服务日志（含 password/psk/secret/token/cookie/authorization/api key/private 的行替换为标记），不收工作区正文。Rust 单元 o08_support_bundle_lines_naming_secrets_are_replaced 本轮通过；m10-sched O08 子测试（非 root 被拒、0600、无 PAM 口令、无完整 machineInstallId、root_audit 不被轮转）KVM 通过（run 41088879793）。 |
-| V1-O09 | 干净构建与安装 | 部分 | Actions 构建（nix --rebuild） | build-repro（run 41091049224）通过：agentos-native、agentos-node、agentos-shell、agentos-release 各构建一次后以 nix build --rebuild 从相同输入再构建，逐位相同（REPRO identical ×4）。ISO/qcow2 未纳入重建比较；同一候选的 ISO 安装/导入/升级/离机恢复文档演练未做。 |
+| V1-O09 | 干净构建与安装 | 部分 | Actions 构建（nix --rebuild） | build-repro（run 41091049224）通过：agentos-native、agentos-node、agentos-shell、agentos-release 各构建一次后以 nix build --rebuild 从相同输入再构建，逐位相同（REPRO identical ×4）。ISO/qcow2 未纳入重建比较；同一候选的 ISO 安装/导入/升级/离机恢复文档演练未做。 build-repro（run 41126607901，f2090b8）：agentos-native、agentos-node、agentos-shell、agentos-release、agentos-oci、agentos-iso 两次干净构建逐位相同（REPRO identical ×6，ISO 已纳入）；agentos-qcow2 不同。差异解释已写成 os/repro-explain-qcow2.py（GPT、每个分区、分区外字节逐段比较；只接受 LUKS2 分区内的差异——luksFormat 每次生成新的卷密钥、keyslot salt 与 UUID，决定 11），CI 重跑（run 41134730893）待结果。**未满足**：同一候选的 ISO 安装/导入/升级/离机恢复文档演练未在同一提交上一次跑齐。 |
 | V1-O10 | 发布完成条件 | 未通过 | 未验收 | 100 项证据未齐（见本报告“部分/未通过”各行与需实体机项目），不能宣称发布完成。随发行发布的材料已写成 docs/RELEASE_V1.0.md：发行物与校验方式、支持硬件（仅 qemu-virtio 经 KVM VM 验证，实体硬件未测、不声称支持）、支持期限（签名清单 supportUntil；本树未正式签名发布，无期限承诺）、已知限制、恢复材料（backup/export/restore/clone/recover/support-bundle/带健康门槛的 commit）。材料齐不等于证据齐，本项保持未通过。 |
 
 ## 统计
 
-未通过 13 项，通过 57 项，部分 30 项（共 100 项）。
+未通过 12 项，通过 57 项，部分 31 项（共 100 项）。
 
 ## 回归与偶发失败记录
 
