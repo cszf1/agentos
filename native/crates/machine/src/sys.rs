@@ -249,7 +249,19 @@ impl System for HostSystem {
         user_unit_ctl(uid, &["start", &format!("agentos-workspace@{ws}.target")]).map(|_| ())
     }
     fn stop_workspace(&mut self, ws: &str, uid: u32) -> R<()> {
-        user_unit_ctl(uid, &["stop", &format!("agentos-workspace@{ws}.target"), &format!("agentos-host@{ws}.service")]).map(|_| ())
+        user_unit_ctl(uid, &["stop", &format!("agentos-workspace@{ws}.target"), &format!("agentos-host@{ws}.service")])?;
+        // The rest of this execution identity ends with it (spec §8.2): the socket-activated rootless Podman service,
+        // its long-lived pause process (a transient scope in user.slice) and any container/conmon left behind. Only
+        // the user manager itself (init.scope) and its session bus stay; the busy check below then sees no process.
+        let _ = user_unit_ctl(uid, &["stop", "podman.socket", "podman.service"]);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while self.exec_cgroup_busy(uid) && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+        if self.exec_cgroup_busy(uid) {
+            let _ = user_unit_ctl(uid, &["kill", "--signal=SIGKILL", "app.slice", "user.slice", "background.slice"]);
+        }
+        Ok(())
     }
     fn exec_cgroup_busy(&self, uid: u32) -> bool {
         // Any process of the execution UID counts (Host, Pi workers, rootless Podman, conmon), except the UID's own

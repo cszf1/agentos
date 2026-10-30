@@ -8,7 +8,7 @@
 let
   installed = mkSystem (releaseModules ++ [
     "${nixpkgs}/nixos/modules/testing/test-instrumentation.nix"
-    ({ lib, ... }: { agentos.graphical = lib.mkForce false; boot.kernelParams = [ "console=ttyS0" ]; boot.initrd.systemd.enable = true; })
+    ({ lib, ... }: { agentos.graphical = lib.mkForce false; boot.kernelParams = [ "console=ttyS0" ]; users.users.root.hashedPasswordFile = lib.mkForce null; boot.initrd.systemd.enable = true; })
   ]);
   top = installed.config.system.build.toplevel;
   installer = pkgs.callPackage ./../packages/installer.nix { system = top; };
@@ -87,7 +87,7 @@ pkgs.testers.runNixOSTest {
         target = create_machine(start, name="installed")
         target.start()
         target.wait_for_console_text("assphrase", timeout=600)
-        target.send_chars("correct horse battery\n")
+        target.send_console("correct horse battery\n")
         target.wait_for_unit("multi-user.target", timeout=900)
         target.succeed("findmnt -no FSTYPE / | grep -q btrfs && cryptsetup status agentos-root | grep -q LUKS2")
         for sv in ["@nix", "@home", "@machine", "@broker", "@snapshots"]:
@@ -103,7 +103,7 @@ pkgs.testers.runNixOSTest {
         target.shutdown()
         target.start()
         target.wait_for_console_text("assphrase", timeout=600)
-        target.send_chars("correct horse battery\n")
+        target.send_console("correct horse battery\n")
         target.wait_for_unit("agentos-machine.service", timeout=900)
         assert json.loads(target.succeed("agentosctl status"))["meta"]["machineInstallId"] == mid
   '';

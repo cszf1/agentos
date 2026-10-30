@@ -1,7 +1,7 @@
 # agentos-shell: the native Qt 6 Shell (spec §10, §11). Imported by default.nix/shell.nix here and, later, by os/packages:
 #   pkgs.callPackage ../../desktop/package.nix { }
 # Source is the desktop/ tree plus the shared fixtures the tests compare against (fixtures/v1.0/slot-vectors etc.).
-{ lib, stdenv, cmake, ninja, qt6, nodejs ? null }:
+{ lib, stdenv, cmake, ninja, qt6, makeFontsConf, noto-fonts-cjk-sans, dejavu_fonts, nodejs ? null }:
 let
   repo = ../.;
   src = lib.fileset.toSource {
@@ -27,6 +27,8 @@ stdenv.mkDerivation {
   checkPhase = ''
     runHook preCheck
     export QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software HOME=$TMPDIR XDG_RUNTIME_DIR=$TMPDIR
+    # The build sandbox has no fontconfig setup; render tests need real glyphs (CJK included) or text renders blank.
+    export FONTCONFIG_FILE=${makeFontsConf { fontDirectories = [ noto-fonts-cjk-sans dejavu_fonts ]; }}
     export QML_IMPORT_PATH=${qt6.qtdeclarative}/${qt6.qtbase.qtQmlPrefix}
     export QT_PLUGIN_PATH=${qt6.qtbase}/${qt6.qtbase.qtPluginPrefix}:${qt6.qtdeclarative}/${qt6.qtbase.qtPluginPrefix}
     ctest --output-on-failure -j1

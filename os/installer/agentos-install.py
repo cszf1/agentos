@@ -161,6 +161,12 @@ def cmd_plan(args):
             raise Refuse("bad timezone")
     plan = {"formatVersion": 1, "disk": disk, "identity": identity(d), "medium": medium_identity(), "timezone": tz, "system": SYSTEM,
             "erase": "the whole disk", "layout": {"esp": "2 GiB", "luks2": "rest", "btrfs": SUBVOLS}, "installId": str(uuid.uuid4())}
+    if "--template" in args:
+        # qcow2 template build only (os/packages/qcow2.nix): same layout and closure, LUKS opened by the public
+        # template key that first boot replaces; no per-machine install record.
+        if not os.environ.get("AGENTOS_INSTALL_TEMPLATE_BUILD"):
+            raise Refuse("--template is only for the qcow2 image build")
+        plan["template"] = True
     st = {"state": "plan_ready", "plan": plan, "planHash": phash(plan), "updatedAt": time.time()}
     save(st)
     return {"planHash": st["planHash"], "plan": plan, "confirmWith": "type the disk serial (or WWN when there is no serial)"}
@@ -296,7 +302,9 @@ def cmd_run(args):
     if st["state"] == "configuring":
         os.makedirs(f"{MNT}/etc/agentos", exist_ok=True)
         release = json.load(open(RELEASE)) if os.path.exists(RELEASE) else {}
-        hw = {"formatVersion": 1, "installId": st["plan"]["installId"], "timezone": st["plan"]["timezone"], "disk": st["plan"]["identity"],
+        tpl = bool(st["plan"].get("template"))
+        hw = {"formatVersion": 1, "installId": None if tpl else st["plan"]["installId"], "timezone": st["plan"]["timezone"],
+              "disk": None if tpl else st["plan"]["identity"], "template": tpl,
               "baseReleaseId": release.get("releaseId"), "baseClosurePath": SYSTEM}
         body = canon(hw)
         hw_hash = "sha256:" + hashlib.sha256(body.encode()).hexdigest()

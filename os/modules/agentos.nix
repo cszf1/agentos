@@ -36,6 +36,14 @@ let
     '';
     passthru.providedSessions = [ "agentos" ];
   };
+  workerUids = { agentos-file = 961; agentos-svc = 962; agentos-net = 963; agentos-serial = 964; };
+  workerDefs = {
+    file = { dir = "file"; user = "agentos-file"; extra = { ReadWritePaths = [ "/var/lib/agentos-managed" ]; PrivateNetwork = true; PrivateDevices = true; CapabilityBoundingSet = ""; }; };
+    service = { dir = "service"; user = "agentos-svc"; extra = { PrivateNetwork = true; PrivateDevices = true; CapabilityBoundingSet = ""; }; };
+    # no lab network is registered in the release image, so the network worker gets no capability and no network
+    network = { dir = "net"; user = "agentos-net"; extra = { PrivateNetwork = true; CapabilityBoundingSet = ""; }; };
+    serial = { dir = "serial"; user = "agentos-serial"; extra = { PrivateNetwork = true; SupplementaryGroups = [ "dialout" ]; }; };
+  };
 in {
   options.agentos = {
     enable = lib.mkEnableOption "AgentOS";
@@ -54,12 +62,9 @@ in {
     security.pam.services.agentos-admin-auth = { unixAuth = true; };
 
     users.mutableUsers = true; # machined owns dynamic accounts (spec §21.2: activation must not reset them)
-    users.groups.agentos-broker = { };
-    users.users = lib.genAttrs [ "agentos-file" "agentos-svc" "agentos-net" "agentos-serial" ] (n: { isSystemUser = true; group = n; });
-    users.groups.agentos-file = { };
-    users.groups.agentos-svc = { };
-    users.groups.agentos-net = { };
-    users.groups.agentos-serial = { };
+    # Provider worker accounts have fixed UIDs: the broker policy names them and proves each worker by SO_PEERCRED.
+    users.users = lib.mapAttrs (n: uid: { isSystemUser = true; group = n; inherit uid; }) workerUids;
+    users.groups = lib.mapAttrs (n: gid: { inherit gid; }) workerUids // { agentos-broker = { }; };
 
     systemd.tmpfiles.rules = [
       "d /var/lib/agentos 0711 root root -"
@@ -69,6 +74,7 @@ in {
       "d /run/agentos 0755 root root -"
       "d /run/agentos/workspaces 0711 root root -"
       "d /etc/agentos/broker 0755 root root -"
+      "d /var/lib/agentos-managed 0755 agentos-file agentos-file -"
     ];
 
     # A real root-owned file (not a store symlink): the broker refuses a policy it cannot prove root-only.
@@ -82,11 +88,27 @@ in {
       labNetworks = [ ];
       serial = [ ];
       maintenance = [ ];
-      workers = { };
+      workers = lib.mapAttrs (k: w: { socket = "/run/agentos-worker-${w.dir}/worker.sock"; unit = "agentos-worker-${w.dir}.service"; uid = workerUids.${w.user}; }) workerDefs;
       testMode = false;
     };
 
-    systemd.services.agentos-machine = {
+    # Provider workers (inherited v0.3 §16): the only writers of their resource class, reached only by the broker.
+    systemd.services = lib.mapAttrs' (k: w: lib.nameValuePair "agentos-worker-${w.dir}" {
+      description = "AgentOS ${k} worker";
+      wantedBy = [ "multi-user.target" ];
+      before = [ "agentos-broker.service" ];
+      unitConfig.StartLimitIntervalSec = 0;
+      serviceConfig = {
+        ExecStart = "${native}/bin/agentos-worker ${k} /run/agentos-worker-${w.dir}/worker.sock";
+        User = w.user; Group = w.user; UMask = "0022";
+        RuntimeDirectory = "agentos-worker-${w.dir}"; RuntimeDirectoryMode = "0755";
+        NoNewPrivileges = true; ProtectSystem = "strict"; ProtectHome = true; PrivateTmp = true;
+        RestrictAddressFamilies = [ "AF_UNIX" ] ++ lib.optionals (k == "network") [ "AF_NETLINK" ];
+        SystemCallArchitectures = "native"; MemoryMax = "128M"; TasksMax = 64; LimitCORE = 0;
+        Restart = "on-failure"; RestartSec = 1;
+      } // w.extra;
+    }) workerDefs // {
+    agentos-machine = {
       description = "AgentOS machine directory (machined)";
       wantedBy = [ "multi-user.target" ];
       after = [ "local-fs.target" "dbus.service" "systemd-logind.service" ];
@@ -106,7 +128,7 @@ in {
       };
     };
 
-    systemd.services.agentos-session-gateway = {
+    agentos-session-gateway = {
       description = "AgentOS session gateway";
       wantedBy = [ "multi-user.target" ];
       requires = [ "agentos-machine.service" ];
@@ -131,7 +153,7 @@ in {
       };
     };
 
-    systemd.services.agentos-broker = {
+    agentos-broker = {
       description = "AgentOS privileged broker";
       wantedBy = [ "multi-user.target" ];
       after = [ "agentos-machine.service" "dbus.service" ];
@@ -149,6 +171,8 @@ in {
         RestartSec = 1;
         LimitCORE = 0;
       };
+    };
+
     };
 
     # Per-workspace units live in the execution UID's own user manager (spec §17.2). They only start for a UID that

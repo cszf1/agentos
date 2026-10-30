@@ -48,15 +48,8 @@
           boot.supportedFilesystems = [ "btrfs" "vfat" ];
         })
       ];
-      # qcow2: the same AgentOS package set and modules on a plain ext4 VM disk without LUKS (no passphrase can be
-      # baked into a template). Identity is created at first boot; the image ships with no machine.sqlite.
-      qcowSystem = mk [ ./modules/base.nix ./modules/graphics.nix ./modules/agentos.nix ./hardware/qemu.nix
-        ({ lib, ... }: {
-          agentos.enable = true; agentos.softwareRendering = true;
-          fileSystems."/" = { device = "/dev/disk/by-label/nixos"; fsType = "ext4"; };
-          fileSystems."/boot" = { device = "/dev/disk/by-label/ESP"; fsType = "vfat"; options = [ "umask=0077" ]; };
-          boot.growPartition = true;
-        }) ];
+      # qcow2: the SAME release toplevel installed by the SAME installer onto a blank template disk (spec §19.1).
+      qcow2 = pkgs.callPackage ./packages/qcow2.nix { system = toplevel; installer = installerPkg; qemu = pkgs.qemu-utils; };
       test = name: file: extra: import file ({ inherit pkgs; modules = [ ./modules/base.nix ./modules/agentos.nix ]; } // extra);
     in {
       packages.${system} = {
@@ -65,9 +58,7 @@
         agentos-release = release;
         agentos-installer = installerPkg;
         agentos-iso = installerSystem.config.system.build.isoImage;
-        agentos-qcow2 = import "${nixpkgs}/nixos/lib/make-disk-image.nix" {
-          inherit pkgs lib; config = qcowSystem.config; format = "qcow2"; partitionTableType = "efi"; diskSize = "auto"; additionalSpace = "2G"; copyChannel = false;
-        };
+        agentos-qcow2 = qcow2;
         m0-toplevel = self.nixosConfigurations.m0-proto.config.system.build.toplevel;
       };
       nixosConfigurations.agentos = agentosSystem;
@@ -78,6 +69,7 @@
         m2-identity = test "m2" ./tests/m2-identity.nix { };
         m2-identity-tcg = test "m2" ./tests/m2-identity.nix { cores = 1; };
         m6-install = import ./tests/m6-install.nix { inherit pkgs releaseModules nixpkgs; mkSystem = mk; };
+        m6-qcow2 = import ./tests/m6-qcow2.nix { inherit pkgs releaseModules nixpkgs; mkSystem = mk; };
         m7-update = test "m7" ./tests/m7-update.nix { };
         m8-backup = test "m8" ./tests/m8-backup.nix { };
         m5-desktop = import ./tests/m5-desktop.nix { inherit pkgs; modules = [ ./modules/base.nix ./modules/graphics.nix ./modules/agentos.nix ]; };
