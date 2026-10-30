@@ -102,7 +102,9 @@ vm.runInLinuxVM (pkgs.runCommand "agentos-oci" {
     rm -rf /tmp/oci/npm && cp -r "$cache" /tmp/oci/npm && chmod -R u+w /tmp/oci/npm
     printf 'cache=/npmcache\noffline=true\naudit=false\nfund=false\nupdate-notifier=false\n' > /tmp/oci/npmrc
     labels=$(jq -r '.labels | to_entries[] | "--label=\(.key)=\(.value)"' $m)
-    $P build --network=none --pull=never --layers=false --rm --force-rm \
+    # --timestamp 0: image config "created" and every layer file mtime fixed, so two clean builds give the same archive
+    # (build-repro run 41116526465 found images.tar differing between two builds of the same inputs).
+    $P build --network=none --pull=never --layers=false --rm --force-rm --timestamp 0 \
       --build-arg BASE="$(jq -r .base $m)" $labels -t "$name" \
       -v /tmp/oci/npm:/npmcache:rw -v /tmp/oci/npmrc:/usr/local/etc/npmrc:ro \
       -f ${contexts}/$i/Containerfile ${contexts}/$i

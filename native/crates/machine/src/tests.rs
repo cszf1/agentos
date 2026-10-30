@@ -772,5 +772,6 @@ fn o06_after_a_power_cut_running_workspaces_without_a_host_on_this_boot_become_s
     let lost: i64 = t.m.c.query_row("SELECT COUNT(*) FROM workspace_instances WHERE workspace_id = ?1 AND state = 'lost'", [&wss[0].0], |r| r.get(0)).unwrap();
     assert!(lost >= 1);
     assert_eq!(t.m.reconcile_boot().unwrap(), 0, "idempotent");
+    t.fake.busy.lock().unwrap().remove(&wss[0].2); // the power cut ended that execution: its cgroup is empty
     t.m.start_workspace(&wss[0].0).unwrap();
 }
