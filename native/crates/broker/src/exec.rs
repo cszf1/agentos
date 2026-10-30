@@ -32,7 +32,13 @@ pub fn observe(b: &Broker, r: &CatalogRes) -> Result<Obs, BErr> {
 }
 
 /// Record an observation: a changed identity increases the generation (old grants and plans become stale).
-pub fn apply_observation(c: &Connection, r: &CatalogRes, obs: &Result<Obs, BErr>) -> Result<(i64, String, Option<String>), BErr> {
+/// A resource registered after the broker started has no state row yet: create it (generation 1, unobserved)
+/// before reading, instead of failing with "Query returned no rows".
+pub fn apply_observation(c: &Connection, store: &str, r: &CatalogRes, obs: &Result<Obs, BErr>) -> Result<(i64, String, Option<String>), BErr> {
+    c.execute(
+        "INSERT INTO resource_state(resource_id, store_uuid, kind, catalog_key, generation, status, updated_at) VALUES (?1,?2,?3,?4,1,'unobserved',?5) ON CONFLICT(resource_id) DO NOTHING",
+        params![r.resource_id, store, r.kind, r.key, now()],
+    )?;
     let (gen, digest, quarantine): (i64, Option<String>, Option<String>) =
         c.query_row("SELECT generation, identity_digest, quarantine_operation_id FROM resource_state WHERE resource_id=?1", params![r.resource_id], |x| {
             Ok((x.get(0)?, x.get(1)?, x.get(2)?))
@@ -851,7 +857,7 @@ fn admission(b: &Broker, op: &OpRow) -> Admission {
     let g = b.db.lock().unwrap();
     let c = g.as_ref().unwrap();
     let Ok(tx) = c.unchecked_transaction() else { return Admission::Wait };
-    let _ = apply_observation(&tx, &res, &obs);
+    let _ = apply_observation(&tx, &op.store, &res, &obs);
     let ws: (i64, String) =
         match tx.query_row("SELECT incarnation, state FROM workspace_bindings WHERE store_uuid=?1", params![op.store], |r| Ok((r.get(0)?, r.get(1)?))) {
             Ok(x) => x,
@@ -1759,5 +1765,31 @@ pub fn fence_workers(b: &Shared) {
     let g = b.db.lock().unwrap();
     if let Some(c) = g.as_ref() {
         let _ = db::audit(c, "workers_fenced", None, None, None, None, &json!({"instance": b.instance_id}));
+    }
+}
+
+#[cfg(test)]
+mod observation_tests {
+    use super::*;
+
+    fn res() -> CatalogRes {
+        CatalogRes { resource_id: "rnew".into(), kind: "file", key: "k".into(), display_name: "n".into(), target: json!({}), caps: json!({}) }
+    }
+
+    #[test]
+    fn observation_creates_missing_state_row() {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch("CREATE TABLE resource_state (resource_id TEXT PRIMARY KEY, store_uuid TEXT NOT NULL, kind TEXT NOT NULL, catalog_key TEXT NOT NULL, generation INTEGER NOT NULL, identity_digest TEXT, observed_version TEXT, status TEXT NOT NULL, lock_operation_id TEXT, quarantine_operation_id TEXT, updated_at INTEGER NOT NULL) STRICT;").unwrap();
+        let o: Result<Obs, BErr> = Ok(Obs { digest: "d1".into(), version: "v1".into(), details: json!({}) });
+        let (g, st, q) = apply_observation(&c, "s1", &res(), &o).unwrap();
+        assert_eq!((g, st.as_str(), q), (1, "available", None));
+        let store: String = c.query_row("SELECT store_uuid FROM resource_state WHERE resource_id='rnew'", [], |x| x.get(0)).unwrap();
+        assert_eq!(store, "s1");
+        // second observation with the same identity keeps the generation and does not duplicate the row
+        let (g2, _, _) = apply_observation(&c, "s1", &res(), &o).unwrap();
+        assert_eq!(g2, 1);
+        let e: Result<Obs, BErr> = Err(BErr::new("RESOURCE_GONE", "x".to_string()));
+        let (_, st3, _) = apply_observation(&c, "s1", &res(), &e).unwrap();
+        assert_eq!(st3, "gone");
     }
 }

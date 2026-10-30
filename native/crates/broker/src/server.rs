@@ -471,7 +471,7 @@ fn describe(b: &Shared, sess: &mut Session, v: &Value) -> Result<Value, BErr> {
         let obs = exec::observe(b, &r);
         let g = b.db.lock().unwrap();
         let c = g.as_ref().unwrap();
-        let (gen, status, quarantine) = exec::apply_observation(c, &r, &obs)?;
+        let (gen, status, quarantine) = exec::apply_observation(c, &store, &r, &obs)?;
         out.push(json!({
             "resourceId": r.resource_id, "kind": r.kind, "catalogKey": r.key, "displayName": r.display_name,
             "generation": gen, "status": status, "identityDigest": obs.as_ref().ok().map(|o| o.digest.clone()),
