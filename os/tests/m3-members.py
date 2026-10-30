@@ -116,9 +116,9 @@ with subtest("broker protocol 3 end to end: an owner pause reaches the broker as
     assert machine.succeed(f"sqlite3 {BDB} \"SELECT state FROM workspace_maintenance_state WHERE store_uuid='{store_a}' ORDER BY incarnation DESC LIMIT 1\"").strip() == "paused"
     # the broker checked the principal against its synced directory: a member version it does not know is refused
     # (protocol 1/2 carry no principal at all, so this refusal can only come from the v3 check)
-    machine.succeed("systemctl stop agentos-broker.service")
+    machine.succeed("systemctl stop agentos-broker.path agentos-broker.service")  # the path unit would restart it at once
     machine.succeed(f"sqlite3 {BDB} \"UPDATE machine_members SET member_version = member_version + 100 WHERE store_uuid='{store_a}' AND user_id='{alice}'\"")
-    machine.succeed("systemctl start agentos-broker.service")
+    machine.succeed("systemctl start agentos-broker.service agentos-broker.path")
     machine.wait_for_unit("agentos-broker.service")
     r = call(1, [fwd(ws_a, "maintenance.control.post", body={"action": "resume"}, idem="p3-2")], "p32")[0]
     assert r["status"] == 200, r
@@ -126,9 +126,9 @@ with subtest("broker protocol 3 end to end: an owner pause reaches the broker as
     assert st.startswith("failed") and "MEMBERSHIP_REVOKED" in st, st
     assert machine.succeed(f"sqlite3 {BDB} \"SELECT state FROM workspace_maintenance_state WHERE store_uuid='{store_a}' ORDER BY incarnation DESC LIMIT 1\"").strip() == "paused"
     # directory consistent again: the next owner control is accepted
-    machine.succeed("systemctl stop agentos-broker.service")
+    machine.succeed("systemctl stop agentos-broker.path agentos-broker.service")  # the path unit would restart it at once
     machine.succeed(f"sqlite3 {BDB} \"UPDATE machine_members SET member_version = member_version - 100 WHERE store_uuid='{store_a}' AND user_id='{alice}'\"")
-    machine.succeed("systemctl start agentos-broker.service")
+    machine.succeed("systemctl start agentos-broker.service agentos-broker.path")
     machine.wait_for_unit("agentos-broker.service")
     r = call(1, [fwd(ws_a, "maintenance.control.post", body={"action": "resume"}, idem="p3-3")], "p33")[0]
     assert r["status"] == 200, r
@@ -297,9 +297,9 @@ with subtest("delete: owner+admin, broker effect verdict, executors; UID and sto
     r = call(1, [{"methodId": "workspaces.archive", "workspaceId": ws_d, "idempotencyKey": str(uuid.uuid4()), "body": {}}], "d2")[0]
     assert r["status"] == 200 and r["body"]["state"] == "archived", r
     # an unreconciled broker effect of this store blocks the deletion (back to archived, data kept)
-    machine.succeed("systemctl stop agentos-broker.service")
+    machine.succeed("systemctl stop agentos-broker.path agentos-broker.service")  # the path unit would restart it at once
     machine.succeed(f"sqlite3 /var/lib/agentos-broker/broker.sqlite \"INSERT INTO effect_operations(machine_install_id,store_uuid,incarnation,operation_id,action_id,plan_hash,request_hash,envelope_json,capability_id,resource_id,resource_generation,replay_class,state,deadline_ms,accepted_seq,updated_seq,created_at,updated_at) VALUES ('t','{store_d}',1,'w10-op','a','p','r','{{}}','cap','res',1,'effect','indeterminate',1,1,1,1,1)\"")
-    machine.succeed("systemctl start agentos-broker.service")
+    machine.succeed("systemctl start agentos-broker.service agentos-broker.path")
     machine.wait_for_unit("agentos-broker.service")
     machine.wait_until_succeeds("test $(sqlite3 /var/lib/agentos-machine/machine.sqlite \"SELECT COUNT(*) FROM registry_outbox WHERE target_kind='broker' AND state='pending'\") = 0", timeout=60)
     p = plan_delete("d4")
@@ -310,9 +310,9 @@ with subtest("delete: owner+admin, broker effect verdict, executors; UID and sto
     assert sql(f"SELECT state FROM workspaces WHERE workspace_id='{ws_d}'") == "archived"
     machine.succeed(f"test -d /var/lib/agentos/workspaces/{ws_d}/data")
     # reconciled: the second deletion goes through
-    machine.succeed("systemctl stop agentos-broker.service")
+    machine.succeed("systemctl stop agentos-broker.path agentos-broker.service")  # the path unit would restart it at once
     machine.succeed("sqlite3 /var/lib/agentos-broker/broker.sqlite \"UPDATE effect_operations SET resolution_json='{}' WHERE operation_id='w10-op'\"")
-    machine.succeed("systemctl start agentos-broker.service")
+    machine.succeed("systemctl start agentos-broker.service agentos-broker.path")
     machine.wait_for_unit("agentos-broker.service")
     machine.wait_until_succeeds("test $(sqlite3 /var/lib/agentos-machine/machine.sqlite \"SELECT COUNT(*) FROM registry_outbox WHERE target_kind='broker' AND state='pending'\") = 0", timeout=60)
     p = plan_delete("d6")
