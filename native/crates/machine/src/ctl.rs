@@ -294,10 +294,18 @@ fn backup(c: &mut Client, a: &[String]) {
     }
     let _ = std::fs::create_dir_all(format!("{out_dir}/ws"));
     let mut parts = vec![];
+    let mut never_started = vec![];
     for w in &wss {
         let id = w["workspaceId"].as_str().unwrap_or_default();
         let dest = format!("{out_dir}/ws/{id}");
         let data = format!("/var/lib/agentos/workspaces/{id}/data");
+        // A workspace whose Host never ran has no databases and nothing to restore: it is named in the set
+        // (`neverStarted`) instead of failing the whole machine set. One database without the other stays an error.
+        let (os_db, agent_db) = (std::path::Path::new(&format!("{data}/os.sqlite")).exists(), std::path::Path::new(&format!("{data}/agent.sqlite")).exists());
+        if !os_db && !agent_db {
+            never_started.push(json!({ "workspaceId": id, "storeUUID": w["storeUUID"] }));
+            continue;
+        }
         let r = rw(&["checkpoint", "--data", &data, "--out", &dest, "--set-id", &set_id, "--workspace-id", id, "--barrier-id", &barrier, "--machine-install-id", &mid]);
         if r["ok"] != true {
             fail(c, format!("checkpoint of {id} failed: {}", r["error"]), true);
@@ -307,7 +315,7 @@ fn backup(c: &mut Client, a: &[String]) {
         parts.push(json!({ "workspaceId": id, "displayName": w["displayName"], "storeUUID": w["storeUUID"], "executionUid": w["executionUid"], "workspaceIncarnation": w["workspaceIncarnation"], "members": members["members"], "checkpoint": r["result"] }));
     }
     let manifest = json!({ "formatVersion": 1, "kind": "agentos-machine-set", "setId": set_id, "machineInstallId": mid, "barrierId": barrier,
-        "machineControlEpoch": st["meta"]["machineControlEpoch"], "workspaces": parts });
+        "machineControlEpoch": st["meta"]["machineControlEpoch"], "workspaces": parts, "neverStarted": never_started });
     let bytes = serde_json::to_vec(&manifest).unwrap_or_default();
     let mh = format!("sha256:{}", sha256_hex(&bytes));
     if std::fs::write(format!("{out_dir}/machine-set.json"), &bytes).is_err() {
