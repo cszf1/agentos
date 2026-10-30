@@ -66,6 +66,8 @@ jobs:
             experimental-features = nix-command flakes
             system-features = nixos-test benchmark big-parallel kvm
             require-sigs = true
+            # the Actions cache throttles (HTTP 418) and the cache substituter is then disabled: build locally instead
+            fallback = true
 
       # Path-level binary cache in the GitHub Actions cache, shared and de-duplicated across all matrix jobs.
       # (nix-community/cache-nix-action restored a whole-store tarball into the daemon-owned /nix/store and failed
