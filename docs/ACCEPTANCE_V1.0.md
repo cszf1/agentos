@@ -20,7 +20,7 @@
 | V1-B01 | 已修复 | 部分 | 单元/集成 | 开发树在 v0.4 验收机上：contracts、unit 88、identity 9、machine 7、migration-v1 5、agents 24、maintenance 35、maintenance-recovery 4、gc-online 7、compaction 6 全过；recovery 套件仍有偶发失败（见 R08 记录与“回归”一节）；telemetry 的 eBPF 部分见 O 行与“回归”一节。 |
 | V1-B02 | 应用/ABI | 通过 | 单元/集成 | tests/integration/v02-contracts.test.ts：formatVersion 1/2/3、ABI 1/2、catalog 与冻结 bundle hash（fixtures/todo-v1.json sha256:428df8c7…）不变。 |
 | V1-B03 | 三语言协议 | 通过 | 单元/集成 | fixtures/v1.0/protocol/vectors.json 在 TS（scripts/v1-vectors.mjs --check）、Rust（agentos-protocol v1_vectors/vectors）、C++（desktop v1_vectors，含于 Shell ctest）结果一致。 |
-| V1-B04 | 发行依赖冻结 | 部分 | KVM VM（Actions） | os/flake.lock 固定 nixpkgs nixos-26.05@6f06d204（2026-10-29，26.05 支持期至 2026-12-31）与 rust-overlay@96a0986b；pnpm 依赖为固定输出哈希；仓库与 Nix 文件无 latest。离线 OCI（决定 18）：agentos-oci 在构建 VM 里 --network=none --pull=never 构建 8 个 catalog 镜像，基础镜像为固定输出 skopeo 副本，release manifest ociDigests 填入；build-oci 在 Actions（run 41080892538）构建通过。m5 应用容器启动失败（crun: readlink ``）根因：工作区 home 为 0700，--userns=keep-id 下容器 root 映射的 subuid 无法穿过 home 解析 rootfs（同 podman#27785）；已改为 home 与到 graphroot 的路径 0711（仅穿越），内容目录仍 0700，m5 重跑 run 41090848802，CI 待结果。**未满足**：固件清单未单列。 |
+| V1-B04 | 发行依赖冻结 | 部分 | KVM VM（Actions） | os/flake.lock 固定 nixpkgs nixos-26.05@6f06d204（2026-10-29，26.05 支持期至 2026-12-31）与 rust-overlay@96a0986b；pnpm 依赖为固定输出哈希；仓库与 Nix 文件无 latest。离线 OCI（决定 18）：agentos-oci 在构建 VM 里 --network=none --pull=never 构建 8 个 catalog 镜像，基础镜像为固定输出 skopeo 副本，release manifest ociDigests 填入；build-oci 在 Actions（run 41080892538）构建通过。m5 应用容器启动失败（crun: readlink ``）根因：工作区 home 为 0700，--userns=keep-id 下容器 root 映射的 subuid 无法穿过 home 解析 rootfs（同 podman#27785）；已改为 home 与到 graphroot 的路径 0711（仅穿越），内容目录仍 0700；m5 重跑（run 41090848802，KVM）该子测试通过：无网络下从发行镜像导入 4 个 lock、未拉取任何镜像、探针容器按应用策略启动。**未满足**：固件清单未单列。 |
 | V1-B05 | 单写者和双库 | 部分 | KVM VM（Actions）＋单元/集成 | machined 在旧实例进程仍在时拒绝再次启动（WORKSPACE_FENCED，m8-backup 曾因此暴露并修复 podman 残留）；tests/machine/directory.test.ts 拒绝重复 storeUUID。Pi marker 不匹配阻断新任务未在 v1.0 VM 中重跑。 |
 | V1-B06 | 实施证据边界 | 通过 | 本报告 | 每行标注证据等级；TCG/KVM/单元/实体机分列；继承的 V3-E04 串口仍为未验收。 |
 | V1-B07 | schema | 部分 | 单元/集成 | tests/migration/schema5.test.ts 保留 schema 4→5 旧收据与 v0.1 bundle hash；broker db::tests 保留 schema 3→4 effect 行。崩溃中途写入未做。 |
@@ -48,7 +48,7 @@
 | 编号 | 名称 | 结论 | 证据等级 | 证据 / 原因 |
 |---|---|---|---|---|
 | V1-W01 | 真实 | 通过 | KVM VM（Actions） | m2-identity：两工作区不同执行 UID、各自 subuid 段与 0700 数据目录；双方 UID 与登录用户都不能读对方 os.sqlite。 |
-| V1-W02 | 容器逃逸入口 | 未通过 | 未验收 | VM 中未启动应用容器，Wayland/session bus/machine/gateway/Nix socket 不可见性未测。 |
+| V1-W02 | 容器逃逸入口 | 通过 | KVM VM（Actions） | m5-desktop（run 41090848802，KVM）子测试“app container from the release images, offline…”通过：离线（删除默认路由）从发行 OCI 导入镜像（prefetch 4 个 lock，未拉取 docker.io），agentos-runtime doctor 在应用策略下启动探针容器：容器内不存在 /run/user/*/wayland-*、bus、podman、pipewire/pulse，无 /tmp/.X11-unix、system bus、/run/agentos/gateway(.sock)、/run/agentos/machine、/run/agentos-broker、Nix daemon socket、/nix/store、/var/lib/agentos、/var/lib/agentos-machine、/run/podman、systemd private，环境无 WAYLAND_DISPLAY/DISPLAY/DBUS_SESSION_BUS_ADDRESS/XDG_RUNTIME_DIR/AGENTOS_GATEWAY_SOCKET；同时断言宿主侧 Wayland socket 确实存在。另：无网络（ENETUNREACH）、只读根、CapEff=0、NoNewPrivs=1、Seccomp=2。检查脚本 packages/host/src/runtime-ops.ts（doctor）。 |
 | V1-W03 | 创建断点 | 部分 | 单元/集成 | directory.test.ts：半创建工作区不可见；VM 中各断点强杀未做。 |
 | V1-W04 | 两工作区并行 | 通过 | KVM VM（Actions） | m3-members：两个 Host 在不同 UID 下并行；SIGKILL A 的 Host 后 B 仍正常应答，A 由 systemd 重启后恢复。 CI：run 41088865318 中 I04/I03/W04/I06/I08 通过，I09 子测试失败——禁用 bob 被 machined 以 CONFLICT 拒绝（bob 是工作区 “Bob” 的唯一 owner，须先转移所有权），属正确行为、断言有误；已改为断言该拒绝并禁用一个不拥有工作区的新用户，重跑 run 41090308175，I09/I10/W07/I11 CI 待结果。 |
 | V1-W05 | 切换与迟到响应 | 未通过 | 未验收 | Shell 快速切换与迟到响应过滤只有 offscreen ctest 的部分断言，未在 VM 会话中做。 |
@@ -94,7 +94,7 @@
 |---|---|---|---|---|
 | V1-S01 | 两级额度 | 部分 | KVM VM（Actions）＋单元/集成 | m10-sched（run 41089904864）KVM 通过：两个真实 Host、本地保持端点计数真实 HTTP 请求，机器总在途峰值 2、两工作区都等待时各 1，machine_permits reserved/in_use ≤2。Rust 单元（本轮在 agentos-v1 cargo test 通过）：native/crates/machine/src/tests.rs s01_two_level_quota_total_two_background_one_and_day_budgets 覆盖后台 ≤1 与日预算。**未满足**：后台 ≤1 与日预算未在真实 Host 下测。 |
 | V1-S02 | 前台公平性 | 通过 | KVM VM（Actions）＋单元/集成 | m10-sched（run 41089904864）KVM 通过：两工作区持续排队时每次两个在途请求各属一个工作区、释放后交替派发；Rust 单元（本轮在 agentos-v1 cargo test 通过）：native/crates/machine/src/tests.rs s02_foreground_round_robin_one_workspace_cannot_monopolise。 |
-| V1-S03 | 无锁循环 | 未通过 | 未验收 | 未做。 |
+| V1-S03 | 无锁循环 | 部分 | 单元/集成 | Rust 单元（agentos-v1 cargo test -p agentos-machine 通过，9 passed）：native/crates/machine/src/tests.rs s03_no_owner_waits_for_one_class_while_holding_another——同一 owner 持有 model permit 时请求 build 槽被 MACHINE_CAPACITY 拒绝且不排队，释放后可再请求（permits.rs 禁止持有一类等待另一类，杜绝两工作区互等）。**未满足**：后台不持应用长锁与审批等待不占槽未在真实 Host/VM 中验证。 |
 | V1-S04 | 准入最终检查 | 通过 | KVM VM（Actions）＋单元/集成 | m10-sched I07/S04 子测试 KVM 通过（run 41089904864）：取得 permit 前的最终检查读取撤销；Rust 单元（本轮在 agentos-v1 cargo test 通过）：native/crates/machine/src/tests.rs s04_final_check_after_waiting_member_version_revocation_and_stop。 |
 | V1-S05 | permit | 部分 | 单元/集成 | Rust 单元（本轮在 agentos-v1 cargo test 通过）：native/crates/machine/src/tests.rs s05_s06_restart_never_frees_held_slots_until_the_holder_is_gone_unknown_is_charged；directory.test.ts：重启不释放已占槽。VM 中 reserved/in_use 各位置强杀未做。 |
 | V1-S06 | 进程与未知用量 | 部分 | 单元/集成 | Rust 单元（本轮在 agentos-v1 cargo test 通过）：native/crates/machine/src/tests.rs s05_s06_restart_never_frees_held_slots_until_the_holder_is_gone_unknown_is_charged（unknown 按已用计费）。VM 未做。 |
@@ -165,7 +165,7 @@
 
 ## 统计
 
-未通过 24 项，通过 33 项，部分 43 项（共 100 项）。
+未通过 22 项，通过 34 项，部分 44 项（共 100 项）。
 
 ## 回归与偶发失败记录
 
