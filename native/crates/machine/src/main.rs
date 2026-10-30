@@ -61,6 +61,11 @@ fn main() {
             Ok(v) if !v.is_empty() => eprintln!("resumed {} workspace creations", v.len()),
             _ => {}
         }
+        match m.reconcile_boot() {
+            Ok(n) if n > 0 => eprintln!("{n} workspaces had no Host on this boot: marked stopped"),
+            Err(e) => eprintln!("boot reconcile: {e}"),
+            _ => {}
+        }
         match m.resume_deletions() {
             Ok(n) if n > 0 => eprintln!("re-asked the broker about {n} pending workspace deletions"),
             Err(e) => eprintln!("deletion resume: {e}"),

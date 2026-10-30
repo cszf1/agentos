@@ -209,8 +209,12 @@ with subtest("VM power cut with a model request in flight: identity kept, the he
     tty_login(1, "alice", "alice-pw-1")
     r = call(1, [{"methodId": "workspaces.list"}], "pcl")[0]
     assert r["status"] == 200, r
+    # machined marks the workspaces it still called running (no Host on this boot) stopped, so attach starts them
+    machine.succeed("journalctl -b -u agentos-machine.service -o cat --no-pager | grep -q 'had no Host on this boot'")
     for ws, tag in ((ws_a, "pca"), (ws_b, "pcb")):
         r = call(1, [{"methodId": "workspaces.attach", "workspaceId": ws, "idempotencyKey": str(uuid.uuid4()), "body": {}}], tag)[0]
+        if r["status"] != 200:
+            print(machine.execute("systemctl list-units --all 'agentos*' 'user@*' --no-pager; journalctl -b --no-pager -o short-monotonic | grep -iE 'agentos|host' | tail -80")[1])
         assert r["status"] == 200, r
     ua = machine.succeed(f"stat -c %u /var/lib/agentos/workspaces/{ws_a}/data").strip()
     machine.wait_until_succeeds(f"pgrep -u {ua} -f packages/host/dist/main.js", timeout=120)

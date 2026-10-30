@@ -410,8 +410,12 @@ with subtest("owner transfer and disable: the old approvals wait for review; a s
         call(1, [{"methodId": "workspaces.stop", "workspaceId": w, "idempotencyKey": str(uuid.uuid4()), "body": {}}], "tpre")
     r = call(1, [{"methodId": "workspaces.attach", "workspaceId": ws_a, "idempotencyKey": str(uuid.uuid4()), "body": {}}], "t0")[0]
     assert r["status"] == 200, r
-    for who, role, tag in [(frank, "editor", "t1"), (gina, "editor", "t2")]:
-        r = call(1, [{"methodId": "members.setRole", "workspaceId": ws_a, "idempotencyKey": str(uuid.uuid4()), "body": {"userId": who, "role": role}}], tag)[0]
+    for who, tag in [(frank, "t1"), (gina, "t2")]:
+        # a new member starts as viewer (machined refuses anything else), then is promoted with the current version
+        r = call(1, [{"methodId": "members.setRole", "workspaceId": ws_a, "idempotencyKey": str(uuid.uuid4()), "body": {"userId": who, "role": "viewer"}}], tag)[0]
+        assert r["status"] == 200, r
+        v = int(sql(f"SELECT member_version FROM workspace_members WHERE workspace_id='{ws_a}' AND user_id='{who}'"))
+        r = call(1, [{"methodId": "members.setRole", "workspaceId": ws_a, "idempotencyKey": str(uuid.uuid4()), "body": {"userId": who, "role": "editor", "expectedMemberVersion": v}}], tag + "e")[0]
         assert r["status"] == 200, r
     # I12: an old memberVersion cannot change a member
     mv = int(sql(f"SELECT member_version FROM workspace_members WHERE workspace_id='{ws_a}' AND user_id='{frank}'"))

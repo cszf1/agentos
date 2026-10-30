@@ -759,3 +759,18 @@ fn u04_u05_signatures_content_sequence_and_trusted_key_rotation() {
     let hw: i64 = t.m.c.query_row("SELECT accepted_release_sequence FROM machine_meta", [], |r| r.get(0)).unwrap();
     assert_eq!(hw, 5);
 }
+
+#[test]
+fn o06_after_a_power_cut_running_workspaces_without_a_host_on_this_boot_become_stopped() {
+    let (mut t, wss) = setup();
+    // setup's Hosts said hello from another boot ("boot"); ws[1] gets a Host on the current boot (machined restarted only)
+    t.m.host_hello(&wss[1].0, &uuid(), 4343, &crate::util::boot_id()).unwrap();
+    assert_eq!(t.m.reconcile_boot().unwrap(), 1);
+    let st = |t: &T, w: &str| t.m.c.query_row("SELECT state FROM workspaces WHERE workspace_id = ?1", [w], |r| r.get::<_, String>(0)).unwrap();
+    assert_eq!(st(&t, &wss[0].0), "stopped", "no Host on this boot: stopped, so attach really starts one");
+    assert_eq!(st(&t, &wss[1].0), "running", "a Host of this boot is kept");
+    let lost: i64 = t.m.c.query_row("SELECT COUNT(*) FROM workspace_instances WHERE workspace_id = ?1 AND state = 'lost'", [&wss[0].0], |r| r.get(0)).unwrap();
+    assert!(lost >= 1);
+    assert_eq!(t.m.reconcile_boot().unwrap(), 0, "idempotent");
+    t.m.start_workspace(&wss[0].0).unwrap();
+}

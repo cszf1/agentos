@@ -926,6 +926,29 @@ impl Machine {
         self.ws_row(ws)
     }
 
+    /// New boot (power cut, crash, reboot without a clean stop): a workspace the registry still calls running/starting/
+    /// quiescing has no live Host on THIS boot. Its instances from earlier boots are `lost` and the workspace is
+    /// `stopped`, so the next attach/start really starts a Host instead of waiting for one that cannot come (O06).
+    /// Instances of the current boot (machined itself was restarted) are left alone.
+    pub fn reconcile_boot(&mut self) -> R<usize> {
+        let boot = self.boot.clone();
+        self.tx(|c| {
+            let wss: Vec<String> = {
+                let mut st = c.prepare(
+                    "SELECT w.workspace_id FROM workspaces w WHERE w.state IN ('starting','running','quiescing') AND NOT EXISTS (SELECT 1 FROM workspace_instances i WHERE i.workspace_id = w.workspace_id AND i.boot_id = ?1 AND i.state IN ('starting','running','stopping'))",
+                )?;
+                let v = st.query_map([&boot], |r| r.get(0))?.collect::<Result<_, _>>()?;
+                v
+            };
+            for w in &wss {
+                c.execute("UPDATE workspace_instances SET state = 'lost' WHERE workspace_id = ?1 AND boot_id != ?2 AND state IN ('starting','running','stopping')", params![w, boot])?;
+                c.execute("UPDATE workspaces SET state = 'stopped' WHERE workspace_id = ?1", [w])?;
+                Self::audit(c, "machine", "workspace.boot_reconcile", Some(w), "stopped", None)?;
+            }
+            Ok(wss.len())
+        })
+    }
+
     /// Restart: a deletion still `deleting` asks the broker again (its verdict may have been lost in a crash).
     pub fn resume_deletions(&mut self) -> R<usize> {
         let rows: Vec<(String, String, Option<String>)> = {
