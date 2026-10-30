@@ -31,7 +31,7 @@ jobs:
         env:
           WANT: ${{ github.event.inputs.test || 'all' }}
         run: |
-          ALL='["m2-identity","m3-members","m5-desktop","m6-install","m6-qcow2","m7-update","m8-backup","m9-restore","m10-sched","m11-ops","build-release","build-iso","build-qcow2","build-shell","build-oci"]'
+          ALL='["m2-identity","m3-members","m5-desktop","m6-install","m6-qcow2","m7-update","m8-backup","m9-restore","m10-sched","m11-ops","build-release","build-iso","build-qcow2","build-shell","build-oci","build-repro"]'
           if [ "$WANT" = all ]; then echo "tests=$ALL" >> "$GITHUB_OUTPUT";
           else echo "$ALL" | jq -e --arg t "$WANT" 'index($t) != null' >/dev/null || { echo "unknown test $WANT"; exit 1; }
                echo "tests=[\"$WANT\"]" >> "$GITHUB_OUTPUT"; fi
@@ -88,8 +88,28 @@ jobs:
           ls -l /dev/kvm
           nix build ".#checks.x86_64-linux.${{ matrix.test }}" -L --print-out-paths 2>&1 | tee "$RUNNER_TEMP/vm-${{ matrix.test }}.log"
 
+      - name: Rebuild and compare (O09 part)
+        if: ${{ matrix.test == 'build-repro' }}
+        working-directory: os
+        run: |
+          # Build each delivered output, then build it again from the same inputs with --rebuild: Nix fails if the
+          # second build differs bit for bit and keeps both copies (<out> and <out>.check) for the diff.
+          set -o pipefail
+          rc=0
+          for A in agentos-native agentos-node agentos-shell agentos-release; do
+            nix build ".#$A" -L --print-out-paths 2>&1 | tail -3 | tee -a "$RUNNER_TEMP/build-repro.log"
+            if nix build ".#$A" --rebuild --keep-failed -L 2>&1 | tail -20 | tee -a "$RUNNER_TEMP/build-repro.log"; then
+              echo "REPRO $A identical" | tee -a "$RUNNER_TEMP/build-repro.log"
+            else
+              echo "REPRO $A DIFFERS" | tee -a "$RUNNER_TEMP/build-repro.log"; rc=1
+              out=$(nix eval --raw ".#$A.outPath")
+              [ -e "$out.check" ] && diff -r "$out" "$out.check" 2>&1 | head -40 | tee -a "$RUNNER_TEMP/build-repro.log"
+            fi
+          done
+          exit $rc
+
       - name: Build release output
-        if: ${{ startsWith(matrix.test, 'build-') }}
+        if: ${{ startsWith(matrix.test, 'build-') && matrix.test != 'build-repro' }}
         working-directory: os
         env:
           T: ${{ matrix.test }}

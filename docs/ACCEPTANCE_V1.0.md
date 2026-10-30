@@ -34,7 +34,7 @@
 | V1-I02 | 非登录进程 | 通过 | KVM VM（Actions） | m2-identity：无 logind 会话的 root 进程 session.bind → 401 SESSION_REQUIRED。 |
 | V1-I03 | 用户不可见数据 | 通过 | KVM VM（Actions） | m2-identity：B 列不到 A 的工作区，get/forward A 的 ID 统一 404 NOT_FOUND_OR_FORBIDDEN；m3-members 中机器管理员对非成员工作区同样 404。 |
 | V1-I04 | 角色矩阵 | 通过 | KVM VM（Actions）＋单元/集成 | tests/identity/access.test.ts 角色×动作全矩阵；m3-members：viewer 读 200、写/成员管理 404，editor 写入但 owner 动作（maintenance.control）被 Host 矩阵拒绝，owner 可执行，机器管理员无数据入口。 CI：f6d9d93 轮（run 41086404523）I04/I03/W04 子测试通过；I06 失败的根因是测试等待语句的 sqlite 查询三重转义、从未被解析（诊断显示撤销 196ms 内已 revoked，三方 outbox 均 acked），并非缺 ack；已修（4a0f725），重跑 run 41088865318，CI 待结果。 |
-| V1-I05 | 自身任务和共享任务 | 部分 | 单元/集成 | access.test.ts 覆盖自身/他人任务的读取与取消判定；真实 transcript 与 owner 跨任务管理未在 VM 中做。 |
+| V1-I05 | 自身任务和共享任务 | 部分 | 单元/集成（VM 已写，CI 待结果） | access.test.ts 覆盖自身/他人任务的读取与取消判定。m11-ops I05：editor 读不到/取消不了 owner 的 run transcript，能读并取消自己的；owner 能取消 editor 的 run。 m11-ops（os/tests/m11-ops.py，两个真实 Host + 本地保持端点）已写，run 41089329164，CI 待结果。 |
 | V1-I06 | 撤销与写提交竞争 | 部分 | KVM VM（Actions） | m3-members：Host 运行中撤销 → 被撤销者的读写立即被拒；revocations 只有在 gateway/host/broker 三方 ack 后才变 revoked。写提交与撤销的精确竞争窗口与 UI 结果一致性未做。 CI：f6d9d93 轮（run 41086404523）I04/I03/W04 子测试通过；I06 失败的根因是测试等待语句的 sqlite 查询三重转义、从未被解析（诊断显示撤销 196ms 内已 revoked，三方 outbox 均 acked），并非缺 ack；已修（4a0f725），重跑 run 41088865318，CI 待结果。 |
 | V1-I07 | 撤销与模型派发 | 部分 | 单元/集成 | directory.test.ts / admitPermit：等待中的 permit 在 memberVersion 变化后被撤；Rust 单元（本轮在 agentos-v1 cargo test 通过）：native/crates/machine/src/tests.rs s04_final_check_after_waiting_member_version_revocation_and_stop。 m10-sched（两个真实 Host + 本地保持端点）已写；f6d9d93 轮（run 41086409743）第一个子测试 W08 失败（gateway 返回 INVALID_REQUEST unknown method），本项子测试未执行到。 |
 | V1-I08 | 撤销时 | 部分 | KVM VM（Actions） | m3-members：Host 停止时撤销，gateway 立即拒绝，root 侧保持 revoking ≥8 秒，Host 重新启动并 ack 后才 revoked。broker 失联与执行者 fence 未单独做。 CI：f6d9d93 轮（run 41086404523）I04/I03/W04 子测试通过；I06 失败的根因是测试等待语句的 sqlite 查询三重转义、从未被解析（诊断显示撤销 196ms 内已 revoked，三方 outbox 均 acked），并非缺 ack；已修（4a0f725），重跑 run 41088865318，CI 待结果。 |
@@ -52,7 +52,7 @@
 | V1-W03 | 创建断点 | 部分 | 单元/集成 | directory.test.ts：半创建工作区不可见；VM 中各断点强杀未做。 |
 | V1-W04 | 两工作区并行 | 通过 | KVM VM（Actions） | m3-members：两个 Host 在不同 UID 下并行；SIGKILL A 的 Host 后 B 仍正常应答，A 由 systemd 重启后恢复。 CI：f6d9d93 轮（run 41086404523）I04/I03/W04 子测试通过；I06 失败的根因是测试等待语句的 sqlite 查询三重转义、从未被解析（诊断显示撤销 196ms 内已 revoked，三方 outbox 均 acked），并非缺 ack；已修（4a0f725），重跑 run 41088865318，CI 待结果。 |
 | V1-W05 | 切换与迟到响应 | 未通过 | 未验收 | Shell 快速切换与迟到响应过滤只有 offscreen ctest 的部分断言，未在 VM 会话中做。 |
-| V1-W06 | 接受后切换 | 未通过 | 未验收 | 未做。 |
+| V1-W06 | 接受后切换 | 未通过 | 未验收 | m11-ops W06：已接受 run 后切到 B，同幂等键重试回到 A 得到同一 runId，B 的 runs.list/runs.get 不含该 run，A 中只有一份。 m11-ops（os/tests/m11-ops.py，两个真实 Host + 本地保持端点）已写，run 41089329164，CI 待结果。 |
 | V1-W07 | 停止/归档 | 部分 | KVM VM（Actions） | m3-members：stop 后无 Host/Podman 进程且 os.sqlite/agent.sqlite 保留；archive 后数据保留、attach 被拒。归档恢复未做。 CI：f6d9d93 轮（run 41086404523）I04/I03/W04 子测试通过；I06 失败的根因是测试等待语句的 sqlite 查询三重转义、从未被解析（诊断显示撤销 196ms 内已 revoked，三方 outbox 均 acked），并非缺 ack；已修（4a0f725），重跑 run 41088865318，CI 待结果。 |
 | V1-W08 | 后台与注销 | 部分 | 单元/集成（VM 已写，CI 待结果） | Rust 单元（本轮在 agentos-v1 通过）：native/crates/machine/src/tests.rs w08_run_when_logged_out_default_off_owner_only_and_machine_quota：默认关闭、仅 owner、机器限额 ≤ 运行工作区上限。§16.1 没有设置类 route（原测试调用的 workspaces.setRunWhenLoggedOut 被 gateway 以 unknown method 拒绝），改为固定机器动作 workspaces.runWhenLoggedOut（plan→confirm，plan 与 dispatch 两次核对 owner）；m10-sched W08 子测试改为走该动作，重跑 run 41088879793，CI 待结果。锁屏/注销不扩大维护范围未单独断言。 |
 | V1-W09 | 资源共享冲突 | 未通过 | 未验收 | 两工作区共享物理资源的 broker 全局 fence 未在 v1.0 VM 中测（发行镜像不登记资源）。 |
@@ -157,10 +157,10 @@
 | V1-O03 | 断网日常可用 | 部分 | 单元/集成 | tests/integration/http.test.ts 无模型时 CRUD/查询/版本可用、生成明确不可用；未在 VM 中断网复测。 |
 | V1-O04 | 启动与交互性能 | 未通过 | 需实体机，未验收 | 需要固定参考机计时。 |
 | V1-O05 | 持续后台性能 | 未通过 | 需实体机，未验收 | 需要固定参考机计时。 |
-| V1-O06 | 真实故障恢复 | 部分 | KVM VM（Actions） | VM 中已有：machined 重启保身份（m2）、Host SIGKILL 后另一工作区不受影响（m3）、坏候选复位（m7）、检查点强杀（m8）。Shell/broker SIGKILL 与 VM power-cut 窗口未做。 |
-| V1-O07 | 原生入口攻击 | 部分 | 单元/集成 | access.test.ts：重复键/未知字段/URL 形 forward/超长帧被拒；fuzz 与慢连接未做。 |
+| V1-O06 | 真实故障恢复 | 部分 | KVM VM（Actions） | VM 中已有：machined 重启保身份（m2）、Host SIGKILL 后另一工作区不受影响（m3 W04，CI 通过）、坏候选复位（m7）、检查点强杀（m8）。m11-ops O06：依次 SIGKILL broker/machined/gateway，各自由 systemd 重启、machineInstallId 不变、两个 Host 重连后 forward 可用。m11-ops（os/tests/m11-ops.py，两个真实 Host + 本地保持端点）已写，run 41089329164，CI 待结果。 Shell SIGKILL 与 VM power-cut 窗口未做。 |
+| V1-O07 | 原生入口攻击 | 部分 | 单元/集成（VM 已写，CI 待结果） | access.test.ts：重复键/未知字段/URL 形 forward/超长帧被拒。本轮 gateway 新增：每 UID 32、总计 256 连接上限，已开始的帧须 30 秒内收齐（事件订阅空闲不限）；Rust 单元 o07_connection_slots_are_bounded_per_uid_and_released、o07_a_started_frame_must_complete_in_time_but_idle_is_unbounded 本轮通过。m11-ops O07（os/tests/ops-fuzz.py：超长长度、非 JSON、重复键、未知字段、URL forward、深嵌套、截断帧、20 个慢连接时正常请求 <5 s、停滞帧 35 s 内被关、每 UID 上限、释放后恢复、gateway RSS<200 MB）m11-ops（os/tests/m11-ops.py，两个真实 Host + 本地保持端点）已写，run 41089329164，CI 待结果。 旧票据重放未单独做。 |
 | V1-O08 | 日志与支持包 | 部分 | 单元/集成（VM 已写，CI 待结果） | agentosctl support-bundle --out <file>（native/crates/machine/src/ctl.rs）：仅 root、0600；只收机器级事实（release、boot、schema/协议、身份摘要 sha256 前 16 位、registry、工作区状态、permit/barrier/restore、boot default）与脱敏服务日志（含 password/psk/secret/token/cookie/authorization/api key/private 的行替换为标记），不收工作区正文。Rust 单元 o08_support_bundle_lines_naming_secrets_are_replaced 本轮通过；m10-sched O08 子测试（非 root 被拒、0600、无 PAM 口令、无完整 machineInstallId、root_audit 不被轮转）已写，CI 待结果。 |
-| V1-O09 | 干净构建与安装 | 未通过 | 未验收 | 两次干净构建比对与同一候选的完整交付演练未做。 |
+| V1-O09 | 干净构建与安装 | 未通过 | 未验收 | build-repro（Actions 新 job）：agentos-native/node/shell/release 各构建后用 nix build --rebuild 再构建一次逐位比较，不同则列出差异；已写，CI 待结果。ISO 安装/导入/升级/离机恢复的同一候选完整演练未做。 |
 | V1-O10 | 发布完成条件 | 未通过 | 未验收 | 100 项证据未齐，不能宣称发布完成。 |
 
 ## 统计
