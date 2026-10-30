@@ -35,6 +35,63 @@ pub fn read_frame(r: &mut impl Read) -> std::io::Result<Vec<u8>> {
     Ok(b)
 }
 
+/// Client connections per peer UID and in total (spec §27.1, V1-O07): beyond these a new connection is closed at once.
+pub const MAX_CONN_PER_UID: usize = 32;
+pub const MAX_CONN_TOTAL: usize = 256;
+/// Once the first byte of a frame arrived, the rest must arrive within this time (slow-client bound). An idle
+/// connection between frames (event subscriptions) is not limited.
+pub const FRAME_COMPLETE: Duration = Duration::from_secs(30);
+
+static CONNS: std::sync::Mutex<Option<HashMap<u32, usize>>> = std::sync::Mutex::new(None);
+
+pub struct ConnSlot(u32);
+
+impl ConnSlot {
+    pub fn take(uid: u32) -> Option<ConnSlot> {
+        let mut g = CONNS.lock().unwrap();
+        let m = g.get_or_insert_with(HashMap::new);
+        let total: usize = m.values().sum();
+        let mine = m.get(&uid).copied().unwrap_or(0);
+        if mine >= MAX_CONN_PER_UID || total >= MAX_CONN_TOTAL {
+            return None;
+        }
+        m.insert(uid, mine + 1);
+        Some(ConnSlot(uid))
+    }
+}
+
+impl Drop for ConnSlot {
+    fn drop(&mut self) {
+        let mut g = CONNS.lock().unwrap();
+        if let Some(m) = g.as_mut() {
+            if let Some(n) = m.get_mut(&self.0) {
+                *n = n.saturating_sub(1);
+                if *n == 0 {
+                    m.remove(&self.0);
+                }
+            }
+        }
+    }
+}
+
+/// read_frame for client sockets: unlimited wait for the first byte, then FRAME_COMPLETE for the rest.
+pub fn read_client_frame(s: &mut UnixStream) -> std::io::Result<Vec<u8>> {
+    let mut first = [0u8; 1];
+    s.set_read_timeout(None)?;
+    s.read_exact(&mut first)?;
+    s.set_read_timeout(Some(FRAME_COMPLETE))?;
+    let mut rest = [0u8; 3];
+    s.read_exact(&mut rest)?;
+    let n = u32::from_be_bytes([first[0], rest[0], rest[1], rest[2]]) as usize;
+    if n > MAX_FRAME {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "frame exceeds 4 MiB"));
+    }
+    let mut b = vec![0u8; n];
+    s.read_exact(&mut b)?;
+    s.set_read_timeout(None)?;
+    Ok(b)
+}
+
 pub fn frame(body: &[u8]) -> Vec<u8> {
     let mut v = Vec::with_capacity(body.len() + 4);
     v.extend_from_slice(&(body.len() as u32).to_be_bytes());
@@ -228,6 +285,13 @@ pub fn handle_client(gw: Arc<Gw>, stream: UnixStream) {
         Ok(c) => c,
         Err(_) => return,
     };
+    let _slot = match ConnSlot::take(cred.uid) {
+        Some(s) => s,
+        None => {
+            let _ = stream.shutdown(std::net::Shutdown::Both);
+            return;
+        }
+    };
     let conn = gw.next.fetch_add(1, Ordering::SeqCst);
     let dbus = match zbus::blocking::Connection::system() {
         Ok(c) => c,
@@ -266,7 +330,7 @@ pub fn handle_client(gw: Arc<Gw>, stream: UnixStream) {
     let inflight = Arc::new(AtomicU64::new(0));
     let mut r = stream;
     loop {
-        let body = match read_frame(&mut r) {
+        let body = match read_client_frame(&mut r) {
             Ok(b) => b,
             Err(_) => break,
         };
@@ -810,4 +874,30 @@ pub fn serve(gw: Arc<Gw>, client: UnixListener, host: UnixListener) -> ! {
         std::thread::spawn(move || handle_client(g, s));
     }
     std::process::exit(1)
+}
+
+#[cfg(test)]
+mod o07_tests {
+    use super::*;
+
+    #[test]
+    fn o07_connection_slots_are_bounded_per_uid_and_released() {
+        let uid = 4_000_123;
+        let held: Vec<ConnSlot> = (0..MAX_CONN_PER_UID).map(|_| ConnSlot::take(uid).expect("slot")).collect();
+        assert!(ConnSlot::take(uid).is_none(), "one uid cannot exceed its connection bound");
+        assert!(ConnSlot::take(uid + 1).is_some(), "another uid is still served");
+        drop(held);
+        assert!(ConnSlot::take(uid).is_some(), "slots come back when connections end");
+    }
+
+    #[test]
+    fn o07_a_started_frame_must_complete_in_time_but_idle_is_unbounded() {
+        let (mut a, mut b) = UnixStream::pair().unwrap();
+        std::io::Write::write_all(&mut b, &frame(b"{\"x\":1}")).unwrap();
+        assert_eq!(read_client_frame(&mut a).unwrap(), b"{\"x\":1}".to_vec());
+        assert_eq!(a.read_timeout().unwrap(), None, "between frames the connection may stay idle");
+        let big = (MAX_FRAME as u32 + 1).to_be_bytes();
+        std::io::Write::write_all(&mut b, &big).unwrap();
+        assert!(read_client_frame(&mut a).is_err(), "oversized frame refused before reading its body");
+    }
 }

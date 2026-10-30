@@ -76,6 +76,7 @@
         m8-backup = test "m8" ./tests/m8-backup.nix { };
         m9-restore = test "m9" ./tests/m9-restore.nix { };
         m10-sched = test "m10" ./tests/m10-sched.nix { };
+        m11-ops = test "m11" ./tests/m11-ops.nix { };
         m5-desktop = import ./tests/m5-desktop.nix { inherit pkgs; modules = [ ./modules/base.nix ./modules/graphics.nix ./modules/agentos.nix ]; };
       };
     };
