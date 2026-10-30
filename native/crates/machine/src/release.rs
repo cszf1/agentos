@@ -279,6 +279,33 @@ impl Machine {
             )
             .optional()?
             .ok_or_else(MErr::hidden)
+            .and_then(|mut v| {
+                v["commitIntent"] = json!(self.commit_intent_recorded(update_id)?);
+                Ok(v)
+            })
+    }
+
+    /// The commit intent of an update (spec §21.3 step 7, V1-U10): written once, in its own transaction, after the
+    /// trial boot passed its health gate and before the worker writes the persistent default. It lives in the
+    /// append-only root audit, so a crash anywhere after it resolves from facts: default not yet the candidate →
+    /// write it again; default already the candidate → finish the commit. Only a validating update takes it.
+    pub fn record_commit_intent(&self, update_id: &str) -> R<Value> {
+        self.tx(|c| {
+            let st: String = c.query_row("SELECT state FROM update_jobs WHERE update_id = ?1", [update_id], |r| r.get(0)).optional()?.ok_or_else(MErr::hidden)?;
+            let have: i64 = c.query_row("SELECT COUNT(*) FROM root_audit WHERE kind = 'update.commit_intent' AND scope_id = ?1", [update_id], |r| r.get(0))?;
+            if have > 0 {
+                return Ok(());
+            }
+            if st != "validating" {
+                return Err(MErr::new("CONFLICT", format!("a commit intent needs a validating update (this one is {st})")));
+            }
+            Self::audit(c, "root", "update.commit_intent", Some(update_id), "recorded", None)
+        })?;
+        self.update(update_id)
+    }
+
+    pub fn commit_intent_recorded(&self, update_id: &str) -> R<bool> {
+        Ok(self.c.query_row("SELECT COUNT(*) FROM root_audit WHERE kind = 'update.commit_intent' AND scope_id = ?1", [update_id], |r| r.get::<_, i64>(0))? > 0)
     }
 
     pub fn open_update_id(&self) -> R<Option<String>> {

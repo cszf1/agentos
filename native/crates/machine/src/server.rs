@@ -199,6 +199,7 @@ pub fn dispatch(m: &mut Machine, ex: &mut dyn Executor, secrets: &std::sync::Mut
             "updates.open" => m.open_update(s(&a, "updateId")?, s(&a, "toReleaseId")?, a.get("plan").unwrap_or(&Value::Null)),
             "updates.get" => m.update(s(&a, "updateId")?),
             "updates.current" => Ok(json!({ "updateId": m.open_update_id()? })),
+            "updates.commitIntent" => m.record_commit_intent(s(&a, "updateId")?),
             "updates.advance" => m.advance_update(s(&a, "updateId")?, s(&a, "to")?, a.get("fields").unwrap_or(&json!({}))),
             "barrier.hold" => Ok(json!({ "barrierId": m.hold_barrier(s(&a, "ownerKind")?, s(&a, "ownerId")?, a.get("scope").unwrap_or(&json!({})))? })),
             "barrier.release" => m.release_barrier(s(&a, "barrierId")?).map(|_| json!({})),

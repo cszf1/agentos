@@ -13,6 +13,10 @@
 //!   agentosctl update verify --manifest <file> --signature <file> [--trusted-time] [--images <index.json>]
 //!                                                              (root: signature, key, fields, sequence, expiry, closure
 //!                                                               content in the store, OCI image IDs; nothing registered)
+//!   agentosctl update commit --update-id <id>                  (root: health gate → commit intent → persistent default
+//!                                                               read back → committed, deferred migration once)
+//!   agentosctl update reconcile                                (root, every boot: resolves the open update from facts —
+//!                                                               machined state + commit intent + what the loader booted)
 use agentos_machine::server::Client;
 use agentos_machine::util::uuid;
 use serde_json::{json, Value};
@@ -111,6 +115,14 @@ fn main() {
         (Some("update"), Some("verify")) => {
             root_only("update verify");
             update_verify(&mut c, &a);
+        }
+        (Some("update"), Some("commit")) => {
+            root_only("update commit");
+            update_commit(&mut c, &a);
+        }
+        (Some("update"), Some("reconcile")) => {
+            root_only("update reconcile");
+            update_reconcile(&mut c);
         }
         (Some("firstboot"), _) => {
             if unsafe { libc::geteuid() } != 0 {
@@ -661,4 +673,95 @@ fn binding_pending(db: &str) -> bool {
         rusqlite::Connection::open_with_flags(uri, ro).ok().and_then(|c| c.query_row("SELECT agent_binding_state FROM meta WHERE id = 1", [], |r| r.get::<_, String>(0)).ok())
     };
     q(format!("file:{db}?mode=ro")).or_else(|| q(format!("file:{db}?immutable=1"))).as_deref() == Some("pending")
+}
+
+/// Runs the fixed update worker and returns its last JSON line (`{"ok": ..}`).
+fn uw(args: &[&str]) -> Value {
+    let o = std::process::Command::new(update_worker()).args(args).output().unwrap_or_else(|e| die(&format!("update worker: {e}")));
+    let text = String::from_utf8_lossy(&o.stdout);
+    text.lines().rev().find_map(|l| serde_json::from_str::<Value>(l).ok()).unwrap_or_else(|| json!({ "ok": false, "error": { "code": "UPDATE_WORKER", "message": String::from_utf8_lossy(&o.stderr).trim().to_string() } }))
+}
+
+fn uw_ok(args: &[&str]) -> Value {
+    let v = uw(args);
+    if v["ok"] != true {
+        die(&format!("{}: {}", v["error"]["code"].as_str().unwrap_or("UPDATE_WORKER"), v["error"]["message"].as_str().unwrap_or("update worker failed")));
+    }
+    v["result"].clone()
+}
+
+fn health_gate_skipped() -> bool {
+    // VM checks have no greeter or Shell frame; only the test fault switch (never set in a release unit) skips it.
+    std::env::var("AGENTOS_TEST_FAULTS").as_deref() == Ok("1") && std::env::var("AGENTOS_TEST_SKIP_HEALTH_GATE").as_deref() == Ok("1")
+}
+
+/// Commit window (spec §21.3 step 7, V1-U10). Order: health gate on the trial boot → commit intent (machined, its
+/// own transaction) → the worker writes the persistent default and reads it back → machined `committed` (current/
+/// known-good/high-water, barrier released, deferred schema migration once). A crash between any two steps is
+/// resolved by `update reconcile` from the facts, never by repeating a finished step.
+fn update_commit(c: &mut Client, a: &[String]) {
+    let id = arg(a, "--update-id").unwrap_or_else(|| die("usage: agentosctl update commit --update-id <id>"));
+    let u = c.call("updates.get", json!({ "updateId": id })).unwrap_or_else(|e| die(&e.to_string()));
+    if u["state"] != "validating" {
+        die(&format!("CONFLICT: update {id} is {} (commit needs a validating trial boot)", u["state"].as_str().unwrap_or("?")));
+    }
+    let to = u["toReleaseId"].as_str().unwrap_or_default().to_string();
+    let boot_id = std::fs::read_to_string("/proc/sys/kernel/random/boot_id").unwrap_or_default().trim().to_string();
+    if u["trialBootId"].as_str() != Some(boot_id.as_str()) {
+        die("CONFLICT: this is not the trial boot of the update; commit only from the candidate's own trial boot");
+    }
+    if !health_gate_skipped() {
+        // the gate alone; the default is written only after the intent below
+        let g = uw(&["health", "--state-dir", "/var/lib/agentos-machine", "--schema-min", "5", "--schema-max", "5"]);
+        if g["ok"] != true || g["result"]["healthy"] != true {
+            die(&format!("NEEDS_ATTENTION: health gate failed; default unchanged: {}", g["result"]["failing"]));
+        }
+    }
+    c.call("updates.commitIntent", json!({ "updateId": id })).unwrap_or_else(|e| die(&e.to_string()));
+    fault("update.commit.after_intent");
+    uw_ok(&["commit", "--release-id", &to]);
+    fault("update.commit.after_default");
+    let done = c.call("updates.advance", json!({ "updateId": id, "to": "committed", "fields": {} })).unwrap_or_else(|e| die(&e.to_string()));
+    out(&json!({ "updateId": id, "state": done["state"], "default": format!("agentos-{to}.conf") }));
+}
+
+/// Boot-time reconciliation of the open update (spec §21.2–21.3, V1-U08/U10): facts from machined (state,
+/// candidate, known-good, trial boot id, commit intent) and from the loader (booted entry, persistent default) go
+/// through the worker's pure decision; the action is applied here. Running it twice changes nothing more.
+fn update_reconcile(c: &mut Client) {
+    let cur = c.call("updates.current", json!({})).unwrap_or_else(|e| die(&e.to_string()));
+    let Some(id) = cur["updateId"].as_str().map(String::from) else {
+        out(&json!({ "action": "none", "reason": "no open update" }));
+        return;
+    };
+    let u = c.call("updates.get", json!({ "updateId": id })).unwrap_or_else(|e| die(&e.to_string()));
+    let to = u["toReleaseId"].as_str().unwrap_or_default().to_string();
+    let from = u["fromReleaseId"].as_str().unwrap_or_default().to_string();
+    let facts = json!({ "state": u["state"], "candidate": to, "knownGood": from, "trialBootId": u["trialBootId"], "commitIntent": u["commitIntent"] == true });
+    let boot_id = std::fs::read_to_string("/proc/sys/kernel/random/boot_id").unwrap_or_default().trim().to_string();
+    let f = facts.to_string();
+    let act = uw_ok(&["after-boot", "--facts", &f, "--boot-id", &boot_id]);
+    let adv = |c: &mut Client, to_state: &str, fields: Value| c.call("updates.advance", json!({ "updateId": id, "to": to_state, "fields": fields })).unwrap_or_else(|e| die(&e.to_string()));
+    let done = match act["action"].as_str().unwrap_or("none") {
+        "enter_validating" => {
+            if u["state"] == "armed" {
+                adv(c, "trial_boot", json!({ "trialBootId": boot_id }));
+            }
+            adv(c, "validating", json!({ "trialBootId": boot_id }))
+        }
+        "resume_commit_set_default" => {
+            uw_ok(&["commit", "--release-id", &to]);
+            fault("update.reconcile.after_default");
+            adv(c, "committed", json!({}))
+        }
+        "finish_commit" => adv(c, "committed", json!({})),
+        "rolled_back" => {
+            if u["state"] != "rollback_pending" {
+                adv(c, "rollback_pending", json!({ "error": { "reason": act["reason"] } }));
+            }
+            adv(c, "rolled_back", json!({}))
+        }
+        _ => u.clone(),
+    };
+    out(&json!({ "updateId": id, "facts": facts, "action": act, "state": done["state"] }));
 }
