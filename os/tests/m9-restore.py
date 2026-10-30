@@ -36,7 +36,11 @@ assert ua != ub
 for ws in (ws_a, ws_b):
     machine.wait_until_succeeds(f"test -s /var/lib/agentos/workspaces/{ws}/data/agent.sqlite", timeout=120)
 for u in (bob, carol):
-    r = call(1, [{"methodId": "members.setRole", "workspaceId": ws_a, "idempotencyKey": str(uuid.uuid4()), "body": {"userId": u, "role": "editor"}}], "sr" + u[:4])[0]
+    # a new member starts as viewer; promotion names the member version it was decided on (§7.1)
+    r = call(1, [{"methodId": "members.setRole", "workspaceId": ws_a, "idempotencyKey": str(uuid.uuid4()), "body": {"userId": u, "role": "viewer"}}], "sv" + u[:4])[0]
+    assert r["status"] == 200, r
+    mv = int(sql(f"SELECT member_version FROM workspace_members WHERE workspace_id='{ws_a}' AND user_id='{u}'"))
+    r = call(1, [{"methodId": "members.setRole", "workspaceId": ws_a, "idempotencyKey": str(uuid.uuid4()), "body": {"userId": u, "role": "editor", "expectedMemberVersion": mv}}], "sr" + u[:4])[0]
     assert r["status"] == 200, r
 
 with subtest("a backup that dies under its barrier freezes every workspace; abandon releases it (R02)"):
