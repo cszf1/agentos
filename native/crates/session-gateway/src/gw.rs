@@ -489,7 +489,7 @@ pub fn route(gw: &Gw, conn: u64, uid: u32, pid: u32, dbus: &zbus::blocking::Conn
         "workspaces.list" => gw.machine("workspaces.list", a(json!({}))).map(|v| (200, v)),
         "workspaces.get" => gw.machine("workspaces.get", a(json!({ "workspaceId": ws }))).map(|v| (200, redact_ws(v))),
         "workspaces.create" => gw.machine("workspaces.create", a(json!({ "createId": idem_uuid(e)?, "displayName": s(&e.body, "displayName")? }))).map(|v| (201, redact_ws(v))),
-        "workspaces.start" => gw.machine("workspaces.start", a(json!({ "workspaceId": ws }))).map(|v| (202, redact_ws(v))),
+        "workspaces.start" => gw.machine("workspaces.start", a(json!({ "workspaceId": ws, "restoreArchived": true }))).map(|v| (202, redact_ws(v))),
         "workspaces.stop" => gw.machine("workspaces.stop", a(json!({ "workspaceId": ws }))).map(|v| (200, redact_ws(v))),
         "workspaces.archive" => gw.machine("workspaces.archive", a(json!({ "workspaceId": ws }))).map(|v| (200, redact_ws(v))),
         "workspaces.attach" => attach(gw, conn, &user, e, tx, &p),

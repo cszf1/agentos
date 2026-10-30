@@ -135,7 +135,8 @@ pub fn dispatch(m: &mut Machine, ex: &mut dyn Executor, secrets: &std::sync::Mut
                 m.membership(&p.user_id, ws)?;
                 // Restoring an archived workspace (spec §8.2, V1-W07) is its owner starting it again: unarchive (owner
                 // only, re-enables linger) and then the normal start, whose fence check verifies no old instance lives.
-                if m.ws_row(ws)?["state"] == "archived" {
+                // Only an explicit workspaces.start says so; attach's implicit start never unarchives.
+                if a.get("restoreArchived").and_then(|x| x.as_bool()) == Some(true) && m.ws_row(ws)?["state"] == "archived" {
                     m.unarchive_workspace(&p.user_id, ws)?;
                 }
                 m.start_workspace(ws)
