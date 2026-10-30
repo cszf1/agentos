@@ -146,17 +146,22 @@ impl Machine {
                 return Err(MErr::hidden());
             }
             if state == "in_use" {
-                return Ok(());
+                return Ok(None);
             }
             if state != "reserved" {
                 return Err(MErr::new(if state == "reconciling" { "PERMIT_RECONCILING" } else { "MEMBERSHIP_REVOKED" }, format!("permit is {state}")));
             }
             if mv != member_version || now_ms() > deadline {
+                // Committed (not rolled back with the error): the slot goes to the next waiter at once.
                 c.execute("UPDATE machine_permits SET state = 'revoked', usage_status = 'unused' WHERE permit_id = ?1", [permit_id])?;
-                return Err(MErr::new("MEMBERSHIP_REVOKED", "permit was issued for an older membership or expired"));
+                return Ok(Some(MErr::new("MEMBERSHIP_REVOKED", "permit was issued for an older membership or expired")));
             }
             c.execute("UPDATE machine_permits SET state = 'in_use', used_at = ?2 WHERE permit_id = ?1", params![permit_id, now_ms()])?;
-            Ok(())
+            Ok(None)
+        })?
+        .map_or(Ok(()), |e| {
+            let _ = self.schedule();
+            Err(e)
         })?;
         self.permit(permit_id)
     }

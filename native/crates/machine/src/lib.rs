@@ -14,3 +14,5 @@ pub mod util;
 
 pub use dir::Machine;
 pub use err::MErr;
+#[cfg(test)]
+mod tests;
