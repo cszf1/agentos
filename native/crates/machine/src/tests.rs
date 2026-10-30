@@ -658,3 +658,32 @@ fn r12_full_or_read_only_disk_stops_new_effects_keeps_receipts_pins_and_local_la
     t.m.set_export_state(&sets[4], "verified").unwrap();
     assert_eq!(t.m.checkpoint(&sets[4]).unwrap()["offMachineCopy"], true);
 }
+
+#[test]
+fn b07_interrupted_machine_migration_leaves_schema_1_intact() {
+    let dir = std::env::temp_dir().join(format!("agentos-b07-{}", uuid()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let p = dir.join("machine.sqlite");
+    {
+        let c = rusqlite::Connection::open(&p).unwrap();
+        c.execute_batch(&crate::db::schema_v1()).unwrap();
+        c.execute("INSERT INTO machine_meta (id, machine_install_id, first_boot_id, machine_control_epoch, registry_seq, schema_version, restore_state, first_boot_state, machine_secret_ref, created_at) VALUES (1, 'mid', 'fb', 1, 0, 1, 'idle', 'closed', 'x', 1)", []).unwrap();
+        c.execute("INSERT INTO users (user_id, login_uid, login_name, role, state, auth_version, provisioning_id, created_at) VALUES ('u1', 1000, 'ada', 'user', 'active', 1, 'p1', 1)", []).unwrap();
+        c.execute("INSERT INTO workspaces (workspace_id, create_id, store_uuid, display_name, owner_user_id, execution_uid, exec_login, subuid_start, subgid_start, range_size, state, instance_epoch, workspace_incarnation, data_path_id, origin, created_at) VALUES ('w1', 'c1', 's1', 'A', 'u1', 60000, 'aows0', 100000, 100000, 65536, 'stopped', 1, 1, 'd', 'created', 1)", []).unwrap();
+        // a damaged row (foreign keys were off when it was written): the migration's own check fails half-way
+        c.execute("INSERT INTO workspace_members (workspace_id, user_id, role, member_version, state, changed_at) VALUES ('w-gone', 'u1', 'viewer', 1, 'active', 1)", []).unwrap();
+    }
+    assert!(crate::db::open(p.to_str().unwrap()).is_err(), "a failed migration is reported, not hidden");
+    let c = rusqlite::Connection::open(&p).unwrap();
+    let v: i64 = c.query_row("SELECT schema_version FROM machine_meta", [], |r| r.get(0)).unwrap();
+    assert_eq!(v, 1, "rolled back as a whole");
+    assert!(c.execute("UPDATE workspaces SET state = 'deleted'", []).is_err(), "still the schema-1 CHECK");
+    let n: i64 = c.query_row("SELECT COUNT(*) FROM workspaces", [], |r| r.get(0)).unwrap();
+    assert_eq!(n, 1);
+    let tmp: i64 = c.query_row("SELECT COUNT(*) FROM sqlite_master WHERE name LIKE '%_v2'", [], |r| r.get(0)).unwrap();
+    assert_eq!(tmp, 0, "no half-built table left behind");
+    let a: i64 = c.query_row("SELECT COUNT(*) FROM root_audit WHERE kind = 'machine.schema_migrate'", [], |r| r.get(0)).unwrap();
+    assert_eq!(a, 0);
+    drop(c);
+    let _ = std::fs::remove_dir_all(&dir);
+}
