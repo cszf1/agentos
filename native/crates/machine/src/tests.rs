@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex};
 #[derive(Clone, Default)]
 struct Fake {
     busy: Arc<Mutex<HashSet<u32>>>,
+    removed: Arc<Mutex<Vec<String>>>,
 }
 
 impl System for Fake {
@@ -30,6 +31,7 @@ impl System for Fake {
     fn stop_workspace(&mut self, _: &str, uid: u32) -> R<()> { self.busy.lock().unwrap().remove(&uid); Ok(()) }
     fn exec_cgroup_busy(&self, uid: u32) -> bool { self.busy.lock().unwrap().contains(&uid) }
     fn kill_exec_cgroup(&mut self, uid: u32) -> R<()> { self.busy.lock().unwrap().remove(&uid); Ok(()) }
+    fn remove_workspace_roots(&mut self, _: &Paths, ws: &str) -> R<()> { self.removed.lock().unwrap().push(ws.to_string()); Ok(()) }
 }
 
 struct T {
@@ -337,6 +339,7 @@ impl System for Accounts {
     fn stop_workspace(&mut self, _: &str, _: u32) -> R<()> { Ok(()) }
     fn exec_cgroup_busy(&self, _: u32) -> bool { false }
     fn kill_exec_cgroup(&mut self, _: u32) -> R<()> { Ok(()) }
+    fn remove_workspace_roots(&mut self, _: &Paths, _: &str) -> R<()> { Ok(()) }
 }
 
 #[test]
@@ -415,4 +418,141 @@ fn i09_owner_transfer_needs_both_sides_and_current_versions() {
     // replaying the confirmation is idempotent; the last owner cannot be dropped by demotion
     assert_eq!(t.m.confirm_transfer(&bea, &tid2).unwrap()["state"], "confirmed");
     assert!(t.m.set_role(&bea, &ws, &bea, "viewer", None).is_err());
+}
+
+fn ack_all(m: &Machine) {
+    m.c.execute("UPDATE registry_outbox SET state = 'acked' WHERE state = 'pending'", []).unwrap();
+}
+
+#[test]
+fn w10_delete_checks_effects_pins_executors_and_keeps_tombstone() {
+    let (mut t, w) = setup();
+    let (ws, ada, uid) = w[0].clone();
+    let bea = w[1].1.clone();
+    let store = t.m.ws_row(&ws).unwrap()["storeUUID"].as_str().unwrap().to_string();
+    // a running workspace cannot be deleted; deletion needs archive first
+    assert_eq!(t.m.begin_delete(&ada, &ws, &uuid(), "discard", None, None).unwrap_err().code, "CONFLICT");
+    t.m.archive_workspace(&ada, &ws).unwrap();
+    ack_all(&t.m);
+    // the administrator is not the owner and has no owner consent → refused
+    assert_eq!(t.m.begin_delete(&bea, &ws, &uuid(), "discard", None, None).unwrap_err().code, "CONFLICT");
+    // a bad disposition, or "exported" without a complete exported set, is refused
+    assert_eq!(t.m.begin_delete(&ada, &ws, &uuid(), "keep", None, None).unwrap_err().code, "INVALID_REQUEST");
+    assert!(t.m.begin_delete(&ada, &ws, &uuid(), "exported", Some(&uuid()), None).is_err());
+    // an executor of the workspace is alive → fenced
+    t.fake.busy.lock().unwrap().insert(uid);
+    assert_eq!(t.m.begin_delete(&ada, &ws, &uuid(), "discard", None, None).unwrap_err().code, "WORKSPACE_FENCED");
+    t.fake.busy.lock().unwrap().remove(&uid);
+    // a pinned local recovery set that covered this workspace blocks deletion
+    let b = t.m.hold_barrier("checkpoint", &uuid(), &serde_json::json!({ "workspaces": [ws.clone()] })).unwrap();
+    let set = uuid();
+    t.m.begin_checkpoint(&set, "machine", &b).unwrap();
+    t.m.complete_checkpoint(&set, "sha256:00", true).unwrap();
+    t.m.release_barrier(&b).unwrap();
+    ack_all(&t.m);
+    let e = t.m.begin_delete(&ada, &ws, &uuid(), "discard", None, None).unwrap_err();
+    assert_eq!(e.code, "CONFLICT", "{}", e.message);
+    t.m.c.execute("UPDATE checkpoint_sets SET pinned = 0 WHERE set_id = ?1", [&set]).unwrap();
+    // an unsynced broker blocks deletion (it could not judge effects yet)
+    t.m.c.execute("UPDATE registry_outbox SET state = 'pending' WHERE id = (SELECT MAX(id) FROM registry_outbox WHERE target_kind = 'broker')", []).unwrap();
+    assert_eq!(t.m.begin_delete(&ada, &ws, &uuid(), "discard", None, None).unwrap_err().code, "STORE_UNAVAILABLE");
+    ack_all(&t.m);
+    // phase 1: deleting, broker asked; nothing removed yet; idempotent for the same deleteId
+    let did = uuid();
+    assert_eq!(t.m.begin_delete(&ada, &ws, &did, "discard", None, None).unwrap()["state"], "deleting");
+    assert_eq!(t.m.begin_delete(&ada, &ws, &did, "discard", None, None).unwrap()["state"], "deleting");
+    assert_eq!(t.m.begin_delete(&ada, &ws, &uuid(), "discard", None, None).unwrap_err().code, "CONFLICT");
+    let asked: i64 = t.m.c.query_row("SELECT COUNT(*) FROM registry_outbox WHERE target_kind = 'broker' AND kind = 'workspace.deleting' AND state = 'pending'", [], |r| r.get(0)).unwrap();
+    assert_eq!(asked, 1);
+    assert!(t.fake.removed.lock().unwrap().is_empty());
+    // a deleting workspace cannot be started or restored, and its executor is no longer recognised
+    assert!(t.m.start_workspace(&ws).is_err());
+    assert!(t.m.unarchive_workspace(&ada, &ws).is_err());
+    assert!(t.m.ws_by_exec_uid(uid).unwrap().is_none());
+    // the broker reports an unknown effect → blocked, back to archived with the reason kept
+    assert_eq!(t.m.delete_verdict(&ws, &did, 1, &serde_json::json!({ "operations": ["x"] })).unwrap_err().code, "CONFLICT");
+    assert_eq!(t.m.ws_row(&ws).unwrap()["state"], "archived");
+    assert!(t.fake.removed.lock().unwrap().is_empty());
+    // a stale verdict for that old deleteId has no effect
+    assert_eq!(t.m.delete_verdict(&ws, &did, 0, &serde_json::Value::Null).unwrap()["state"], "archived");
+    // retry after reconciliation; a restart before the verdict re-asks the broker
+    let did2 = uuid();
+    ack_all(&t.m);
+    t.m.begin_delete(&ada, &ws, &did2, "discard", None, None).unwrap();
+    ack_all(&t.m);
+    assert_eq!(t.m.resume_deletions().unwrap(), 1);
+    let again: String = t.m.c.query_row("SELECT body_json FROM registry_outbox WHERE target_kind = 'broker' AND kind = 'workspace.deleting' AND state = 'pending'", [], |r| r.get(0)).unwrap();
+    assert!(again.contains(&did2));
+    // clean verdict: roots removed, row kept as tombstone, members revoked, invisible to everyone
+    assert_eq!(t.m.delete_verdict(&ws, &did2, 0, &serde_json::Value::Null).unwrap()["state"], "deleted");
+    assert_eq!(t.fake.removed.lock().unwrap().as_slice(), &[ws.clone()]);
+    assert!(t.m.list_visible(&ada).unwrap().iter().all(|v| v["workspaceId"] != ws.as_str()));
+    assert_eq!(t.m.membership(&ada, &ws).unwrap_err().code, crate::err::MErr::hidden().code);
+    let tomb: (String, String, i64, Option<i64>) = t.m.c.query_row("SELECT state, store_uuid, execution_uid, deleted_at FROM workspaces WHERE workspace_id = ?1", [&ws], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))).unwrap();
+    assert_eq!((tomb.0.as_str(), tomb.1.as_str(), tomb.2 as u32), ("deleted", store.as_str(), uid));
+    assert!(tomb.3.is_some());
+    // tombstones: the storeUUID cannot be registered again (no second writer for it) and the UID is not reused
+    assert_eq!(t.m.create_workspace(&uuid(), &ada, "again", Some(&store), "imported_v04").unwrap_err().code, "STORE_ALREADY_REGISTERED");
+    let n = t.m.create_workspace(&uuid(), &ada, "new", None, "created").unwrap();
+    assert_ne!(n["executionUid"].as_u64().unwrap() as u32, uid);
+    // a deleted workspace does not count toward the registered-workspace cap
+    let cnt: i64 = t.m.c.query_row("SELECT COUNT(*) FROM workspaces WHERE state != 'deleted'", [], |r| r.get(0)).unwrap();
+    assert_eq!(cnt, 2);
+}
+
+#[test]
+fn w10_owner_consent_operation_lets_a_non_owner_admin_delete() {
+    let (mut t, w) = setup();
+    let (ws, ada, _) = w[0].clone();
+    let bea = w[1].1.clone();
+    t.m.archive_workspace(&ada, &ws).unwrap();
+    ack_all(&t.m);
+    // a consent record by someone who is not the owner, or for another disposition, does not count
+    let fake_op = uuid();
+    t.m.c.execute("INSERT INTO machine_operations (operation_id, principal_user_id, session_epoch, idempotency_key, kind, resource_id, resource_generation, params_json, plan_hash, request_hash, machine_control_epoch, state, effect_certainty, expires_at, created_at) VALUES (?1, ?2, 1, ?1, 'workspaces.deleteConsent', 'r', 1, ?3, 'h', 'h', 1, 'succeeded', 'applied', 0, 0)",
+        rusqlite::params![fake_op, bea, serde_json::json!({ "workspaceId": ws, "dataDisposition": "discard" }).to_string()]).unwrap();
+    assert!(!t.m.owner_consented(&bea, &ws, "discard", Some(&fake_op)).unwrap());
+    let op = uuid();
+    t.m.c.execute("INSERT INTO machine_operations (operation_id, principal_user_id, session_epoch, idempotency_key, kind, resource_id, resource_generation, params_json, plan_hash, request_hash, machine_control_epoch, state, effect_certainty, expires_at, created_at) VALUES (?1, ?2, 1, ?1, 'workspaces.deleteConsent', 'r', 1, ?3, 'h', 'h', 1, 'succeeded', 'applied', 0, 0)",
+        rusqlite::params![op, ada, serde_json::json!({ "workspaceId": ws, "dataDisposition": "discard" }).to_string()]).unwrap();
+    assert!(!t.m.owner_consented(&bea, &ws, "exported", Some(&op)).unwrap());
+    assert!(t.m.owner_consented(&bea, &ws, "discard", Some(&op)).unwrap());
+    assert_eq!(t.m.begin_delete(&bea, &ws, &uuid(), "discard", None, Some(&op)).unwrap()["state"], "deleting");
+}
+
+#[test]
+fn w10_schema_1_database_migrates_to_2_keeping_every_row() {
+    let dir = std::env::temp_dir().join(format!("agentos-mig-{}", uuid()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let p = dir.join("machine.sqlite");
+    {
+        let c = rusqlite::Connection::open(&p).unwrap();
+        c.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        c.execute_batch(&crate::db::schema_v1()).unwrap();
+        c.execute("INSERT INTO machine_meta (id, machine_install_id, first_boot_id, machine_control_epoch, registry_seq, schema_version, restore_state, first_boot_state, machine_secret_ref, created_at) VALUES (1, 'mid', 'fb', 3, 7, 1, 'idle', 'closed', 'file:machine.secret#1', 1)", []).unwrap();
+        c.execute("INSERT INTO users (user_id, login_uid, login_name, role, state, auth_version, provisioning_id, created_at) VALUES ('u1', 1000, 'ada', 'user', 'active', 1, 'p1', 1)", []).unwrap();
+        c.execute("INSERT INTO workspaces (workspace_id, create_id, store_uuid, display_name, owner_user_id, execution_uid, exec_login, subuid_start, subgid_start, range_size, state, instance_epoch, workspace_incarnation, data_path_id, origin, created_at) VALUES ('w1', 'c1', 's1', 'A', 'u1', 60000, 'aows0', 100000, 100000, 65536, 'archived', 4, 2, 'data:w1:1', 'imported_v04', 1)", []).unwrap();
+        c.execute("INSERT INTO workspace_members (workspace_id, user_id, role, member_version, state, changed_at) VALUES ('w1', 'u1', 'owner', 3, 'active', 1)", []).unwrap();
+        // schema 1 has no deleted state
+        assert!(c.execute("UPDATE workspaces SET state = 'deleted'", []).is_err());
+    }
+    let c = crate::db::open(p.to_str().unwrap()).unwrap();
+    let (v, epoch, seq): (i64, i64, i64) = c.query_row("SELECT schema_version, machine_control_epoch, registry_seq FROM machine_meta", [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap();
+    assert_eq!((v, epoch, seq), (2, 3, 7));
+    let row: (String, i64, i64, String) = c.query_row("SELECT state, instance_epoch, workspace_incarnation, origin FROM workspaces WHERE workspace_id = 'w1'", [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))).unwrap();
+    assert_eq!(row, ("archived".into(), 4, 2, "imported_v04".into()));
+    let mv: i64 = c.query_row("SELECT member_version FROM workspace_members WHERE workspace_id = 'w1'", [], |r| r.get(0)).unwrap();
+    assert_eq!(mv, 3);
+    // foreign keys still bind members to the rebuilt table, and the new states are accepted
+    assert!(c.execute("INSERT INTO workspace_members (workspace_id, user_id, role, member_version, state, changed_at) VALUES ('nope', 'u1', 'viewer', 1, 'active', 1)", []).is_err());
+    c.execute("UPDATE workspaces SET state = 'deleted', deleted_at = 5 WHERE workspace_id = 'w1'", []).unwrap();
+    let audit: i64 = c.query_row("SELECT COUNT(*) FROM root_audit WHERE kind = 'machine.schema_migrate'", [], |r| r.get(0)).unwrap();
+    assert_eq!(audit, 1);
+    drop(c);
+    // reopening is a no-op; a newer schema is refused
+    let c = crate::db::open(p.to_str().unwrap()).unwrap();
+    c.execute_batch("PRAGMA foreign_keys = OFF; PRAGMA ignore_check_constraints = ON; UPDATE machine_meta SET schema_version = 9;").unwrap();
+    drop(c);
+    assert!(crate::db::open(p.to_str().unwrap()).is_err());
+    let _ = std::fs::remove_dir_all(&dir);
 }

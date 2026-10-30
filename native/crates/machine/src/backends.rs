@@ -184,7 +184,15 @@ impl Executor for RealExecutor {
                 let ws = p["workspaceId"].as_str().unwrap_or_default();
                 Ok((format!("workspace:{ws}:runWhenLoggedOut"), 1, json!({ "workspaceId": ws, "enabled": p["enabled"] })))
             }
-            "updates.activate" | "updates.rollback" | "restores.confirm" | "workspaces.delete" => Ok((format!("{kind}:{}", p["id"].as_str().unwrap_or_default()), 1, json!({ "id": p["id"] }))),
+            "workspaces.delete" | "workspaces.deleteConsent" => {
+                let ws = p["workspaceId"].as_str().ok_or_else(|| MErr::new("INVALID_REQUEST", "workspaceId is required"))?;
+                if !matches!(p["dataDisposition"].as_str(), Some("exported") | Some("discard")) {
+                    return Err(MErr::new("INVALID_REQUEST", "dataDisposition must be exported or discard"));
+                }
+                // every precondition is checked again inside the dispatch transaction (begin_delete)
+                Ok((format!("workspace:{ws}:delete"), 1, json!({ "workspaceId": ws, "dataDisposition": p["dataDisposition"], "exportSetId": p["exportSetId"], "summary": if kind == "workspaces.delete" { "delete the workspace data; its UID and storeUUID stay as a tombstone" } else { "owner confirms deleting this workspace" } })))
+            }
+            "updates.activate" | "updates.rollback" | "restores.confirm" => Ok((format!("{kind}:{}", p["id"].as_str().unwrap_or_default()), 1, json!({ "id": p["id"] }))),
             _ => Err(MErr::new("INVALID_REQUEST", "unknown kind")),
         }
     }
@@ -285,6 +293,19 @@ impl Executor for RealExecutor {
                 m.set_run_when_logged_out(op["initiator"].as_str().unwrap_or_default(), p["workspaceId"].as_str().unwrap_or_default(), enabled)?;
                 Ok(json!({ "runWhenLoggedOut": enabled }))
             }
+            "workspaces.deleteConsent" => {
+                let ws = p["workspaceId"].as_str().unwrap_or_default();
+                m.delete_consent_check(op["initiator"].as_str().unwrap_or_default(), ws)?;
+                Ok(json!({ "consented": true, "workspaceId": ws }))
+            }
+            "workspaces.delete" => m.begin_delete(
+                op["initiator"].as_str().unwrap_or_default(),
+                p["workspaceId"].as_str().unwrap_or_default(),
+                op["operationId"].as_str().unwrap_or_default(),
+                p["dataDisposition"].as_str().unwrap_or_default(),
+                p["exportSetId"].as_str(),
+                p["ownerConsentOperationId"].as_str(),
+            ),
             _ => Err(MErr::new("HARDWARE_UNSUPPORTED", "this action is performed by its fixed worker")),
         }
     }
@@ -307,7 +328,9 @@ impl Executor for RealExecutor {
                     Some(true)
                 }
             }
-            "users.create" | "users.disable" | "workspaces.runWhenLoggedOut" => Some(!dispatched.is_null() && dispatched.get("code").is_none()),
+            "users.create" | "users.disable" | "workspaces.runWhenLoggedOut" | "workspaces.deleteConsent" => Some(!dispatched.is_null() && dispatched.get("code").is_none()),
+            // Phase 1 of a deletion is applied once the workspace is `deleting` (the broker verdict finishes it).
+            "workspaces.delete" => Some(matches!(dispatched["state"].as_str(), Some("deleting") | Some("deleted"))),
             _ => None,
         }
     }

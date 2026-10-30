@@ -82,7 +82,7 @@ pub fn ensure_schema(c: &Connection) -> rusqlite::Result<()> {
     c.execute_batch(SCHEMA_V5)
 }
 
-fn apply(c: &Connection, m: &Value) -> rusqlite::Result<()> {
+fn apply(c: &Connection, m: &Value, verdicts: &mut Vec<Value>) -> rusqlite::Result<()> {
     let seq = m["registrySeq"].as_i64().unwrap_or(0);
     let b = &m["body"];
     let store_of = |c: &Connection, ws: &str| -> rusqlite::Result<Option<String>> {
@@ -119,6 +119,17 @@ fn apply(c: &Connection, m: &Value) -> rusqlite::Result<()> {
         "workspace.archived" => {
             c.execute("UPDATE machine_hosts SET state = 'archived', registry_seq = ?2 WHERE workspace_id = ?1", params![b["workspaceId"].as_str(), seq])?;
         }
+        // V1-W10: before machined removes a workspace, the broker judges its effects. Any accepted/running/
+        // reconciling or unresolved indeterminate effect, or a resource quarantined/locked by one of its operations,
+        // blocks the deletion. The store stays fenced (no new writes) while deleting.
+        "workspace.deleting" => {
+            let store = b["storeUUID"].as_str().unwrap_or_default();
+            c.execute("UPDATE machine_hosts SET state = 'deleting', registry_seq = ?2 WHERE store_uuid = ?1", params![store, seq])?;
+            verdicts.push(delete_verdict(c, b)?);
+        }
+        "workspace.deleted" => {
+            c.execute("UPDATE machine_hosts SET state = 'deleted', registry_seq = ?2 WHERE workspace_id = ?1", params![b["workspaceId"].as_str(), seq])?;
+        }
         "members.snapshot" | "owner.changed" | "workspace.incarnation" | "member.revoking" => {
             if let Some(store) = store_of(c, b["workspaceId"].as_str().unwrap_or_default())? {
                 members(c, &store)?;
@@ -148,11 +159,23 @@ fn apply(c: &Connection, m: &Value) -> rusqlite::Result<()> {
     Ok(())
 }
 
+/// The broker's verdict on deleting one store (spec §8.2, V1-W10): unknown or in-flight effects and quarantines.
+pub fn delete_verdict(c: &Connection, b: &Value) -> rusqlite::Result<Value> {
+    let store = b["storeUUID"].as_str().unwrap_or_default();
+    let mut st = c.prepare("SELECT operation_id, state FROM effect_operations WHERE store_uuid = ?1 AND (state IN ('accepted','running','reconciling') OR (state = 'indeterminate' AND resolution_json IS NULL))")?;
+    let ops: Vec<Value> = st.query_map([store], |r| Ok(json!({ "operationId": r.get::<_, String>(0)?, "state": r.get::<_, String>(1)? })))?.collect::<Result<_, _>>()?;
+    drop(st);
+    let mut st = c.prepare("SELECT r.resource_id, r.status FROM resource_state r WHERE (r.quarantine_operation_id IS NOT NULL AND r.quarantine_operation_id IN (SELECT operation_id FROM effect_operations WHERE store_uuid = ?1)) OR (r.lock_operation_id IS NOT NULL AND r.lock_operation_id IN (SELECT operation_id FROM effect_operations WHERE store_uuid = ?1))")?;
+    let res: Vec<Value> = st.query_map([store], |r| Ok(json!({ "resourceId": r.get::<_, String>(0)?, "status": r.get::<_, String>(1)? })))?.collect::<Result<_, _>>()?;
+    Ok(json!({ "workspaceId": b["workspaceId"], "deleteId": b["deleteId"], "unresolved": (ops.len() + res.len()) as i64, "detail": { "operations": ops, "resources": res } }))
+}
+
 /// Pull/apply/ack loop. A message is acked only after its batch committed (the broker now enforces it).
 pub fn sync_loop(b: Shared) {
     loop {
         let r = (|| -> Result<(), String> {
             let mut s = connect()?;
+            let mut verdicts: Vec<Value> = vec![];
             loop {
                 let v = call(&mut s, "registry.pull", json!({ "target": "broker" }))?;
                 let msgs = v["messages"].as_array().cloned().unwrap_or_default();
@@ -161,8 +184,9 @@ pub fn sync_loop(b: Shared) {
                         let g = b.db.lock().unwrap();
                         let c = g.as_ref().ok_or("broker log unavailable")?;
                         c.execute_batch("BEGIN IMMEDIATE").map_err(|e| e.to_string())?;
+                        verdicts.clear();
                         for m in &msgs {
-                            if let Err(e) = apply(c, m) {
+                            if let Err(e) = apply(c, m, &mut verdicts) {
                                 let _ = c.execute_batch("ROLLBACK");
                                 return Err(e.to_string());
                             }
@@ -170,6 +194,11 @@ pub fn sync_loop(b: Shared) {
                         c.execute_batch("COMMIT").map_err(|e| e.to_string())?;
                     }
                     call(&mut s, "registry.ack", json!({ "target": "broker", "registrySeq": last }))?;
+                    // after the batch committed: report deletion verdicts (machined ignores stale/repeated ones and
+                    // asks again after a restart, so a verdict lost here is not a lost decision)
+                    for v in verdicts.drain(..) {
+                        let _ = call(&mut s, "workspaces.deleteVerdict", v);
+                    }
                     continue;
                 }
                 std::thread::sleep(Duration::from_millis(250));
@@ -247,4 +276,61 @@ pub fn check_v3(b: &Shared, peer_uid: u32, params: &Value) -> Result<Value, BErr
         _ => return Err(BErr::new("INVALID_SYSTEM_PLAN", "unknown protocol-3 principal kind")),
     }
     Ok(body)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn db() -> (Connection, std::path::PathBuf) {
+        let path = std::env::temp_dir().join(format!("broker-w10-{}.sqlite", std::process::id() as u64 * 1000 + rand_suffix()));
+        let _ = std::fs::remove_file(&path);
+        let c = crate::db::create(path.to_str().unwrap(), "machine-registry", "p1").unwrap();
+        ensure_schema(&c).unwrap();
+        (c, path)
+    }
+    fn rand_suffix() -> u64 {
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().subsec_nanos() as u64 % 1000
+    }
+    fn op(c: &Connection, store: &str, id: &str, state: &str) {
+        c.execute(
+            "INSERT INTO effect_operations(machine_install_id,store_uuid,incarnation,operation_id,action_id,plan_hash,request_hash,envelope_json,capability_id,resource_id,resource_generation,replay_class,state,deadline_ms,accepted_seq,updated_seq,created_at,updated_at) VALUES ('m',?1,1,?2,'a','p','r','{}','cap','res',1,'read',?3,1,1,1,1,1)",
+            params![store, id, state],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn w10_delete_verdict_counts_only_this_stores_unresolved_effects() {
+        let (c, path) = db();
+        let reg = |seq: i64, ws: &str, store: &str| json!({ "registrySeq": seq, "kind": "workspace.registered", "body": { "workspaceId": ws, "storeUUID": store, "executionUid": 60000 + seq, "workspaceIncarnation": 1 } });
+        let mut v = vec![];
+        apply(&c, &reg(1, "wa", "sa"), &mut v).unwrap();
+        apply(&c, &reg(2, "wb", "sb"), &mut v).unwrap();
+        op(&c, "sa", "done", "succeeded");
+        op(&c, "sa", "open", "indeterminate");
+        op(&c, "sb", "other", "running");
+        let del = |seq: i64| json!({ "registrySeq": seq, "kind": "workspace.deleting", "body": { "workspaceId": "wa", "storeUUID": "sa", "deleteId": "d1" } });
+        apply(&c, &del(3), &mut v).unwrap();
+        assert_eq!(v.len(), 1);
+        assert_eq!(v[0]["unresolved"], 1, "only sa's unresolved indeterminate effect counts, not sb's or a succeeded one");
+        assert_eq!(v[0]["deleteId"], "d1");
+        // the store is fenced while deleting: no host writes for it
+        assert!(machine_host(&c, 60001, Some("sa")).is_none());
+        // once resolved the verdict is clean
+        c.execute("UPDATE effect_operations SET resolution_json = '{}' WHERE operation_id = 'open'", []).unwrap();
+        v.clear();
+        apply(&c, &del(4), &mut v).unwrap();
+        assert_eq!(v[0]["unresolved"], 0);
+        // a quarantine held by one of its operations blocks too
+        c.execute("INSERT INTO resource_state (resource_id, store_uuid, kind, catalog_key, generation, status, quarantine_operation_id, updated_at) VALUES ('r1','sa','serial','k',1,'quarantined','done',1)", []).unwrap();
+        v.clear();
+        apply(&c, &del(5), &mut v).unwrap();
+        assert_eq!(v[0]["unresolved"], 1);
+        apply(&c, &json!({ "registrySeq": 6, "kind": "workspace.deleted", "body": { "workspaceId": "wa" } }), &mut v).unwrap();
+        let st: String = c.query_row("SELECT state FROM machine_hosts WHERE store_uuid = 'sa'", [], |r| r.get(0)).unwrap();
+        assert_eq!(st, "deleted");
+        drop(c);
+        let _ = std::fs::remove_file(path);
+    }
 }

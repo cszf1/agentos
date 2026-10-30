@@ -28,6 +28,8 @@ pub const KINDS: &[(&str, bool)] = &[
     ("updates.rollback", true),
     ("restores.confirm", true),
     ("workspaces.delete", true),
+    // Owner's confirmation of a deletion and its data disposition (spec §8.2: owner AND machine administrator).
+    ("workspaces.deleteConsent", false),
     // Owner setting (spec §9.3, §27.1, V1-W08): owner of the workspace only, checked at plan and again at dispatch.
     ("workspaces.runWhenLoggedOut", false),
 ];
@@ -93,6 +95,17 @@ impl Machine {
         }
         if kind != "restores.confirm" {
             self.require_restore_idle()?;
+        }
+        if kind == "workspaces.deleteConsent" {
+            let ws = params_v["workspaceId"].as_str().ok_or_else(|| MErr::new("INVALID_REQUEST", "workspaceId is required"))?;
+            self.delete_consent_check(&p.user_id, ws)?;
+        }
+        if kind == "workspaces.delete" {
+            let ws = params_v["workspaceId"].as_str().ok_or_else(|| MErr::new("INVALID_REQUEST", "workspaceId is required"))?;
+            // the plan shows the current blocker (if any) so the administrator sees why it would fail
+            if let Some(b) = self.delete_blocker(ws)? {
+                return Err(MErr::new(b["code"].as_str().unwrap_or("CONFLICT"), b["reason"].as_str().unwrap_or("blocked").to_string()));
+            }
         }
         if kind == "workspaces.runWhenLoggedOut" {
             let ws = params_v["workspaceId"].as_str().ok_or_else(|| MErr::new("INVALID_REQUEST", "workspaceId is required"))?;

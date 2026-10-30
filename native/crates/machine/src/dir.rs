@@ -129,7 +129,7 @@ impl Machine {
             }
             let mid = uuid();
             c.execute(
-                "INSERT INTO machine_meta (id, machine_install_id, first_boot_id, machine_control_epoch, registry_seq, schema_version, restore_state, first_boot_state, machine_secret_ref, created_at) VALUES (1, ?1, ?2, 1, 0, 1, 'idle', 'open', 'file:machine.secret#1', ?3)",
+                "INSERT INTO machine_meta (id, machine_install_id, first_boot_id, machine_control_epoch, registry_seq, schema_version, restore_state, first_boot_state, machine_secret_ref, created_at) VALUES (1, ?1, ?2, 1, 0, 2, 'idle', 'open', 'file:machine.secret#1', ?3)",
                 params![mid, first_boot_id, now_ms()],
             )?;
             Self::audit(c, "root", "install.identity", Some(&mid), "created", None)?;
@@ -486,7 +486,7 @@ impl Machine {
             if let Some(rec) = Self::step_done(c, create_id, "allocate")? {
                 return Ok(rec["workspaceId"].as_str().unwrap_or_default().to_string());
             }
-            let n = opt_i64(c, "SELECT COUNT(*) FROM workspaces", [])?.unwrap_or(0);
+            let n = opt_i64(c, "SELECT COUNT(*) FROM workspaces WHERE state != 'deleted'", [])?.unwrap_or(0);
             if n >= MAX_WORKSPACES {
                 return Err(MErr::new("MACHINE_CAPACITY", "the machine already has the maximum number of registered workspaces"));
             }
@@ -628,7 +628,7 @@ impl Machine {
     }
 
     pub fn ws_by_exec_uid(&self, uid: u32) -> R<Option<String>> {
-        Ok(self.c.query_row("SELECT workspace_id FROM workspaces WHERE execution_uid = ?1 AND state != 'archived'", [uid], |r| r.get(0)).optional()?)
+        Ok(self.c.query_row("SELECT workspace_id FROM workspaces WHERE execution_uid = ?1 AND state NOT IN ('archived','deleting','deleted')", [uid], |r| r.get(0)).optional()?)
     }
 
     /// Membership of an active user in a workspace, or the uniform hidden error (spec §16.1, V1-I03).
@@ -636,7 +636,7 @@ impl Machine {
         let r: Option<(String, i64, String)> = self
             .c
             .query_row(
-                "SELECT m.role, m.member_version, m.state FROM workspace_members m JOIN users u ON u.user_id = m.user_id WHERE m.workspace_id = ?1 AND m.user_id = ?2 AND u.state = 'active'",
+                "SELECT m.role, m.member_version, m.state FROM workspace_members m JOIN users u ON u.user_id = m.user_id JOIN workspaces w ON w.workspace_id = m.workspace_id WHERE m.workspace_id = ?1 AND m.user_id = ?2 AND u.state = 'active' AND w.state != 'deleted'",
                 params![ws, user_id],
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
@@ -650,7 +650,7 @@ impl Machine {
 
     pub fn list_visible(&self, user_id: &str) -> R<Vec<Value>> {
         let mut st = self.c.prepare(
-            "SELECT w.workspace_id, w.display_name, w.state, m.role, m.member_version, w.store_uuid FROM workspaces w JOIN workspace_members m ON m.workspace_id = w.workspace_id JOIN users u ON u.user_id = m.user_id WHERE m.user_id = ?1 AND m.state = 'active' AND u.state = 'active' AND w.state NOT IN ('creating') ORDER BY w.created_at",
+            "SELECT w.workspace_id, w.display_name, w.state, m.role, m.member_version, w.store_uuid FROM workspaces w JOIN workspace_members m ON m.workspace_id = w.workspace_id JOIN users u ON u.user_id = m.user_id WHERE m.user_id = ?1 AND m.state = 'active' AND u.state = 'active' AND w.state NOT IN ('creating','deleted') ORDER BY w.created_at",
         )?;
         let v = st
             .query_map([user_id], |r| {
@@ -767,6 +767,168 @@ impl Machine {
         })?;
         self.sys.enable_linger(&login)?;
         self.ws_row(ws)
+    }
+
+    // ---------------- deletion and tombstones (spec §8.2, V1-W10) ----------------
+
+    /// Local preconditions of a full deletion. Returns the reason it must not proceed, or None.
+    pub fn delete_blocker(&self, ws: &str) -> R<Option<Value>> {
+        let row = self.ws_row(ws)?;
+        let state = row["state"].as_str().unwrap_or_default();
+        if state != "archived" {
+            return Ok(Some(json!({ "code": "CONFLICT", "reason": format!("workspace is {state}; archive it first") })));
+        }
+        let live = opt_i64(&self.c, "SELECT COUNT(*) FROM workspace_instances WHERE workspace_id = ?1 AND state IN ('starting','running','stopping')", [ws])?.unwrap_or(0);
+        let uid = row["executionUid"].as_u64().unwrap_or(0) as u32;
+        if live > 0 || self.sys.exec_cgroup_busy(uid) {
+            return Ok(Some(json!({ "code": "WORKSPACE_FENCED", "reason": "an execution instance or process of this workspace is still alive" })));
+        }
+        // Snapshot references: a pinned local recovery set whose barrier covered this workspace (a set taken with
+        // no explicit list covered every workspace then registered, so it counts too).
+        let mut st = self.c.prepare("SELECT s.set_id, b.scope_json FROM checkpoint_sets s LEFT JOIN barriers b ON b.barrier_id = s.barrier_id WHERE s.pinned = 1 AND s.state = 'complete'")?;
+        let pins: Vec<(String, Option<String>)> = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<Result<_, _>>()?;
+        drop(st);
+        for (set, scope) in pins {
+            let covers = match scope.and_then(|t| serde_json::from_str::<Value>(&t).ok()).and_then(|v| v.get("workspaces").cloned()) {
+                Some(Value::Array(a)) => a.iter().any(|x| x.as_str() == Some(ws)),
+                _ => true,
+            };
+            if covers {
+                return Ok(Some(json!({ "code": "CONFLICT", "reason": "a pinned local recovery set still references this workspace", "setId": set })));
+            }
+        }
+        // The broker must have applied every registry message about this workspace before it can judge its effects.
+        let unsynced = opt_i64(&self.c, "SELECT COUNT(*) FROM registry_outbox WHERE target_kind = 'broker' AND state = 'pending'", [])?.unwrap_or(0);
+        if unsynced > 0 {
+            return Ok(Some(json!({ "code": "STORE_UNAVAILABLE", "reason": "the broker has not caught up with the machine directory" })));
+        }
+        Ok(None)
+    }
+
+    /// Owner consent for a deletion (non-admin machine action by the active owner).
+    pub fn delete_consent_check(&self, actor: &str, ws: &str) -> R<()> {
+        let (role, _) = self.membership(actor, ws)?;
+        if role != Role::Owner {
+            return Err(MErr::hidden());
+        }
+        Ok(())
+    }
+
+    /// Owner consent is either the administrator being the active owner, or a succeeded `workspaces.deleteConsent`
+    /// operation of the current active owner for this workspace and data disposition.
+    pub fn owner_consented(&self, admin: &str, ws: &str, disposition: &str, consent_op: Option<&str>) -> R<bool> {
+        let owner: Option<String> = self.c.query_row("SELECT user_id FROM workspace_members WHERE workspace_id = ?1 AND role = 'owner' AND state = 'active'", [ws], |r| r.get(0)).optional()?;
+        let owner = match owner {
+            Some(o) => o,
+            None => return Ok(false),
+        };
+        if owner == admin {
+            return Ok(true);
+        }
+        let op = match consent_op {
+            Some(o) => o,
+            None => return Ok(false),
+        };
+        let r: Option<(String, String, String, String)> = self
+            .c
+            .query_row("SELECT principal_user_id, kind, state, params_json FROM machine_operations WHERE operation_id = ?1", [op], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+            .optional()?;
+        Ok(match r {
+            Some((who, kind, state, params)) => {
+                let p: Value = serde_json::from_str(&params).unwrap_or(Value::Null);
+                who == owner && kind == "workspaces.deleteConsent" && state == "succeeded" && p["workspaceId"] == ws && p["dataDisposition"] == disposition
+            }
+            None => false,
+        })
+    }
+
+    /// Phase 1 (dispatch of the admin action): verify, then enter `deleting` and ask the broker for its verdict on
+    /// unknown effects. Nothing is removed yet. Idempotent for the same deleteId.
+    pub fn begin_delete(&mut self, actor: &str, ws: &str, delete_id: &str, disposition: &str, export_set: Option<&str>, consent_op: Option<&str>) -> R<Value> {
+        let row = self.ws_row(ws)?;
+        if row["state"] == "deleting" || row["state"] == "deleted" {
+            let cur: Option<String> = self.c.query_row("SELECT delete_json FROM workspaces WHERE workspace_id = ?1", [ws], |r| r.get(0))?;
+            let same = cur.and_then(|t| serde_json::from_str::<Value>(&t).ok()).map(|v| v["deleteId"] == delete_id).unwrap_or(false);
+            return if same { self.ws_row(ws) } else { Err(MErr::new("CONFLICT", "another deletion of this workspace is recorded")) };
+        }
+        if !matches!(disposition, "exported" | "discard") {
+            return Err(MErr::new("INVALID_REQUEST", "dataDisposition must be exported or discard"));
+        }
+        if !self.owner_consented(actor, ws, disposition, consent_op)? {
+            return Err(MErr::new("CONFLICT", "the workspace owner has not confirmed this deletion and data disposition"));
+        }
+        if disposition == "exported" {
+            let set = export_set.ok_or_else(|| MErr::new("INVALID_REQUEST", "exportSetId is required for an exported deletion"))?;
+            let ok: Option<(String, String)> = self.c.query_row("SELECT state, export_state FROM checkpoint_sets WHERE set_id = ?1", [set], |r| Ok((r.get(0)?, r.get(1)?))).optional()?;
+            match ok {
+                Some((st, ex)) if st == "complete" && (ex == "exported" || ex == "verified") => {}
+                _ => return Err(MErr::new("CONFLICT", "the export set is not a complete, exported recovery set")),
+            }
+        }
+        if let Some(b) = self.delete_blocker(ws)? {
+            return Err(MErr::new(b["code"].as_str().unwrap_or("CONFLICT"), b["reason"].as_str().unwrap_or("blocked").to_string()));
+        }
+        let store = row["storeUUID"].as_str().unwrap_or_default().to_string();
+        let body = json!({ "deleteId": delete_id, "dataDisposition": disposition, "exportSetId": export_set, "requestedBy": actor, "requestedAt": now_ms() });
+        self.tx(|c| {
+            Self::set_ws_state(c, ws, &["archived"], "deleting")?;
+            c.execute("UPDATE workspaces SET delete_json = ?2 WHERE workspace_id = ?1", params![ws, canon(&body)])?;
+            Self::enqueue(c, &[("broker", "*")], "workspace.deleting", &json!({ "workspaceId": ws, "storeUUID": store, "deleteId": delete_id }))?;
+            Self::enqueue(c, &[("gateway", "*")], "workspace.state_changed", &json!({ "workspaceId": ws, "state": "deleting" }))?;
+            Self::audit(c, actor, "workspace.delete", Some(ws), "deleting", None)
+        })?;
+        self.ws_row(ws)
+    }
+
+    /// Phase 2: the broker's verdict. Unknown/in-flight effects or quarantines block (back to archived, reason
+    /// recorded); otherwise the registered roots are removed, the execution account is locked and kept (its UID is
+    /// never reused) and the row stays as an identity tombstone (`deleted`, UID and storeUUID still UNIQUE).
+    pub fn delete_verdict(&mut self, ws: &str, delete_id: &str, unresolved: i64, detail: &Value) -> R<Value> {
+        let row = self.ws_row(ws)?;
+        let cur: Option<String> = self.c.query_row("SELECT delete_json FROM workspaces WHERE workspace_id = ?1", [ws], |r| r.get(0))?;
+        let mut body = cur.and_then(|t| serde_json::from_str::<Value>(&t).ok()).unwrap_or(Value::Null);
+        if row["state"] != "deleting" || body["deleteId"] != delete_id {
+            return Ok(row); // stale or repeated verdict: no effect
+        }
+        let uid = row["executionUid"].as_u64().unwrap_or(0) as u32;
+        let login = row["execLogin"].as_str().unwrap_or_default().to_string();
+        let live = self.sys.exec_cgroup_busy(uid);
+        if unresolved > 0 || live {
+            body["blocked"] = json!({ "unresolvedEffects": unresolved, "executionAlive": live, "detail": detail, "at": now_ms() });
+            self.tx(|c| {
+                Self::set_ws_state(c, ws, &["deleting"], "archived")?;
+                c.execute("UPDATE workspaces SET delete_json = ?2 WHERE workspace_id = ?1", params![ws, canon(&body)])?;
+                Self::enqueue(c, &[("broker", "*"), ("gateway", "*")], "workspace.archived", &json!({ "workspaceId": ws }))?;
+                Self::audit(c, "root", "workspace.delete", Some(ws), "blocked", None)
+            })?;
+            return Err(MErr::new("CONFLICT", if live { "an execution process appeared; deletion refused".to_string() } else { format!("{unresolved} external effect(s) of this workspace are not reconciled") }));
+        }
+        let _ = self.sys.disable_linger(&login);
+        self.sys.lock_user(&login)?;
+        self.sys.remove_workspace_roots(&self.paths, ws)?;
+        body["removedAt"] = json!(now_ms());
+        self.tx(|c| {
+            Self::set_ws_state(c, ws, &["deleting"], "deleted")?;
+            c.execute("UPDATE workspaces SET delete_json = ?2, deleted_at = ?3, run_when_logged_out = 0 WHERE workspace_id = ?1", params![ws, canon(&body), now_ms()])?;
+            c.execute("UPDATE workspace_members SET state = 'revoked', changed_at = ?2 WHERE workspace_id = ?1 AND state != 'revoked'", params![ws, now_ms()])?;
+            Self::enqueue(c, &[("broker", "*"), ("gateway", "*")], "workspace.deleted", &json!({ "workspaceId": ws }))?;
+            Self::audit(c, "root", "workspace.delete", Some(ws), "deleted", None)
+        })?;
+        self.ws_row(ws)
+    }
+
+    /// Restart: a deletion still `deleting` asks the broker again (its verdict may have been lost in a crash).
+    pub fn resume_deletions(&mut self) -> R<usize> {
+        let rows: Vec<(String, String, Option<String>)> = {
+            let mut st = self.c.prepare("SELECT workspace_id, store_uuid, delete_json FROM workspaces WHERE state = 'deleting'")?;
+            let v = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.collect::<Result<_, _>>()?;
+            v
+        };
+        for (ws, store, body) in &rows {
+            let id = body.as_deref().and_then(|t| serde_json::from_str::<Value>(t).ok()).map(|v| v["deleteId"].clone()).unwrap_or(Value::Null);
+            self.tx(|c| Self::enqueue(c, &[("broker", "*")], "workspace.deleting", &json!({ "workspaceId": ws, "storeUUID": store, "deleteId": id })).map(|_| ()))?;
+        }
+        Ok(rows.len())
     }
 
     pub fn set_run_when_logged_out(&self, actor: &str, ws: &str, enabled: bool) -> R<()> {

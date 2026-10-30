@@ -71,6 +71,8 @@ pub trait System: Send {
     /// Whether any process still runs in the workspace's execution cgroup (user-<uid>.slice).
     fn exec_cgroup_busy(&self, uid: u32) -> bool;
     fn kill_exec_cgroup(&mut self, uid: u32) -> R<()>;
+    /// Remove the registered roots of a deleted workspace (data, secrets, runtime/graphroot, run dir). Idempotent.
+    fn remove_workspace_roots(&mut self, paths: &Paths, ws: &str) -> R<()>;
 }
 
 fn run(cmd: &mut Command) -> R<String> {
@@ -290,6 +292,17 @@ impl System for HostSystem {
                 })
             })
             .unwrap_or(false)
+    }
+    fn remove_workspace_roots(&mut self, paths: &Paths, ws: &str) -> R<()> {
+        for p in [paths.ws_root(ws), paths.ws_runtime(ws), paths.ws_run(ws)] {
+            // Registered paths only (built from the workspace UUID); never follow a link out of the parent.
+            match std::fs::symlink_metadata(&p) {
+                Ok(m) if m.file_type().is_symlink() => std::fs::remove_file(&p).map_err(|e| MErr::new("SYSTEM_FAILED", format!("{}: {e}", p.display())))?,
+                Ok(_) => std::fs::remove_dir_all(&p).map_err(|e| MErr::new("SYSTEM_FAILED", format!("{}: {e}", p.display())))?,
+                Err(_) => {}
+            }
+        }
+        Ok(())
     }
     fn kill_exec_cgroup(&mut self, uid: u32) -> R<()> {
         let _ = run(Command::new("systemctl").args(["kill", "--signal=SIGKILL", &format!("user-{uid}.slice")]));

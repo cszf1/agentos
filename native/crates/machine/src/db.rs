@@ -1,8 +1,8 @@
 //! machine.sqlite (spec §15.1): local filesystem, WAL, foreign keys, synchronous=FULL; only agentos-machined writes it.
-//! schemaVersion 1. Every ID column holds a canonical lowercase UUID unless noted; times are UTC milliseconds.
+//! schemaVersion 2 (1 → 2: workspace tombstones `deleting`/`deleted`, deleted_at, delete_json; V1-W10). Every ID column holds a canonical lowercase UUID unless noted; times are UTC milliseconds.
 use rusqlite::Connection;
 
-pub const SCHEMA_VERSION: i64 = 1;
+pub const SCHEMA_VERSION: i64 = 2;
 
 pub const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS machine_meta (
@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS machine_meta (
   first_boot_id TEXT NOT NULL UNIQUE,
   machine_control_epoch INTEGER NOT NULL CHECK (machine_control_epoch >= 1),
   registry_seq INTEGER NOT NULL CHECK (registry_seq >= 0),
-  schema_version INTEGER NOT NULL CHECK (schema_version = 1),
+  schema_version INTEGER NOT NULL CHECK (schema_version = 2),
   current_release_id TEXT,
   known_good_release_id TEXT,
   accepted_release_sequence INTEGER NOT NULL DEFAULT 0,
@@ -42,13 +42,15 @@ CREATE TABLE IF NOT EXISTS workspaces (
   subuid_start INTEGER NOT NULL UNIQUE,
   subgid_start INTEGER NOT NULL UNIQUE,
   range_size INTEGER NOT NULL,
-  state TEXT NOT NULL CHECK (state IN ('creating','stopped','starting','running','quiescing','recovery_required','archived')),
+  state TEXT NOT NULL CHECK (state IN ('creating','stopped','starting','running','quiescing','recovery_required','archived','deleting','deleted')),
   instance_epoch INTEGER NOT NULL CHECK (instance_epoch >= 1),
   workspace_incarnation INTEGER NOT NULL CHECK (workspace_incarnation >= 1),
   data_path_id TEXT NOT NULL,
   run_when_logged_out INTEGER NOT NULL DEFAULT 0 CHECK (run_when_logged_out IN (0,1)),
   origin TEXT NOT NULL CHECK (origin IN ('created','imported_v04','restored','cloned')),
-  created_at INTEGER NOT NULL
+  created_at INTEGER NOT NULL,
+  deleted_at INTEGER,
+  delete_json TEXT
 ) STRICT;
 CREATE TABLE IF NOT EXISTS workspace_members (
   workspace_id TEXT NOT NULL REFERENCES workspaces(workspace_id),
@@ -268,7 +270,66 @@ CREATE TABLE IF NOT EXISTS root_audit (
 
 pub fn open(path: &str) -> rusqlite::Result<Connection> {
     let c = Connection::open(path)?;
-    c.execute_batch("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA synchronous = FULL; PRAGMA busy_timeout = 5000;")?;
+    c.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; PRAGMA busy_timeout = 5000;")?;
+    migrate(&c)?;
+    c.execute_batch("PRAGMA foreign_keys = ON;")?;
     c.execute_batch(SCHEMA)?;
     Ok(c)
+}
+
+/// The CREATE TABLE text of one table in SCHEMA, renamed (used to rebuild a table whose CHECK changed).
+fn table_ddl(name: &str, new_name: &str) -> String {
+    let head = format!("CREATE TABLE IF NOT EXISTS {name} (");
+    let start = SCHEMA.find(&head).expect("table in schema");
+    let end = start + SCHEMA[start..].find(") STRICT;").expect("strict") + ") STRICT;".len();
+    SCHEMA[start..end].replacen(&head, &format!("CREATE TABLE {new_name} ("), 1)
+}
+
+/// Schema 1 → 2 in one transaction with foreign keys off (SQLite cannot alter a CHECK; the documented
+/// create-copy-drop-rename procedure). Every row, ID and constraint is kept; a crash leaves either schema 1 or 2.
+/// A database newer than this program is refused, never opened (same rule as the workspace stores).
+pub fn migrate(c: &Connection) -> rusqlite::Result<()> {
+    let ver: Option<i64> = c
+        .query_row("SELECT name FROM sqlite_master WHERE type='table' AND name='machine_meta'", [], |_| Ok(()))
+        .ok()
+        .and_then(|_| c.query_row("SELECT schema_version FROM machine_meta WHERE id = 1", [], |r| r.get(0)).ok());
+    let ver = match ver {
+        None => return Ok(()), // new database (or meta row not yet written): SCHEMA creates schema 2
+        Some(v) => v,
+    };
+    if ver == SCHEMA_VERSION {
+        return Ok(());
+    }
+    if ver > SCHEMA_VERSION || ver < 1 {
+        return Err(rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_MISMATCH), Some(format!("machine.sqlite schema {ver} is not supported by this program (schema {SCHEMA_VERSION})"))));
+    }
+    c.execute_batch("PRAGMA foreign_keys = OFF; BEGIN IMMEDIATE;")?;
+    let r = (|| -> rusqlite::Result<()> {
+        c.execute_batch(&table_ddl("machine_meta", "machine_meta_v2"))?;
+        c.execute_batch("INSERT INTO machine_meta_v2 (id, machine_install_id, first_boot_id, machine_control_epoch, registry_seq, schema_version, current_release_id, known_good_release_id, accepted_release_sequence, restore_state, first_boot_state, machine_secret_ref, created_at) SELECT id, machine_install_id, first_boot_id, machine_control_epoch, registry_seq, 2, current_release_id, known_good_release_id, accepted_release_sequence, restore_state, first_boot_state, machine_secret_ref, created_at FROM machine_meta; DROP TABLE machine_meta; ALTER TABLE machine_meta_v2 RENAME TO machine_meta;")?;
+        c.execute_batch(&table_ddl("workspaces", "workspaces_v2"))?;
+        c.execute_batch("INSERT INTO workspaces_v2 (workspace_id, create_id, store_uuid, display_name, owner_user_id, execution_uid, exec_login, subuid_start, subgid_start, range_size, state, instance_epoch, workspace_incarnation, data_path_id, run_when_logged_out, origin, created_at) SELECT workspace_id, create_id, store_uuid, display_name, owner_user_id, execution_uid, exec_login, subuid_start, subgid_start, range_size, state, instance_epoch, workspace_incarnation, data_path_id, run_when_logged_out, origin, created_at FROM workspaces; DROP TABLE workspaces; ALTER TABLE workspaces_v2 RENAME TO workspaces;")?;
+        let bad: i64 = c.query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |r| r.get(0))?;
+        if bad != 0 {
+            return Err(rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_CONSTRAINT), Some("foreign keys broken by the 1→2 migration".into())));
+        }
+        c.execute("INSERT INTO root_audit (actor_id, kind, scope_id, outcome, timestamp) VALUES ('root', 'machine.schema_migrate', NULL, '1->2', CAST(strftime('%s','now') AS INTEGER) * 1000)", [])?;
+        Ok(())
+    })();
+    match r {
+        Ok(()) => c.execute_batch("COMMIT; PRAGMA foreign_keys = ON;"),
+        Err(e) => {
+            let _ = c.execute_batch("ROLLBACK; PRAGMA foreign_keys = ON;");
+            Err(e)
+        }
+    }
+}
+
+/// The schema-1 workspaces/machine_meta definitions, kept to build schema-1 fixtures in migration tests.
+#[cfg(test)]
+pub fn schema_v1() -> String {
+    SCHEMA
+        .replace("CHECK (schema_version = 2)", "CHECK (schema_version = 1)")
+        .replace(",'deleting','deleted')),", ")),")
+        .replace("  created_at INTEGER NOT NULL,\n  deleted_at INTEGER,\n  delete_json TEXT\n) STRICT;", "  created_at INTEGER NOT NULL\n) STRICT;")
 }

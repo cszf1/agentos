@@ -61,6 +61,11 @@ fn main() {
             Ok(v) if !v.is_empty() => eprintln!("resumed {} workspace creations", v.len()),
             _ => {}
         }
+        match m.resume_deletions() {
+            Ok(n) if n > 0 => eprintln!("re-asked the broker about {n} pending workspace deletions"),
+            Err(e) => eprintln!("deletion resume: {e}"),
+            _ => {}
+        }
         match m.reconcile_permits() {
             Ok(v) => eprintln!("permits reconciled: {v}"),
             Err(e) => eprintln!("permit reconcile: {e}"),

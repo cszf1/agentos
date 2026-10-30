@@ -160,6 +160,8 @@ pub fn dispatch(m: &mut Machine, ex: &mut dyn Executor, secrets: &std::sync::Mut
             "workspaces.memberSnapshot" => crate::dir::Machine::member_snapshot(&m.c, s(&a, "workspaceId")?),
             "workspaces.byExecUid" => Ok(json!({ "workspaceId": m.ws_by_exec_uid(i(&a, "uid")? as u32)? })),
             "workspaces.resume" => Ok(json!({ "resumed": m.resume_creations()? })),
+            // From the broker (root) after it judged the store's effects (V1-W10).
+            "workspaces.deleteVerdict" => m.delete_verdict(s(&a, "workspaceId")?, s(&a, "deleteId")?, i(&a, "unresolved")?, a.get("detail").unwrap_or(&Value::Null)),
             "members.check" => {
                 let (role, mv) = m.membership(s(&a, "userId")?, s(&a, "workspaceId")?)?;
                 Ok(json!({ "role": role.as_str(), "memberVersion": mv }))
