@@ -7,7 +7,7 @@ pkgs.testers.runNixOSTest {
     imports = modules;
     agentos.enable = true;
     agentos.graphical = false;
-    virtualisation = { memorySize = 3072; cores = 4; diskSize = 6144; };
+    virtualisation = { memorySize = 3072; cores = 1; diskSize = 6144; };
     environment.systemPackages = [ pkgs.python3 ];
     environment.etc."agentos-test/rpc.py".source = ./rpc.py;
   };
