@@ -80,7 +80,9 @@ with subtest("support bundle: root only, 0600, no passwords, no full machine ide
 
 with subtest("two real Hosts: at most two model requests in flight on the machine, one per workspace while both wait (S01, S02)"):
     machine.succeed(f"echo 25 > {FM}/hold")
-    ids = [run(1, ws_a, "做一个待办应用", "ra1"), run(1, ws_a, "做一个记账应用", "ra2"), run(1, ws_b, "做一个读书清单", "rb1"), run(1, ws_b, "做一个习惯打卡", "rb2")]
+    # §13.2: with no other waiter a workspace may use the second permit, so interleave the posts: once both
+    # workspaces wait, each holds at most one model permit and freed slots alternate between them.
+    ids = [run(1, ws_a, "做一个待办应用", "ra1"), run(1, ws_b, "做一个读书清单", "rb1"), run(1, ws_a, "做一个记账应用", "ra2"), run(1, ws_b, "做一个习惯打卡", "rb2")]
     assert all(ids), ids
     machine.wait_until_succeeds(f"test \"$(python3 -c \"import json;print(sum(json.load(open('{FM}/state.json'))['inflight'].values()))\")\" = 2", timeout=180)
     first = fm_state()["inflight"]
@@ -98,7 +100,7 @@ with subtest("two real Hosts: at most two model requests in flight on the machin
     print(sql("SELECT workspace_id, state, usage_status, COUNT(*) FROM machine_permits GROUP BY 1,2,3"))
     assert int(sql("SELECT COUNT(*) FROM machine_permits WHERE state IN ('reserved','in_use')")) <= 2
     for rid in ids:
-        r = call(1, [fwd(ws_a if rid in ids[:2] else ws_b, "runs.cancel.post", params={"runId": rid}, idem="c-" + rid)], "c" + rid[:6])[0]
+        r = call(1, [fwd(ws_a if rid in (ids[0], ids[2]) else ws_b, "runs.cancel.post", params={"runId": rid}, idem="c-" + rid)], "c" + rid[:6])[0]
     machine.wait_until_succeeds(f"python3 -c \"import json,sys;sys.exit(sum(json.load(open('{FM}/state.json'))['inflight'].values()))\"", timeout=120)
 
 with subtest("revocation while a run waits for a machine permit: no model request is sent for it (I07, S04)"):
