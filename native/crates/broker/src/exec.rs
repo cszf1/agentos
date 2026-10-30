@@ -975,6 +975,27 @@ fn admission(b: &Broker, op: &OpRow) -> Admission {
         let _ = tx.commit();
         return Admission::Wait;
     }
+    // The same physical resource registered by another workspace (spec §12.3/§12.4, V1-W09): its quarantine refuses
+    // this write and its execution lock makes it wait, exactly as if it were this workspace's own id.
+    for a in b.physical_aliases(&op.store, &env.resource_id).iter().skip(1) {
+        let (al, aq): (Option<String>, Option<String>) = tx
+            .query_row("SELECT lock_operation_id, quarantine_operation_id FROM resource_state WHERE resource_id=?1", params![a], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap_or((None, None));
+        if let Some(q) = aq.filter(|q| q != &op.op_id) {
+            let _ = tx.commit();
+            return Admission::Refused(no_effect(
+                "failed_no_effect",
+                "admission_refused",
+                json!({"quarantineOperationId": q, "physicalAlias": a}),
+                "RESOURCE_BUSY",
+                "the same physical resource is quarantined (another workspace) until an unknown result is resolved",
+            ));
+        }
+        if al.as_deref().is_some_and(|l| l != op.op_id) {
+            let _ = tx.commit();
+            return Admission::Wait;
+        }
+    }
     let inflight: i64 = tx
         .query_row(
             "SELECT count(*) FROM effect_operations WHERE store_uuid=?1 AND state IN ('running','reconciling') AND operation_id<>?2",

@@ -254,18 +254,37 @@ fn control(b: &Shared, sess: &mut Session, g: &MaintenanceControlParams) -> Resu
 /// count is aggregated over every workspace (store), user, policy, job and execution UID that ever acted on this
 /// resource, so moving the same work to another workspace, a new policy or a new executionUid never resets it.
 pub fn counts(c: &Connection, resource_id: &str, family: &str) -> (i64, i64, Option<i64>) {
+    counts_any(c, &[resource_id.to_string()], family)
+}
+
+/// `counts` over every id of one physical resource (`Broker::physical_aliases`): two workspaces that registered the
+/// same unit share one hourly/24 h budget and one cooldown.
+pub fn counts_any(c: &Connection, ids: &[String], family: &str) -> (i64, i64, Option<i64>) {
     let t = now();
+    let marks = vec!["?"; ids.len().max(1)].join(",");
+    let args = |extra: Option<i64>| -> Vec<rusqlite::types::Value> {
+        let mut v: Vec<rusqlite::types::Value> = vec![family.to_string().into()];
+        if let Some(x) = extra {
+            v.push(x.into());
+        }
+        v.extend(ids.iter().map(|i| rusqlite::types::Value::from(i.clone())));
+        v
+    };
     let n = |since: i64| -> i64 {
         c.query_row(
-            "SELECT count(*) FROM maintenance_attempts WHERE resource_id=?1 AND action_family=?2 AND admitted_at > ?3",
-            params![resource_id, family, since],
+            &format!("SELECT count(*) FROM maintenance_attempts WHERE action_family=?1 AND admitted_at > ?2 AND resource_id IN ({marks})"),
+            rusqlite::params_from_iter(args(Some(since))),
             |r| r.get(0),
         )
         .unwrap_or(0)
     };
     let (hour, day) = (n(t - 3_600_000), n(t - 86_400_000));
     let last: Option<i64> = c
-        .query_row("SELECT max(admitted_at) FROM maintenance_attempts WHERE resource_id=?1 AND action_family=?2", params![resource_id, family], |r| r.get(0))
+        .query_row(
+            &format!("SELECT max(admitted_at) FROM maintenance_attempts WHERE action_family=?1 AND resource_id IN ({marks})"),
+            rusqlite::params_from_iter(args(None)),
+            |r| r.get(0),
+        )
         .ok()
         .flatten();
     (hour, day, last)
@@ -296,7 +315,8 @@ fn state(b: &Shared, sess: &mut Session, g: &MaintenanceStateParams) -> Result<V
         .collect();
     let mut out_p = vec![];
     for mut pv in policies {
-        let (h, d, last) = counts(c, pv["resourceId"].as_str().unwrap_or(""), pv["actionFamily"].as_str().unwrap_or(""));
+        let aliases = b.physical_aliases(store, pv["resourceId"].as_str().unwrap_or(""));
+        let (h, d, last) = counts_any(c, &aliases, pv["actionFamily"].as_str().unwrap_or(""));
         pv["attempts"] = json!({"lastHour": h, "last24h": d, "lastAdmittedAtMs": last});
         out_p.push(pv);
     }
@@ -402,8 +422,14 @@ fn submit(b: &Shared, sess: &mut Session, env: &MaintenanceWriteEnvelope) -> Res
         )
         .with(json!({"controlEpoch": ce})));
     }
-    let quarantine: Option<String> =
-        tx.query_row("SELECT quarantine_operation_id FROM resource_state WHERE resource_id=?1", params![env.resource_id], |r| r.get(0)).optional()?.flatten();
+    // Quarantine is per PHYSICAL resource: an unknown result left by another workspace on the same unit blocks too.
+    let aliases = b.physical_aliases(store, &env.resource_id);
+    let mut quarantine: Option<String> = None;
+    for a in &aliases {
+        if quarantine.is_none() {
+            quarantine = tx.query_row("SELECT quarantine_operation_id FROM resource_state WHERE resource_id=?1", params![a], |r| r.get(0)).optional()?.flatten();
+        }
+    }
     if let Some(q) = quarantine {
         return Err(BErr::new("RESOURCE_BUSY", "the resource is quarantined by an unknown result; maintenance never clears it")
             .with(json!({"quarantineOperationId": q})));
@@ -412,7 +438,7 @@ fn submit(b: &Shared, sess: &mut Session, env: &MaintenanceWriteEnvelope) -> Res
     let per_hour = bounds.per_hour.min(caps.per_hour) as i64;
     let per24h = bounds.per24h.min(caps.per24h) as i64;
     let cooldown = bounds.cooldown_seconds.max(caps.cooldown_seconds) as i64 * 1000;
-    let (h, d, last) = counts(&tx, &env.resource_id, family);
+    let (h, d, last) = counts_any(&tx, &aliases, family);
     if h >= per_hour || d >= per24h {
         return Err(BErr::new("CIRCUIT_OPEN", format!("{h} attempts in the last hour / {d} in 24 h reach the limit ({per_hour}/{per24h})"))
             .with(json!({"lastHour": h, "last24h": d, "perHour": per_hour, "per24h": per24h})));
@@ -544,6 +570,53 @@ mod tests {
         assert_eq!(counts(&c, "unit:other", "restart").0, 1);
         // attempts are never deleted, so no path can reset the window
         assert!(c.execute("DELETE FROM maintenance_attempts WHERE store_uuid='store-a'", []).is_err());
+        drop(c);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn w09_two_workspaces_registering_one_unit_share_its_counts_and_quarantine_ids() {
+        // the real root policy shape: workspace A registers agentos-lab.service as "lab", workspace B registers the very
+        // same unit as "svc"; a third entry is another unit. Resource ids differ (they carry the store) — the physical
+        // identity must not.
+        let unit = |store: &str, key: &str, u: &str| {
+            json!({"key": key, "storeUuid": store, "unit": u, "displayName": key, "templateHash": "sha256:00", "safeRepeatStart": true,
+                   "autoConverge": false, "cpuQuotaPerSecUSec": {"min": 1, "max": 2}, "memoryMax": {"min": 1, "max": 2}})
+        };
+        let w = |n: &str| json!({"socket": format!("/run/{n}.sock"), "unit": format!("{n}.service"), "uid": 961});
+        let pol: crate::policy::Policy = serde_json::from_value(json!({
+            "policyFormat": 1, "machineInstallId": "m", "hosts": [], "managedRoots": [], "labNetworks": [], "serial": [],
+            "units": [unit("store-a", "lab", "agentos-lab.service"), unit("store-b", "svc", "agentos-lab.service"), unit("store-b", "other", "other.service")],
+            "workers": {"file": w("f"), "service": w("s"), "network": w("n"), "serial": w("r")}, "testMode": false
+        }))
+        .unwrap();
+        let ra = crate::policy::resource_id("m", "store-a", "service", "lab");
+        let rb = crate::policy::resource_id("m", "store-b", "service", "svc");
+        let ro = crate::policy::resource_id("m", "store-b", "service", "other");
+        assert_ne!(ra, rb);
+        let mut al = crate::state::aliases_of(&pol, "m", "store-a", &ra);
+        assert_eq!(al[0], ra);
+        al.sort();
+        let mut want = vec![ra.clone(), rb.clone()];
+        want.sort();
+        assert_eq!(al, want, "both workspaces' ids name the one unit");
+        assert_eq!(crate::state::aliases_of(&pol, "m", "store-b", &ro), vec![ro.clone()]);
+        let path = std::env::temp_dir().join(format!("broker-w09b-{}-{}.sqlite", std::process::id(), now()));
+        let _ = std::fs::remove_file(&path);
+        let c = crate::db::create(path.to_str().unwrap(), "m", "p1").unwrap();
+        let t = now();
+        for (store, res, op, at) in [("store-a", &ra, "o1", t - 5000), ("store-a", &ra, "o2", t - 4000), ("store-b", &rb, "o3", t - 1000), ("store-b", &ro, "o4", t - 10)] {
+            c.execute(
+                "INSERT INTO maintenance_attempts(store_uuid, incarnation, resource_id, action_family, operation_id, policy_id, policy_version, job_id, step_id, admitted_at, outcome, seq) VALUES (?1,1,?2,'service.ensure_state.running',?3,'p',1,'j','s',?4,'done',1)",
+                params![store, res, op, at],
+            )
+            .unwrap();
+        }
+        // B's own id alone would say 1 attempt; the physical unit has had 3, and the cooldown runs from B's last one
+        assert_eq!(counts(&c, &rb, "service.ensure_state.running").0, 1);
+        let (h, d, last) = counts_any(&c, &crate::state::aliases_of(&pol, "m", "store-b", &rb), "service.ensure_state.running");
+        assert_eq!((h, d, last), (3, 3, Some(t - 1000)));
+        assert_eq!(counts_any(&c, &crate::state::aliases_of(&pol, "m", "store-b", &ro), "service.ensure_state.running").0, 1);
         drop(c);
         let _ = std::fs::remove_file(&path);
     }

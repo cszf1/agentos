@@ -53,56 +53,106 @@ pub struct CatalogRes {
     pub caps: Value,
 }
 
+/// What a catalog resource really is on this machine, independent of the workspace that registered it.
+pub fn physical_key(kind: &str, target: &Value) -> String {
+    let t = |k: &str| target[k].as_str().unwrap_or("").to_string();
+    match kind {
+        "service" => format!("service:{}", t("unit")),
+        "managed-root" => format!("managed-root:{}", t("root").trim_end_matches('/')),
+        "lab-network" => format!("lab-network:{}:{}", t("netnsPath"), t("table")),
+        _ => format!("serial:{}", t("path")),
+    }
+}
+
+
+pub fn catalog_of(p: &Policy, install_id: &str, store: &str) -> Vec<CatalogRes> {
+    let mut out = Vec::new();
+
+    for m in p.managed_roots.iter().filter(|m| m.store_uuid == store) {
+        out.push(CatalogRes {
+            resource_id: policy::resource_id(install_id, store, "managed-root", &m.key),
+            kind: "managed-root",
+            key: m.key.clone(),
+            display_name: m.display_name.clone(),
+            target: json!({"root": m.path, "writerUid": p.workers.file.uid}),
+            caps: json!({"maxFileBytes": m.max_file_bytes.min(128 * 1024), "quotaBytes": m.quota_bytes}),
+        });
+    }
+    for u in p.units.iter().filter(|u| u.store_uuid == store) {
+        out.push(CatalogRes {
+            resource_id: policy::resource_id(install_id, store, "service", &u.key),
+            kind: "service",
+            key: u.key.clone(),
+            display_name: u.display_name.clone(),
+            target: json!({"unit": u.unit, "templateHash": u.template_hash}),
+            caps: json!({
+                "states": ["running", "stopped"],
+                "CPUQuotaPerSecUSec": {"min": u.cpu_quota_per_sec_usec.min, "max": u.cpu_quota_per_sec_usec.max},
+                "MemoryMax": {"min": u.memory_max.min, "max": u.memory_max.max},
+                "safeRepeatStart": u.safe_repeat_start, "autoConverge": u.auto_converge
+            }),
+        });
+    }
+    for n in p.lab_networks.iter().filter(|n| n.store_uuid == store) {
+        out.push(CatalogRes {
+            resource_id: policy::resource_id(install_id, store, "lab-network", &n.key),
+            kind: "lab-network",
+            key: n.key.clone(),
+            display_name: n.display_name.clone(),
+            target: json!({"netnsPath": n.netns_path, "table": n.table, "peerAddress": n.peer_address, "peerPort": n.peer_port, "maxRules": n.max_rules}),
+            caps: json!({"profiles": n.profiles}),
+        });
+    }
+    for s in p.serial.iter().filter(|s| s.store_uuid == store) {
+        out.push(CatalogRes {
+            resource_id: policy::resource_id(install_id, store, "serial", &s.key),
+            kind: "serial",
+            key: s.key.clone(),
+            display_name: s.display_name.clone(),
+            target: json!({"kind": s.kind, "path": s.path, "profile": s.profile, "udevMatch": s.udev_match}),
+            caps: json!({"commands": ["SAMPLE", "ECHO"], "profile": s.profile, "frameMax": 256, "responseMax": 4096, "timeoutMs": 2000}),
+        });
+    }
+    out
+}
+
+/// Every catalog resource id, in any workspace, that names the same PHYSICAL resource as this one (spec §12.3,
+/// V1-W09): resource ids carry the registering store, so two workspaces that register the same unit, root,
+/// lab network or serial device get two ids for one real thing. Counts, cooldowns, quarantine and the write lock
+/// must follow the real thing. Always contains `resource_id` itself.
+pub fn aliases_of(p: &Policy, install_id: &str, store: &str, resource_id: &str) -> Vec<String> {
+    let Some(r) = catalog_of(p, install_id, store).into_iter().find(|r| r.resource_id == resource_id) else { return vec![resource_id.to_string()] };
+    let key = physical_key(r.kind, &r.target);
+    let mut stores: Vec<&str> = p
+        .managed_roots
+        .iter()
+        .map(|m| m.store_uuid.as_str())
+        .chain(p.units.iter().map(|u| u.store_uuid.as_str()))
+        .chain(p.lab_networks.iter().map(|n| n.store_uuid.as_str()))
+        .chain(p.serial.iter().map(|s| s.store_uuid.as_str()))
+        .collect();
+    stores.sort_unstable();
+    stores.dedup();
+    let mut out = vec![resource_id.to_string()];
+    for st in stores {
+        for c in catalog_of(p, install_id, st) {
+            if c.kind == r.kind && physical_key(c.kind, &c.target) == key && !out.contains(&c.resource_id) {
+                out.push(c.resource_id);
+            }
+        }
+    }
+    out
+}
+
+
 impl Broker {
     pub fn catalog(&self, store: &str) -> Vec<CatalogRes> {
-        let p = &self.policy;
-        let mut out = Vec::new();
-        for m in p.managed_roots.iter().filter(|m| m.store_uuid == store) {
-            out.push(CatalogRes {
-                resource_id: policy::resource_id(&self.install_id, store, "managed-root", &m.key),
-                kind: "managed-root",
-                key: m.key.clone(),
-                display_name: m.display_name.clone(),
-                target: json!({"root": m.path, "writerUid": p.workers.file.uid}),
-                caps: json!({"maxFileBytes": m.max_file_bytes.min(128 * 1024), "quotaBytes": m.quota_bytes}),
-            });
-        }
-        for u in p.units.iter().filter(|u| u.store_uuid == store) {
-            out.push(CatalogRes {
-                resource_id: policy::resource_id(&self.install_id, store, "service", &u.key),
-                kind: "service",
-                key: u.key.clone(),
-                display_name: u.display_name.clone(),
-                target: json!({"unit": u.unit, "templateHash": u.template_hash}),
-                caps: json!({
-                    "states": ["running", "stopped"],
-                    "CPUQuotaPerSecUSec": {"min": u.cpu_quota_per_sec_usec.min, "max": u.cpu_quota_per_sec_usec.max},
-                    "MemoryMax": {"min": u.memory_max.min, "max": u.memory_max.max},
-                    "safeRepeatStart": u.safe_repeat_start, "autoConverge": u.auto_converge
-                }),
-            });
-        }
-        for n in p.lab_networks.iter().filter(|n| n.store_uuid == store) {
-            out.push(CatalogRes {
-                resource_id: policy::resource_id(&self.install_id, store, "lab-network", &n.key),
-                kind: "lab-network",
-                key: n.key.clone(),
-                display_name: n.display_name.clone(),
-                target: json!({"netnsPath": n.netns_path, "table": n.table, "peerAddress": n.peer_address, "peerPort": n.peer_port, "maxRules": n.max_rules}),
-                caps: json!({"profiles": n.profiles}),
-            });
-        }
-        for s in p.serial.iter().filter(|s| s.store_uuid == store) {
-            out.push(CatalogRes {
-                resource_id: policy::resource_id(&self.install_id, store, "serial", &s.key),
-                kind: "serial",
-                key: s.key.clone(),
-                display_name: s.display_name.clone(),
-                target: json!({"kind": s.kind, "path": s.path, "profile": s.profile, "udevMatch": s.udev_match}),
-                caps: json!({"commands": ["SAMPLE", "ECHO"], "profile": s.profile, "frameMax": 256, "responseMax": 4096, "timeoutMs": 2000}),
-            });
-        }
-        out
+        catalog_of(&self.policy, &self.install_id, store)
+    }
+
+    /// See `aliases_of`.
+    pub fn physical_aliases(&self, store: &str, resource_id: &str) -> Vec<String> {
+        aliases_of(&self.policy, &self.install_id, store, resource_id)
     }
 
     pub fn find_res(&self, store: &str, resource_id: &str) -> Option<CatalogRes> {
