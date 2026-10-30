@@ -250,28 +250,22 @@ fn control(b: &Shared, sess: &mut Session, g: &MaintenanceControlParams) -> Resu
     Ok(json!({"state": st.0, "maintenanceEpoch": st.1, "applied": applied_ws, "targetControlEpoch": target_epoch, "seq": seq}))
 }
 
-pub fn counts(c: &Connection, store: &str, resource_id: &str, family: &str) -> (i64, i64, Option<i64>) {
+/// Rolling attempt counts and the last admission for one REAL resource + action family (spec §12.3, V1-W09): the
+/// count is aggregated over every workspace (store), user, policy, job and execution UID that ever acted on this
+/// resource, so moving the same work to another workspace, a new policy or a new executionUid never resets it.
+pub fn counts(c: &Connection, resource_id: &str, family: &str) -> (i64, i64, Option<i64>) {
     let t = now();
-    let hour: i64 = c
-        .query_row(
-            "SELECT count(*) FROM maintenance_attempts WHERE store_uuid=?1 AND resource_id=?2 AND action_family=?3 AND admitted_at > ?4",
-            params![store, resource_id, family, t - 3_600_000],
+    let n = |since: i64| -> i64 {
+        c.query_row(
+            "SELECT count(*) FROM maintenance_attempts WHERE resource_id=?1 AND action_family=?2 AND admitted_at > ?3",
+            params![resource_id, family, since],
             |r| r.get(0),
         )
-        .unwrap_or(0);
-    let day: i64 = c
-        .query_row(
-            "SELECT count(*) FROM maintenance_attempts WHERE store_uuid=?1 AND resource_id=?2 AND action_family=?3 AND admitted_at > ?4",
-            params![store, resource_id, family, t - 86_400_000],
-            |r| r.get(0),
-        )
-        .unwrap_or(0);
+        .unwrap_or(0)
+    };
+    let (hour, day) = (n(t - 3_600_000), n(t - 86_400_000));
     let last: Option<i64> = c
-        .query_row(
-            "SELECT max(admitted_at) FROM maintenance_attempts WHERE store_uuid=?1 AND resource_id=?2 AND action_family=?3",
-            params![store, resource_id, family],
-            |r| r.get(0),
-        )
+        .query_row("SELECT max(admitted_at) FROM maintenance_attempts WHERE resource_id=?1 AND action_family=?2", params![resource_id, family], |r| r.get(0))
         .ok()
         .flatten();
     (hour, day, last)
@@ -302,7 +296,7 @@ fn state(b: &Shared, sess: &mut Session, g: &MaintenanceStateParams) -> Result<V
         .collect();
     let mut out_p = vec![];
     for mut pv in policies {
-        let (h, d, last) = counts(c, store, pv["resourceId"].as_str().unwrap_or(""), pv["actionFamily"].as_str().unwrap_or(""));
+        let (h, d, last) = counts(c, pv["resourceId"].as_str().unwrap_or(""), pv["actionFamily"].as_str().unwrap_or(""));
         pv["attempts"] = json!({"lastHour": h, "last24h": d, "lastAdmittedAtMs": last});
         out_p.push(pv);
     }
@@ -418,7 +412,7 @@ fn submit(b: &Shared, sess: &mut Session, env: &MaintenanceWriteEnvelope) -> Res
     let per_hour = bounds.per_hour.min(caps.per_hour) as i64;
     let per24h = bounds.per24h.min(caps.per24h) as i64;
     let cooldown = bounds.cooldown_seconds.max(caps.cooldown_seconds) as i64 * 1000;
-    let (h, d, last) = counts(&tx, store, &env.resource_id, family);
+    let (h, d, last) = counts(&tx, &env.resource_id, family);
     if h >= per_hour || d >= per24h {
         return Err(BErr::new("CIRCUIT_OPEN", format!("{h} attempts in the last hour / {d} in 24 h reach the limit ({per_hour}/{per24h})"))
             .with(json!({"lastHour": h, "last24h": d, "perHour": per_hour, "per24h": per24h})));
@@ -516,4 +510,41 @@ pub fn maintenance_of(c: &Connection, install: &str, store: &str, inc: i64, op_i
     .ok()
     .flatten()
     .and_then(|s| serde_json::from_str(&s).ok())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn w09_counts_follow_the_real_resource_across_workspaces_and_policies() {
+        let path = std::env::temp_dir().join(format!("broker-w09-{}-{}.sqlite", std::process::id(), now()));
+        let _ = std::fs::remove_file(&path);
+        let c = crate::db::create(path.to_str().unwrap(), "machine-w09", "p1").unwrap();
+        let add = |store: &str, inc: i64, res: &str, fam: &str, op: &str, policy: &str, at: i64| {
+            c.execute(
+                "INSERT INTO maintenance_attempts(store_uuid, incarnation, resource_id, action_family, operation_id, policy_id, policy_version, job_id, step_id, admitted_at, outcome, seq) VALUES (?1,?2,?3,?4,?5,?6,1,'j','s',?7,'done',1)",
+                params![store, inc, res, fam, op, policy, at],
+            )
+            .unwrap();
+        };
+        let t = now();
+        // workspace A used the shared unit twice; then the same work moves to workspace B under a new policy/incarnation
+        add("store-a", 1, "unit:shared", "restart", "op1", "pa", t - 1000);
+        add("store-a", 1, "unit:shared", "restart", "op2", "pa", t - 900);
+        add("store-b", 3, "unit:shared", "restart", "op3", "pb", t - 500);
+        let (h, d, last) = counts(&c, "unit:shared", "restart");
+        assert_eq!((h, d, last), (3, 3, Some(t - 500)), "another workspace does not start from zero");
+        // other resources and other families are separate; an attempt older than an hour counts only in 24 h
+        add("store-b", 3, "unit:other", "restart", "op4", "pb", t - 500);
+        add("store-a", 1, "unit:shared", "stop", "op5", "pa", t - 500);
+        add("store-c", 1, "unit:shared", "restart", "op6", "pc", t - 7_200_000);
+        assert_eq!(counts(&c, "unit:shared", "restart").0, 3);
+        assert_eq!(counts(&c, "unit:shared", "restart").1, 4);
+        assert_eq!(counts(&c, "unit:other", "restart").0, 1);
+        // attempts are never deleted, so no path can reset the window
+        assert!(c.execute("DELETE FROM maintenance_attempts WHERE store_uuid='store-a'", []).is_err());
+        drop(c);
+        let _ = std::fs::remove_file(&path);
+    }
 }
