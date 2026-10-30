@@ -389,3 +389,10 @@ with subtest("rollback only to a release whose compatibility covers the live dat
     assert "revoked" in revs0, revs0                                                                               # bob's revocation (I07) is among them
     r = call(1, [{"methodId": "workspaces.list"}], "u11l")[0]
     assert r["status"] == 200, r
+
+with subtest("no PAM password reached a model request body (I11 model content)"):
+    bodies = machine.succeed(f"wc -c < {FM}/bodies.log").strip()
+    print("model request bytes seen by the endpoint", bodies)
+    assert int(bodies) > 0
+    for secret in ("alice-pw-1", "bob-pw-1"):
+        machine.fail(f"grep -qF '{secret}' {FM}/bodies.log")

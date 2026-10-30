@@ -41,6 +41,8 @@ class H(BaseHTTPRequestHandler):
         raw = self.rfile.read(n) or b"{}"
         body = json.loads(raw)
         # the Host's compaction instructions mark a compaction request (background); everything else is a task turn
+        with open(f"{D}/bodies.log", "ab") as bf:   # every request body, so a test can search what reached "the model"
+            bf.write(raw + b"\n")
         kind = "compaction" if "Keep only: the current goal" in raw.decode("utf-8", "replace") else "run"
         t0 = time.time()
         with lock:

@@ -212,3 +212,50 @@ with subtest("a commit behind a failing health gate leaves the persistent defaul
     v = json.loads(out.strip().splitlines()[-1])
     assert not v["ok"] and v["error"]["code"] == "NEEDS_ATTENTION" and "greeter_frame" in v["error"]["message"], v
     assert machine.succeed(f"tail -c +5 {efi} | tr -d '\\000'").strip() == before
+
+with subtest("power cut at every ESP publish point leaves only the complete old entries or a complete candidate; known-good still boots (U07)"):
+    NEW = "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+    efi = "/sys/firmware/efi/efivars/LoaderEntryDefault-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f"
+    default0 = machine.succeed(f"tail -c +5 {efi} | tr -d '\\000'").strip()
+    assert default0 == f"agentos-{CAND}.conf", default0
+    sysp = machine.succeed("readlink -f /run/current-system").strip()
+    kernel = machine.succeed(f"readlink -f {sysp}/kernel").strip()
+    initrd = machine.succeed(f"readlink -f {sysp}/initrd").strip()
+    kh = machine.succeed(f"sha256sum {kernel} | cut -d' ' -f1").strip()
+    ih = machine.succeed(f"sha256sum {initrd} | cut -d' ' -f1").strip()
+    params = machine.succeed(f"cat {sysp}/kernel-params").strip()
+    cmd = f"{UW} write-entry --esp /boot --release-id {NEW} --kernel {kernel} --initrd {initrd} --initrd-hash sha256:{ih} --init {sysp}/init --cmdline '{params}' --title 'AgentOS {NEW[:8]}'"
+    def esp_state():
+        conf = machine.succeed(f"test -e /boot/loader/entries/agentos-{NEW}.conf && echo y || echo n").strip() == "y"
+        d = f"/boot/EFI/agentos/{NEW}"
+        lk = machine.succeed(f"sha256sum {d}/linux 2>/dev/null | cut -d' ' -f1 || true").strip()
+        ik = machine.succeed(f"sha256sum {d}/initrd 2>/dev/null | cut -d' ' -f1 || true").strip()
+        return conf, lk == kh and ik == ih, bool(lk or ik)
+    def old_entries_complete():
+        for rid in (GOOD, CAND):
+            machine.succeed(f"test -s /boot/loader/entries/agentos-{rid}.conf && test -s /boot/EFI/agentos/{rid}/linux && test -s /boot/EFI/agentos/{rid}/initrd")
+            machine.succeed(f"cmp /boot/EFI/agentos/{rid}/linux {kernel} && cmp /boot/EFI/agentos/{rid}/initrd {initrd}")
+    for pt in ("boot.after_copy_linux", "boot.after_copy_initrd", "boot.before_dir_publish", "boot.before_entry", "boot.after_entry"):
+        rc, out = machine.execute(f"AGENTOS_FAULT_POINT={pt} {cmd}")
+        assert rc != 0, (pt, out)                                   # the worker died at that publish point
+        machine.crash()                                             # power cut: no shutdown, no sync of anything still unwritten
+        machine.start()
+        machine.wait_for_unit("multi-user.target", timeout=600)
+        assert booted_release() == CAND, (pt, booted_release())     # the persistent default (known-good) still boots
+        assert machine.succeed(f"tail -c +5 {efi} | tr -d '\\000'").strip() == default0, pt
+        machine.fail("test -n \"$(cat /sys/firmware/efi/efivars/LoaderEntryOneShot-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f 2>/dev/null)\"")
+        old_entries_complete()
+        conf, complete, any_asset = esp_state()
+        print(pt, "entry", conf, "assets complete", complete, "assets present", any_asset)
+        assert (not conf) or complete, pt                           # a visible entry always names complete assets
+        if pt == "boot.after_entry":
+            assert conf and complete, pt                            # past the last publish point: the complete candidate
+        if pt in ("boot.after_copy_linux", "boot.after_copy_initrd", "boot.before_dir_publish"):
+            assert not conf and not any_asset, pt                   # before the directory publish: no candidate at all (only .tmp)
+        # the same command completes from whatever was left, and the candidate is then complete
+        uw(cmd[len(UW) + 1:])
+        conf, complete, _ = esp_state()
+        assert conf and complete, pt
+        r = uw(f"gc --esp /boot --keep {CAND},{GOOD}")
+        assert NEW in r["removed"], r
+        old_entries_complete()
