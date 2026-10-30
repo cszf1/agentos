@@ -204,6 +204,9 @@ class ShellController : public QObject, public RequestSink {
   qint64 clientEpoch_ = 1;
   int scopeGen_ = 0;
   int lateDropped_ = 0;
+  int eventsSeen_ = 0;    // diagnostics: every event frame, and those for another workspace
+  int eventsOther_ = 0;
+  QString lastEventType_;
   QDateTime cachedAt_;
   JValue machineStatus_ = JValue::object(), capabilities_ = JValue::object(), updateStatus_ = JValue::object(), maintState_ = JValue::object();
   QString diagnosticsText_, transcriptText_;

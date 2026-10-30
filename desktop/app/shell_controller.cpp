@@ -117,7 +117,8 @@ QVariantMap ShellController::transportStats() const {
   const RpcStats s = rpc_->stats();
   return {{QStringLiteral("inflight"), s.inflight}, {QStringLiteral("queued"), s.queued},       {QStringLiteral("reconnects"), s.reconnects},
           {QStringLiteral("resent"), s.resent},     {QStringLiteral("statusQueries"), s.statusQueries}, {QStringLiteral("gaps"), s.gaps},
-          {QStringLiteral("protocolErrors"), s.protocolErrors}, {QStringLiteral("lateDropped"), lateDropped_}};
+          {QStringLiteral("protocolErrors"), s.protocolErrors}, {QStringLiteral("lateDropped"), lateDropped_},
+          {QStringLiteral("events"), eventsSeen_}, {QStringLiteral("eventsOtherWorkspace"), eventsOther_}, {QStringLiteral("lastEvent"), lastEventType_}};
 }
 
 QString ShellController::banner() const {
@@ -483,6 +484,11 @@ void ShellController::loadAll() {
 
 void ShellController::refreshPage() {
   if (ws_.isEmpty() || !sessionBound_) return;
+  // The app list is re-read from the Host on every page refresh as well as on app.* events: events are hints and
+  // can be missed (gap, reconnect); a page refresh must never show an app list older than the Host's.
+  request(QStringLiteral("state"), JValue::object(), [this](const RpcReply& r) {
+    if (r.ok()) applyApps(r.body);
+  });
   const JValue a = JValue::object({{QStringLiteral("workspaceId"), ws_}});
   auto list = [this](JsonListModel* m) {
     return [this, m](const RpcReply& r) {
@@ -866,7 +872,12 @@ void ShellController::confirmReject() {
 
 // ------------------------------------------------------------------ events
 void ShellController::onEvent(const RpcEvent& e) {
-  if (e.workspaceId != ws_) return;
+  eventsSeen_++;
+  lastEventType_ = e.type;
+  if (e.workspaceId != ws_) {
+    eventsOther_++;
+    return;
+  }
   const QString t = e.type;
   if (t == QLatin1String("membership.revoking") || t == QLatin1String("membership.revoked")) {
     const QString who = e.data.get(QStringLiteral("userId")).stringOr(userId_);

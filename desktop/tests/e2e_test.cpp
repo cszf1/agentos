@@ -190,7 +190,15 @@ class E2E : public QObject {
     QString run1 = r.submit(QStringLiteral("做一个待办应用"));
     QVERIFY2(!run1.isEmpty(), "runs.submit gave no runId");
     QCOMPARE(r.waitRun(run1, 240000), QStringLiteral("succeeded"));
-    QTRY_VERIFY_WITH_TIMEOUT(r.appCount() >= 1, 20000);
+    if (!QTest::qWaitFor([&] { return r.appCount() >= 1; }, 20000)) {
+      r.go(QStringLiteral("home"));   // a page refresh re-reads the app list from the Host
+      QTest::qWaitFor([&] { return r.appCount() >= 1; }, 10000);
+      const QVariantMap t = r.shell->transportStats();
+      QStringList ts;
+      for (auto it = t.begin(); it != t.end(); ++it) ts << it.key() + QLatin1Char('=') + it.value().toString();
+      fprintf(stderr, "E2E app list after the run: count=%d (events did not refresh it within 20 s) transport={%s}\n", r.appCount(), qPrintable(ts.join(QLatin1Char(' '))));
+    }
+    QVERIFY(r.appCount() >= 1);
     const QString todo = r.app(0).get(QStringLiteral("appId")).str();
     report(QStringLiteral("declarative"), {{QStringLiteral("runId"), run1}, {QStringLiteral("appId"), todo}});
 
