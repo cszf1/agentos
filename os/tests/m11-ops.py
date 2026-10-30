@@ -148,14 +148,16 @@ with subtest("old, foreign and expired confirmation tickets are refused at machi
     print("O07 expired ticket", res_exp)
     assert res_exp == "SESSION_STALE", res_exp
     # the valid ticket confirms once; replaying it returns the recorded result and never dispatches again
-    ok = confirm(pa, op1, ph1, t1b)
+    t1c = ticket(pa, op1, ph1)["data"]["ticket"]          # t1b has expired with the wait too: a fresh one
+    assert ecode(confirm(pa, op1, ph1, t1b)) == "SESSION_STALE"
+    ok = confirm(pa, op1, ph1, t1c)
     assert ok["ok"], ok
     for _ in range(30):
         if sql(f"SELECT state FROM machine_operations WHERE operation_id='{op1}'") == "succeeded":
             break
         time.sleep(1)
     assert sql(f"SELECT state FROM machine_operations WHERE operation_id='{op1}'") == "succeeded"
-    again = confirm(pa, op1, ph1, t1b)
+    again = confirm(pa, op1, ph1, t1c)
     print("O07 replay of the used ticket", again)
     assert again["ok"] and again["data"]["state"] == "succeeded", again
     assert sql(f"SELECT COUNT(*) FROM root_audit WHERE kind='op.confirm:workspaces.runWhenLoggedOut' AND operation_id='{op1}'") == "1"
