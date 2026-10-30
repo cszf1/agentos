@@ -450,7 +450,9 @@ void ShellController::loadMachine() {
       const JValue& v = c.get(QString::fromLatin1(k));
       return v.isMissing() || v.str() == QLatin1String("ok") || v.str() == QLatin1String("ready");
     };
-    const bool h = up("host"), m = up("model"), b = up("broker");
+    // a missing model component says nothing: the Host's state view decides (applyApps)
+    const bool h = up("host"), b = up("broker");
+    const bool m = c.get(QStringLiteral("model")).isMissing() ? modelAvailable_ : up("model");
     if (m != modelAvailable_ || b != brokerAvailable_) {
       modelAvailable_ = m;
       brokerAvailable_ = b;
@@ -468,6 +470,14 @@ void ShellController::loadMachine() {
 
 void ShellController::applyApps(const JValue& state) {
   apps_->setItems(state.get(QStringLiteral("apps")));
+  // The workspace Host's state view says whether generation is possible (its own model configuration). machine.status
+  // has no model component, so without this the Shell kept "available" after the Host restarted without a model
+  // (m13 O03 run 41143307884: Host logged modelAvailable=false, the submit button stayed enabled).
+  const JValue& ma = state.get(QStringLiteral("modelAvailable"));
+  if (ma.isBool() && ma.toBool() != modelAvailable_) {
+    modelAvailable_ = ma.toBool();
+    emit statusChanged();
+  }
   // An open app view older than the list (a new version activated, the event missed or not carrying the appId) is
   // re-read: its appEpoch guards every write from it, so a stale one turns the next action into APP_EPOCH_STALE
   // (m13 run 41131676224: the version switch after a modify answered 409).

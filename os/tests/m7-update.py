@@ -312,7 +312,9 @@ with subtest("commit window: a crash after the intent or after the default resol
             mok("updates.advance", {"updateId": uid, "to": st, "fields": {}})
         b = mok("barrier.hold", {"ownerKind": "update", "ownerId": uid, "scope": {}})["barrierId"]
         mok("updates.advance", {"updateId": uid, "to": "armed", "fields": {"barrierId": b, "candidateEntryId": f"agentos-{rid}.conf", "previousEntryId": f"agentos-{known}.conf"}})
-        write_entry(rid, system=OLDGEN if rid == C1 else None)   # C1 is the older generation: its own closure
+        # C1 is the older generation (its own closure); every other entry is the newer one. Run 41143311441: C2's entry
+        # was written while C1 (OLDGEN) was booted, copied /run/current-system and so booted the older closure again
+        write_entry(rid, system=OLDGEN if rid == C1 else NEWGEN)
         uw(f"arm --esp /boot --release-id {rid} --known-good {known}")
         reboot()
         assert booted_release() == rid, booted_release()
