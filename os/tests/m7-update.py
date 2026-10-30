@@ -108,6 +108,8 @@ with subtest("GC removes only unpinned registered entries; NixOS entries stay (U
 with subtest("release verification: tampered manifest/closure/OCI/signature, unknown key, missing file all refused (U04)"):
     import base64, uuid as _uuid
     machine.wait_for_unit("agentos-machine.service")
+    # the release high-water mark lives in the machine identity: first boot creates it
+    machine.succeed("printf 'alice-pw-1' | agentosctl firstboot --admin alice")
     machine.succeed("mkdir -p /root/rel && cd /root/rel && openssl genpkey -algorithm ed25519 -out rel.pem && openssl genpkey -algorithm ed25519 -out other.pem")
     pk = machine.succeed("openssl pkey -in /root/rel/rel.pem -pubout -outform DER | tail -c 32 | od -An -tx1 | tr -d ' \\n'").strip()
     assert len(pk) == 64, pk
