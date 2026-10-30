@@ -1,0 +1,66 @@
+{
+  "format": 2,
+  "complete": true,
+  "storeUUID": "1385edad-f864-464f-b9d1-d640406dfbfd",
+  "productVersion": "0.4.0",
+  "schemaVersion": 4,
+  "clientEpoch": 1,
+  "abiVersion": 1,
+  "policyVersion": 1,
+  "toolsetVersion": 4,
+  "sourceCommit": "unknown",
+  "piDurableVersion": "1.4.0",
+  "catalogHash": "sha256:37b6fca0829c00c15e9de803d1e31ef53c2c3ed6bc72ce10bfa35481d600cb7b",
+  "createdAt": "2026-10-30T13:47:13.293Z",
+  "files": {
+    "os.sqlite": "bc8653f84a495c23a04aa3efc19f0689d361af63c916467370953d0f2e33ecba",
+    "os.sqlite-wal": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "agent.sqlite": "3bfc32d5a6f756f756804c53aa60f734493306e1f70ac6b1d879bf6a1e842004",
+    "runtime/catalog.json": "cee0025b4dade0751a94d31e300e441ca954f4d9520cf87c41c9aef6c58d8660"
+  },
+  "artifacts": [],
+  "images": [],
+  "v03": {
+    "providerCatalogHash": "sha256:f09bb2f60d79a8cd53fd4b9323b5b1ba7ed886d711df98005e457f1be57b2a3b",
+    "policyVersion": null,
+    "checkpoint": null,
+    "resources": [
+      {
+        "id": "res_hostnet_1385edad",
+        "kind": "host-network",
+        "generation": 1,
+        "status": "available",
+        "identityDigest": null
+      },
+      {
+        "id": "res_telemetry_1385edad",
+        "kind": "telemetry",
+        "generation": 1,
+        "status": "available",
+        "identityDigest": null
+      }
+    ],
+    "auditFile": null,
+    "managed": null,
+    "brokerAvailable": false
+  },
+  "v04": {
+    "schedulerEpoch": 1,
+    "maintenanceEpoch": 1,
+    "maintenanceState": "running",
+    "conversations": {
+      "total": 0,
+      "byState": {},
+      "bindingsHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    "policies": [],
+    "unfinishedJobs": [],
+    "openDeleteIntents": 0,
+    "heldPins": 0,
+    "unknownEffects": {
+      "maintenanceSteps": 0,
+      "systemActions": 0
+    },
+    "gcResumedBeforeCopy": 0
+  }
+}

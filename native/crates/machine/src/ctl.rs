@@ -8,6 +8,9 @@
 //!   agentosctl recover --new-identity                          (root: accept a new install identity after loss)
 //!   agentosctl clone --set <dir> --owner <login>               (root: a machine set from ANOTHER machine becomes new
 //!                                                               workspaces here; history kept as evidence, no authority)
+//!   agentosctl import-v04 --backup <dir> --owner <login> [--name <name>] [--include-secrets]
+//!                                                              (root: a v0.4 cold backup becomes a NEW workspace;
+//!                                                               the import itself runs as its execution UID, §25)
 //!   agentosctl update digest --manifest <file>                 (the digest a release key signs)
 //!   agentosctl update trust-key --key-id <id> --public-key <hex> (root: add a release verification key, audited)
 //!   agentosctl update verify --manifest <file> --signature <file> [--trusted-time] [--images <index.json>]
@@ -171,6 +174,7 @@ fn main() {
         (Some("backup"), _) => backup(&mut c, &a),
         (Some("restore"), _) => restore(&mut c, &a),
         (Some("clone"), _) => clone(&mut c, &a),
+        (Some("import-v04"), _) => import_v04(&mut c, &a),
         _ => die("usage: agentosctl status | doctor | workspace list | workspace status <id> | update status | firstboot --admin <login> | support-bundle --out <file>"),
     }
 }
@@ -499,6 +503,113 @@ fn clone(c: &mut Client, a: &[String]) {
         report.push(json!({ "sourceWorkspaceId": old, "workspaceId": ws, "executionUid": uid, "storeUUID": p["storeUUID"], "owner": owner_login }));
     }
     out(&json!({ "ok": true, "setId": set_id, "sourceMachineInstallId": src_mid, "machineInstallId": st["meta"]["machineInstallId"], "workspaces": report }));
+}
+
+fn admin_program() -> String {
+    std::env::var("AGENTOS_ADMIN_PROGRAM").unwrap_or_else(|_| "/run/current-system/sw/bin/agentos-admin".into())
+}
+
+/// v0.4 import on a v1.0 machine (spec §25, V1-M01..M08). machined allocates a NEW workspace (new execution UID,
+/// sub-ID range, account, origin `imported_v04`, the backup's storeUUID — a store already registered here is refused
+/// with STORE_ALREADY_REGISTERED); the workspace is stopped, a private copy of the backup is handed to its UID, and
+/// the import program runs AS that UID (`agentos-admin import-v04`: verify every file hash, copy only regular files,
+/// migrate to schema 5 in a staging tree, compare content facts, bind `user:local` to the owner, pause policies,
+/// revoke grants; one rename publishes it). The backup itself is never modified. Resumable: the same backup gives the
+/// same createId; a finished import is reported, never repeated.
+fn import_v04(c: &mut Client, a: &[String]) {
+    root_only("import-v04");
+    let usage = "usage: agentosctl import-v04 --backup <dir> --owner <login> [--name <name>] [--include-secrets]";
+    let dir = arg(a, "--backup").unwrap_or_else(|| die(usage));
+    let owner_login = arg(a, "--owner").unwrap_or_else(|| die(usage));
+    let mbytes = std::fs::read(format!("{dir}/manifest.json")).unwrap_or_else(|_| die("IMPORT_FORMAT_UNSUPPORTED: not a v0.4 backup (manifest.json missing)"));
+    let man: Value = serde_json::from_slice(&mbytes).unwrap_or_else(|_| die("IMPORT_FORMAT_UNSUPPORTED: manifest.json is not JSON"));
+    if !man["productVersion"].as_str().map(|v| v.starts_with("0.4.")).unwrap_or(false) || man["complete"] != true {
+        die("IMPORT_FORMAT_UNSUPPORTED: only a complete v0.4.x cold backup can be imported");
+    }
+    let store = man["storeUUID"].as_str().unwrap_or_else(|| die("IMPORT_FORMAT_UNSUPPORTED: manifest has no storeUUID")).to_string();
+    // every listed file is checked before anything is allocated (the import program checks again as the new UID)
+    for (f, h) in man["files"].as_object().cloned().unwrap_or_default() {
+        if f.split('/').any(|c| c.is_empty() || c == "." || c == "..") {
+            die(&format!("IMPORT_ENTRY_UNSUPPORTED: {f}"));
+        }
+        let p = format!("{dir}/{f}");
+        match std::fs::symlink_metadata(&p) {
+            Ok(md) if md.file_type().is_file() => {}
+            _ => die(&format!("IMPORT_HASH_MISMATCH: {f} is missing or not a regular file")),
+        }
+        let b = std::fs::read(&p).unwrap_or_else(|e| die(&format!("IMPORT_HASH_MISMATCH: {f}: {e}")));
+        if Some(sha256_hex(&b).as_str()) != h.as_str() {
+            die(&format!("IMPORT_HASH_MISMATCH: {f} does not match the manifest; nothing was created"));
+        }
+    }
+    let call = |c: &mut Client, op: &str, args: Value| c.call(op, args).unwrap_or_else(|e| die(&format!("{op}: {e}")));
+    let users = call(c, "users.list", json!({}));
+    let owner = users["users"].as_array().cloned().unwrap_or_default().into_iter().find(|u| u["loginName"].as_str() == Some(owner_login.as_str()) && u["state"] == "active")
+        .unwrap_or_else(|| die(&format!("no active local user {owner_login} on this machine")));
+    let owner_id = owner["userId"].as_str().unwrap_or_default().to_string();
+    let create_id = derived_uuid(&["import-v04", &store, &sha256_hex(&mbytes)]);
+    let name = arg(a, "--name").unwrap_or_else(|| "Imported v0.4".into());
+    let w = call(c, "workspaces.createFor", json!({ "createId": create_id, "ownerUserId": owner_id, "displayName": name, "storeUUID": store, "origin": "imported_v04" }));
+    let ws = w["workspaceId"].as_str().unwrap_or_else(|| die("machined did not return the new workspace")).to_string();
+    let _ = c.call("workspaces.rootStop", json!({ "workspaceId": ws }));
+    let row = call(c, "workspaces.row", json!({ "workspaceId": ws }));
+    let uid = row["executionUid"].as_i64().unwrap_or(-1);
+    if uid <= 0 || row["origin"] != "imported_v04" {
+        die(&format!("workspace {ws} is not an import target"));
+    }
+    let root = format!("/var/lib/agentos/workspaces/{ws}");
+    let data = format!("{root}/data");
+    let receipt = format!("{root}/import-v04.json");
+    if let Ok(t) = std::fs::read_to_string(&receipt) {
+        let mut v: Value = serde_json::from_str(&t).unwrap_or(json!({}));
+        v["resumed"] = json!(true);
+        out(&v);
+        return;
+    }
+    let sh = |args: &[&str]| {
+        let o = std::process::Command::new(args[0]).args(&args[1..]).output().unwrap_or_else(|e| die(&format!("{}: {e}", args[0])));
+        if !o.status.success() {
+            die(&format!("{} failed: {}", args[0], String::from_utf8_lossy(&o.stderr).trim()));
+        }
+    };
+    // The databases step wrote a fresh, empty os.sqlite (no agent.sqlite until a Host starts). An import that
+    // already published its tree carries agent.sqlite; anything else in data/ is that fresh tree and is replaced.
+    if !std::path::Path::new(&format!("{data}/agent.sqlite")).exists() {
+        let _ = std::fs::remove_dir_all(&data);
+        let src = format!("{root}/import-src");
+        let _ = std::fs::remove_dir_all(&src);
+        sh(&["cp", "-r", "-H", "--no-preserve=all", "--", &dir, &src]);
+        sh(&["chown", "-R", "--no-dereference", &format!("{uid}:{uid}"), "--", &src]);
+        sh(&["chmod", "-R", "u=rwX,go=", "--", &src]);
+        let registered: Vec<String> = call(c, "workspaces.all", json!({}))["workspaces"].as_array().cloned().unwrap_or_default().into_iter()
+            .filter(|x| x["workspaceId"].as_str() != Some(ws.as_str())).filter_map(|x| x["storeUUID"].as_str().map(String::from)).collect();
+        let mut cmd = std::process::Command::new("setpriv");
+        cmd.args(["--reuid", &uid.to_string(), "--regid", &uid.to_string(), "--init-groups", "--"]).arg(admin_program())
+            .args(["import-v04", "--backup", &src, "--data", &data, "--workspace-id", &ws, "--owner", &owner_id]);
+        if !registered.is_empty() {
+            cmd.args(["--registered", &registered.join(",")]);
+        }
+        if a.iter().any(|x| x == "--include-secrets") {
+            cmd.arg("--include-secrets");
+        }
+        let o = cmd.env_clear().env("HOME", &root).env("AGENTOS_DATA_DIR", &data).env("PATH", std::env::var("PATH").unwrap_or_default()).output()
+            .unwrap_or_else(|e| die(&format!("import program: {e}")));
+        let _ = std::fs::remove_dir_all(&src);
+        let text = String::from_utf8_lossy(&o.stdout).to_string() + &String::from_utf8_lossy(&o.stderr);
+        let r = text.lines().rev().find_map(|l| serde_json::from_str::<Value>(l).ok()).unwrap_or(json!({ "ok": false, "error": "no result" }));
+        if !o.status.success() || r["ok"] != true {
+            // nothing was published (the import program removes its staging tree): the workspace stays empty and
+            // stopped; the same command resumes
+            die(&format!("{}: {} (workspace {ws} left empty; run the same command again)", r["code"].as_str().unwrap_or("IMPORT_FAILED"), r["error"]));
+        }
+        let rep = json!({ "ok": true, "workspaceId": ws, "executionUid": uid, "storeUUID": store, "owner": owner_login, "origin": "imported_v04", "import": r });
+        agentos_machine::dir::write_private(std::path::Path::new(&receipt), rep.to_string().as_bytes()).unwrap_or_else(|e| die(&e.to_string()));
+        out(&rep);
+        return;
+    }
+    let rep = json!({ "ok": true, "workspaceId": ws, "executionUid": uid, "storeUUID": store, "owner": owner_login, "origin": "imported_v04", "import": { "published": true } });
+    agentos_machine::dir::write_private(std::path::Path::new(&receipt), rep.to_string().as_bytes()).unwrap_or_else(|e| die(&e.to_string()));
+    out(&rep);
 }
 
 fn bail(c: &mut Client, set_id: &str, barrier: &str, msg: String, begun: bool, was_running: &[String]) -> ! {

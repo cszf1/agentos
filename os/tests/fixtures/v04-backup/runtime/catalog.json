@@ -1,0 +1,147 @@
+{
+  "catalogVersion": 1,
+  "locks": [
+    {
+      "id": "core-v1@1",
+      "profileId": "core-v1",
+      "platform": "linux/amd64",
+      "baseImage": {
+        "reference": "docker.io/library/node",
+        "digest": "sha256:e1582112fb9f152ed38eefcd712efc93fee1becb519fdfa57574d5e07eaa5e7d"
+      },
+      "builderImage": {
+        "name": "localhost/agentos-builder-core-v1:5509cf20d792a02d",
+        "recipeHash": "sha256:5509cf20d792a02d694887c6d5e2c3122651695b04aa0908a383fa8f1c273864"
+      },
+      "runtimeImage": {
+        "name": "localhost/agentos-runtime-core-v1:e4ddd24e84404ad1",
+        "recipeHash": "sha256:e4ddd24e84404ad1641bab1596e5560199c515f572027af58e268bb4303147b7"
+      },
+      "sdkVersion": "1.0.0",
+      "abiVersion": 1,
+      "compiler": {
+        "typescript": "5.9.3",
+        "esbuild": "0.28.2"
+      },
+      "modules": [],
+      "dependencyLockHash": "sha256:00ea58b2185c13677e2c1cb104e7e47b069e9b2172ad436a7e112292dec948c1",
+      "policyVersion": 1
+    },
+    {
+      "id": "data-v1@1",
+      "profileId": "data-v1",
+      "platform": "linux/amd64",
+      "baseImage": {
+        "reference": "docker.io/library/node",
+        "digest": "sha256:e1582112fb9f152ed38eefcd712efc93fee1becb519fdfa57574d5e07eaa5e7d"
+      },
+      "builderImage": {
+        "name": "localhost/agentos-builder-data-v1:42f9cdd47f1f0fad",
+        "recipeHash": "sha256:42f9cdd47f1f0fadccaaa215798e35f63a908239dc954fe9369da402571ce593"
+      },
+      "runtimeImage": {
+        "name": "localhost/agentos-runtime-data-v1:08f69b54ea64d698",
+        "recipeHash": "sha256:08f69b54ea64d698e28d595d9722eee79c19dd5d8b9a8a3e8d3ae0558eb01a00"
+      },
+      "sdkVersion": "1.0.0",
+      "abiVersion": 1,
+      "compiler": {
+        "typescript": "5.9.3",
+        "esbuild": "0.28.2"
+      },
+      "modules": [
+        {
+          "name": "date-fns",
+          "version": "4.4.0",
+          "license": "MIT",
+          "integrity": "sha512-+1UMbeh68lH1SegH83CGWwpb6OHHbpSgr3+s5Eww5M4CAgswBpoWS0AjTOfEJ33HiYKz1hdj/KTFprzXHmq/6w==",
+          "specifiers": [
+            "date-fns"
+          ]
+        },
+        {
+          "name": "papaparse",
+          "version": "5.7.0",
+          "license": "MIT",
+          "integrity": "sha512-qBGxg/7Q3Kl9Wfhrz2Z74UnvnHTXLNG6jmKJFeBvP2+y4lV7So+7SR62+Zd47JvdrCkX+nDcnr0ObPzek/+6RA==",
+          "specifiers": [
+            "papaparse"
+          ]
+        }
+      ],
+      "dependencyLockHash": "sha256:92c779a6ef3aa8384edaf22d05ef79ec464a82b95e61c3981d2036e0f5b72a78",
+      "policyVersion": 1
+    },
+    {
+      "id": "core-v2@1",
+      "profileId": "core-v2",
+      "platform": "linux/amd64",
+      "baseImage": {
+        "reference": "docker.io/library/node",
+        "digest": "sha256:e1582112fb9f152ed38eefcd712efc93fee1becb519fdfa57574d5e07eaa5e7d"
+      },
+      "builderImage": {
+        "name": "localhost/agentos-builder-core-v2:ae1b26e7c36a808e",
+        "recipeHash": "sha256:ae1b26e7c36a808e349b8c0be894b3540f73f5a56df4331a07b2921d4fcf0d9a"
+      },
+      "runtimeImage": {
+        "name": "localhost/agentos-runtime-core-v2:264472296b294703",
+        "recipeHash": "sha256:264472296b294703e083447b0b51487193e40be72085b8539e028a4d022cf278"
+      },
+      "sdkVersion": "2.0.0",
+      "abiVersion": 2,
+      "compiler": {
+        "typescript": "5.9.3",
+        "esbuild": "0.28.2"
+      },
+      "modules": [],
+      "dependencyLockHash": "sha256:69678111a977f71a39104efeeb1c3a7d73a6e0c2578afb239d710eb8316b6e90",
+      "policyVersion": 1
+    },
+    {
+      "id": "data-v2@1",
+      "profileId": "data-v2",
+      "platform": "linux/amd64",
+      "baseImage": {
+        "reference": "docker.io/library/node",
+        "digest": "sha256:e1582112fb9f152ed38eefcd712efc93fee1becb519fdfa57574d5e07eaa5e7d"
+      },
+      "builderImage": {
+        "name": "localhost/agentos-builder-data-v2:2d0f566569a0780d",
+        "recipeHash": "sha256:2d0f566569a0780dd9ab11b0fa48ea7f84fd9422488a4ed545d07dd67fd2eb5c"
+      },
+      "runtimeImage": {
+        "name": "localhost/agentos-runtime-data-v2:105b5515072864f7",
+        "recipeHash": "sha256:105b5515072864f723ef07bf13117924818bed2b575bed1d38b6a6afd6f44b16"
+      },
+      "sdkVersion": "2.0.0",
+      "abiVersion": 2,
+      "compiler": {
+        "typescript": "5.9.3",
+        "esbuild": "0.28.2"
+      },
+      "modules": [
+        {
+          "name": "date-fns",
+          "version": "4.4.0",
+          "license": "MIT",
+          "integrity": "sha512-+1UMbeh68lH1SegH83CGWwpb6OHHbpSgr3+s5Eww5M4CAgswBpoWS0AjTOfEJ33HiYKz1hdj/KTFprzXHmq/6w==",
+          "specifiers": [
+            "date-fns"
+          ]
+        },
+        {
+          "name": "papaparse",
+          "version": "5.7.0",
+          "license": "MIT",
+          "integrity": "sha512-qBGxg/7Q3Kl9Wfhrz2Z74UnvnHTXLNG6jmKJFeBvP2+y4lV7So+7SR62+Zd47JvdrCkX+nDcnr0ObPzek/+6RA==",
+          "specifiers": [
+            "papaparse"
+          ]
+        }
+      ],
+      "dependencyLockHash": "sha256:6b5077a44b8d60ca2a199f4ce61ba752312c93cb73752cd05dfd71f3b1883e98",
+      "policyVersion": 1
+    }
+  ]
+}
