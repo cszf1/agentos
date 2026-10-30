@@ -51,6 +51,12 @@ jobs:
       - name: Free disk space
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          if [ "${{ matrix.test }}" = build-repro ]; then
+            # two copies of the ISO and the qcow2 plus their closures: run 41141167119 died with "No space left on device"
+            sudo rm -rf /usr/local/lib/node_modules /usr/local/.ghcup /usr/share/swift /usr/lib/jvm /opt/microsoft /opt/google \
+              /usr/local/share/chromium /usr/local/share/powershell /opt/hostedtoolcache /opt/az /usr/share/miniconda || true
+            sudo docker system prune -af >/dev/null 2>&1 || true
+          fi
           df -h /
 
       - name: Enable KVM
@@ -122,6 +128,9 @@ jobs:
                 echo "REPRO $A DIFFERS" | tee -a "$RUNNER_TEMP/build-repro.log"; rc=1
               fi
             fi
+            # the second copy and failed build trees are only needed for the comparison above
+            out=$(nix eval --raw ".#$A.outPath"); sudo rm -rf "$out.check" /tmp/nix-build-* 2>/dev/null || true
+            df -h / | tail -1 | tee -a "$RUNNER_TEMP/build-repro.log"
           done
           exit $rc
 

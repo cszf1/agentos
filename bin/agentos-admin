@@ -9,6 +9,12 @@ export AGENTOS_DATA_DIR="$DATA_DIR"
 [[ "${1:-}" == "--" ]] && shift
 CMD="${1:?usage: agentos-admin backup --output DIR | restore --backup DIR}"; shift
 [[ "${1:-}" == "--" ]] && shift
+if [[ "$CMD" == "import-v04" ]]; then
+  # The import publishes a NEW data directory by one rename and refuses an existing one: creating DATA_DIR here to
+  # hold host.lock made every machine import fail with CONFLICT (m18-o09 run 41143728456). No Host can run without
+  # its data directory, so the absence the import requires is the exclusion.
+  exec "$NODE_BIN" --disable-warning=ExperimentalWarning "$HERE/packages/host/dist/admin-main.js" "$CMD" "$@"
+fi
 mkdir -p "$DATA_DIR"
 exec flock --nonblock --conflict-exit-code 75 --no-fork "$DATA_DIR/host.lock" \
   "$NODE_BIN" --disable-warning=ExperimentalWarning "$HERE/packages/host/dist/admin-main.js" "$CMD" "$@"
