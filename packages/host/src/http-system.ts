@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { AgentOsError, isV3, parseDto, type CodeBundleV3 } from "@agentos/contracts";
 import type { SystemCapabilities, UserWriteMeta } from "@agentos/core";
 import type { HostRuntime } from "./http.js";
+import { historyAll } from "./backup-v3.js";
 
 /**
  * v0.3 HTTP endpoints (spec §21.1). Every write keeps local auth, same origin, JSON, client epoch, the idempotency
@@ -37,6 +38,8 @@ export function registerSystemRoutes(
     if (prior) return core.gateway.write(cap, { principal, ...meta }, () => {
       throw new AgentOsError("INTERNAL" as never, "unreachable: receipt exists");
     });
+    // Admission before any side effect: a stale client epoch (or a denied principal) must not run `work()`.
+    core.gateway.admit(cap, { principal, ...meta });
     let out: { status: number; body: T };
     try {
       out = await work();
@@ -212,7 +215,7 @@ export function registerSystemRoutes(
     try {
       const st = await c.broker.ensure();
       if (st.brokerReady && st.machineInstallId) {
-        const h2 = await c.broker.client.historySync(st.machineInstallId, 0, 200);
+        const h2 = { operations: (await historyAll(c.broker.client, st.machineInstallId)).ops };
         const known = new Set(core.store.all<{ operation_id: string }>("SELECT operation_id FROM system_actions WHERE operation_id IS NOT NULL").map((x) => x.operation_id));
         brokerOnly = h2.operations.filter((o) => !known.has(o.operationId)).map((o) => ({ ...o, source: "broker-only" }));
       }

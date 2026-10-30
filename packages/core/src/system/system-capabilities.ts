@@ -414,6 +414,10 @@ export class SystemCapabilities {
     return { mode: r.mode, scope: r.system_resource_scope ? (JSON.parse(r.system_resource_scope) as RunScope) : null, status: r.status, prepared: r.prepared_action_id };
   }
 
+  #runEpoch(runId: string): number {
+    return this.core.store.get<{ execution_epoch: number }>("SELECT execution_epoch FROM runs WHERE id = ?", runId)?.execution_epoch ?? -1;
+  }
+
   #requirePlanRun(runId: string): RunScope {
     const s = this.runScope(runId);
     if (s.mode !== "system_plan" || !s.scope) throw new AgentOsError("FORBIDDEN", "this tool is only available in system_plan runs");
@@ -450,6 +454,8 @@ export class SystemCapabilities {
   /** system_plan tool: freeze at most one valid action for the run; always awaiting the user's confirmation. */
   async runPlan(runId: string, toolTaskId: string, args: { resourceId: string; capabilityId: string; params: unknown; observationIds: string[] }): Promise<ActionRow> {
     const scope = this.#requirePlanRun(runId);
+    // The execution epoch this call runs under; a cancel during the async preview raises it (closes the fence).
+    const boundEpoch = this.#runEpoch(runId);
     const existing = this.runScope(runId).prepared;
     if (existing) {
       const a = this.actions.get(existing);
@@ -476,6 +482,10 @@ export class SystemCapabilities {
     const runGrant = this.core.store.get<GrantRow>("SELECT * FROM provider_grants WHERE principal_kind = 'run' AND run_id = ? AND resource_id = ? ORDER BY created_at DESC LIMIT 1", runId, r.id) ?? null;
     const { preview, preconditions } = await this.#trustedPreview(r, args.capabilityId, params, runGrant);
     return this.core.store.tx(() => {
+      // Recheck the write fence at commit: the run may have been cancelled while the preview awaited provider reads.
+      const now = this.core.store.get<{ status: string; execution_epoch: number }>("SELECT status, execution_epoch FROM runs WHERE id = ?", runId);
+      if (!now || now.execution_epoch !== boundEpoch) throw new AgentOsError("EXECUTION_EPOCH_STALE", "the run was stopped while the plan was being prepared");
+      if (!["running", "queued"].includes(now.status)) throw new AgentOsError("FORBIDDEN", `run is ${now.status}; writes are closed`);
       if (this.runScope(runId).prepared) throw new AgentOsError("INVALID_SYSTEM_PLAN", "this run already prepared its one system plan");
       const a = this.actions.freezeInTx({ origin: "agent", runId, toolTaskId, capabilityId: args.capabilityId, resource: r, params, preconditions, observationRefs: args.observationIds ?? [], preview });
       this.core.store.run("UPDATE runs SET prepared_action_id = ? WHERE id = ?", a.id, runId);

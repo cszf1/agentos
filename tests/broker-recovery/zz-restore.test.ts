@@ -7,6 +7,7 @@ import { DatabaseSync } from "node:sqlite";
 import { randomBytes } from "node:crypto";
 import { Client, ROOT, seedFixtures, startHost, stopHost, type HostProc } from "../proc.js";
 import { Broker, hasBroker, installed, storeUUID, sudo, systemctl, waitBroker, waitUntil } from "../v03.js";
+import { historyAll } from "../../packages/host/src/backup-v3.js";
 
 /**
  * V3-O02..O06 (spec §23): coordinated cold backup with the real broker, restore with a new workspace incarnation, no
@@ -55,8 +56,9 @@ run("coordinated backup / restore with the broker", () => {
   const brokerOps = async (actionId: string) => {
     const b = await new Broker().open();
     try {
-      const h = await b.client.historySync(b.identity.machineInstallId, 0, 500);
-      return h.operations.filter((o) => o.actionId === actionId);
+      // every page: the shared test broker log outgrows a single 500-row page
+      const h = await historyAll(b.client, b.identity.machineInstallId);
+      return h.ops.filter((o) => o.actionId === actionId);
     } finally {
       b.close();
     }

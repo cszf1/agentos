@@ -160,8 +160,8 @@ directory `/var/lib/agentos-managed/<store>/exports`, the demo unit `agentos-dem
 v0.4 adds the root-side maintenance caps for `agentos-demo.service` (2 recoveries per hour, 3 per 24 h, 600 s
 cooldown; user policies can only be narrower) and broker log schema 3 (maintenance state per workspace incarnation).
 Telemetry needs a kernel with BTF (`/sys/kernel/btf/vmlinux`) and tracepoints; without them it reports
-"不可用" and nothing else changes. If the broker log is ever lost: `sudo bash deploy/v0.3/agentos-system-admin
-reinstall-log` (new machineInstallId; `deploy/v0.4/...` on v0.4), then `bin/agentos-admin rebind-broker --confirm-new-install` with the host
+"不可用" and nothing else changes. If the broker log is ever lost: `sudo bash deploy/v0.4/agentos-system-admin
+reinstall-log` (new machineInstallId; `deploy/v0.3/agentos-system-admin` is the same installer with the v0.3 profile), then `bin/agentos-admin rebind-broker --confirm-new-install` with the host
 stopped; old plans, grants and outbox entries are void and never replayed.
 
 ### Approved runtime images

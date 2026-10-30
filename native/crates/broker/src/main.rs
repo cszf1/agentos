@@ -31,7 +31,7 @@ fn main() {
             0
         }
         _ => {
-            eprintln!("usage: agentos-broker serve | admin <install-db|inspect|reinstall|policy-version> | --version");
+            eprintln!("usage: agentos-broker serve | admin <install-db|inspect|policy-version> | --version");
             2
         }
     };

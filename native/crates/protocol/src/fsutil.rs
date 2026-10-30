@@ -285,7 +285,13 @@ pub fn write_temp(root: RawFd, parent: &str, temp_name: &str, bytes: &[u8]) -> R
 
 /// renameat2 within one directory: NOREPLACE for create, plain (atomic replace) otherwise; then fsync the directory.
 pub fn publish(root: RawFd, parent: &str, temp_name: &str, leaf: &str, no_replace: bool) -> Result<(), FsError> {
-    let pfd = openat2(root, parent, libc::O_RDONLY | libc::O_DIRECTORY, 0)?;
+    publish_phased(root, parent, temp_name, leaf, no_replace).map_err(|(e, _)| e)
+}
+
+/// Like `publish`, but the error says whether the rename already happened (`true`): a failure after the rename
+/// (the directory fsync) means the target HAS changed, so the caller must not report "no effect".
+pub fn publish_phased(root: RawFd, parent: &str, temp_name: &str, leaf: &str, no_replace: bool) -> Result<(), (FsError, bool)> {
+    let pfd = openat2(root, parent, libc::O_RDONLY | libc::O_DIRECTORY, 0).map_err(|e| (e, false))?;
     let a = CString::new(temp_name).unwrap();
     let b = CString::new(leaf).unwrap();
     let flags: libc::c_uint = if no_replace { 1 } else { 0 };
@@ -293,12 +299,12 @@ pub fn publish(root: RawFd, parent: &str, temp_name: &str, leaf: &str, no_replac
     if rc != 0 {
         let e = std::io::Error::last_os_error();
         if e.raw_os_error() == Some(libc::EEXIST) {
-            return Err(FsError::new("FILE_VERSION_STALE", "target appeared before publication (no-replace)"));
+            return Err((FsError::new("FILE_VERSION_STALE", "target appeared before publication (no-replace)"), false));
         }
-        return Err(FsError::new("CONTENT_UNAVAILABLE", format!("renameat2: {e}")));
+        return Err((FsError::new("CONTENT_UNAVAILABLE", format!("renameat2: {e}")), false));
     }
     if unsafe { libc::fsync(pfd.as_raw_fd()) } != 0 {
-        return Err(FsError::os("CONTENT_UNAVAILABLE", "fsync parent"));
+        return Err((FsError::os("CONTENT_UNAVAILABLE", "fsync parent after rename"), true));
     }
     Ok(())
 }

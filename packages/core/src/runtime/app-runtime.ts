@@ -92,7 +92,7 @@ export class AppRuntimeService {
 
   enabledCodeApps(): number {
     return this.ctx.store.get<{ n: number }>(
-      "SELECT COUNT(*) AS n FROM app_runtime ar JOIN apps a ON a.id = ar.app_id JOIN revisions r ON r.app_id = a.id AND r.id = a.active_revision_id WHERE ar.enabled = 1 AND json_extract(r.bundle_json, '$.formatVersion') = 2",
+      "SELECT COUNT(*) AS n FROM app_runtime ar JOIN apps a ON a.id = ar.app_id JOIN revisions r ON r.app_id = a.id AND r.id = a.active_revision_id WHERE ar.enabled = 1 AND json_extract(r.bundle_json, '$.formatVersion') IN (2, 3)",
     )!.n;
   }
 
@@ -204,7 +204,7 @@ export class AppRuntimeService {
     } catch (e) {
       s.tx(() => {
         if (plan.inserted) s.run("UPDATE runtime_instances SET desired_state = 'removed', observed_state = 'failed', exit_reason = ?, updated_at = ? WHERE id = ?", (e as Error).message.slice(0, 300), this.now(), plan.id);
-        this.#recordFailure(appId, { code: (e as { code?: string }).code ?? "ARTIFACT_UNAVAILABLE", message: (e as Error).message });
+        if (this.#stillCurrent(appId, plan)) this.#recordFailure(appId, { code: (e as { code?: string }).code ?? "ARTIFACT_UNAVAILABLE", message: (e as Error).message });
       });
       return;
     }
@@ -226,7 +226,7 @@ export class AppRuntimeService {
     } catch (e) {
       s.tx(() => {
         s.run("UPDATE runtime_instances SET desired_state = 'removed', observed_state = 'failed', exit_reason = ?, updated_at = ? WHERE id = ?", (e as Error).message.slice(0, 300), this.now(), plan.id);
-        this.#recordFailure(appId, { code: (e as AgentOsError).code ?? "INSTANCE_NOT_READY", message: (e as Error).message, details: (e as AgentOsError).details });
+        if (this.#stillCurrent(appId, plan)) this.#recordFailure(appId, { code: (e as AgentOsError).code ?? "INSTANCE_NOT_READY", message: (e as Error).message, details: (e as AgentOsError).details });
       });
       return;
     }
@@ -248,6 +248,17 @@ export class AppRuntimeService {
       return true;
     });
     if (!ok) await host.destroy(live, "superseded");
+  }
+
+  /**
+   * Inside a tx: is this start attempt still the one the runtime intends? A later stop/start/history switch
+   * may have raised the control epoch or installed another instance meanwhile; a failure of the superseded
+   * attempt must then not touch the newer active pointer or the restart budget.
+   */
+  #stillCurrent(appId: string, plan: { controlEpoch: number; active: { revisionId: string } }): boolean {
+    const ar = this.row(appId);
+    const active = this.activeCodeBundle(appId);
+    return !!ar && ar.control_epoch === plan.controlEpoch && ar.enabled === 1 && ar.active_instance_id === null && !!active && active.revisionId === plan.active.revisionId;
   }
 
   /** Inside a tx: count a failure against the persisted restart budget (spec §11.3). */

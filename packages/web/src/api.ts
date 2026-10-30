@@ -346,7 +346,7 @@ export interface ProposalView {
   proposalHash: string;
   baseAppEpoch: number;
   label: string;
-  reasons?: string[];
+  reasons: string;
   expectedBenefit?: string;
   diff?: { files?: { path: string }[] };
   expiresAt?: string;

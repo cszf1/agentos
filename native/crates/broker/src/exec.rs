@@ -219,7 +219,7 @@ fn grant_usable(g: &Option<GrantRow>, cap: &str, res: &str, gen: i64) -> Result<
 
 // ---------------------------------------------------------------- read
 
-pub fn read<F>(b: &Shared, _uid: u32, _store: Option<&str>, r: &ReadParams, check: F) -> Result<Value, BErr>
+pub fn read<F>(b: &Shared, r: &ReadParams, check: F) -> Result<Value, BErr>
 where
     F: Fn(&Connection, &Identity) -> Result<(String, i64), BErr>,
 {

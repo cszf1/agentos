@@ -120,6 +120,21 @@ const RECEIPT_ERRORS = new Set([
 export class CapabilityGateway {
   constructor(private readonly store: Store) {}
 
+  /**
+   * Admission check for writes whose work runs outside the receipt transaction (async provider calls):
+   * authorization and the client epoch are validated before any work starts, so a stale page never
+   * causes side effects that are then reported as CLIENT_EPOCH_STALE. `write` rechecks both at commit.
+   */
+  admit(capability: string, req: WriteRequest): void {
+    authorize(capability, req.principal);
+    if (req.clientEpoch !== undefined) {
+      const epoch = this.store.meta().client_epoch;
+      if (req.clientEpoch !== epoch) {
+        throw new AgentOsError("CLIENT_EPOCH_STALE", "this page belongs to an older workspace state; reload", { clientEpoch: epoch });
+      }
+    }
+  }
+
   write<T>(capability: string, req: WriteRequest, fn: () => { status: number; body: T }): WriteResult<T> {
     authorize(capability, req.principal);
     const pkey = principalKey(req.principal);
