@@ -354,4 +354,67 @@ mod tests {
         drop(c);
         let _ = std::fs::remove_file(path);
     }
+
+    fn v3_log(path: &str) {
+        let _ = std::fs::remove_file(path);
+        let c = Connection::open(path).unwrap();
+        pragmas(&c).unwrap();
+        c.execute_batch(SCHEMA).unwrap();
+        c.execute_batch(SCHEMA_V2).unwrap();
+        c.execute_batch(SCHEMA_V3).unwrap();
+        c.execute("INSERT INTO broker_meta(key,value) VALUES ('schema_version','3')", []).unwrap();
+        c.execute("INSERT INTO broker_meta(key,value) VALUES ('machine_install_id','m')", []).unwrap();
+        c.execute(
+            "INSERT INTO effect_operations(machine_install_id,store_uuid,incarnation,operation_id,action_id,plan_hash,request_hash,envelope_json,capability_id,resource_id,resource_generation,replay_class,state,deadline_ms,accepted_seq,updated_seq,created_at,updated_at) VALUES ('m','store',1,'op','a','p','r','{}','cap','res',1,'read','indeterminate',1,1,1,1,1)",
+            [],
+        )
+        .unwrap();
+    }
+
+    /// Child half of the crash test: runs the 3→4 upgrade statements in one transaction and aborts the process before
+    /// COMMIT (no destructor, no rollback call: what a power cut or SIGKILL leaves behind).
+    #[test]
+    #[ignore]
+    fn b07_child_aborts_inside_the_3_to_4_upgrade() {
+        let Ok(path) = std::env::var("AGENTOS_B07_BROKER_DB") else { return };
+        let c = Connection::open(&path).unwrap();
+        pragmas(&c).unwrap();
+        c.execute_batch(&format!("BEGIN IMMEDIATE; {SCHEMA_V4} UPDATE broker_meta SET value='4' WHERE key='schema_version';")).unwrap();
+        std::process::abort();
+    }
+
+    #[test]
+    fn b07_a_crash_inside_the_broker_3_to_4_upgrade_leaves_schema_3_and_the_next_open_upgrades_once() {
+        let path = std::env::temp_dir().join(format!("agentos-broker-b07-{}", agentos_protocol::random_hex(4)));
+        let path = path.to_str().unwrap().to_string();
+        v3_log(&path);
+        let out = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["b07_child_aborts_inside_the_3_to_4_upgrade", "--ignored", "--nocapture", "--test-threads=1"])
+            .env("AGENTOS_B07_BROKER_DB", &path)
+            .output()
+            .unwrap();
+        assert!(!out.status.success(), "the child must die inside the transaction: {out:?}");
+        {
+            // what the crash left: still schema 3, no v4 table, the effect row unchanged
+            let c = Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+            assert_eq!(meta(&c, "schema_version").as_deref(), Some("3"));
+            let t: i64 = c.query_row("SELECT COUNT(*) FROM sqlite_master WHERE name = 'workspace_protocol'", [], |r| r.get(0)).unwrap();
+            assert_eq!(t, 0, "no table of the unfinished upgrade");
+            let st: String = c.query_row("SELECT state FROM effect_operations WHERE operation_id = 'op'", [], |r| r.get(0)).unwrap();
+            assert_eq!(st, "indeterminate");
+            let ok: String = c.query_row("PRAGMA integrity_check", [], |r| r.get(0)).unwrap();
+            assert_eq!(ok, "ok");
+        }
+        let c = open_existing(&path).unwrap();
+        assert_eq!(meta(&c, "schema_version").as_deref(), Some("4"));
+        let st: String = c.query_row("SELECT state FROM effect_operations WHERE operation_id = 'op'", [], |r| r.get(0)).unwrap();
+        assert_eq!(st, "indeterminate", "the unresolved effect is still unresolved after the upgrade");
+        drop(c);
+        let c = open_existing(&path).unwrap(); // reopening does not migrate again
+        assert_eq!(meta(&c, "schema_version").as_deref(), Some("4"));
+        drop(c);
+        for ext in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{path}{ext}"));
+        }
+    }
 }

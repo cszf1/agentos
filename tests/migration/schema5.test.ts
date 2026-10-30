@@ -4,7 +4,8 @@ import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 import { bundleHash } from "@agentos/contracts";
 import { MIGRATIONS, bindLegacyPrincipal, openCore } from "@agentos/core";
-import { fixture, tmpDir } from "../helpers.js";
+import { spawnSync } from "node:child_process";
+import { ROOT, fixture, tmpDir } from "../helpers.js";
 
 const V1_HASH = "sha256:428df8c73bfcf3a1bc07029d9b5e31286728c4026d4cfe4a203fbc87211332d5";
 const RECEIPT = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
@@ -48,5 +49,46 @@ describe("schema 5 migration", () => {
       core.store.close();
     }
     expect(fs.existsSync(file)).toBe(true);
+  });
+
+  it("V1-B07 a process killed inside the 4→5 migration leaves schema 4 and its receipts intact; the next open migrates once", () => {
+    const dir = tmpDir("agentos-schema5-crash-");
+    const file = path.join(dir, "os.sqlite");
+    const db = new DatabaseSync(file);
+    db.exec("PRAGMA foreign_keys = ON; CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)");
+    db.close();
+    // bring the store to the version just before the last migration through the real code path (child stops there)
+    const last = MIGRATIONS.length;
+    const child = (env: Record<string, string>) =>
+      spawnSync(process.execPath, ["--disable-warning=ExperimentalWarning", "-e", `import(${JSON.stringify(path.join(ROOT, "packages/core/dist/index.js"))}).then((m) => { const c = m.openCore(${JSON.stringify(file)}); console.log("schema", c.store.schemaVersion); c.store.close(); })`], {
+        env: { ...process.env, NODE_ENV: "test", ...env }, encoding: "utf8", timeout: 60_000,
+      });
+    // first run: killed right before the commit of the LAST migration
+    const r = child({ AGENTOS_FAULTS: "1", AGENTOS_FAULT_POINT: `store.migration.${last}.before_commit` });
+    expect(r.signal, r.stderr).toBe("SIGKILL");
+    expect(r.stderr).toContain(`[fault] store.migration.${last}.before_commit`);
+    const after = new DatabaseSync(file, { readOnly: true });
+    try {
+      expect((after.prepare("SELECT MAX(version) AS v FROM schema_migrations").get() as { v: number }).v).toBe(last - 1);
+      expect((after.prepare("SELECT schema_version FROM meta WHERE id = 1").get() as { schema_version: number }).schema_version).toBe(last - 1);
+      expect(after.prepare("SELECT name FROM sqlite_master WHERE name LIKE '%\\_\\_v%' ESCAPE '\\'").all()).toEqual([]); // no half-built tables
+      expect((after.prepare("PRAGMA integrity_check").get() as Record<string, string>).integrity_check).toBe("ok");
+    } finally {
+      after.close();
+    }
+    // a receipt written at schema last-1 survives the completed migration unchanged
+    const w = new DatabaseSync(file);
+    w.prepare("INSERT INTO operations (principal, operation_key, request_hash, status_code, result_json, created_at) VALUES ('user:local', 'b07-key', ?, 200, '{}', ?)").run(RECEIPT, new Date().toISOString());
+    w.close();
+    const ok = child({});
+    expect(ok.status, ok.stderr).toBe(0);
+    expect(ok.stdout).toContain(`schema ${last}`);
+    const fin = new DatabaseSync(file, { readOnly: true });
+    try {
+      expect((fin.prepare("SELECT COUNT(*) AS n FROM schema_migrations WHERE version = ?").get(last) as { n: number }).n).toBe(1);
+      expect(fin.prepare("SELECT principal, request_hash FROM operations WHERE operation_key = 'b07-key'").get()).toEqual({ principal: "user:local", request_hash: RECEIPT });
+    } finally {
+      fin.close();
+    }
   });
 });

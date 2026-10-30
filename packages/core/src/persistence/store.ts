@@ -2,6 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { AgentOsError } from "@agentos/contracts";
 import { MIGRATIONS, type StructuralMigration } from "./migrations.js";
+import { fault } from "../faults.js";
 
 export type Row = Record<string, unknown>;
 
@@ -83,6 +84,7 @@ export class Store {
         } else {
           this.db.prepare("UPDATE meta SET schema_version = ? WHERE id = 1").run(v);
         }
+        fault(`store.migration.${v}.before_commit`); // V1-B07: a crash here must leave the previous schema intact
       });
     }
     const ic = this.db.prepare("PRAGMA quick_check").get() as Row;
@@ -131,6 +133,7 @@ export class Store {
         if (fk.length > 0) throw new AgentOsError("STORE_UNAVAILABLE", `migration ${v}: foreign key check failed (${JSON.stringify(fk.slice(0, 3))})`);
         this.db.prepare("INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)").run(v, iso(this.clock.now()));
         this.db.prepare("UPDATE meta SET schema_version = ? WHERE id = 1").run(v);
+        fault(`store.migration.${v}.before_commit`);
       });
     } finally {
       this.db.exec("PRAGMA foreign_keys = ON");
