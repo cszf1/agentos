@@ -12,6 +12,13 @@ pkgs.testers.runNixOSTest {
     boot.loader.systemd-boot.enable = true;
     boot.loader.efi.canTouchEfiVariables = lib.mkForce true;
     environment.systemPackages = [ pkgs.jq pkgs.openssl pkgs.sqlite pkgs.python3 ];
+    # U11: a second, really different system closure (its own toplevel, init and /etc) for the older generation the
+    # rollback boots; the running system is the newer one. Same AgentOS programs (declared compatible 1..2).
+    environment.etc."agentos-generation".text = "current\n";
+    specialisation.oldgen.configuration = {
+      environment.etc."agentos-generation".text = lib.mkForce "oldgen\n";
+      environment.etc."agentos-oldgen-only".text = "this file exists only in the older generation's closure\n";
+    };
   };
   testScript = builtins.readFile ./m7-update.py;
 }

@@ -11,9 +11,9 @@ def uw(args):
     assert v["ok"], v
     return v["result"]
 
-def write_entry(rid, init_override=None, extra=""):
+def write_entry(rid, init_override=None, extra="", system=None):
     machine.succeed("readlink -f /run/current-system > /tmp/sys")
-    sysp = machine.succeed("cat /tmp/sys").strip()
+    sysp = machine.succeed("cat /tmp/sys").strip() if system is None else system
     kernel = machine.succeed(f"readlink -f {sysp}/kernel").strip()
     initrd = machine.succeed(f"readlink -f {sysp}/initrd").strip()
     ih = "sha256:" + machine.succeed(f"sha256sum {initrd} | cut -d' ' -f1").strip()
@@ -272,6 +272,10 @@ with subtest("commit window: a crash after the intent or after the default resol
     efi = "/sys/firmware/efi/efivars/LoaderEntryDefault-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f"
     C1 = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
     C2 = "ffffffff-ffff-4fff-8fff-ffffffffffff"
+    NEWGEN = machine.succeed("readlink -f /run/current-system").strip()
+    OLDGEN = machine.succeed(f"readlink -f {NEWGEN}/specialisation/oldgen").strip()
+    assert OLDGEN.startswith("/nix/store/") and OLDGEN != NEWGEN, (OLDGEN, NEWGEN)
+    machine.succeed(f"test -e {OLDGEN}/etc/agentos-oldgen-only && test ! -e {NEWGEN}/etc/agentos-oldgen-only")
     machine.succeed("cat > /root/mcall.py <<'PY'\nimport json, socket, struct, sys\ns = socket.socket(socket.AF_UNIX); s.connect('/run/agentos/machine/machine.sock')\nb = json.dumps({'op': sys.argv[1], 'args': json.loads(sys.argv[2])}).encode()\ns.sendall(struct.pack('>I', len(b)) + b)\nn = struct.unpack('>I', s.recv(4, socket.MSG_WAITALL))[0]\nprint(s.recv(n, socket.MSG_WAITALL).decode())\nPY")
     def mcall(op, args):
         return json.loads(machine.succeed(f"python3 /root/mcall.py {op} '{json.dumps(args)}'"))
@@ -308,7 +312,7 @@ with subtest("commit window: a crash after the intent or after the default resol
             mok("updates.advance", {"updateId": uid, "to": st, "fields": {}})
         b = mok("barrier.hold", {"ownerKind": "update", "ownerId": uid, "scope": {}})["barrierId"]
         mok("updates.advance", {"updateId": uid, "to": "armed", "fields": {"barrierId": b, "candidateEntryId": f"agentos-{rid}.conf", "previousEntryId": f"agentos-{known}.conf"}})
-        write_entry(rid)
+        write_entry(rid, system=OLDGEN if rid == C1 else None)   # C1 is the older generation: its own closure
         uw(f"arm --esp /boot --release-id {rid} --known-good {known}")
         reboot()
         assert booted_release() == rid, booted_release()
@@ -385,6 +389,14 @@ with subtest("rollback boots the older registered entry: records stay readable; 
     comp0 = json.dumps({"machineSchema": [1, 1], "workspaceSchema": [5, 5], "brokerSchema": [4, 4], "brokerProtocol": [3, 3], "nativeRpc": [1, 1]}).replace('"', '\\"')
     seqm = int(msql("SELECT MAX(release_sequence) FROM releases"))
     msql(f"INSERT INTO releases (release_id, manifest_hash, release_sequence, closure_path, compatibility_json, migration_class, verification_state, support_until, created_at) VALUES ('{C0}', 'sha256:{C0}', {seqm + 1}, '/nix/store/{C0}', '{comp0}', 'none', 'verified', 4102444800000, 1)")
+    # the newer generation (C2, running now) writes a record the older generation must read after the rollback
+    assert machine.succeed("readlink -f /run/current-system").strip() == NEWGEN
+    seq_a = int(msql("SELECT IFNULL(MAX(seq), 0) FROM root_audit"))
+    mok("workspaces.rootStart", {"workspaceId": ws})                     # real machined writes on the newer generation
+    mok("workspaces.rootStop", {"workspaceId": ws})
+    newgen_rows = msql(f"SELECT group_concat(seq || ':' || kind || ':' || outcome, ',') FROM root_audit WHERE seq > {seq_a}")
+    print("written on the newer generation:", newgen_rows)
+    assert newgen_rows, "the newer generation wrote nothing"
     facts0 = msql("SELECT (SELECT COUNT(*) FROM users) || '|' || (SELECT COUNT(*) FROM update_jobs) || '|' || (SELECT COUNT(*) FROM root_audit) || '|' || accepted_release_sequence FROM machine_meta")
     hw0 = facts0.split("|")[3]
     # a generation that only knows machine schema 1 is refused before anything boots it: default unchanged
@@ -397,7 +409,12 @@ with subtest("rollback boots the older registered entry: records stay readable; 
     assert default_entry() == f"agentos-{C1}.conf", default_entry()
     reboot()
     assert booted_release() == C1, booted_release()
+    # really the older closure: its own toplevel and /etc, not the newer system under another entry name
+    assert machine.succeed("readlink -f /run/current-system").strip() == OLDGEN, machine.succeed("readlink -f /run/current-system")
+    assert machine.succeed("cat /etc/agentos-generation").strip() == "oldgen"
+    machine.succeed("test -e /etc/agentos-oldgen-only")
     machine.wait_for_unit("agentos-update-reconcile.service")
+    assert msql(f"SELECT group_concat(seq || ':' || kind || ':' || outcome, ',') FROM root_audit WHERE seq > {seq_a} AND seq <= {newgen_rows.split(',')[-1].split(':')[0]}") == newgen_rows
     st = json.loads(machine.succeed("agentosctl status"))
     print("after rollback boot", st.get("meta"))
     assert msql("SELECT current_release_id || '|' || known_good_release_id FROM machine_meta") == f"{C1}|{C1}"
