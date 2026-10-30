@@ -286,7 +286,8 @@ fn backup(c: &mut Client, a: &[String]) {
     for w in &wss {
         let id = w["workspaceId"].as_str().unwrap_or_default();
         match call(c, "workspaces.rootStop", json!({ "workspaceId": id })) {
-            Ok(r) if r["state"] == "stopped" => {}
+            // an archived workspace (included with --include-archived) is already cold and stays archived
+            Ok(r) if r["state"] == "stopped" || (r["state"] == "archived" && w["state"] == "archived") => {}
             Ok(r) => fail(c, format!("workspace {id} did not stop cleanly ({})", r["state"]), true),
             Err(e) => fail(c, format!("workspace {id}: {e}"), true),
         }
