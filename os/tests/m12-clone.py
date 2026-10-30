@@ -149,11 +149,18 @@ with subtest("the clone's code app is rebuilt on the new UID from the fixed imag
     osn = f"/var/lib/agentos/workspaces/{ws_n}/data/os.sqlite"
     assert machine.succeed(f"sqlite3 {osn} \"SELECT active_revision_id FROM apps WHERE id='{app_k}'\"").strip() == rev_k
     ep = machine.succeed(f"sqlite3 {osn} \"SELECT epoch FROM apps WHERE id='{app_k}'\"").strip()
-    r = call(1, [fwd(ws_n, "apps.runtime.start.post", {"expectedAppEpoch": int(ep)}, params={"appId": app_k}, idem="rt-start")], "rt1")[0]
+    # the clone moved the workspace's clientEpoch forward (old pages/tokens die): a client reads it from attach
+    a = call(1, [{"methodId": "workspaces.attach", "workspaceId": ws_n, "idempotencyKey": str(uuid.uuid4()), "body": {}}], "rt0")[0]
+    assert a["status"] == 200 and int(a["body"]["clientEpoch"]) >= 2, a
+    def fwdn(route, body=None, params=None, idem=None):
+        x = fwd(ws_n, route, body, params=params, idem=idem)
+        x["clientEpoch"] = int(a["body"]["clientEpoch"])
+        return x
+    r = call(1, [fwdn("apps.runtime.start.post", {"expectedAppEpoch": int(ep)}, params={"appId": app_k}, idem="rt-start")], "rt1")[0]
     print(r)
     assert r["status"] in (200, 202), r
     def rt():
-        v = call(1, [fwd(ws_n, "apps.runtime.list", params={"appId": app_k})], "rt2")[0]
+        v = call(1, [fwdn("apps.runtime.list", params={"appId": app_k})], "rt2")[0]
         return json.dumps(v)
     for _ in range(60):
         st = rt()
