@@ -9,7 +9,7 @@
  */
 import net from "node:net";
 import fs from "node:fs";
-import { randomUUID, randomBytes } from "node:crypto";
+import { randomUUID, randomBytes, createHash } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { identityContext, type BuildGate, type Core, type MachineGate, type WorkspaceIdentity } from "@agentos/core";
 import type { HostRuntime } from "./http.js";
@@ -506,7 +506,8 @@ export class MachineMode {
         const owner = this.rt.core.store.get<{ v: number }>("SELECT member_version AS v FROM membership_mirror WHERE role = 'owner' AND state = 'active' ORDER BY member_version DESC LIMIT 1");
         const r = await this.#request(
           { workspaceId: ws, executionEpoch: this.incarnation, ownerKind: "deployment", ownerId: jobId, attemptId: jobId, resourceClass: "build", background: false,
-            bodyHash: `build:${jobId}`, memberVersion: owner?.v ?? 0, userId: null, instanceId: this.instanceId },
+            // machined takes only sha256: body hashes (permits.rs malformed key check): hash the job identity
+            bodyHash: `sha256:${createHash("sha256").update(`build:${jobId}`).digest("hex")}`, memberVersion: owner?.v ?? 0, userId: null, instanceId: this.instanceId },
           deadlineMs, undefined, null,
         );
         if (!r.ok) return r;

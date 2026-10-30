@@ -288,6 +288,80 @@ with subtest("Host SIGKILL with a model permit in use: held until the successor 
     call(1, [fwd(ws_a, "runs.cancel.post", params={"runId": k1}, idem="s6x")], "s6x")
     machine.succeed(f"echo 0 > {FM}/hold")
 
+with subtest("background model work: at most one background request on the machine, compaction counts as background, it yields to user tasks and blocks none (S01 background, S07, S03)"):
+    machine.succeed(f"echo 1 > {FM}/hold")
+    machine.wait_until_succeeds(f"python3 -c \"import json,sys;sys.exit(sum(json.load(open('{FM}/state.json'))['inflight'].values()))\"", timeout=240)
+    OSDB = lambda w: f"/var/lib/agentos/workspaces/{w}/data/os.sqlite"
+    def wsql(w, q):
+        return machine.succeed(f"sqlite3 {OSDB(w)} \"{q}\"").strip()
+    # ended task conversations to compact (idle compaction needs an ended task): two in A, two in B
+    convs = {}
+    for w, tag, intent in ((ws_a, "bg-a1", "做一个书签应用"), (ws_a, "bg-a2", "做一个菜谱应用"), (ws_b, "bg-b1", "做一个旅行清单"), (ws_b, "bg-b2", "做一个药品提醒")):
+        rid = run(1, w, intent, tag)
+        machine.wait_until_succeeds(f"sqlite3 {OSDB(w)} \"SELECT status FROM runs WHERE id='{rid}'\" | grep -qE '^(succeeded|failed|cancelled)$'", timeout=240)
+        convs[tag] = wsql(w, f"SELECT conversation_id FROM runs WHERE id='{rid}'")
+        assert convs[tag], (tag, rid)
+    def compact(w, tag):
+        r = call(1, [fwd(w, "conversations.compactions.post", params={"id": convs[tag]}, body={}, idem="cmp-" + tag)], "k" + tag[-2:])[0]
+        assert r["status"] == 202, r
+    def bg_held():
+        return int(sql("SELECT COUNT(*) FROM machine_permits WHERE resource_class='model' AND priority='background' AND state IN ('reserved','in_use','reconciling')"))
+    def sample(sec, check):
+        end = time.time() + sec
+        while time.time() < end:
+            check()
+            time.sleep(0.5)
+    n_log = len(fm_log())
+    # (1) S01: two workspaces each ask for a compaction while nothing else runs: one background request at a time
+    machine.succeed(f"echo 20 > {FM}/hold")
+    compact(ws_a, "bg-a1")
+    compact(ws_b, "bg-b1")
+    machine.wait_until_succeeds(f"test \"$(python3 -c \"import json;print(json.load(open('{FM}/state.json'))['kinds']['compaction'])\")\" = 1", timeout=180)
+    def one_bg():
+        st = fm_state()
+        assert st["kinds"]["compaction"] <= 1, st
+        assert bg_held() <= 1, sql("SELECT permit_id, workspace_id, state FROM machine_permits WHERE priority='background' AND state IN ('reserved','in_use','reconciling')")
+    sample(30, one_bg)
+    machine.wait_until_succeeds(f"test $(grep -c '\"kind\": \"compaction\"' {FM}/log.jsonl) -ge 4", timeout=240)   # both ran (start+end each)
+    cs = [e for e in fm_log()[n_log:] if e.get("kind") == "compaction"]
+    starts = [e for e in cs if e["ev"] == "start"]
+    print("compaction requests", [(e["ev"], e["ws"], round(e["t"], 1)) for e in cs])
+    assert {e["ws"] for e in starts} >= {ws_a, ws_b}, starts
+    assert all(e["kinds"]["compaction"] <= 1 for e in cs), cs                     # never two background requests at once
+    print("compaction jobs A", wsql(ws_a, "SELECT state FROM compaction_jobs"), "B", wsql(ws_b, "SELECT state FROM compaction_jobs"))
+    # (2) S07/S03: a background request is in flight in A and another compaction waits in B; a user task in the SAME
+    # workspace A starts at once (the background job holds no app/conversation lock or slot that the user task waits
+    # for), and B's compaction does not start while any user task holds or waits for a model slot on the machine
+    machine.wait_until_succeeds(f"python3 -c \"import json,sys;sys.exit(sum(json.load(open('{FM}/state.json'))['inflight'].values()))\"", timeout=240)
+    n_log = len(fm_log())
+    machine.succeed(f"echo 30 > {FM}/hold")
+    compact(ws_a, "bg-a2")
+    machine.wait_until_succeeds(f"test \"$(python3 -c \"import json;print(json.load(open('{FM}/state.json'))['inflight'].get('{ws_a}',0))\")\" = 1", timeout=180)
+    compact(ws_b, "bg-b2")
+    t_fg = time.time()
+    fg = run(1, ws_a, "做一个前台任务", "bg-fg")
+    machine.wait_until_succeeds(f"test \"$(python3 -c \"import json;print(json.load(open('{FM}/state.json'))['kinds']['run'])\")\" = 1", timeout=60)
+    print("user task started after", round(time.time() - t_fg, 1), "s while A's compaction was in flight")
+    def no_bg_with_fg():
+        st = fm_state()
+        assert st["kinds"]["compaction"] <= 1, st
+        fg_q = int(sql("SELECT COUNT(*) FROM machine_permits WHERE resource_class='model' AND priority='foreground' AND state IN ('queued','reserved','in_use','reconciling')"))
+        bg_new = int(sql("SELECT COUNT(*) FROM machine_permits WHERE resource_class='model' AND priority='background' AND state='reserved'"))
+        assert not (fg_q and bg_new), (fg_q, bg_new)                                 # no background reservation while a user task holds/waits
+    sample(40, no_bg_with_fg)
+    machine.wait_until_succeeds(f"sqlite3 {OSDB(ws_a)} \"SELECT status FROM runs WHERE id='{fg}'\" | grep -qE '^(succeeded|failed|cancelled)$'", timeout=240)
+    machine.wait_until_succeeds(f"test $(python3 -c \"import json;print(sum(1 for l in open('{FM}/log.jsonl').readlines()[{n_log}:] if json.loads(l).get('kind')=='compaction' and json.loads(l)['ev']=='start'))\") -ge 2", timeout=300)
+    ev = fm_log()[n_log:]
+    print("S07 requests", [(e["ev"], e.get("kind"), e["ws"], round(e["t"], 1)) for e in ev])
+    for e in ev:
+        if e["ev"] == "start" and e.get("kind") == "compaction":
+            assert e["kinds"]["run"] == 0, e                                            # a background request never starts beside a user turn
+    b_start = [e for e in ev if e["ev"] == "start" and e.get("kind") == "compaction" and e["ws"] == ws_b]
+    fg_ends = [e["t"] for e in ev if e["ev"] == "end" and e.get("kind") == "run" and e["ws"] == ws_a]
+    assert b_start and fg_ends and b_start[0]["t"] >= max(fg_ends) - 0.5, (b_start, fg_ends)   # B's compaction waited for the user task
+    assert fm_state()["peak"]["total"] <= 2, fm_state()
+    machine.succeed(f"echo 0 > {FM}/hold")
+
 with subtest("rollback only to a release whose compatibility covers the live data; records and revocations stay (U11)"):
     machine.succeed("cat > /root/mcall.py <<'PY'\nimport json, socket, struct, sys\ns = socket.socket(socket.AF_UNIX); s.connect('/run/agentos/machine/machine.sock')\nb = json.dumps({'op': sys.argv[1], 'args': json.loads(sys.argv[2])}).encode()\ns.sendall(struct.pack('>I', len(b)) + b)\nn = struct.unpack('>I', s.recv(4, socket.MSG_WAITALL))[0]\nprint(s.recv(n, socket.MSG_WAITALL).decode())\nPY")
     def mcall(op, args):

@@ -10,6 +10,7 @@ D = "/run/fake-model"
 os.makedirs(D, exist_ok=True)
 lock = threading.Lock()
 inflight = {}
+kinds = {"run": 0, "compaction": 0}
 peak = {"total": 0, "pairs": []}
 
 def hold():
@@ -24,7 +25,7 @@ def log(ev):
 
 def snapshot():
     with open(f"{D}/state.json.tmp", "w") as f:
-        json.dump({"inflight": inflight, "peak": peak}, f)
+        json.dump({"inflight": inflight, "kinds": kinds, "peak": peak}, f)
     os.replace(f"{D}/state.json.tmp", f"{D}/state.json")
 
 class H(BaseHTTPRequestHandler):
@@ -37,15 +38,21 @@ class H(BaseHTTPRequestHandler):
     def do_POST(self):
         ws = self.path.strip("/").split("/")[0]
         n = int(self.headers.get("content-length") or 0)
-        body = json.loads(self.rfile.read(n) or b"{}")
+        raw = self.rfile.read(n) or b"{}"
+        body = json.loads(raw)
+        # the Host's compaction instructions mark a compaction request (background); everything else is a task turn
+        kind = "compaction" if "Keep only: the current goal" in raw.decode("utf-8", "replace") else "run"
         t0 = time.time()
         with lock:
+            kinds[kind] += 1
+            peak.setdefault("kinds", {"run": 0, "compaction": 0})
+            peak["kinds"][kind] = max(peak["kinds"][kind], kinds[kind])
             inflight[ws] = inflight.get(ws, 0) + 1
             tot = sum(inflight.values())
             if tot > peak["total"]:
                 peak["total"] = tot
             peak["pairs"].append(sorted(k for k, v in inflight.items() for _ in range(v)))
-            log({"ev": "start", "ws": ws, "t": t0, "inflight": dict(inflight)})
+            log({"ev": "start", "ws": ws, "kind": kind, "t": t0, "inflight": dict(inflight), "kinds": dict(kinds)})
             snapshot()
         try:
             time.sleep(hold())
@@ -72,7 +79,8 @@ class H(BaseHTTPRequestHandler):
         finally:
             with lock:
                 inflight[ws] -= 1
-                log({"ev": "end", "ws": ws, "t": time.time(), "inflight": dict(inflight)})
+                kinds[kind] -= 1
+                log({"ev": "end", "ws": ws, "kind": kind, "t": time.time(), "inflight": dict(inflight), "kinds": dict(kinds)})
                 snapshot()
 
 ThreadingHTTPServer(("127.0.0.1", 18080), H).serve_forever()
