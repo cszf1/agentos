@@ -339,6 +339,7 @@ with subtest("delete: owner+admin, broker effect verdict, executors; UID and sto
     # a new workspace never reuses the tombstoned execution UID
     r = call(1, [{"methodId": "workspaces.create", "idempotencyKey": str(uuid.uuid4()), "body": {"displayName": "After"}}], "d10")[0]
     assert r["status"] == 201, r
+    r_after = r["body"]["workspaceId"]
     assert int(sql(f"SELECT execution_uid FROM workspaces WHERE workspace_id='{r['body']['workspaceId']}'")) != ud
     assert sql("SELECT schema_version FROM machine_meta") == "2"
 
@@ -351,9 +352,6 @@ with subtest("delete with exported data only after an age copy of a set holding 
     for w in sql("SELECT workspace_id FROM workspaces WHERE state IN ('starting','running')").split():
         if int(sql("SELECT COUNT(*) FROM workspaces WHERE state IN ('starting','running','quiescing')")) < 2:
             break
-        # a Host stopped while it is still creating its two stores leaves one database without the other, which the
-        # machine backup refuses (one store alone is not a restorable pair): let it finish initializing first
-        machine.wait_until_succeeds(f"test -s /var/lib/agentos/workspaces/{w}/data/os.sqlite && test -s /var/lib/agentos/workspaces/{w}/data/agent.sqlite", timeout=120)
         call(1, [{"methodId": "workspaces.stop", "workspaceId": w, "idempotencyKey": str(uuid.uuid4()), "body": {}}], "xpre")
     machine.wait_until_succeeds("test $(sqlite3 /var/lib/agentos-machine/machine.sqlite \"SELECT COUNT(*) FROM workspaces WHERE state IN ('starting','running','quiescing')\") -lt 2", timeout=60)
     r = call(1, [{"methodId": "workspaces.attach", "workspaceId": ws_x, "idempotencyKey": str(uuid.uuid4()), "body": {}}], "xa")[0]
@@ -368,6 +366,9 @@ with subtest("delete with exported data only after an age copy of a set holding 
     bk = json.loads(o[o.index("{"):])
     set_x = bk["setId"]
     assert ws_x in machine.succeed("cat /var/lib/agentos-snapshots/x1/machine-set.json")
+    # "After" was created (workspace-init wrote os.sqlite) but its Host never ran: listed as neverStarted, not a failure
+    ms = json.loads(machine.succeed("cat /var/lib/agentos-snapshots/x1/machine-set.json"))
+    assert any(n["workspaceId"] == r_after for n in ms.get("neverStarted", [])), ms
     def plan_x(tag):
         return call(1, [{"methodId": "machine.actions.plan", "idempotencyKey": str(uuid.uuid4()), "body": {"kind": "workspaces.delete", "params": {"workspaceId": ws_x, "dataDisposition": "exported", "exportSetId": set_x}}}], tag)[0]
     def confirm_x(p, tag):

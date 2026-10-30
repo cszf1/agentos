@@ -302,7 +302,11 @@ fn backup(c: &mut Client, a: &[String]) {
         // A workspace whose Host never ran has no databases and nothing to restore: it is named in the set
         // (`neverStarted`) instead of failing the whole machine set. One database without the other stays an error.
         let (os_db, agent_db) = (std::path::Path::new(&format!("{data}/os.sqlite")).exists(), std::path::Path::new(&format!("{data}/agent.sqlite")).exists());
-        if !os_db && !agent_db {
+        // machined's creation step `databases` writes os.sqlite (workspace-init); agent.sqlite and the pairing appear only
+        // when the Host first starts and binds (meta.agent_binding_state pending → bound). Until then nothing user-made
+        // can exist (every write goes through a ready Host), so os.sqlite alone with the binding still pending is the
+        // same "never started" case. os.sqlite alone after a bind, or agent.sqlite alone, stays an error.
+        if !agent_db && (!os_db || binding_pending(&format!("{data}/os.sqlite"))) {
             never_started.push(json!({ "workspaceId": id, "storeUUID": w["storeUUID"] }));
             continue;
         }
@@ -647,4 +651,14 @@ mod tests {
         assert_eq!(redact_line("machined ready"), "machined ready");
         assert_eq!(redact_line(&"x".repeat(1000)).len(), 400);
     }
+}
+
+/// meta.agent_binding_state of a workspace os.sqlite is still `pending` (its Host never paired the two stores).
+fn binding_pending(db: &str) -> bool {
+    use rusqlite::OpenFlags;
+    let ro = OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI | OpenFlags::SQLITE_OPEN_NO_MUTEX;
+    let q = |uri: String| {
+        rusqlite::Connection::open_with_flags(uri, ro).ok().and_then(|c| c.query_row("SELECT agent_binding_state FROM meta WHERE id = 1", [], |r| r.get::<_, String>(0)).ok())
+    };
+    q(format!("file:{db}?mode=ro")).or_else(|| q(format!("file:{db}?immutable=1"))).as_deref() == Some("pending")
 }

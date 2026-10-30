@@ -139,7 +139,7 @@ The host itself still runs as your user. The privileged part is installed by roo
 ```bash
 # build prerequisites (Debian 13 / Ubuntu 24.04)
 sudo apt-get install -y build-essential pkg-config clang llvm libbpf-dev libelf-dev zlib1g-dev \
-  libnftables-dev libudev-dev libsystemd-dev nftables iproute2 polkitd python3
+  libnftables-dev libudev-dev libsystemd-dev libpam0g-dev nftables iproute2 polkitd python3
 curl -fsSL https://sh.rustup.rs | sh -s -- -y --default-toolchain none   # rust-toolchain.toml pins 1.91.0
 pnpm native:build              # cargo build --release --locked + the fixed BPF object; prints versions and sha256s
 # register this user and its workspace store with the broker (store UUID: meta.store_uuid of os.sqlite, printed by doctor)
