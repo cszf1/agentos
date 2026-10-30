@@ -17,7 +17,7 @@ let
     nativeBuildInputs = [ pkgs.skopeo ];
     outputHashMode = "recursive";
     outputHashAlgo = "sha256";
-    outputHash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+    outputHash = "sha256-bUYu8G7rkGXwmvRsnMcHe+YqXHkcjoDTCXjrFuKj/Wg=";
     SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
     impureEnvVars = lib.fetchers.proxyImpureEnvVars;
   } ''
@@ -27,16 +27,17 @@ let
     rm -f $out/version.tmp
   '';
   overlays = {
-    "core-v1/builder" = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
-    "core-v1/runtime" = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
-    "data-v1/builder" = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
-    "data-v1/runtime" = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
-    "core-v2/builder" = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
-    "core-v2/runtime" = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
-    "data-v2/builder" = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
-    "data-v2/runtime" = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+    "core-v1/builder" = "sha256-kul08C8+oM93TgJSGO2RQ3rKKfaOSv9Ty57ZH/m9xvM=";
+    "core-v1/runtime" = null; # no dependencies: npm ci needs no cache
+    "data-v1/builder" = "sha256-FNJ3Chu2HJ53ndV0cwf2yG1UzP+nX5K9jHFis+bZYS8=";
+    "data-v1/runtime" = "sha256-o7u5N7m9hjix0pFDHswnIJh+tQnKtI+FaDBxQtuUZHs=";
+    "core-v2/builder" = "sha256-B/5nB2yyisAD4S4iFBVda4lZiBTNhCGHp59FPUsbdr8=";
+    "core-v2/runtime" = null; # no dependencies: npm ci needs no cache
+    "data-v2/builder" = "sha256-ZUSCyeGKEgvWYapyz6ADPjzzpS/hbNFPm9dbrLeiKyU=";
+    "data-v2/runtime" = "sha256-sQeNM7ESUaQR5uqwdtJEmD0eWiiLZ6wMNOc/TugkvDc=";
   };
-  npmCache = o: hash: pkgs.fetchNpmDeps {
+  emptyCache = pkgs.runCommand "npm-cache-empty" { } "mkdir -p $out/_cacache";
+  npmCache = o: hash: if hash == null then emptyCache else pkgs.fetchNpmDeps {
     name = "npm-cache-${builtins.replaceStrings [ "/" ] [ "-" ] o}";
     src = "${src}/runtime/overlays/${o}";
     inherit hash;

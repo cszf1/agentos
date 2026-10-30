@@ -8,6 +8,9 @@ def rpc_as_root(reqs):
 
 def tty_login(n, user, pw):
     machine.send_key(f"alt-f{n}")
+    # With a KMS console (virtio-gpu, greetd on VT1) the key switch alone may not spawn the autovt getty: switch and
+    # start it explicitly (no-op when it already runs).
+    machine.succeed(f"chvt {n}; systemctl start getty@tty{n}.service")
     machine.wait_until_tty_matches(str(n), "login: ")
     machine.send_chars(f"{user}\n")
     machine.wait_until_tty_matches(str(n), "Password: ")
