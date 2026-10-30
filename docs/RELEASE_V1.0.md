@@ -44,6 +44,7 @@ Minimum disk for an install: 64 GiB (the installer refuses smaller disks and sys
 | off-machine copy | `agentosctl backup export --set DIR --recipient age1… --out DEST` (read back and verified before `verified`) |
 | same-machine restore (resumable) | `agentosctl restore --set DIR` / `--restore-id ID` |
 | move workspaces to another machine | `agentosctl clone --set DIR --owner LOGIN` (sets from the same machine are refused: use restore) |
+| bring a v0.4 workspace over | `agentosctl import-v04 --backup DIR --owner LOGIN [--name NAME]` (a v0.4 cold backup becomes a new workspace; every file hash checked before anything is allocated; the import runs as the new execution UID; the backup is never modified; a store already on the machine is refused) |
 | machine directory lost | machined enters recovery mode; `agentosctl recover --new-identity` keeps the old state as evidence |
 | failed update | one-shot trial boot; the persistent default stays on known-good until the health gate passes (`agentos-update-worker commit --health-gate`) |
 | support bundle (root only, no passwords) | `agentosctl support-bundle` |
