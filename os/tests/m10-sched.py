@@ -125,23 +125,71 @@ with subtest("revocation while a run waits for a machine permit: no model reques
     for rid, ws in ((a1, ws_a), (b1, ws_b)):
         call(1, [fwd(ws, "runs.cancel.post", params={"runId": rid}, idem="c2-" + rid)], "d" + rid[:6])
 
-with subtest("machined unreachable: gateway fails closed with a visible reason, Hosts stay, all resumes after (S08)"):
+with subtest("machined unreachable: bound sessions degrade (reads, brief writes), new model work waits with a visible reason, all resumes after (S08)"):
     machine.succeed(f"echo 1 > {FM}/hold")
+    machine.succeed("rm -f /tmp/s8-go /tmp/s8-go2")
+    OSB = f"/var/lib/agentos/workspaces/{ws_b}/data/os.sqlite"
+    s8 = [{"methodId": "session.status"}, fwd(ws_b, "runs.list"),
+          {"methodId": "$wait", "path": "/tmp/s8-go"},
+          {"methodId": "session.status"}, fwd(ws_b, "runs.list"),
+          fwd(ws_b, "runs.post", body={"intent": "做一个读书记录应用", "targetAppId": None}, idem="s8-in-grace"),
+          {"methodId": "$wait", "path": "/tmp/s8-go2"},
+          fwd(ws_b, "runs.post", body={"intent": "做一个喝水记录应用", "targetAppId": None}, idem="s8-after-grace"),
+          fwd(ws_b, "runs.list"), {"methodId": "session.status"}]
+    body = json.dumps([{"methodId": "session.bind"}] + s8, ensure_ascii=False)
+    machine.succeed(f"echo {base64.b64encode(body.encode()).decode()} | base64 -d > /tmp/s8.json && chmod 0644 /tmp/s8.json && rm -f /tmp/s8.out")
+    # one connection held open in alice's real tty session for the whole outage (started without waiting)
+    machine.succeed(f"echo {base64.b64encode((RPC + ' @/tmp/s8.json > /tmp/s8.out 2>&1; echo done >> /tmp/s8.out' + chr(10)).encode()).decode()} | base64 -d > /tmp/s8.sh && chmod 0644 /tmp/s8.sh")
+    machine.send_key("alt-f1")
+    machine.wait_until_succeeds("grep -qx tty1 /sys/class/tty/tty0/active")
+    machine.send_chars("sh /tmp/s8.sh\n")
+    def s8_lines(n):
+        machine.wait_until_succeeds(f"test $(grep -c '^{{' /tmp/s8.out) -ge {n}", timeout=240)
+        return [json.loads(l) for l in machine.succeed("cat /tmp/s8.out").splitlines() if l.startswith("{")]
+    L = s8_lines(3)
+    assert L[0]["status"] == 200 and L[1]["body"]["machine"]["reachable"] is True and L[2]["status"] == 200, L
     machine.succeed("systemctl stop agentos-machine.service")
-    out = tty_run(1, f"{RPC} '[{{\"methodId\":\"session.bind\"}}]'", "/tmp/s8a")
-    print(out)
-    assert "STORE_UNAVAILABLE" in out or "unreachable" in out, out
+    n0 = len([e for e in fm_log() if e["ev"] == "start"])
+    t_stop = time.time()
+    machine.succeed("touch /tmp/s8-go")
+    L = s8_lines(7)
+    st, rd, wr = L[4], L[5], L[6]
+    print("S08 status during outage:", st)
+    m = st["body"]["machine"]
+    assert m["reachable"] is False and "unreachable" in m["reason"] and m["writesOpen"] is True, st   # the reason is visible
+    assert rd["status"] == 200, rd                                       # reads continue on the confirmed membership
+    assert wr["status"] in (200, 202), wr                                # a write within the 30 s grace is accepted
+    rid8 = (wr.get("body") or {}).get("data", wr.get("body") or {}).get("runId")
+    assert rid8, wr
+    # the accepted run sends nothing while machined is away; the Host records why
+    machine.wait_until_succeeds(f"sqlite3 {OSB} \"SELECT COUNT(*) FROM events WHERE kind='machine.unreachable'\" | grep -qv '^0$'", timeout=60)
+    print(machine.succeed(f"sqlite3 {OSB} \"SELECT payload_json FROM events WHERE kind='machine.unreachable' ORDER BY rowid DESC LIMIT 1\""))
+    st_run = machine.succeed(f"sqlite3 {OSB} \"SELECT status FROM runs WHERE id='{rid8}'\"").strip()
+    assert st_run in ("queued", "running"), st_run                       # waiting, not failed/stopped as 'budget'
+    # a new session cannot be bound (identity needs machined): visible reason
+    out = tty_run(2, f"{RPC} '[{{\"methodId\":\"session.bind\"}}]'", "/tmp/s8b")
+    assert "STORE_UNAVAILABLE" in out and "unreachable" in out, out
+    time.sleep(max(0, 33 - (time.time() - t_stop)))
+    assert len([e for e in fm_log() if e["ev"] == "start"]) == n0, "a model request went out while machined was unreachable"
+    machine.succeed("touch /tmp/s8-go2")
+    L = s8_lines(11)
+    wr2, rd2, st2 = L[8], L[9], L[10]
+    assert wr2["status"] == 503 and wr2["error"]["code"] == "STORE_UNAVAILABLE" and "writes are closed" in wr2["error"]["message"], wr2
+    assert rd2["status"] == 200, rd2                                     # reads still served within the read grace
+    assert st2["body"]["machine"]["writesOpen"] is False, st2
+    assert machine.succeed(f"sqlite3 {OSB} \"SELECT COUNT(*) FROM runs WHERE intent='做一个喝水记录应用'\"").strip() == "0"   # refused write left nothing
     ua = machine.succeed(f"stat -c %u /var/lib/agentos/workspaces/{ws_a}/data").strip()
     ub = machine.succeed(f"stat -c %u /var/lib/agentos/workspaces/{ws_b}/data").strip()
     for u in (ua, ub):
         machine.succeed(f"pgrep -u {u} -f packages/host/dist/main.js")   # the Hosts keep their data and processes
+    assert len([e for e in fm_log() if e["ev"] == "start"]) == n0
     machine.succeed("systemctl start agentos-machine.service")
     machine.wait_for_unit("agentos-machine.service")
-    r = call(1, [{"methodId": "workspaces.list"}], "s8b")[0]
-    assert r["status"] == 200, r
-    n0 = len([e for e in fm_log() if e["ev"] == "start"])
-    rid = run(1, ws_b, "做一个天气记录应用", "s8r")
-    machine.wait_until_succeeds(f"test $(grep -c '\"ev\": \"start\"' {FM}/log.jsonl) -gt {n0}", timeout=180)   # new model work flows again
+    # the run accepted during the outage now gets its permit and reaches the model; the Host records the recovery
+    machine.wait_until_succeeds(f"test $(grep -c '\"ev\": \"start\"' {FM}/log.jsonl) -gt {n0}", timeout=180)
+    machine.wait_until_succeeds(f"sqlite3 {OSB} \"SELECT COUNT(*) FROM events WHERE kind='machine.reachable'\" | grep -qv '^0$'", timeout=60)
+    r = call(1, [{"methodId": "workspaces.list"}, {"methodId": "session.status"}], "s8c")
+    assert r[0]["status"] == 200 and r[1]["body"]["machine"]["reachable"] is True, r
 
 with subtest("the machine's 24-hour model budget stops a real Host's run before any request is sent (S01 day budget)"):
     machine.succeed(f"echo 1 > {FM}/hold")

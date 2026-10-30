@@ -35,6 +35,14 @@ def main():
         reqs = [reqs]
     state = {}
     for r in reqs:
+        if r.get("methodId") == "$wait":
+            # test choreography: keep THIS connection (and its bound session) open until the test creates a file
+            import os, time
+            end = time.time() + r.get("timeout", 300)
+            while not os.path.exists(r["path"]) and time.time() < end:
+                time.sleep(0.2)
+            print(json.dumps({"wait": os.path.exists(r["path"])}), flush=True)
+            continue
         r = json.loads(json.dumps(r).replace("$EPOCH", str(state.get("epoch", 1))).replace("$WS", state.get("ws", "00000000-0000-0000-0000-000000000000")))
         r.setdefault("requestId", str(uuid.uuid4()))
         r.setdefault("workspaceId", "00000000-0000-0000-0000-000000000000")
