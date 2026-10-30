@@ -135,7 +135,9 @@ in {
     agentos-session-gateway = {
       description = "AgentOS session gateway";
       wantedBy = [ "multi-user.target" ];
-      requires = [ "agentos-machine.service" ];
+      # wants, not requires: when machined stops or dies the gateway stays up and refuses with STORE_UNAVAILABLE
+      # (spec §13.2 "fail closed with a visible reason"); with requires= systemd stopped it and clients saw ECONNREFUSED.
+      wants = [ "agentos-machine.service" ];
       after = [ "agentos-machine.service" ];
       before = [ "display-manager.service" ];
       unitConfig.StartLimitIntervalSec = 0;
