@@ -20,7 +20,7 @@
 | V1-B01 | 已修复 | 部分 | 单元/集成 | 开发树在 v0.4 验收机上：contracts、unit 88、identity 9、machine 7、migration-v1 5、agents 24、maintenance 35、maintenance-recovery 4、gc-online 7、compaction 6 全过；recovery 套件仍有偶发失败（见 R08 记录与“回归”一节）；telemetry 的 eBPF 部分见 O 行与“回归”一节。 |
 | V1-B02 | 应用/ABI | 通过 | 单元/集成 | tests/integration/v02-contracts.test.ts：formatVersion 1/2/3、ABI 1/2、catalog 与冻结 bundle hash（fixtures/todo-v1.json sha256:428df8c7…）不变。 |
 | V1-B03 | 三语言协议 | 通过 | 单元/集成 | fixtures/v1.0/protocol/vectors.json 在 TS（scripts/v1-vectors.mjs --check）、Rust（agentos-protocol v1_vectors/vectors）、C++（desktop v1_vectors，含于 Shell ctest）结果一致。 |
-| V1-B04 | 发行依赖冻结 | 部分 | KVM VM（Actions） | os/flake.lock 固定 nixpkgs nixos-26.05@6f06d204（2026-10-29，26.05 支持期至 2026-12-31）与 rust-overlay@96a0986b；pnpm 依赖为固定输出哈希；仓库与 Nix 文件无 latest。离线 OCI（决定 18）：agentos-oci 在构建 VM 里 --network=none --pull=never 构建 8 个 catalog 镜像，基础镜像为固定输出 skopeo 副本，release manifest ociDigests 填入；build-oci 在 Actions（run 41080892538）构建通过。**未满足**：m5 在发行镜像里启动应用容器失败（crun: readlink ``，OCI runtime 调用的命令未找到），固件清单未单列。 |
+| V1-B04 | 发行依赖冻结 | 部分 | KVM VM（Actions） | os/flake.lock 固定 nixpkgs nixos-26.05@6f06d204（2026-10-29，26.05 支持期至 2026-12-31）与 rust-overlay@96a0986b；pnpm 依赖为固定输出哈希；仓库与 Nix 文件无 latest。离线 OCI（决定 18）：agentos-oci 在构建 VM 里 --network=none --pull=never 构建 8 个 catalog 镜像，基础镜像为固定输出 skopeo 副本，release manifest ociDigests 填入；build-oci 在 Actions（run 41080892538）构建通过。m5 应用容器启动失败（crun: readlink ``）根因：工作区 home 为 0700，--userns=keep-id 下容器 root 映射的 subuid 无法穿过 home 解析 rootfs（同 podman#27785）；已改为 home 与到 graphroot 的路径 0711（仅穿越），内容目录仍 0700，m5 重跑 run 41090848802，CI 待结果。**未满足**：固件清单未单列。 |
 | V1-B05 | 单写者和双库 | 部分 | KVM VM（Actions）＋单元/集成 | machined 在旧实例进程仍在时拒绝再次启动（WORKSPACE_FENCED，m8-backup 曾因此暴露并修复 podman 残留）；tests/machine/directory.test.ts 拒绝重复 storeUUID。Pi marker 不匹配阻断新任务未在 v1.0 VM 中重跑。 |
 | V1-B06 | 实施证据边界 | 通过 | 本报告 | 每行标注证据等级；TCG/KVM/单元/实体机分列；继承的 V3-E04 串口仍为未验收。 |
 | V1-B07 | schema | 部分 | 单元/集成 | tests/migration/schema5.test.ts 保留 schema 4→5 旧收据与 v0.1 bundle hash；broker db::tests 保留 schema 3→4 effect 行。崩溃中途写入未做。 |
@@ -34,7 +34,7 @@
 | V1-I02 | 非登录进程 | 通过 | KVM VM（Actions） | m2-identity：无 logind 会话的 root 进程 session.bind → 401 SESSION_REQUIRED。 |
 | V1-I03 | 用户不可见数据 | 通过 | KVM VM（Actions） | m2-identity：B 列不到 A 的工作区，get/forward A 的 ID 统一 404 NOT_FOUND_OR_FORBIDDEN；m3-members 中机器管理员对非成员工作区同样 404。 |
 | V1-I04 | 角色矩阵 | 通过 | KVM VM（Actions）＋单元/集成 | tests/identity/access.test.ts 角色×动作全矩阵；m3-members：viewer 读 200、写/成员管理 404，editor 写入但 owner 动作（maintenance.control）被 Host 矩阵拒绝，owner 可执行，机器管理员无数据入口。 CI：run 41088865318 中 I04/I03/W04/I06/I08 通过，I09 子测试失败——禁用 bob 被 machined 以 CONFLICT 拒绝（bob 是工作区 “Bob” 的唯一 owner，须先转移所有权），属正确行为、断言有误；已改为断言该拒绝并禁用一个不拥有工作区的新用户，重跑 run 41090308175，I09/I10/W07/I11 CI 待结果。 |
-| V1-I05 | 自身任务和共享任务 | 部分 | 单元/集成（VM 已写，CI 待结果） | access.test.ts 覆盖自身/他人任务的读取与取消判定。m11-ops I05：editor 读不到/取消不了 owner 的 run transcript，能读并取消自己的；owner 能取消 editor 的 run。 m11-ops（os/tests/m11-ops.py，两个真实 Host + 本地保持端点）已写，run 41089329164，CI 待结果。 |
+| V1-I05 | 自身任务和共享任务 | 通过 | KVM VM（Actions）＋单元/集成 | access.test.ts 角色判定；m11-ops（run 41089329164）KVM 通过：editor 读不到/取消不了 owner 的 run transcript，能读并取消自己的；owner 能取消 editor 的 run。 |
 | V1-I06 | 撤销与写提交竞争 | 通过 | KVM VM（Actions） | m3-members：Host 运行中撤销 → 被撤销者的读写立即被拒；revocations 只有在 gateway/host/broker 三方 ack 后才变 revoked。写提交与撤销的精确竞争窗口与 UI 结果一致性未做。 KVM 通过（run 41088865318）：根因是此前测试等待语句的 sqlite 查询三重转义、从未被解析，并非缺 ack。 |
 | V1-I07 | 撤销与模型派发 | 部分 | 单元/集成 | directory.test.ts / admitPermit：等待中的 permit 在 memberVersion 变化后被撤；Rust 单元（本轮在 agentos-v1 cargo test 通过）：native/crates/machine/src/tests.rs s04_final_check_after_waiting_member_version_revocation_and_stop。 m10-sched：run 41088879793 中 S01/S02 子测试失败——测试先连发 A 的两个 run，A 在 B 尚无等待时取得第二个 permit，这是 §13.2 允许的（“无其它等待者可临时使用第二个”），断言有误；已改为交错提交，重跑中，CI 待结果。 |
 | V1-I08 | 撤销时 | 通过 | KVM VM（Actions） | m3-members：Host 停止时撤销，gateway 立即拒绝，root 侧保持 revoking ≥8 秒，Host 重新启动并 ack 后才 revoked。broker 失联与执行者 fence 未单独做。 KVM 通过（run 41088865318）：根因是此前测试等待语句的 sqlite 查询三重转义、从未被解析，并非缺 ack。 |
@@ -52,7 +52,7 @@
 | V1-W03 | 创建断点 | 部分 | 单元/集成 | directory.test.ts：半创建工作区不可见；VM 中各断点强杀未做。 |
 | V1-W04 | 两工作区并行 | 通过 | KVM VM（Actions） | m3-members：两个 Host 在不同 UID 下并行；SIGKILL A 的 Host 后 B 仍正常应答，A 由 systemd 重启后恢复。 CI：run 41088865318 中 I04/I03/W04/I06/I08 通过，I09 子测试失败——禁用 bob 被 machined 以 CONFLICT 拒绝（bob 是工作区 “Bob” 的唯一 owner，须先转移所有权），属正确行为、断言有误；已改为断言该拒绝并禁用一个不拥有工作区的新用户，重跑 run 41090308175，I09/I10/W07/I11 CI 待结果。 |
 | V1-W05 | 切换与迟到响应 | 未通过 | 未验收 | Shell 快速切换与迟到响应过滤只有 offscreen ctest 的部分断言，未在 VM 会话中做。 |
-| V1-W06 | 接受后切换 | 未通过 | 未验收 | m11-ops W06：已接受 run 后切到 B，同幂等键重试回到 A 得到同一 runId，B 的 runs.list/runs.get 不含该 run，A 中只有一份。 m11-ops（os/tests/m11-ops.py，两个真实 Host + 本地保持端点）已写，run 41089329164，CI 待结果。 |
+| V1-W06 | 接受后切换 | 通过 | KVM VM（Actions） | m11-ops（run 41089329164）KVM 通过：已接受 run 后 attach B，同幂等键重试回到 A 得到同一 runId，B 的 runs.list 不含、runs.get 不可见，A 中只有一份。断网重试由同幂等键覆盖。 |
 | V1-W07 | 停止/归档 | 部分 | KVM VM（Actions） | m3-members：stop 后无 Host/Podman 进程且 os.sqlite/agent.sqlite 保留；archive 后数据保留、attach 被拒。归档恢复未做。 CI：run 41088865318 中 I04/I03/W04/I06/I08 通过，I09 子测试失败——禁用 bob 被 machined 以 CONFLICT 拒绝（bob 是工作区 “Bob” 的唯一 owner，须先转移所有权），属正确行为、断言有误；已改为断言该拒绝并禁用一个不拥有工作区的新用户，重跑 run 41090308175，I09/I10/W07/I11 CI 待结果。 |
 | V1-W08 | 后台与注销 | 通过 | KVM VM（Actions）＋单元/集成 | Rust 单元（本轮在 agentos-v1 通过）：native/crates/machine/src/tests.rs w08_run_when_logged_out_default_off_owner_only_and_machine_quota：默认关闭、仅 owner、机器限额 ≤ 运行工作区上限。§16.1 没有设置类 route（原测试调用的 workspaces.setRunWhenLoggedOut 被 gateway 以 unknown method 拒绝），改为固定机器动作 workspaces.runWhenLoggedOut（plan→confirm，plan 与 dispatch 两次核对 owner）；m10-sched W08 子测试改为走该动作，KVM 通过（run 41088879793）：默认 0、editor 计划被拒且值不变、owner 开/关均 succeeded 并读回。锁屏/注销不扩大维护范围未单独断言。 |
 | V1-W09 | 资源共享冲突 | 未通过 | 未验收 | 两工作区共享物理资源的 broker 全局 fence 未在 v1.0 VM 中测（发行镜像不登记资源）。 |
@@ -105,12 +105,12 @@
 
 | 编号 | 名称 | 结论 | 证据等级 | 证据 / 原因 |
 |---|---|---|---|---|
-| V1-U01 | 离线空机安装 | 部分 | KVM VM（Actions）（已写，CI 待结果）；实盘需实体机，未验收 | m6-install：离线（无默认路由、无 substituter）安装到 virtio 盘，systemd-boot→LUKS2→Btrfs 启动，首启进入未登记机器。离线 OCI 已进发行闭包（build-oci 通过，见 B04），但发行镜像中应用容器启动在 m5 失败。5fd7da2 轮 m6-install（run 41080892538）仍在运行，CI 待结果。实体盘未测：跑法见文末。 |
+| V1-U01 | 离线空机安装 | 部分 | KVM VM（Actions）（已写，CI 待结果）；实盘需实体机，未验收 | m6-install：离线（无默认路由、无 substituter）安装到 virtio 盘，systemd-boot→LUKS2→Btrfs 启动，首启进入未登记机器。离线 OCI 已进发行闭包（build-oci 通过，见 B04），发行镜像中应用容器启动失败的根因已修（见 B04），m5 重跑待结果。5fd7da2 轮 m6-install（run 41080892538）仍在运行，CI 待结果。实体盘未测：跑法见文末。 |
 | V1-U02 | 磁盘重验/中断 | 部分 | KVM VM（Actions）（已写，CI 待结果）；实盘需实体机，未验收 | m6-install：小盘/系统盘被拒、计划后磁盘变化被拒且不写入、复制中崩溃只在同一盘续作。5fd7da2 轮 m6-install 仍在运行，CI 待结果。真实 WWN/serial 需实体盘。 |
 | V1-U03 | 首启身份 | 部分 | KVM VM（Actions）（已写，CI 待结果） | m6-qcow2：同一模板两个克隆各自替换模板磁盘密钥后首启，machineInstallId 不同；重启后要求新口令且身份保持；m6-install 同一盘重复 firstboot 被拒。5fd7da2 轮 m6-qcow2 与 build-qcow2（run 41080892538）仍在运行，CI 待结果。 |
 | V1-U04 | 签名与内容 | 部分 | 单元/集成 | access.test.ts 发行准入：坏签名/过期/重放/破坏性迁移被拒；update-worker 单元测试校验内容 hash。篡改闭包/OCI 的端到端与 require-sigs 未在 VM 做（发行配置保持 require-sigs=true）。 |
 | V1-U05 | 序列与密钥轮换 | 部分 | 单元/集成 | directory.test.ts：旧 sequence 被拒、known-good 回退不降高水位；密钥轮换未测。 |
-| V1-U06 | 下载与低空间 | 部分 | 单元/集成（VM 已写，CI 待结果） | agentos-update-worker arm 先做前置检查（native/crates/update-worker/src/preflight.rs）：ESP 可用 ≥16 MiB、store 可用 ≥ max(候选闭包所需, 256 MiB)、无市电且电池 <40% 未充电则拒绝（UPDATE_PRECONDITION），拒绝时不写 one-shot、不改 default/条目。Rust u06_preflight_refuses_low_space_and_low_battery_and_arms_nothing 本轮通过；m7-update U06 子测试（真实 bootctl：低电/空间不足不 armed、loader 状态不变）已写，CI 待结果。下载断线续传：nix copy 以 store 路径为原子单位，已到路径保留，未在 VM 中断网复测。 |
+| V1-U06 | 下载与低空间 | 部分 | KVM VM（Actions）＋单元/集成 | agentos-update-worker arm 先做前置检查（native/crates/update-worker/src/preflight.rs）：ESP 可用 ≥16 MiB、store 可用 ≥ max(候选闭包所需, 256 MiB)、无市电且电池 <40% 未充电则拒绝（UPDATE_PRECONDITION），拒绝时不写 one-shot、不改 default/条目。Rust u06_* 通过；m7-update U06 子测试 KVM 通过（run 41089647759，真实 bootctl：低电/空间不足不 armed、loader 状态与条目不变）。**未满足**：下载断线续传未在 VM 中断网复测（nix copy 以 store 路径为原子单位，已到路径保留）。 |
 | V1-U07 | 启动项写入断电 | 部分 | KVM VM（Actions）＋单元/集成 | m7-update：known-good 与候选条目完整、default 为 known-good；update-worker Rust 测试覆盖各发布点中断。VM 断电未做。 |
 | V1-U08 | 单次试启动 | 通过 | KVM VM（Actions） | m7-update：one-shot 只启动候选一次、default 不变；无 init 的坏候选复位后进入 default，不无限重试。 |
 | V1-U09 | 健康门槛 | 部分 | 单元/集成 | update-worker health 单元测试（假 ready、仅 SSH、Qt 不出帧、schema 不兼容）；VM 中未做。 |
@@ -127,12 +127,12 @@
 | V1-R03 | 集合发布中断 | 通过 | KVM VM（Actions）＋单元/集成 | m8-backup：manifest 前强杀不形成可恢复集合；recovery-worker Rust R03。 |
 | V1-R04 | 加密离机往返 | 通过 | KVM VM（Actions）＋单元/集成 | m8-backup：age 导出→读回→解密到空盘→校验；错误密钥/篡改密文被拒。 |
 | V1-R05 | 恢复路径防护 | 通过 | KVM VM（Actions）＋单元/集成 | m8-backup：路径穿越归档不能写出 staging；Rust R05 覆盖 link/设备节点/UID。 |
-| V1-R06 | 同机根侧事实 | 部分 | 单元/集成 | directory.test.ts：恢复期间保留当前撤权；broker effect/quarantine 未测。 m9-restore（run 41085217261，8df4a6a）在“备份后撤销 bob”子测试等待 revoked 超时（同 I06 缺 ack 问题），本项子测试未执行到。 |
-| V1-R07 | 恢复各代次 | 未通过 | 未验收 | m9-restore 已写，CI 未执行到：m9-restore（run 41085217261，8df4a6a）在“备份后撤销 bob”子测试等待 revoked 超时（同 I06 缺 ack 问题），本项子测试未执行到。 |
-| V1-R08 | 半恢复整机 | 未通过 | 未验收 | m9-restore 已写，CI 未执行到：m9-restore（run 41085217261，8df4a6a）在“备份后撤销 bob”子测试等待 revoked 超时（同 I06 缺 ack 问题），本项子测试未执行到。 |
+| V1-R06 | 同机根侧事实 | 部分 | KVM VM（Actions）＋单元/集成 | directory.test.ts：恢复期间保留当前撤权。m9-restore（run 41088874992）KVM 通过：备份后撤销 bob、禁用 carol、留一个机器计划；恢复后“比集合更新的根侧事实仍成立”（bob 仍 revoked、carol 仍禁用、旧计划失效）。broker effect/quarantine 在恢复后的保留未在 VM 断言。 |
+| V1-R07 | 恢复各代次 | 通过 | KVM VM（Actions） | m9-restore（run 41088874992）：恢复提升 control epoch 与两个工作区 incarnation，旧机器计划失效（PLAN_STALE）。 |
+| V1-R08 | 半恢复整机 | 通过 | KVM VM（Actions） | m9-restore（run 41088874992）：恢复在第一个工作区替换后被切断 → 保持 restore-in-progress，任何工作区都不启动；--restore-id 续作完成。 |
 | V1-R09 | 缓存与 | 未通过 | 未验收 | 未做。 |
 | V1-R10 | 异机克隆 | 未通过 | 未验收 | 未做。 |
-| V1-R11 | 根侧日志丢失 | 未通过 | 未验收 | m9-restore 已写，CI 未执行到：m9-restore（run 41085217261，8df4a6a）在“备份后撤销 bob”子测试等待 revoked 超时（同 I06 缺 ack 问题），本项子测试未执行到。 |
+| V1-R11 | 根侧日志丢失 | 部分 | KVM VM（Actions）（已写，CI 待结果） | m9-restore：broker 日志丢失只进诊断模式（BROKER_HISTORY_MISSING）不建空库；machine.sqlite 丢失进入恢复模式、显式 recover --new-identity、旧状态移入 lost-<ms>/。run 41088874992 中 broker 子测试失败——agentos-broker.path 在测试删除日志前就把 broker 重新拉起，测试未暂停 path 单元；已修，重跑 run 41090998716，CI 待结果。 |
 | V1-R12 | 空间与快照保留 | 未通过 | 未验收 | 未做。 |
 
 ## v0.4 迁移
@@ -165,7 +165,7 @@
 
 ## 统计
 
-未通过 28 项，通过 26 项，部分 46 项（共 100 项）。
+未通过 24 项，通过 30 项，部分 46 项（共 100 项）。
 
 ## 回归与偶发失败记录
 
