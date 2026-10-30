@@ -142,3 +142,29 @@ with subtest("machined unreachable: gateway fails closed with a visible reason, 
     n0 = len([e for e in fm_log() if e["ev"] == "start"])
     rid = run(1, ws_b, "做一个天气记录应用", "s8r")
     machine.wait_until_succeeds(f"test $(grep -c '\"ev\": \"start\"' {FM}/log.jsonl) -gt {n0}", timeout=180)   # new model work flows again
+
+with subtest("the machine's 24-hour model budget stops a real Host's run before any request is sent (S01 day budget)"):
+    machine.succeed(f"echo 1 > {FM}/hold")
+    for w in (ws_a, ws_b):   # nothing of ours in flight first
+        machine.wait_until_succeeds(f"test \"$(python3 -c \"import json;print(json.load(open('{FM}/state.json'))['inflight'].get('{w}',0))\")\" = 0", timeout=180)
+    # charge the machine's day: the budget counts permits created in the last 24 h that were used (or unknown).
+    # These rows stand for earlier requests of today; they belong to no live instance.
+    charged = int(sql("SELECT COUNT(*) FROM machine_permits WHERE resource_class='model' AND created_at >= (CAST(strftime('%s','now') AS INTEGER)-86400)*1000 AND (state IN ('queued','reserved','in_use','reconciling') OR usage_status IN ('used','unknown'))"))
+    k = 256 - charged
+    assert k > 0, charged
+    sql(f"WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i < {k}) INSERT INTO machine_permits (permit_id, workspace_id, execution_epoch, owner_kind, owner_id, attempt_id, resource_class, priority, body_hash, member_version, user_id, instance_id, boot_id, seq, state, deadline_at, usage_status, created_at) SELECT 'day-' || i, '{ws_a}', 0, 'run', 'day-seed', 'day-' || i, 'model', 'foreground', 'h', 1, NULL, 'seed', 'seed', (SELECT MAX(seq) FROM machine_permits) + i, 'released', 0, 'used', CAST(strftime('%s','now') AS INTEGER)*1000 FROM n")
+    n0 = len([e for e in fm_log() if e["ev"] == "start"])
+    rid = run(1, ws_a, "做一个预算之外的应用", "day1")
+    OSA = f"/var/lib/agentos/workspaces/{ws_a}/data/os.sqlite"
+    machine.wait_until_succeeds(f"sqlite3 {OSA} \"SELECT COUNT(*) FROM model_attempts WHERE run_id='{rid}'\" | grep -qv '^0$'", timeout=120)
+    time.sleep(20)
+    att = machine.succeed(f"sqlite3 {OSA} \"SELECT state FROM model_attempts WHERE run_id='{rid}'\"").split()
+    print("day-budget run attempts", att, machine.succeed(f"sqlite3 {OSA} \"SELECT status, IFNULL(error_json,'') FROM runs WHERE id='{rid}'\" 2>&1 || true"))
+    assert att and all(s in ("denied", "failed", "interrupted") for s in att), att
+    assert len([e for e in fm_log() if e["ev"] == "start"]) == n0                     # no request reached the endpoint
+    assert sql(f"SELECT COUNT(*) FROM machine_permits WHERE workspace_id='{ws_a}' AND owner_id='{rid}' AND state IN ('reserved','in_use')") == "0"
+    # the day rolls over (the seeded charges age out): the next run is admitted and its request goes out
+    sql("DELETE FROM machine_permits WHERE owner_id='day-seed'")
+    call(1, [fwd(ws_a, "runs.cancel.post", params={"runId": rid}, idem="day-c1")], "dayc")
+    run(1, ws_a, "做一个预算恢复后的应用", "day2")
+    machine.wait_until_succeeds(f"test $(grep -c '\"ev\": \"start\"' {FM}/log.jsonl) -gt {n0}", timeout=180)
