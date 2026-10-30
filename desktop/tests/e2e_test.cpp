@@ -347,6 +347,12 @@ class E2E : public QObject {
     if (phase != QLatin1String("offline")) QSKIP("phase");
     Real r;
     QVERIFY(r.up());
+    // the switching phase may have left B as the last workspace: work on A explicitly
+    const QString wsA = envOr("AGENTOS_E2E_WS_A", QString());
+    if (!wsA.isEmpty() && r.shell->workspaceId() != wsA) {
+      r.shell->switchWorkspace(wsA);
+      QTRY_VERIFY_WITH_TIMEOUT(r.shell->workspaceId() == wsA && r.shell->hostAvailable(), 60000);
+    }
     // generation is visibly unavailable: the submit button is disabled and an attempt is refused before any run
     r.go(QStringLiteral("home"));
     QTRY_VERIFY_WITH_TIMEOUT(!r.shell->modelAvailable(), 30000);
@@ -370,7 +376,8 @@ class E2E : public QObject {
     v->openCreate();
     v->setDraft(QStringLiteral("title"), QStringLiteral("断网也能记"));
     v->submitRecord();
-    QTRY_VERIFY_WITH_TIMEOUT(rows(v) == n + 1, 20000);
+    // the Shell's notice names the refusal if the write fails (m13 run 41145058422: POST records answered 403)
+    QTRY_VERIFY2_WITH_TIMEOUT(rows(v) == n + 1, qPrintable(QStringLiteral("notice: ") + r.shell->notice() + QStringLiteral(" banner: ") + r.shell->banner()), 20000);
     v->setSearch(QStringLiteral("断网"));
     QTRY_VERIFY_WITH_TIMEOUT(rows(v) == 1, 20000);
     v->setSearch(QString());
