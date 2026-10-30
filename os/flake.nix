@@ -54,7 +54,7 @@
       test = name: file: extra: import file ({ inherit pkgs; modules = [ ./modules/base.nix ./modules/agentos.nix ]; } // extra);
     in {
       packages.${system} = {
-        inherit (pkgs) agentos-native agentos-node agentos-shell agentos-oci;
+        inherit (pkgs) agentos-native agentos-node agentos-shell agentos-oci agentos-shell-e2e;
         agentos-toplevel = toplevel;
         agentos-release = release;
         agentos-installer = installerPkg;
@@ -78,6 +78,7 @@
         m10-sched = test "m10" ./tests/m10-sched.nix { };
         m11-ops = test "m11" ./tests/m11-ops.nix { };
         m12-clone = test "m12" ./tests/m12-clone.nix { };
+        m13-native = test "m13" ./tests/m13-native.nix { };
         m5-desktop = import ./tests/m5-desktop.nix { inherit pkgs; modules = [ ./modules/base.nix ./modules/graphics.nix ./modules/agentos.nix ]; };
       };
     };
