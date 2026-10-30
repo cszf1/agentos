@@ -96,6 +96,10 @@ impl Machine {
         if kind != "restores.confirm" {
             self.require_restore_idle()?;
         }
+        // full/read-only disk: only actions that free space, revoke authority or stop the machine stay available
+        if !matches!(kind, "workspaces.delete" | "workspaces.deleteConsent" | "users.disable" | "power.reboot" | "power.poweroff" | "network.device.disconnect") {
+            self.storage_guard()?;
+        }
         if kind == "workspaces.deleteConsent" {
             let ws = params_v["workspaceId"].as_str().ok_or_else(|| MErr::new("INVALID_REQUEST", "workspaceId is required"))?;
             self.delete_consent_check(&p.user_id, ws)?;

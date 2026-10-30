@@ -12,6 +12,7 @@ use std::sync::{Arc, Mutex};
 struct Fake {
     busy: Arc<Mutex<HashSet<u32>>>,
     removed: Arc<Mutex<Vec<String>>>,
+    storage: Arc<Mutex<Option<(u64, bool)>>>,
 }
 
 impl System for Fake {
@@ -32,6 +33,7 @@ impl System for Fake {
     fn exec_cgroup_busy(&self, uid: u32) -> bool { self.busy.lock().unwrap().contains(&uid) }
     fn kill_exec_cgroup(&mut self, uid: u32) -> R<()> { self.busy.lock().unwrap().remove(&uid); Ok(()) }
     fn remove_workspace_roots(&mut self, _: &Paths, ws: &str) -> R<()> { self.removed.lock().unwrap().push(ws.to_string()); Ok(()) }
+    fn storage(&self, _: &Path) -> (u64, bool) { self.storage.lock().unwrap().unwrap_or((u64::MAX, false)) }
 }
 
 struct T {
@@ -604,4 +606,55 @@ fn u11_migration_waits_for_commit_and_rollback_needs_a_compatible_generation() {
     assert_eq!(crate::db::live_schema(&m.c), 2, "a rollback never runs a down-migration");
     drop(m);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn r12_full_or_read_only_disk_stops_new_effects_keeps_receipts_pins_and_local_label() {
+    let (mut t, w) = setup();
+    let (ws, ada, _) = w[0].clone();
+    let bea = w[1].1.clone();
+    // a permit granted before the disk filled
+    let held = t.m.request_permit(&ws, &rq(&w[0], mv(&t, &w[0]), false)).unwrap();
+    *t.fake.storage.lock().unwrap() = Some((10 * 1024 * 1024, false));
+    // new effects stop: model/build permits, new workspaces, new checkpoint sets
+    assert_eq!(t.m.request_permit(&ws, &rq(&w[0], mv(&t, &w[0]), false)).unwrap_err().code, "MACHINE_CAPACITY");
+    assert_eq!(t.m.create_workspace(&uuid(), &ada, "more", None, "created").unwrap_err().code, "MACHINE_CAPACITY");
+    let b = t.m.hold_barrier("checkpoint", &uuid(), &serde_json::json!({})).unwrap();
+    assert_eq!(t.m.begin_checkpoint(&uuid(), "machine", &b).unwrap_err().code, "MACHINE_CAPACITY");
+    t.m.release_barrier(&b).unwrap();
+    // what already runs can still use and release its permit and write its receipt
+    done(&t, &held);
+    // authority still moves: a revocation is recorded on a full disk
+    t.m.set_role(&ada, &ws, &bea, "viewer", None).ok();
+    // read-only is treated the same
+    *t.fake.storage.lock().unwrap() = Some((u64::MAX, true));
+    assert_eq!(t.m.request_permit(&w[1].0, &rq(&w[1], mv(&t, &w[1]), false)).unwrap_err().code, "MACHINE_CAPACITY");
+    *t.fake.storage.lock().unwrap() = None;
+    // retention: newest 3 complete + every pinned set are kept; with a single complete set nothing is prunable
+    let mut sets = vec![];
+    for i in 0..5 {
+        let b = t.m.hold_barrier("checkpoint", &uuid(), &serde_json::json!({})).unwrap();
+        let s = uuid();
+        t.m.begin_checkpoint(&s, "machine", &b).unwrap();
+        if i == 0 {
+            assert!(t.m.prunable_checkpoints().unwrap().is_empty());
+        }
+        t.m.complete_checkpoint(&s, "sha256:00", i == 1).unwrap();
+        t.m.c.execute("UPDATE checkpoint_sets SET created_at = ?2 WHERE set_id = ?1", rusqlite::params![s, i as i64]).unwrap();
+        t.m.release_barrier(&b).unwrap();
+        if i == 0 {
+            assert!(t.m.prunable_checkpoints().unwrap().is_empty(), "the only complete set is never prunable");
+        }
+        sets.push(s);
+    }
+    assert_eq!(t.m.prunable_checkpoints().unwrap(), vec![sets[0].clone()], "oldest unpinned beyond the newest 3; the pinned set stays");
+    // a local set is labelled local and is not an off-machine backup until an export really wrote and read it back
+    let c0 = t.m.checkpoint(&sets[4]).unwrap();
+    assert_eq!((c0["location"].as_str(), c0["offMachineCopy"].as_bool()), (Some("local"), Some(false)));
+    assert_eq!(t.m.set_export_state(&sets[4], "verified").unwrap_err().code, "CONFLICT");
+    assert_eq!(t.m.set_export_state(&sets[4], "exported").unwrap_err().code, "CONFLICT");
+    t.m.set_export_state(&sets[4], "exporting").unwrap();
+    t.m.set_export_state(&sets[4], "exported").unwrap();
+    t.m.set_export_state(&sets[4], "verified").unwrap();
+    assert_eq!(t.m.checkpoint(&sets[4]).unwrap()["offMachineCopy"], true);
 }

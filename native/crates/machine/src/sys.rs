@@ -71,6 +71,19 @@ pub trait System: Send {
     /// Whether any process still runs in the workspace's execution cgroup (user-<uid>.slice).
     fn exec_cgroup_busy(&self, uid: u32) -> bool;
     fn kill_exec_cgroup(&mut self, uid: u32) -> R<()>;
+    /// Free bytes and read-only flag of the filesystem holding `path` (spec §27.1 R12). Missing path → (MAX, false).
+    fn storage(&self, path: &Path) -> (u64, bool) {
+        use std::os::unix::ffi::OsStrExt;
+        let c = match std::ffi::CString::new(path.as_os_str().as_bytes()) {
+            Ok(c) => c,
+            Err(_) => return (u64::MAX, false),
+        };
+        let mut st: libc::statvfs = unsafe { std::mem::zeroed() };
+        if unsafe { libc::statvfs(c.as_ptr(), &mut st) } != 0 {
+            return (u64::MAX, false);
+        }
+        ((st.f_bavail as u64).saturating_mul(st.f_frsize as u64), st.f_flag & libc::ST_RDONLY != 0)
+    }
     /// Remove the registered roots of a deleted workspace (data, secrets, runtime/graphroot, run dir). Idempotent.
     fn remove_workspace_roots(&mut self, paths: &Paths, ws: &str) -> R<()>;
 }

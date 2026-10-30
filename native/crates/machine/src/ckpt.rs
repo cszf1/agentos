@@ -84,6 +84,10 @@ impl Machine {
         if !is_uuid(set_id) || !matches!(scope, "workspace" | "machine") {
             return Err(MErr::new("INVALID_REQUEST", "bad checkpoint request"));
         }
+        // §23.3: without space a new set is refused; nothing (least of all the only usable set) is deleted to make room
+        if self.checkpoint(set_id).is_err() {
+            self.storage_guard()?;
+        }
         let rid: Option<String> = self.c.query_row("SELECT current_release_id FROM machine_meta WHERE id = 1", [], |r| r.get(0))?;
         self.tx(|c| {
             let held: Option<String> = c.query_row("SELECT barrier_id FROM barriers WHERE state = 'held'", [], |r| r.get(0)).optional()?;
@@ -123,7 +127,9 @@ impl Machine {
         self.c
             .query_row("SELECT set_id, scope, state, manifest_hash, release_id, barrier_id, pinned, export_state, created_at FROM checkpoint_sets WHERE set_id = ?1", [set_id], |r| {
                 Ok(json!({ "setId": r.get::<_, String>(0)?, "scope": r.get::<_, String>(1)?, "state": r.get::<_, String>(2)?, "manifestHash": r.get::<_, Option<String>>(3)?,
-                    "releaseId": r.get::<_, Option<String>>(4)?, "barrierId": r.get::<_, String>(5)?, "pinned": r.get::<_, i64>(6)? == 1, "exportState": r.get::<_, String>(7)?, "createdAt": r.get::<_, i64>(8)? }))
+                    "releaseId": r.get::<_, Option<String>>(4)?, "barrierId": r.get::<_, String>(5)?, "pinned": r.get::<_, i64>(6)? == 1, "exportState": r.get::<_, String>(7)?, "createdAt": r.get::<_, i64>(8)?,
+                    // a local set shares the disk's failure domain: it is never reported as an off-machine backup
+                    "location": "local", "offMachineCopy": matches!(r.get::<_, String>(7)?.as_str(), "exported" | "verified") }))
             })
             .optional()?
             .ok_or_else(MErr::hidden)
@@ -151,8 +157,15 @@ impl Machine {
         Ok(all.into_iter().skip(KEEP_COMPLETE as usize).filter(|s| !pinned_in_use.contains(s)).collect())
     }
 
+    /// Export progress only moves forward: none → exporting → exported (written off-machine) → verified (read back
+    /// and hash-checked). A local set can never be marked exported without passing through an export.
     pub fn set_export_state(&self, set_id: &str, state: &str) -> R<()> {
         self.tx(|c| {
+            let (cur, st): (String, String) = c.query_row("SELECT export_state, state FROM checkpoint_sets WHERE set_id = ?1", [set_id], |r| Ok((r.get(0)?, r.get(1)?))).optional()?.ok_or_else(MErr::hidden)?;
+            let ok = cur == state || matches!((cur.as_str(), state), ("none", "exporting") | ("exporting", "exported") | ("exporting", "none") | ("exported", "verified"));
+            if !ok || st != "complete" {
+                return Err(MErr::new("CONFLICT", format!("export state cannot move {cur} → {state} (set {st})")));
+            }
             c.execute("UPDATE checkpoint_sets SET export_state = ?2 WHERE set_id = ?1", params![set_id, state])?;
             Ok(())
         })

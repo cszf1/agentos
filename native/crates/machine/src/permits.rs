@@ -63,6 +63,11 @@ impl Machine {
         if !matches!(rq.resource_class.as_str(), "model" | "build" | "io") || !matches!(rq.owner_kind.as_str(), "run" | "maintenance" | "compaction" | "deployment" | "backup") {
             return Err(MErr::new("INVALID_REQUEST", "unknown resource class or owner kind"));
         }
+        // new model/build/io effects stop on a full or read-only disk (an existing permit is returned below unchanged)
+        let exists = self.c.query_row("SELECT 1 FROM machine_permits WHERE workspace_id = ?1 AND execution_epoch = ?2 AND owner_kind = ?3 AND owner_id = ?4 AND attempt_id = ?5 AND resource_class = ?6", rusqlite::params![rq.workspace_id, rq.execution_epoch, rq.owner_kind, rq.owner_id, rq.attempt_id, rq.resource_class], |_| Ok(())).is_ok();
+        if !exists {
+            self.storage_guard()?;
+        }
         if rq.execution_epoch < 1 || rq.owner_id.is_empty() || rq.owner_id.len() > 128 || !is_uuid(&rq.attempt_id) || !rq.body_hash.starts_with("sha256:") || !is_uuid(&rq.instance_id) {
             return Err(MErr::new("INVALID_REQUEST", "malformed permit key"));
         }

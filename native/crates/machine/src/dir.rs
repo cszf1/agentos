@@ -17,6 +17,8 @@ pub const SUBID_RANGE: u32 = 65536;
 pub const MAX_USERS: i64 = 4;
 pub const MAX_WORKSPACES: i64 = 4;
 pub const MAX_RUNNING: i64 = 2;
+/// Space kept free for receipts and audit of work already accepted (spec §27.1).
+pub const MIN_FREE_BYTES: u64 = 256 * 1024 * 1024;
 pub const TRANSFER_MS: i64 = 86_400_000;
 
 pub const USER_STEPS: [&str; 3] = ["allocate", "account", "registry"];
@@ -480,6 +482,9 @@ impl Machine {
             return Err(MErr::hidden());
         }
         self.require_no_barrier()?;
+        if Self::step_done(&self.c, create_id, "allocate")?.is_none() {
+            self.storage_guard()?;
+        }
         let intent = json!({ "ownerUserId": owner_user_id, "displayName": display_name, "storeUUID": store_uuid, "origin": origin });
         let ws = self.tx(|c| {
             Self::step_intent(c, create_id, "allocate", "workspace", owner_user_id, &intent)?;
@@ -1177,6 +1182,18 @@ impl Machine {
             Ok(())
         })?;
         let _ = ws;
+        Ok(())
+    }
+
+    /// Disk full or read-only (spec §26 row "磁盘满/只读", §27.1): new effects stop; receipts, releases,
+    /// revocations, viewing and export continue. The floor leaves room to write the receipts of what already runs.
+    pub fn storage_guard(&self) -> R<()> {
+        for p in [&self.paths.machine_dir, &self.paths.workspaces_dir, &self.paths.snapshots_dir] {
+            let (free, ro) = self.sys.storage(p);
+            if ro || free < MIN_FREE_BYTES {
+                return Err(MErr::new("MACHINE_CAPACITY", format!("storage {} is {}: new effects are stopped until space is freed", p.display(), if ro { "read-only" } else { "almost full" })));
+            }
+        }
         Ok(())
     }
 
