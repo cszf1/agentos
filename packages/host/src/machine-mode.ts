@@ -143,7 +143,8 @@ export function machineModeFromEnv(env: NodeJS.ProcessEnv): MachineModeConfig | 
   const ws = env.AGENTOS_WORKSPACE_ID ?? "";
   const store = env.AGENTOS_STORE_UUID ?? "";
   const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-  if (!uuid.test(ws) || !uuid.test(store)) throw new Error("machine mode needs AGENTOS_WORKSPACE_ID and AGENTOS_STORE_UUID");
+  // storeUUID is optional here: start() takes it from machined's registration and requires os.sqlite to match.
+  if (!uuid.test(ws) || (store !== "" && !uuid.test(store))) throw new Error("machine mode needs AGENTOS_WORKSPACE_ID (and a valid AGENTOS_STORE_UUID if given)");
   return {
     workspaceId: ws,
     storeUUID: store,
@@ -257,6 +258,11 @@ export class MachineMode {
 
   async start(): Promise<void> {
     const { core, log } = this.rt;
+    const self = await this.link.call<{ workspaceId: string; storeUUID: string }>("workspace.self", {});
+    if (self.workspaceId !== this.cfg.workspaceId) throw new Error("machined registers this execution UID for another workspace");
+    if (this.cfg.storeUUID && this.cfg.storeUUID !== self.storeUUID) throw new Error("AGENTOS_STORE_UUID differs from the machine registration");
+    this.cfg.storeUUID = self.storeUUID;
+    if (this.rt.machine) this.rt.machine.storeUUID = self.storeUUID;
     const meta = core.store.get<{ workspace_id: string | null; store_uuid: string }>("SELECT workspace_id, store_uuid FROM meta WHERE id = 1");
     if (!meta || meta.store_uuid !== this.cfg.storeUUID || meta.workspace_id !== this.cfg.workspaceId) {
       throw new Error("os.sqlite does not belong to the registered workspace (storeUUID/workspaceId mismatch)");
