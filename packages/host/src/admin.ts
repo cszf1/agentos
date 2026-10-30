@@ -10,6 +10,7 @@ import { backupFull, restoreFull } from "./backup-v2.js";
 import { assertLockHeld } from "./lock.js";
 import { rotateSecrets } from "./auth.js";
 import { MIGRATIONS, openCore } from "@agentos/core";
+import { importV04 } from "./import-v04.js";
 import { checkAnyStructure, isCodeBundle } from "@agentos/contracts";
 
 /**
@@ -289,6 +290,30 @@ function workspaceInit(): void {
 
 export function adminMain(): void {
   const cmd = process.argv[2];
+  if (cmd === "import-v04") {
+    // Run by machined as the new workspace's execution UID (spec §25 step 2): target is that workspace's data dir.
+    const a = process.argv.slice(3);
+    const get = (n: string) => {
+      const i = a.indexOf(n);
+      if (i < 0 || !a[i + 1]) throw new Error(`${n} is required`);
+      return a[i + 1]!;
+    };
+    try {
+      const r = importV04({
+        backupDir: get("--backup"),
+        targetDataDir: get("--data"),
+        workspaceId: get("--workspace-id"),
+        ownerUserId: get("--owner"),
+        registeredStoreUUIDs: a.includes("--registered") ? get("--registered").split(",").filter(Boolean) : [],
+        includeSecrets: a.includes("--include-secrets"),
+      });
+      process.stdout.write(`${JSON.stringify({ ok: true, ...r })}\n`);
+    } catch (e) {
+      process.stderr.write(`${JSON.stringify({ ok: false, code: (e as { code?: string }).code ?? "IMPORT_FAILED", error: (e as Error).message })}\n`);
+      process.exit(1);
+    }
+    return;
+  }
   if (cmd === "workspace-init") {
     try {
       workspaceInit();
