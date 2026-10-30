@@ -19,6 +19,19 @@ with subtest("login on a VT starts Sway with the Qt Shell; no browser engine (D0
     machine.succeed(f"grep -q libQt6Quick /proc/{pid}/maps")
     machine.screenshot("shell")
 
+with subtest("Shell SIGKILL: the session agent brings it back within 5 s (O06 part, D11 part)"):
+    old = machine.succeed("pgrep -u alice -f bin/agentos-shell | head -1").strip()
+    t0 = time.time()
+    machine.succeed(f"kill -KILL {old}")
+    machine.wait_until_succeeds(f"pgrep -u alice -f bin/agentos-shell | grep -vx {old}", timeout=10)
+    new = machine.succeed("pgrep -u alice -f bin/agentos-shell | head -1").strip()
+    # visible again: the new Shell maps a Wayland toplevel (sway's tree names its app_id)
+    machine.wait_until_succeeds("su - alice -c 'SWAYSOCK=$(ls /run/user/$(id -u)/sway-ipc.*.sock | head -1) swaymsg -t get_tree' | grep -q agentos-shell", timeout=10)
+    dt = time.time() - t0
+    print("shell back after", round(dt, 2), "s; pid", old, "->", new)
+    assert new != old and dt <= 5.0, dt
+    machine.succeed("pgrep -u alice -x sway")                                   # the session itself survived
+
 with subtest("app container from the release images, offline, with no escape surface (U01, B04, W02, M04 part)"):
     tty_login(3, "alice", "alice-pw-1")
     out = tty_run(3, f"{RPC} '[{{\"methodId\":\"session.bind\"}},{{\"methodId\":\"workspaces.attach\",\"workspaceId\":\"{ws}\",\"idempotencyKey\":\"att\",\"body\":{{}}}}]'", "/tmp/att")
@@ -61,8 +74,20 @@ with subtest("lock: swaylock confirms, logind LockedHint=yes, gateway refuses (I
     machine.wait_until_succeeds("pgrep -u alice swaylock", timeout=60)
     machine.wait_until_succeeds(f"loginctl show-session {sid} -p LockedHint | grep -q yes", timeout=60)
     machine.screenshot("locked")
-    machine.send_chars("alice-pw-1\n")
-    machine.wait_until_succeeds(f"loginctl show-session {sid} -p LockedHint | grep -q no", timeout=60)
+    machine.succeed("grep -qx tty2 /sys/class/tty/tty0/active")
+    time.sleep(2)                                                            # swaylock has its surfaces mapped
+    machine.send_chars("alice-pw-1\n", delay=0.05)
+    try:
+        machine.wait_until_succeeds(f"loginctl show-session {sid} -p LockedHint | grep -q no", timeout=30)
+    except BaseException:
+        print(machine.execute(f"cat /sys/class/tty/tty0/active; loginctl show-session {sid}; ps -o pid,stat,comm,args -u alice; "
+                              "journalctl -b --no-pager | grep -iE 'swaylock|pam_unix|agentos-session-agent|sway\\[' | tail -40")[1])
+        machine.screenshot("unlock-failed")
+        # retry once, key by key
+        for ch in "alice-pw-1":
+            machine.send_key("minus" if ch == "-" else ch)
+        machine.send_key("ret")
+        machine.wait_until_succeeds(f"loginctl show-session {sid} -p LockedHint | grep -q no", timeout=30)
     machine.wait_until_fails("pgrep -u alice swaylock", timeout=60)
 
 with subtest("a killed locker never returns to an unlocked desktop (H03)"):

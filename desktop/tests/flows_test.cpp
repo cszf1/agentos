@@ -442,6 +442,40 @@ class FlowsTest : public QObject {
     QVERIFY(!h.shell->writesStopped());
   }
 
+  // V1-W05: a fast A -> B -> A round trip. The answer held from the FIRST visit to A comes back while the Shell is
+  // on A again: same workspaceId, but an older scope, so it is dropped and never shown in the new A view.
+  void rapidRoundTripDropsAnswersFromTheEarlierVisit() {
+    Harness h;
+    QVERIFY(h.up());
+    const QString kan = h.be.kanban.get(QStringLiteral("app")).get(QStringLiteral("appId")).str();
+    h.be.holdQueries = true;
+    auto* vm = qobject_cast<AppViewModel*>(h.shell->appView(kan));
+    QTRY_COMPARE(vm->mode(), QStringLiteral("slot"));
+    QTRY_VERIFY(h.sent(QStringLiteral("apps.queries.post")).size() >= 1);
+    const QString heldId = h.sent(QStringLiteral("apps.queries.post")).last().get(QStringLiteral("requestId")).str();
+    QPointer<AppViewModel> firstView(vm);
+    const int dropped = h.shell->lateDropped();
+    const int attaches = h.sent(QStringLiteral("workspaces.attach")).size();
+    h.shell->switchWorkspace(WS_B);
+    h.shell->switchWorkspace(WS_A);  // back before B has even settled
+    QTRY_COMPARE(h.shell->workspaceId(), WS_A);
+    QTRY_VERIFY_WITH_TIMEOUT(h.sent(QStringLiteral("workspaces.attach")).size() >= attaches + 2, 5000);
+    QTRY_VERIFY(firstView.isNull());  // the first A view (forms, selection, caches) is gone
+    QMetaObject::invokeMethod(h.gw->gw, "reply", Qt::BlockingQueuedConnection, Q_ARG(QString, heldId),
+                              Q_ARG(agentos::JValue, JValue::object({{QStringLiteral("output"), JValue::object({{QStringLiteral("marker"), QStringLiteral("FIRST-VISIT-BODY")}})}, {QStringLiteral("revisionId"), QStringLiteral("x")}, {QStringLiteral("appEpoch"), 3}})));
+    QTRY_VERIFY(h.shell->lateDropped() > dropped);
+    // whatever the new A view shows, it is not the first visit's answer
+    if (auto* now = qobject_cast<AppViewModel*>(h.shell->appView(kan))) {
+      QTest::qWait(200);
+      QVERIFY(!now->runtime().formsSnapshot().stringify().contains(QStringLiteral("FIRST-VISIT-BODY")));
+    }
+    // the event subscription ends on A, not B
+    QTRY_VERIFY(([&] {
+      const auto subs = h.sent(QStringLiteral("events.subscribe"));
+      return !subs.isEmpty() && subs.last().get(QStringLiteral("params")).get(QStringLiteral("workspaceId")).str() == WS_A;
+    }()));
+  }
+
   void degradedModes() {
     Harness h;
     QVERIFY(h.up());
