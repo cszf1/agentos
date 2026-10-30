@@ -156,11 +156,13 @@ with subtest("the machine's 24-hour model budget stops a real Host's run before 
     n0 = len([e for e in fm_log() if e["ev"] == "start"])
     rid = run(1, ws_a, "做一个预算之外的应用", "day1")
     OSA = f"/var/lib/agentos/workspaces/{ws_a}/data/os.sqlite"
-    machine.wait_until_succeeds(f"sqlite3 {OSA} \"SELECT COUNT(*) FROM model_attempts WHERE run_id='{rid}'\" | grep -qv '^0$'", timeout=120)
-    time.sleep(20)
+    # the Host is refused at admission (before any attempt row may be written) and ends the run
+    machine.wait_until_succeeds(f"sqlite3 {OSA} \"SELECT status FROM runs WHERE id='{rid}'\" | grep -qE '^(failed|cancelled)$'", timeout=120)
+    time.sleep(5)
     att = machine.succeed(f"sqlite3 {OSA} \"SELECT state FROM model_attempts WHERE run_id='{rid}'\"").split()
     print("day-budget run attempts", att, machine.succeed(f"sqlite3 {OSA} \"SELECT status, IFNULL(error_json,'') FROM runs WHERE id='{rid}'\" 2>&1 || true"))
-    assert att and all(s in ("denied", "failed", "interrupted") for s in att), att
+    print(machine.succeed("journalctl -o cat --no-pager | grep -F '" + rid + "' | grep -i budget | tail -2 || true"))
+    assert all(s in ("denied", "failed", "interrupted") for s in att), att      # nothing reached the provider
     assert len([e for e in fm_log() if e["ev"] == "start"]) == n0                     # no request reached the endpoint
     assert sql(f"SELECT COUNT(*) FROM machine_permits WHERE workspace_id='{ws_a}' AND owner_id='{rid}' AND state IN ('reserved','in_use')") == "0"
     # the day rolls over (the seeded charges age out): the next run is admitted and its request goes out
