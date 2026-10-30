@@ -16,7 +16,7 @@ fn main() {
             std::env::remove_var(&k);
         }
     }
-    std::env::set_var("PATH", "/usr/sbin:/usr/bin:/sbin:/bin");
+    std::env::set_var("PATH", "/run/current-system/sw/bin:/usr/sbin:/usr/bin:/sbin:/bin");
     let args: Vec<String> = std::env::args().collect();
     let code = match args.get(1).map(|s| s.as_str()) {
         Some("serve") => server::serve(),

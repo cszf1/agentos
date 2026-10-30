@@ -28,5 +28,8 @@
         m0-toplevel = self.nixosConfigurations.m0-proto.config.system.build.toplevel;
       };
       nixosConfigurations.m0-proto = mk [ ./modules/base.nix ./modules/graphics.nix ./hardware/qemu.nix ];
+      checks.${system} = {
+        m2-identity = import ./tests/m2-identity.nix { inherit pkgs; modules = [ ./modules/base.nix ./modules/agentos.nix ]; };
+      };
     };
 }

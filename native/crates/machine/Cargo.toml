@@ -23,3 +23,7 @@ rusqlite = { workspace = true }
 zbus = { workspace = true }
 ed25519-dalek = { version = "2", default-features = false, features = ["std", "fast"] }
 getrandom = "0.2"
+
+[[bin]]
+name = "agentosctl"
+path = "src/ctl.rs"
