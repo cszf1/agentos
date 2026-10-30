@@ -103,6 +103,72 @@ with subtest("native entry abuse: bad frames close only their connection; slow c
     print("gateway rss kB", rss)
     assert rss < 200_000, rss
 
+with subtest("old, foreign and expired confirmation tickets are refused at machined; a confirmed ticket never dispatches twice (O07 replay)"):
+    machine.succeed("cat > /root/mcall.py <<'PY'\nimport json, socket, struct, sys\ns = socket.socket(socket.AF_UNIX); s.connect('/run/agentos/machine/machine.sock')\nb = json.dumps({'op': sys.argv[1], 'args': json.loads(sys.argv[2])}).encode()\ns.sendall(struct.pack('>I', len(b)) + b)\nn = struct.unpack('>I', s.recv(4, socket.MSG_WAITALL))[0]\nprint(s.recv(n, socket.MSG_WAITALL).decode())\nPY")
+    def mcall(op, args):
+        return json.loads(machine.succeed(f"python3 /root/mcall.py {op} '{json.dumps(args)}'"))
+    def ecode(r):
+        return None if r.get("ok") else (r.get("error") or {}).get("code")
+    pa = {"userId": alice, "sessionEpoch": 7, "admin": True, "locked": False}
+    pb = {"userId": bob, "sessionEpoch": 7, "admin": False, "locked": False}
+    def plan(enabled, key):
+        r = mcall("ops.plan", {"principal": pa, "idempotencyKey": key, "kind": "workspaces.runWhenLoggedOut", "params": {"workspaceId": ws_a, "enabled": enabled}})
+        assert r["ok"], r
+        return r["data"]["operationId"], r["data"]["planHash"]
+    def ticket(p, op, ph):
+        return mcall("ops.ticket", {"principal": p, "operationId": op, "planHash": ph, "authenticated": True})
+    def confirm(p, op, ph, t):
+        return mcall("ops.confirm", {"principal": p, "operationId": op, "planHash": ph, "ticket": t})
+    rwlo0 = sql(f"SELECT run_when_logged_out FROM workspaces WHERE workspace_id='{ws_a}'")
+    op1, ph1 = plan(True, str(uuid.uuid4()))
+    op2, ph2 = plan(True, str(uuid.uuid4()))
+    t1 = ticket(pa, op1, ph1)["data"]["ticket"]
+    t1b = ticket(pa, op1, ph1)["data"]["ticket"]             # re-issued: the earlier ticket of the same plan is dead
+    t2 = ticket(pa, op2, ph2)["data"]["ticket"]
+    res = {}
+    res["old-ticket"] = ecode(confirm(pa, op1, ph1, t1))
+    res["other-op-ticket"] = ecode(confirm(pa, op1, ph1, t2))
+    res["forged-ticket"] = ecode(confirm(pa, op1, ph1, "00" * 32))
+    res["other-user"] = ecode(confirm(pb, op1, ph1, t1b))
+    res["other-user-ticket"] = ecode(ticket(pb, op1, ph1))
+    res["old-session-epoch"] = ecode(confirm({**pa, "sessionEpoch": 6}, op1, ph1, t1b))
+    res["locked-session"] = ecode(confirm({**pa, "locked": True}, op1, ph1, t1b))
+    res["locked-ticket"] = ecode(ticket({**pa, "locked": True}, op1, ph1))
+    res["changed-plan-hash"] = ecode(confirm(pa, op1, ph2, t1b))
+    print("O07 replay", res)
+    assert res["old-ticket"] == "SESSION_STALE" and res["other-op-ticket"] == "SESSION_STALE" and res["forged-ticket"] == "SESSION_STALE", res
+    assert res["other-user"] not in (None,) and res["other-user-ticket"] not in (None,), res
+    assert res["old-session-epoch"] == "PLAN_STALE" and res["changed-plan-hash"] == "PLAN_STALE", res
+    assert res["locked-session"] == "SESSION_LOCKED" and res["locked-ticket"] == "SESSION_LOCKED", res
+    assert sql(f"SELECT state FROM machine_operations WHERE operation_id='{op1}'") == "planned"          # nothing above moved it
+    assert sql(f"SELECT run_when_logged_out FROM workspaces WHERE workspace_id='{ws_a}'") == rwlo0
+    # an expired ticket (60 s) is refused even though the plan itself is still valid
+    time.sleep(62)
+    res_exp = ecode(confirm(pa, op2, ph2, t2))
+    print("O07 expired ticket", res_exp)
+    assert res_exp == "SESSION_STALE", res_exp
+    # the valid ticket confirms once; replaying it returns the recorded result and never dispatches again
+    ok = confirm(pa, op1, ph1, t1b)
+    assert ok["ok"], ok
+    for _ in range(30):
+        if sql(f"SELECT state FROM machine_operations WHERE operation_id='{op1}'") == "succeeded":
+            break
+        time.sleep(1)
+    assert sql(f"SELECT state FROM machine_operations WHERE operation_id='{op1}'") == "succeeded"
+    again = confirm(pa, op1, ph1, t1b)
+    print("O07 replay of the used ticket", again)
+    assert again["ok"] and again["data"]["state"] == "succeeded", again
+    assert sql(f"SELECT COUNT(*) FROM root_audit WHERE kind='op.confirm:workspaces.runWhenLoggedOut' AND operation_id='{op1}'") == "1"
+    assert sql(f"SELECT run_when_logged_out FROM workspaces WHERE workspace_id='{ws_a}'") == "1"
+    # put the setting back through the normal path
+    op3, ph3 = plan(False, str(uuid.uuid4()))
+    assert confirm(pa, op3, ph3, ticket(pa, op3, ph3)["data"]["ticket"])["ok"]
+    for _ in range(30):
+        if sql(f"SELECT run_when_logged_out FROM workspaces WHERE workspace_id='{ws_a}'") == "0":
+            break
+        time.sleep(1)
+    assert sql(f"SELECT run_when_logged_out FROM workspaces WHERE workspace_id='{ws_a}'") == "0"
+
 with subtest("SIGKILL of broker, machined and gateway: each restarts, identity and Hosts survive (O06 part)"):
     mid = sql("SELECT machine_install_id FROM machine_meta")
     hosts = machine.succeed("pgrep -f packages/host/dist/main.js | sort").split()
