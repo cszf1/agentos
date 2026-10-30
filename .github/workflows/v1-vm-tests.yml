@@ -31,7 +31,7 @@ jobs:
         env:
           WANT: ${{ github.event.inputs.test || 'all' }}
         run: |
-          ALL='["m2-identity","m5-desktop","m6-install","m7-update","m8-backup"]'
+          ALL='["m2-identity","m5-desktop","m6-install","m7-update","m8-backup","build-release","build-iso","build-qcow2","build-shell"]'
           if [ "$WANT" = all ]; then echo "tests=$ALL" >> "$GITHUB_OUTPUT";
           else echo "$ALL" | jq -e --arg t "$WANT" 'index($t) != null' >/dev/null || { echo "unknown test $WANT"; exit 1; }
                echo "tests=[\"$WANT\"]" >> "$GITHUB_OUTPUT"; fi
@@ -77,15 +77,32 @@ jobs:
 
 
       - name: Build test driver
+        if: ${{ !startsWith(matrix.test, 'build-') }}
         working-directory: os
-        run: nix build ".#checks.x86_64-linux.${{ matrix.test }}.driver" -L --print-out-paths 2>&1 | tee "$RUNNER_TEMP/build-${{ matrix.test }}.log"
+        run: |
+          set -o pipefail
+          nix build ".#checks.x86_64-linux.${{ matrix.test }}.driver" -L --print-out-paths 2>&1 | tee "$RUNNER_TEMP/build-${{ matrix.test }}.log"
 
       - name: Run VM check (KVM)
+        if: ${{ !startsWith(matrix.test, 'build-') }}
         working-directory: os
         run: |
           set -o pipefail
           ls -l /dev/kvm
           nix build ".#checks.x86_64-linux.${{ matrix.test }}" -L --print-out-paths 2>&1 | tee "$RUNNER_TEMP/vm-${{ matrix.test }}.log"
+
+      - name: Build release output
+        if: ${{ startsWith(matrix.test, 'build-') }}
+        working-directory: os
+        env:
+          T: ${{ matrix.test }}
+        run: |
+          set -o pipefail
+          A="agentos-${T#build-}"
+          nix build ".#$A" -L --print-out-paths -o "$RUNNER_TEMP/out-$A" 2>&1 | tee "$RUNNER_TEMP/build-$A.log"
+          ls -laR "$RUNNER_TEMP"/out-$A* | head -50 | tee -a "$RUNNER_TEMP/build-$A.log"
+          if [ "$A" = agentos-release ]; then cp "$RUNNER_TEMP/out-$A"/*.json "$RUNNER_TEMP/out-$A"/SHA256SUMS "$RUNNER_TEMP/" ; fi
+          find -L "$RUNNER_TEMP"/out-$A* -maxdepth 3 -type f \( -name '*.iso' -o -name '*.qcow2' \) -exec sha256sum {} \; | tee -a "$RUNNER_TEMP/build-$A.log"
 
       - name: Save Nix store cache (also after a failed check, so the next run reuses the builds)
         if: always()
@@ -100,5 +117,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: vm-${{ matrix.test }}-logs
-          path: ${{ runner.temp }}/*.log
+          path: |
+            ${{ runner.temp }}/*.log
+            ${{ runner.temp }}/*.json
+            ${{ runner.temp }}/SHA256SUMS
           retention-days: 14
