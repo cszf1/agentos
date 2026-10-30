@@ -252,13 +252,25 @@ impl System for HostSystem {
         user_unit_ctl(uid, &["stop", &format!("agentos-workspace@{ws}.target"), &format!("agentos-host@{ws}.service")]).map(|_| ())
     }
     fn exec_cgroup_busy(&self, uid: u32) -> bool {
-        let p = format!("/sys/fs/cgroup/user.slice/user-{uid}.slice/user@{uid}.service/app.slice/agentos-host@.service");
-        let _ = p;
-        // Any process of the execution UID counts: the Host, Pi workers and rootless Podman all run under it.
-        std::fs::read_dir("/proc").map(|d| d.flatten().any(|e| {
-            use std::os::unix::fs::MetadataExt;
-            e.file_name().to_string_lossy().chars().all(|c| c.is_ascii_digit()) && e.metadata().map(|m| m.uid() == uid).unwrap_or(false)
-        })).unwrap_or(false)
+        // Any process of the execution UID counts (Host, Pi workers, rootless Podman, conmon), except the UID's own
+        // systemd user manager (`user@<uid>.service/init.scope`) and its session bus (`session.slice`): the manager
+        // starts the Host and stays up between instances. A process anywhere else under that UID — the Host unit in
+        // app.slice, Podman containers, conmon, or anything outside the manager — is a previous execution.
+        std::fs::read_dir("/proc")
+            .map(|d| {
+                d.flatten().any(|e| {
+                    use std::os::unix::fs::MetadataExt;
+                    let name = e.file_name().to_string_lossy().into_owned();
+                    if !name.chars().all(|c| c.is_ascii_digit()) || e.metadata().map(|m| m.uid() != uid).unwrap_or(true) {
+                        return false;
+                    }
+                    let cg = std::fs::read_to_string(format!("/proc/{name}/cgroup")).unwrap_or_default();
+                    let mgr = format!("/user@{uid}.service/");
+                    // manager infrastructure: the manager itself (init.scope) and its session bus (session.slice)
+                    !cg.lines().any(|l| l.contains(&mgr) && (l.ends_with("/init.scope") || l.contains("/session.slice/")))
+                })
+            })
+            .unwrap_or(false)
     }
     fn kill_exec_cgroup(&mut self, uid: u32) -> R<()> {
         let _ = run(Command::new("systemctl").args(["kill", "--signal=SIGKILL", &format!("user-{uid}.slice")]));

@@ -105,6 +105,8 @@ with subtest("B cannot see or guess A's workspace (I03)"):
 with subtest("attach starts A's Host under its execution UID; forward reaches it through the gateway"):
     r = tty_run(1, f"{RPC} '[{{\"methodId\":\"session.bind\"}},{{\"methodId\":\"workspaces.attach\",\"workspaceId\":\"{ws_a}\",\"idempotencyKey\":\"a\",\"body\":{{}}}},{{\"methodId\":\"workspace.forward\",\"workspaceId\":\"{ws_a}\",\"body\":{{\"routeId\":\"state.list\"}}}}]'", "/tmp/a5")
     lines = [json.loads(l) for l in r.splitlines() if l.startswith("{")]
+    if lines[1]["status"] != 200:
+        print(machine.execute(f"ps -eo uid,pid,cgroup:120,args | awk '$1=={ua}'; journalctl -u agentos-machine --no-pager | tail -30; journalctl _UID={ua} --no-pager | tail -30")[1])
     assert lines[1]["status"] == 200, lines
     assert lines[2]["status"] == 200 and "apps" in lines[2]["body"]["data"], lines
     machine.succeed(f"pgrep -u {ua} -f agentos/packages/host/dist/main.js")
