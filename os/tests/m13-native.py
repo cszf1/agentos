@@ -27,11 +27,13 @@ def e2e(phase, timeout):
     machine.send_key("alt-f1")
     machine.wait_until_succeeds("grep -qx tty1 /sys/class/tty/tty0/active")
     machine.send_chars(f"sh {out}.sh\n")
+    t0 = time.time()
     try:
         machine.wait_until_succeeds(f"grep -q '^done$' {out}", timeout=timeout)
     finally:
         text = machine.execute(f"cat {out}")[1]
         print(text[-12000:])
+        print(f"e2e {phase}: {time.time() - t0:.0f} s")
     if "rc=0" not in text:
         print(machine.execute(f"journalctl --no-pager -n 80 -u agentos-session-gateway; tail -60 /var/lib/agentos/workspaces/{ws}/data/logs/*.log")[1])
         raise Exception(f"agentos-shell-e2e {phase} failed")
