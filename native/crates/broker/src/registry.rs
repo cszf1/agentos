@@ -124,11 +124,16 @@ fn apply(c: &Connection, m: &Value, verdicts: &mut Vec<Value>) -> rusqlite::Resu
         // blocks the deletion. The store stays fenced (no new writes) while deleting.
         "workspace.deleting" => {
             let store = b["storeUUID"].as_str().unwrap_or_default();
-            c.execute("UPDATE machine_hosts SET state = 'deleting', registry_seq = ?2 WHERE store_uuid = ?1", params![store, seq])?;
+            // the host row stays non-active (fenced) without a broker schema change
+            c.execute("UPDATE machine_hosts SET state = 'archived', registry_seq = ?2 WHERE store_uuid = ?1", params![store, seq])?;
             verdicts.push(delete_verdict(c, b)?);
         }
         "workspace.deleted" => {
-            c.execute("UPDATE machine_hosts SET state = 'deleted', registry_seq = ?2 WHERE workspace_id = ?1", params![b["workspaceId"].as_str(), seq])?;
+            // tombstone: the host row stays fenced and the deletion is recorded; effect history is kept untouched
+            c.execute("UPDATE machine_hosts SET state = 'archived', registry_seq = ?2 WHERE workspace_id = ?1", params![b["workspaceId"].as_str(), seq])?;
+            if let Some(store) = store_of(c, b["workspaceId"].as_str().unwrap_or_default())? {
+                c.execute("INSERT INTO broker_meta(key,value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value", params![format!("workspace_deleted:{store}"), seq.to_string()])?;
+            }
         }
         "members.snapshot" | "owner.changed" | "workspace.incarnation" | "member.revoking" => {
             if let Some(store) = store_of(c, b["workspaceId"].as_str().unwrap_or_default())? {
@@ -329,7 +334,10 @@ mod tests {
         assert_eq!(v[0]["unresolved"], 1);
         apply(&c, &json!({ "registrySeq": 6, "kind": "workspace.deleted", "body": { "workspaceId": "wa" } }), &mut v).unwrap();
         let st: String = c.query_row("SELECT state FROM machine_hosts WHERE store_uuid = 'sa'", [], |r| r.get(0)).unwrap();
-        assert_eq!(st, "deleted");
+        assert_eq!(st, "archived");
+        assert!(crate::db::meta(&c, "workspace_deleted:sa").is_some());
+        let kept: i64 = c.query_row("SELECT COUNT(*) FROM effect_operations WHERE store_uuid = 'sa'", [], |r| r.get(0)).unwrap();
+        assert_eq!(kept, 2, "effect history is kept");
         drop(c);
         let _ = std::fs::remove_file(path);
     }

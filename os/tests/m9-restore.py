@@ -156,9 +156,10 @@ with subtest("machine directory lost: recovery mode, then an explicit new identi
     # the broker belongs to the new identity: skipped until it exists, then a fresh log for the new install
     machine.succeed("systemctl restart agentos-broker.service || true")
     machine.succeed("test \"$(systemctl show -p ActiveState --value agentos-broker.service)\" != active")
+    t_fb = machine.succeed("date +%s").strip()                                 # only broker lines after this count
     machine.execute("printf 'eve-pw-1' | agentosctl firstboot --admin eve --workspace E")
     st = ctl("status")
     assert st["meta"]["machineInstallId"] != mid0 and st["meta"]["firstBootState"] == "closed", st   # a new installation identity
     machine.wait_for_unit("agentos-broker.service")
     machine.succeed("test -f /var/lib/agentos-broker/broker.sqlite")
-    machine.fail("journalctl -u agentos-broker --since -2min --no-pager | grep -q 'BROKER_IDENTITY_MISMATCH\\|BROKER_HISTORY_MISSING'")
+    machine.fail(f"journalctl -u agentos-broker --since @{t_fb} --no-pager | grep -q 'BROKER_IDENTITY_MISMATCH\\|BROKER_HISTORY_MISSING'")

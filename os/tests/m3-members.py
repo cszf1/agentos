@@ -231,9 +231,11 @@ with subtest("stop and archive keep the data; an archived workspace does not sta
     assert sql(f"SELECT COUNT(*) FROM root_audit WHERE kind='workspace.unarchive' AND scope_id='{ws_a}'") == "1"
 
 with subtest("PAM passwords given to the gateway are not in argv, logs or machine state (I11)"):
-    machine.succeed("(for i in $(seq 1 400); do cat /proc/[0-9]*/cmdline 2>/dev/null | tr '\\0' ' ' >> /root/argv.log; echo >> /root/argv.log; sleep 0.05; done) >/dev/null 2>&1 &")
+    # sampler in its own session (the driver's shell must not reap it); it marks when its 400 samples are done
+    machine.succeed("rm -f /root/argv.log /root/argv.done; setsid bash -c 'for i in $(seq 1 400); do cat /proc/[0-9]*/cmdline 2>/dev/null | tr \"\\\\0\" \" \" >> /root/argv.log; echo >> /root/argv.log; sleep 0.05; done; touch /root/argv.done' >/dev/null 2>&1 < /dev/null &")
+    machine.wait_until_succeeds("test -s /root/argv.log", timeout=30)
     make_user("dave", "dave-secret-pw-9", "ud")
-    machine.succeed("sleep 21")
+    machine.wait_until_succeeds("test -e /root/argv.done", timeout=600)
     for pw in ["alice-pw-1", "bob-pw-1", "carol-pw-1", "dave-secret-pw-9"]:
         machine.fail(f"grep -F -- {pw} /root/argv.log")
         machine.fail(f"journalctl -o cat --no-pager | grep -F -- {pw}")

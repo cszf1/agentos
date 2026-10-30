@@ -866,7 +866,7 @@ impl Machine {
             }
         }
         if let Some(b) = self.delete_blocker(ws)? {
-            return Err(MErr::new(b["code"].as_str().unwrap_or("CONFLICT"), b["reason"].as_str().unwrap_or("blocked").to_string()));
+            return Err(blocker_err(&b));
         }
         let store = row["storeUUID"].as_str().unwrap_or_default().to_string();
         let body = json!({ "deleteId": delete_id, "dataDisposition": disposition, "exportSetId": export_set, "requestedBy": actor, "requestedAt": now_ms() });
@@ -1207,6 +1207,16 @@ impl Machine {
 
 fn user_json(r: &rusqlite::Row) -> rusqlite::Result<Value> {
     Ok(json!({ "userId": r.get::<_, String>(0)?, "loginUid": r.get::<_, i64>(1)?, "loginName": r.get::<_, String>(2)?, "role": r.get::<_, String>(3)?, "state": r.get::<_, String>(4)?, "authVersion": r.get::<_, i64>(5)? }))
+}
+
+/// A delete_blocker reason as an error with a fixed code.
+pub fn blocker_err(b: &Value) -> MErr {
+    let code = match b["code"].as_str() {
+        Some("WORKSPACE_FENCED") => "WORKSPACE_FENCED",
+        Some("STORE_UNAVAILABLE") => "STORE_UNAVAILABLE",
+        _ => "CONFLICT",
+    };
+    MErr::new(code, b["reason"].as_str().unwrap_or("blocked").to_string())
 }
 
 pub fn valid_login(s: &str) -> bool {

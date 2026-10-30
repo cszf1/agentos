@@ -104,7 +104,7 @@ impl Machine {
             let ws = params_v["workspaceId"].as_str().ok_or_else(|| MErr::new("INVALID_REQUEST", "workspaceId is required"))?;
             // the plan shows the current blocker (if any) so the administrator sees why it would fail
             if let Some(b) = self.delete_blocker(ws)? {
-                return Err(MErr::new(b["code"].as_str().unwrap_or("CONFLICT"), b["reason"].as_str().unwrap_or("blocked").to_string()));
+                return Err(crate::dir::blocker_err(&b));
             }
         }
         if kind == "workspaces.runWhenLoggedOut" {
