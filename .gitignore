@@ -11,3 +11,5 @@ playwright-report/
 .data/
 native/target/
 desktop/build/
+desktop/build/
+desktop/tests/out/

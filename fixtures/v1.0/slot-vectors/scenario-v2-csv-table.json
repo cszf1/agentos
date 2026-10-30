@@ -1,0 +1,1839 @@
+{
+ "name": "v2-csv-table",
+ "bundle": {
+  "formatVersion": 2,
+  "manifest": {
+   "appId": "7c2e9a10-4b6d-4f3a-8e21-9d0c1b2a3f45",
+   "title": "CSV 导入待办",
+   "description": "把最多 100 行 CSV 待办一次性导入。",
+   "runtime": "isolated-code-v1",
+   "capabilities": [
+    "records.read",
+    "records.write"
+   ]
+  },
+  "data": {
+   "fields": {
+    "title": {
+     "type": "string",
+     "label": "任务",
+     "minLength": 1,
+     "maxLength": 200
+    },
+    "done": {
+     "type": "boolean",
+     "label": "已完成",
+     "default": false
+    },
+    "due": {
+     "type": "string",
+     "label": "截止日期",
+     "maxLength": 10,
+     "default": ""
+    },
+    "priority": {
+     "type": "enum",
+     "label": "优先级",
+     "values": [
+      "low",
+      "normal",
+      "high"
+     ],
+     "default": "normal"
+    }
+   }
+  },
+  "code": {
+   "entry": "src/app.ts",
+   "files": {}
+  },
+  "runtimeLockId": "data-v1@1",
+  "queries": {
+   "main": {
+    "inputSchema": {
+     "type": "object",
+     "properties": {}
+    },
+    "outputSchema": {
+     "type": "object",
+     "required": [
+      "items",
+      "total"
+     ],
+     "properties": {
+      "items": {
+       "type": "array",
+       "maxItems": 1000,
+       "items": {
+        "type": "object",
+        "required": [
+         "id",
+         "title",
+         "done",
+         "due",
+         "priority"
+        ],
+        "properties": {
+         "id": {
+          "type": "string",
+          "maxLength": 64
+         },
+         "title": {
+          "type": "string",
+          "maxLength": 200
+         },
+         "done": {
+          "type": "boolean"
+         },
+         "due": {
+          "type": "string",
+          "maxLength": 10
+         },
+         "priority": {
+          "type": "string",
+          "maxLength": 8
+         }
+        }
+       }
+      },
+      "total": {
+       "type": "integer"
+      }
+     }
+    }
+   }
+  },
+  "commands": {
+   "add": {
+    "inputSchema": {
+     "type": "object",
+     "required": [
+      "title"
+     ],
+     "properties": {
+      "title": {
+       "type": "string",
+       "minLength": 1,
+       "maxLength": 200
+      }
+     }
+    },
+    "outputSchema": {
+     "type": "object",
+     "required": [
+      "created"
+     ],
+     "properties": {
+      "created": {
+       "type": "integer"
+      }
+     }
+    },
+    "operations": [
+     "create"
+    ],
+    "writableFields": [
+     "title"
+    ]
+   },
+   "importCsv": {
+    "description": "解析 CSV（表头 title,done,due,priority），最多 100 行，全部合法才写入",
+    "inputSchema": {
+     "type": "object",
+     "required": [
+      "csv"
+     ],
+     "properties": {
+      "csv": {
+       "type": "string",
+       "minLength": 1,
+       "maxLength": 65536
+      }
+     }
+    },
+    "outputSchema": {
+     "type": "object",
+     "required": [
+      "imported"
+     ],
+     "properties": {
+      "imported": {
+       "type": "integer"
+      }
+     }
+    },
+    "operations": [
+     "create"
+    ],
+    "writableFields": [
+     "title",
+     "done",
+     "due",
+     "priority"
+    ]
+   }
+  },
+  "exports": [],
+  "imports": [],
+  "view": {
+   "kind": "slot-tree-v1",
+   "dataSources": {
+    "list": {
+     "queryId": "main",
+     "input": {}
+    }
+   },
+   "slots": {
+    "main": {
+     "type": "Stack",
+     "props": {
+      "gap": "md"
+     },
+     "children": [
+      {
+       "type": "Table",
+       "props": {
+        "items": {
+         "$bind": {
+          "from": "query",
+          "source": "list",
+          "pointer": "/items"
+         }
+        },
+        "columns": [
+         {
+          "pointer": "/title",
+          "label": "任务"
+         },
+         {
+          "pointer": "/due",
+          "label": "截止"
+         },
+         {
+          "pointer": "/priority",
+          "label": "优先级"
+         }
+        ],
+        "pageSize": 20,
+        "emptyText": "还没有任务"
+       }
+      },
+      {
+       "type": "Form",
+       "props": {
+        "formId": "add",
+        "title": "新建"
+       },
+       "children": [
+        {
+         "type": "TextInput",
+         "props": {
+          "name": "title",
+          "label": "任务",
+          "required": true
+         }
+        },
+        {
+         "type": "Button",
+         "props": {
+          "label": "添加",
+          "command": "add",
+          "input": {
+           "form": "add"
+          }
+         }
+        }
+       ]
+      },
+      {
+       "type": "Form",
+       "props": {
+        "formId": "csv",
+        "title": "导入 CSV"
+       },
+       "children": [
+        {
+         "type": "TextArea",
+         "props": {
+          "name": "csv",
+          "label": "CSV 内容",
+          "required": true,
+          "maxLength": 4096
+         }
+        },
+        {
+         "type": "Button",
+         "props": {
+          "label": "导入",
+          "command": "importCsv",
+          "input": {
+           "form": "csv"
+          }
+         }
+        }
+       ]
+      }
+     ]
+    }
+   }
+  }
+ },
+ "app": {
+  "appId": "7c2e9a10-4b6d-4f3a-8e21-9d0c1b2a3f45",
+  "appEpoch": 3,
+  "revisionId": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+ },
+ "validation": {
+  "valid": true
+ },
+ "steps": [
+  {
+   "op": "init",
+   "expect": {
+    "result": null,
+    "error": null,
+    "snapshot": [
+     {
+      "path": "/view/slots/main",
+      "type": "Stack",
+      "visible": true,
+      "direction": "vertical",
+      "gap": "md",
+      "children": [
+       {
+        "path": "/view/slots/main/children/0",
+        "type": "Table",
+        "visible": true,
+        "columns": [
+         "任务",
+         "截止",
+         "优先级"
+        ],
+        "selectionId": null,
+        "page": 0,
+        "pages": 1,
+        "total": 0,
+        "emptyText": "还没有任务",
+        "rows": []
+       },
+       {
+        "path": "/view/slots/main/children/1",
+        "type": "Form",
+        "visible": true,
+        "formId": "add",
+        "title": "新建",
+        "children": [
+         {
+          "path": "/view/slots/main/children/1/children/0",
+          "type": "TextInput",
+          "visible": true,
+          "formId": "add",
+          "name": "title",
+          "label": "任务",
+          "value": "",
+          "mode": "text",
+          "maxLength": 4096,
+          "placeholder": ""
+         },
+         {
+          "path": "/view/slots/main/children/1/children/1",
+          "type": "Button",
+          "visible": true,
+          "label": "添加",
+          "command": "add",
+          "variant": "secondary",
+          "disabled": false,
+          "confirm": null
+         }
+        ]
+       },
+       {
+        "path": "/view/slots/main/children/2",
+        "type": "Form",
+        "visible": true,
+        "formId": "csv",
+        "title": "导入 CSV",
+        "children": [
+         {
+          "path": "/view/slots/main/children/2/children/0",
+          "type": "TextArea",
+          "visible": true,
+          "formId": "csv",
+          "name": "csv",
+          "label": "CSV 内容",
+          "value": "",
+          "maxLength": 4096
+         },
+         {
+          "path": "/view/slots/main/children/2/children/1",
+          "type": "Button",
+          "visible": true,
+          "label": "导入",
+          "command": "importCsv",
+          "variant": "secondary",
+          "disabled": false,
+          "confirm": null
+         }
+        ]
+       }
+      ]
+     }
+    ],
+    "forms": {},
+    "selections": {},
+    "notice": null,
+    "busy": false,
+    "staleInput": false
+   }
+  },
+  {
+   "op": "load",
+   "source": "list",
+   "output": {
+    "items": [
+     {
+      "id": "t0",
+      "title": "任务 0",
+      "due": "2026-11-01",
+      "priority": 0
+     },
+     {
+      "id": "t1",
+      "title": "任务 1",
+      "due": null,
+      "priority": 1
+     },
+     {
+      "id": "t2",
+      "title": "任务 2",
+      "due": "2026-11-01",
+      "priority": 2
+     },
+     {
+      "id": "t3",
+      "title": "任务 3",
+      "due": null,
+      "priority": 3
+     },
+     {
+      "id": "t4",
+      "title": "任务 4",
+      "due": "2026-11-01",
+      "priority": 4
+     },
+     {
+      "id": "t5",
+      "title": "任务 5",
+      "due": null,
+      "priority": 5
+     },
+     {
+      "id": "t6",
+      "title": "任务 6",
+      "due": "2026-11-01",
+      "priority": 6
+     },
+     {
+      "id": "t7",
+      "title": "任务 7",
+      "due": null,
+      "priority": 7
+     },
+     {
+      "id": "t8",
+      "title": "任务 8",
+      "due": "2026-11-01",
+      "priority": 8
+     },
+     {
+      "id": "t9",
+      "title": "任务 9",
+      "due": null,
+      "priority": 9
+     },
+     {
+      "id": "t10",
+      "title": "任务 10",
+      "due": "2026-11-01",
+      "priority": 10
+     },
+     {
+      "id": "t11",
+      "title": "任务 11",
+      "due": null,
+      "priority": 11
+     },
+     {
+      "id": "t12",
+      "title": "任务 12",
+      "due": "2026-11-01",
+      "priority": 12
+     },
+     {
+      "id": "t13",
+      "title": "任务 13",
+      "due": null,
+      "priority": 13
+     },
+     {
+      "id": "t14",
+      "title": "任务 14",
+      "due": "2026-11-01",
+      "priority": 14
+     },
+     {
+      "id": "t15",
+      "title": "任务 15",
+      "due": null,
+      "priority": 15
+     },
+     {
+      "id": "t16",
+      "title": "任务 16",
+      "due": "2026-11-01",
+      "priority": 16
+     },
+     {
+      "id": "t17",
+      "title": "任务 17",
+      "due": null,
+      "priority": 17
+     },
+     {
+      "id": "t18",
+      "title": "任务 18",
+      "due": "2026-11-01",
+      "priority": 18
+     },
+     {
+      "id": "t19",
+      "title": "任务 19",
+      "due": null,
+      "priority": 19
+     },
+     {
+      "id": "t20",
+      "title": "任务 20",
+      "due": "2026-11-01",
+      "priority": 20
+     },
+     {
+      "id": "t21",
+      "title": "任务 21",
+      "due": null,
+      "priority": 21
+     },
+     {
+      "id": "t22",
+      "title": "任务 22",
+      "due": "2026-11-01",
+      "priority": 22
+     },
+     {
+      "id": "t23",
+      "title": "任务 23",
+      "due": null,
+      "priority": 23
+     },
+     {
+      "id": "t24",
+      "title": "任务 24",
+      "due": "2026-11-01",
+      "priority": 24
+     },
+     {
+      "id": "t25",
+      "title": "任务 25",
+      "due": null,
+      "priority": 25
+     },
+     {
+      "id": "t26",
+      "title": "任务 26",
+      "due": "2026-11-01",
+      "priority": 26
+     },
+     {
+      "id": "t27",
+      "title": "任务 27",
+      "due": null,
+      "priority": 27
+     },
+     {
+      "id": "t28",
+      "title": "任务 28",
+      "due": "2026-11-01",
+      "priority": 28
+     },
+     {
+      "id": "t29",
+      "title": "任务 29",
+      "due": null,
+      "priority": 29
+     },
+     {
+      "id": "t30",
+      "title": "任务 30",
+      "due": "2026-11-01",
+      "priority": 30
+     },
+     {
+      "id": "t31",
+      "title": "任务 31",
+      "due": null,
+      "priority": 31
+     },
+     {
+      "id": "t32",
+      "title": "任务 32",
+      "due": "2026-11-01",
+      "priority": 32
+     },
+     {
+      "id": "t33",
+      "title": "任务 33",
+      "due": null,
+      "priority": 33
+     },
+     {
+      "id": "t34",
+      "title": "任务 34",
+      "due": "2026-11-01",
+      "priority": 34
+     },
+     {
+      "id": "t35",
+      "title": "任务 35",
+      "due": null,
+      "priority": 35
+     },
+     {
+      "id": "t36",
+      "title": "任务 36",
+      "due": "2026-11-01",
+      "priority": 36
+     },
+     {
+      "id": "t37",
+      "title": "任务 37",
+      "due": null,
+      "priority": 37
+     },
+     {
+      "id": "t38",
+      "title": "任务 38",
+      "due": "2026-11-01",
+      "priority": 38
+     },
+     {
+      "id": "t39",
+      "title": "任务 39",
+      "due": null,
+      "priority": 39
+     },
+     {
+      "id": "t40",
+      "title": "任务 40",
+      "due": "2026-11-01",
+      "priority": 40
+     },
+     {
+      "id": "t41",
+      "title": "任务 41",
+      "due": null,
+      "priority": 41
+     },
+     {
+      "id": "t42",
+      "title": "任务 42",
+      "due": "2026-11-01",
+      "priority": 42
+     },
+     {
+      "id": "t43",
+      "title": "任务 43",
+      "due": null,
+      "priority": 43
+     },
+     {
+      "id": "t44",
+      "title": "任务 44",
+      "due": "2026-11-01",
+      "priority": 44
+     }
+    ]
+   },
+   "revisionId": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "appEpoch": 3,
+   "expect": {
+    "result": true,
+    "error": null,
+    "snapshot": [
+     {
+      "path": "/view/slots/main",
+      "type": "Stack",
+      "visible": true,
+      "direction": "vertical",
+      "gap": "md",
+      "children": [
+       {
+        "path": "/view/slots/main/children/0",
+        "type": "Table",
+        "visible": true,
+        "columns": [
+         "任务",
+         "截止",
+         "优先级"
+        ],
+        "selectionId": null,
+        "page": 0,
+        "pages": 3,
+        "total": 45,
+        "emptyText": null,
+        "rows": [
+         {
+          "id": "t0",
+          "selected": false,
+          "cells": [
+           "任务 0",
+           "2026-11-01",
+           "0"
+          ]
+         },
+         {
+          "id": "t1",
+          "selected": false,
+          "cells": [
+           "任务 1",
+           "",
+           "1"
+          ]
+         },
+         {
+          "id": "t2",
+          "selected": false,
+          "cells": [
+           "任务 2",
+           "2026-11-01",
+           "2"
+          ]
+         },
+         {
+          "id": "t3",
+          "selected": false,
+          "cells": [
+           "任务 3",
+           "",
+           "3"
+          ]
+         },
+         {
+          "id": "t4",
+          "selected": false,
+          "cells": [
+           "任务 4",
+           "2026-11-01",
+           "4"
+          ]
+         },
+         {
+          "id": "t5",
+          "selected": false,
+          "cells": [
+           "任务 5",
+           "",
+           "5"
+          ]
+         },
+         {
+          "id": "t6",
+          "selected": false,
+          "cells": [
+           "任务 6",
+           "2026-11-01",
+           "6"
+          ]
+         },
+         {
+          "id": "t7",
+          "selected": false,
+          "cells": [
+           "任务 7",
+           "",
+           "7"
+          ]
+         },
+         {
+          "id": "t8",
+          "selected": false,
+          "cells": [
+           "任务 8",
+           "2026-11-01",
+           "8"
+          ]
+         },
+         {
+          "id": "t9",
+          "selected": false,
+          "cells": [
+           "任务 9",
+           "",
+           "9"
+          ]
+         },
+         {
+          "id": "t10",
+          "selected": false,
+          "cells": [
+           "任务 10",
+           "2026-11-01",
+           "10"
+          ]
+         },
+         {
+          "id": "t11",
+          "selected": false,
+          "cells": [
+           "任务 11",
+           "",
+           "11"
+          ]
+         },
+         {
+          "id": "t12",
+          "selected": false,
+          "cells": [
+           "任务 12",
+           "2026-11-01",
+           "12"
+          ]
+         },
+         {
+          "id": "t13",
+          "selected": false,
+          "cells": [
+           "任务 13",
+           "",
+           "13"
+          ]
+         },
+         {
+          "id": "t14",
+          "selected": false,
+          "cells": [
+           "任务 14",
+           "2026-11-01",
+           "14"
+          ]
+         },
+         {
+          "id": "t15",
+          "selected": false,
+          "cells": [
+           "任务 15",
+           "",
+           "15"
+          ]
+         },
+         {
+          "id": "t16",
+          "selected": false,
+          "cells": [
+           "任务 16",
+           "2026-11-01",
+           "16"
+          ]
+         },
+         {
+          "id": "t17",
+          "selected": false,
+          "cells": [
+           "任务 17",
+           "",
+           "17"
+          ]
+         },
+         {
+          "id": "t18",
+          "selected": false,
+          "cells": [
+           "任务 18",
+           "2026-11-01",
+           "18"
+          ]
+         },
+         {
+          "id": "t19",
+          "selected": false,
+          "cells": [
+           "任务 19",
+           "",
+           "19"
+          ]
+         }
+        ]
+       },
+       {
+        "path": "/view/slots/main/children/1",
+        "type": "Form",
+        "visible": true,
+        "formId": "add",
+        "title": "新建",
+        "children": [
+         {
+          "path": "/view/slots/main/children/1/children/0",
+          "type": "TextInput",
+          "visible": true,
+          "formId": "add",
+          "name": "title",
+          "label": "任务",
+          "value": "",
+          "mode": "text",
+          "maxLength": 4096,
+          "placeholder": ""
+         },
+         {
+          "path": "/view/slots/main/children/1/children/1",
+          "type": "Button",
+          "visible": true,
+          "label": "添加",
+          "command": "add",
+          "variant": "secondary",
+          "disabled": false,
+          "confirm": null
+         }
+        ]
+       },
+       {
+        "path": "/view/slots/main/children/2",
+        "type": "Form",
+        "visible": true,
+        "formId": "csv",
+        "title": "导入 CSV",
+        "children": [
+         {
+          "path": "/view/slots/main/children/2/children/0",
+          "type": "TextArea",
+          "visible": true,
+          "formId": "csv",
+          "name": "csv",
+          "label": "CSV 内容",
+          "value": "",
+          "maxLength": 4096
+         },
+         {
+          "path": "/view/slots/main/children/2/children/1",
+          "type": "Button",
+          "visible": true,
+          "label": "导入",
+          "command": "importCsv",
+          "variant": "secondary",
+          "disabled": false,
+          "confirm": null
+         }
+        ]
+       }
+      ]
+     }
+    ],
+    "forms": {},
+    "selections": {},
+    "notice": null,
+    "busy": false,
+    "staleInput": false
+   }
+  },
+  {
+   "op": "page",
+   "path": "/view/slots/main/children/0",
+   "page": 2,
+   "expect": {
+    "result": null,
+    "error": null,
+    "snapshot": [
+     {
+      "path": "/view/slots/main",
+      "type": "Stack",
+      "visible": true,
+      "direction": "vertical",
+      "gap": "md",
+      "children": [
+       {
+        "path": "/view/slots/main/children/0",
+        "type": "Table",
+        "visible": true,
+        "columns": [
+         "任务",
+         "截止",
+         "优先级"
+        ],
+        "selectionId": null,
+        "page": 2,
+        "pages": 3,
+        "total": 45,
+        "emptyText": null,
+        "rows": [
+         {
+          "id": "t40",
+          "selected": false,
+          "cells": [
+           "任务 40",
+           "2026-11-01",
+           "40"
+          ]
+         },
+         {
+          "id": "t41",
+          "selected": false,
+          "cells": [
+           "任务 41",
+           "",
+           "41"
+          ]
+         },
+         {
+          "id": "t42",
+          "selected": false,
+          "cells": [
+           "任务 42",
+           "2026-11-01",
+           "42"
+          ]
+         },
+         {
+          "id": "t43",
+          "selected": false,
+          "cells": [
+           "任务 43",
+           "",
+           "43"
+          ]
+         },
+         {
+          "id": "t44",
+          "selected": false,
+          "cells": [
+           "任务 44",
+           "2026-11-01",
+           "44"
+          ]
+         }
+        ]
+       },
+       {
+        "path": "/view/slots/main/children/1",
+        "type": "Form",
+        "visible": true,
+        "formId": "add",
+        "title": "新建",
+        "children": [
+         {
+          "path": "/view/slots/main/children/1/children/0",
+          "type": "TextInput",
+          "visible": true,
+          "formId": "add",
+          "name": "title",
+          "label": "任务",
+          "value": "",
+          "mode": "text",
+          "maxLength": 4096,
+          "placeholder": ""
+         },
+         {
+          "path": "/view/slots/main/children/1/children/1",
+          "type": "Button",
+          "visible": true,
+          "label": "添加",
+          "command": "add",
+          "variant": "secondary",
+          "disabled": false,
+          "confirm": null
+         }
+        ]
+       },
+       {
+        "path": "/view/slots/main/children/2",
+        "type": "Form",
+        "visible": true,
+        "formId": "csv",
+        "title": "导入 CSV",
+        "children": [
+         {
+          "path": "/view/slots/main/children/2/children/0",
+          "type": "TextArea",
+          "visible": true,
+          "formId": "csv",
+          "name": "csv",
+          "label": "CSV 内容",
+          "value": "",
+          "maxLength": 4096
+         },
+         {
+          "path": "/view/slots/main/children/2/children/1",
+          "type": "Button",
+          "visible": true,
+          "label": "导入",
+          "command": "importCsv",
+          "variant": "secondary",
+          "disabled": false,
+          "confirm": null
+         }
+        ]
+       }
+      ]
+     }
+    ],
+    "forms": {},
+    "selections": {},
+    "notice": null,
+    "busy": false,
+    "staleInput": false
+   }
+  },
+  {
+   "op": "page",
+   "path": "/view/slots/main/children/0",
+   "page": 9,
+   "expect": {
+    "result": null,
+    "error": null,
+    "snapshot": [
+     {
+      "path": "/view/slots/main",
+      "type": "Stack",
+      "visible": true,
+      "direction": "vertical",
+      "gap": "md",
+      "children": [
+       {
+        "path": "/view/slots/main/children/0",
+        "type": "Table",
+        "visible": true,
+        "columns": [
+         "任务",
+         "截止",
+         "优先级"
+        ],
+        "selectionId": null,
+        "page": 2,
+        "pages": 3,
+        "total": 45,
+        "emptyText": null,
+        "rows": [
+         {
+          "id": "t40",
+          "selected": false,
+          "cells": [
+           "任务 40",
+           "2026-11-01",
+           "40"
+          ]
+         },
+         {
+          "id": "t41",
+          "selected": false,
+          "cells": [
+           "任务 41",
+           "",
+           "41"
+          ]
+         },
+         {
+          "id": "t42",
+          "selected": false,
+          "cells": [
+           "任务 42",
+           "2026-11-01",
+           "42"
+          ]
+         },
+         {
+          "id": "t43",
+          "selected": false,
+          "cells": [
+           "任务 43",
+           "",
+           "43"
+          ]
+         },
+         {
+          "id": "t44",
+          "selected": false,
+          "cells": [
+           "任务 44",
+           "2026-11-01",
+           "44"
+          ]
+         }
+        ]
+       },
+       {
+        "path": "/view/slots/main/children/1",
+        "type": "Form",
+        "visible": true,
+        "formId": "add",
+        "title": "新建",
+        "children": [
+         {
+          "path": "/view/slots/main/children/1/children/0",
+          "type": "TextInput",
+          "visible": true,
+          "formId": "add",
+          "name": "title",
+          "label": "任务",
+          "value": "",
+          "mode": "text",
+          "maxLength": 4096,
+          "placeholder": ""
+         },
+         {
+          "path": "/view/slots/main/children/1/children/1",
+          "type": "Button",
+          "visible": true,
+          "label": "添加",
+          "command": "add",
+          "variant": "secondary",
+          "disabled": false,
+          "confirm": null
+         }
+        ]
+       },
+       {
+        "path": "/view/slots/main/children/2",
+        "type": "Form",
+        "visible": true,
+        "formId": "csv",
+        "title": "导入 CSV",
+        "children": [
+         {
+          "path": "/view/slots/main/children/2/children/0",
+          "type": "TextArea",
+          "visible": true,
+          "formId": "csv",
+          "name": "csv",
+          "label": "CSV 内容",
+          "value": "",
+          "maxLength": 4096
+         },
+         {
+          "path": "/view/slots/main/children/2/children/1",
+          "type": "Button",
+          "visible": true,
+          "label": "导入",
+          "command": "importCsv",
+          "variant": "secondary",
+          "disabled": false,
+          "confirm": null
+         }
+        ]
+       }
+      ]
+     }
+    ],
+    "forms": {},
+    "selections": {},
+    "notice": null,
+    "busy": false,
+    "staleInput": false
+   }
+  },
+  {
+   "op": "type",
+   "formId": "csv",
+   "name": "csv",
+   "raw": "a,b\n1,2",
+   "expect": {
+    "result": null,
+    "error": null,
+    "snapshot": [
+     {
+      "path": "/view/slots/main",
+      "type": "Stack",
+      "visible": true,
+      "direction": "vertical",
+      "gap": "md",
+      "children": [
+       {
+        "path": "/view/slots/main/children/0",
+        "type": "Table",
+        "visible": true,
+        "columns": [
+         "任务",
+         "截止",
+         "优先级"
+        ],
+        "selectionId": null,
+        "page": 2,
+        "pages": 3,
+        "total": 45,
+        "emptyText": null,
+        "rows": [
+         {
+          "id": "t40",
+          "selected": false,
+          "cells": [
+           "任务 40",
+           "2026-11-01",
+           "40"
+          ]
+         },
+         {
+          "id": "t41",
+          "selected": false,
+          "cells": [
+           "任务 41",
+           "",
+           "41"
+          ]
+         },
+         {
+          "id": "t42",
+          "selected": false,
+          "cells": [
+           "任务 42",
+           "2026-11-01",
+           "42"
+          ]
+         },
+         {
+          "id": "t43",
+          "selected": false,
+          "cells": [
+           "任务 43",
+           "",
+           "43"
+          ]
+         },
+         {
+          "id": "t44",
+          "selected": false,
+          "cells": [
+           "任务 44",
+           "2026-11-01",
+           "44"
+          ]
+         }
+        ]
+       },
+       {
+        "path": "/view/slots/main/children/1",
+        "type": "Form",
+        "visible": true,
+        "formId": "add",
+        "title": "新建",
+        "children": [
+         {
+          "path": "/view/slots/main/children/1/children/0",
+          "type": "TextInput",
+          "visible": true,
+          "formId": "add",
+          "name": "title",
+          "label": "任务",
+          "value": "",
+          "mode": "text",
+          "maxLength": 4096,
+          "placeholder": ""
+         },
+         {
+          "path": "/view/slots/main/children/1/children/1",
+          "type": "Button",
+          "visible": true,
+          "label": "添加",
+          "command": "add",
+          "variant": "secondary",
+          "disabled": false,
+          "confirm": null
+         }
+        ]
+       },
+       {
+        "path": "/view/slots/main/children/2",
+        "type": "Form",
+        "visible": true,
+        "formId": "csv",
+        "title": "导入 CSV",
+        "children": [
+         {
+          "path": "/view/slots/main/children/2/children/0",
+          "type": "TextArea",
+          "visible": true,
+          "formId": "csv",
+          "name": "csv",
+          "label": "CSV 内容",
+          "value": "a,b\n1,2",
+          "maxLength": 4096
+         },
+         {
+          "path": "/view/slots/main/children/2/children/1",
+          "type": "Button",
+          "visible": true,
+          "label": "导入",
+          "command": "importCsv",
+          "variant": "secondary",
+          "disabled": false,
+          "confirm": null
+         }
+        ]
+       }
+      ]
+     }
+    ],
+    "forms": {
+     "csv": {
+      "csv": "a,b\n1,2"
+     }
+    },
+    "selections": {},
+    "notice": null,
+    "busy": false,
+    "staleInput": false
+   }
+  },
+  {
+   "op": "click",
+   "path": "/view/slots/main/children/2/children/1",
+   "expect": {
+    "result": {
+     "kind": "request",
+     "notice": {
+      "kind": "info",
+      "text": "导入：已提交，执行中…"
+     },
+     "request": {
+      "methodId": "workspace.forward",
+      "routeId": "apps.commands.post",
+      "params": {
+       "appId": "7c2e9a10-4b6d-4f3a-8e21-9d0c1b2a3f45",
+       "commandId": "importCsv"
+      },
+      "body": {
+       "expectedAppEpoch": 3,
+       "input": {
+        "csv": "a,b\n1,2"
+       }
+      },
+      "write": true,
+      "idempotencyKey": "k1"
+     }
+    },
+    "error": null,
+    "snapshot": [
+     {
+      "path": "/view/slots/main",
+      "type": "Stack",
+      "visible": true,
+      "direction": "vertical",
+      "gap": "md",
+      "children": [
+       {
+        "path": "/view/slots/main/children/0",
+        "type": "Table",
+        "visible": true,
+        "columns": [
+         "任务",
+         "截止",
+         "优先级"
+        ],
+        "selectionId": null,
+        "page": 2,
+        "pages": 3,
+        "total": 45,
+        "emptyText": null,
+        "rows": [
+         {
+          "id": "t40",
+          "selected": false,
+          "cells": [
+           "任务 40",
+           "2026-11-01",
+           "40"
+          ]
+         },
+         {
+          "id": "t41",
+          "selected": false,
+          "cells": [
+           "任务 41",
+           "",
+           "41"
+          ]
+         },
+         {
+          "id": "t42",
+          "selected": false,
+          "cells": [
+           "任务 42",
+           "2026-11-01",
+           "42"
+          ]
+         },
+         {
+          "id": "t43",
+          "selected": false,
+          "cells": [
+           "任务 43",
+           "",
+           "43"
+          ]
+         },
+         {
+          "id": "t44",
+          "selected": false,
+          "cells": [
+           "任务 44",
+           "2026-11-01",
+           "44"
+          ]
+         }
+        ]
+       },
+       {
+        "path": "/view/slots/main/children/1",
+        "type": "Form",
+        "visible": true,
+        "formId": "add",
+        "title": "新建",
+        "children": [
+         {
+          "path": "/view/slots/main/children/1/children/0",
+          "type": "TextInput",
+          "visible": true,
+          "formId": "add",
+          "name": "title",
+          "label": "任务",
+          "value": "",
+          "mode": "text",
+          "maxLength": 4096,
+          "placeholder": ""
+         },
+         {
+          "path": "/view/slots/main/children/1/children/1",
+          "type": "Button",
+          "visible": true,
+          "label": "添加",
+          "command": "add",
+          "variant": "secondary",
+          "disabled": true,
+          "confirm": null
+         }
+        ]
+       },
+       {
+        "path": "/view/slots/main/children/2",
+        "type": "Form",
+        "visible": true,
+        "formId": "csv",
+        "title": "导入 CSV",
+        "children": [
+         {
+          "path": "/view/slots/main/children/2/children/0",
+          "type": "TextArea",
+          "visible": true,
+          "formId": "csv",
+          "name": "csv",
+          "label": "CSV 内容",
+          "value": "a,b\n1,2",
+          "maxLength": 4096
+         },
+         {
+          "path": "/view/slots/main/children/2/children/1",
+          "type": "Button",
+          "visible": true,
+          "label": "导入",
+          "command": "importCsv",
+          "variant": "secondary",
+          "disabled": true,
+          "confirm": null
+         }
+        ]
+       }
+      ]
+     }
+    ],
+    "forms": {
+     "csv": {
+      "csv": "a,b\n1,2"
+     }
+    },
+    "selections": {},
+    "notice": {
+     "kind": "info",
+     "text": "导入：已提交，执行中…"
+    },
+    "busy": true,
+    "staleInput": false
+   }
+  },
+  {
+   "op": "respond",
+   "outcome": {
+    "invocation": "succeeded",
+    "commitCount": 1
+   },
+   "expect": {
+    "result": {
+     "notice": {
+      "kind": "ok",
+      "text": "导入：完成，1 条记录已原子提交"
+     },
+     "reload": true,
+     "openPlan": null
+    },
+    "error": null,
+    "snapshot": [
+     {
+      "path": "/view/slots/main",
+      "type": "Stack",
+      "visible": true,
+      "direction": "vertical",
+      "gap": "md",
+      "children": [
+       {
+        "path": "/view/slots/main/children/0",
+        "type": "Table",
+        "visible": true,
+        "columns": [
+         "任务",
+         "截止",
+         "优先级"
+        ],
+        "selectionId": null,
+        "page": 2,
+        "pages": 3,
+        "total": 45,
+        "emptyText": null,
+        "rows": [
+         {
+          "id": "t40",
+          "selected": false,
+          "cells": [
+           "任务 40",
+           "2026-11-01",
+           "40"
+          ]
+         },
+         {
+          "id": "t41",
+          "selected": false,
+          "cells": [
+           "任务 41",
+           "",
+           "41"
+          ]
+         },
+         {
+          "id": "t42",
+          "selected": false,
+          "cells": [
+           "任务 42",
+           "2026-11-01",
+           "42"
+          ]
+         },
+         {
+          "id": "t43",
+          "selected": false,
+          "cells": [
+           "任务 43",
+           "",
+           "43"
+          ]
+         },
+         {
+          "id": "t44",
+          "selected": false,
+          "cells": [
+           "任务 44",
+           "2026-11-01",
+           "44"
+          ]
+         }
+        ]
+       },
+       {
+        "path": "/view/slots/main/children/1",
+        "type": "Form",
+        "visible": true,
+        "formId": "add",
+        "title": "新建",
+        "children": [
+         {
+          "path": "/view/slots/main/children/1/children/0",
+          "type": "TextInput",
+          "visible": true,
+          "formId": "add",
+          "name": "title",
+          "label": "任务",
+          "value": "",
+          "mode": "text",
+          "maxLength": 4096,
+          "placeholder": ""
+         },
+         {
+          "path": "/view/slots/main/children/1/children/1",
+          "type": "Button",
+          "visible": true,
+          "label": "添加",
+          "command": "add",
+          "variant": "secondary",
+          "disabled": false,
+          "confirm": null
+         }
+        ]
+       },
+       {
+        "path": "/view/slots/main/children/2",
+        "type": "Form",
+        "visible": true,
+        "formId": "csv",
+        "title": "导入 CSV",
+        "children": [
+         {
+          "path": "/view/slots/main/children/2/children/0",
+          "type": "TextArea",
+          "visible": true,
+          "formId": "csv",
+          "name": "csv",
+          "label": "CSV 内容",
+          "value": "",
+          "maxLength": 4096
+         },
+         {
+          "path": "/view/slots/main/children/2/children/1",
+          "type": "Button",
+          "visible": true,
+          "label": "导入",
+          "command": "importCsv",
+          "variant": "secondary",
+          "disabled": false,
+          "confirm": null
+         }
+        ]
+       }
+      ]
+     }
+    ],
+    "forms": {
+     "csv": {}
+    },
+    "selections": {},
+    "notice": {
+     "kind": "ok",
+     "text": "导入：完成，1 条记录已原子提交"
+    },
+    "busy": false,
+    "staleInput": false
+   }
+  },
+  {
+   "op": "load",
+   "source": "list",
+   "output": {
+    "items": []
+   },
+   "revisionId": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "appEpoch": 3,
+   "expect": {
+    "result": true,
+    "error": null,
+    "snapshot": [
+     {
+      "path": "/view/slots/main",
+      "type": "Stack",
+      "visible": true,
+      "direction": "vertical",
+      "gap": "md",
+      "children": [
+       {
+        "path": "/view/slots/main/children/0",
+        "type": "Table",
+        "visible": true,
+        "columns": [
+         "任务",
+         "截止",
+         "优先级"
+        ],
+        "selectionId": null,
+        "page": 0,
+        "pages": 1,
+        "total": 0,
+        "emptyText": "还没有任务",
+        "rows": []
+       },
+       {
+        "path": "/view/slots/main/children/1",
+        "type": "Form",
+        "visible": true,
+        "formId": "add",
+        "title": "新建",
+        "children": [
+         {
+          "path": "/view/slots/main/children/1/children/0",
+          "type": "TextInput",
+          "visible": true,
+          "formId": "add",
+          "name": "title",
+          "label": "任务",
+          "value": "",
+          "mode": "text",
+          "maxLength": 4096,
+          "placeholder": ""
+         },
+         {
+          "path": "/view/slots/main/children/1/children/1",
+          "type": "Button",
+          "visible": true,
+          "label": "添加",
+          "command": "add",
+          "variant": "secondary",
+          "disabled": false,
+          "confirm": null
+         }
+        ]
+       },
+       {
+        "path": "/view/slots/main/children/2",
+        "type": "Form",
+        "visible": true,
+        "formId": "csv",
+        "title": "导入 CSV",
+        "children": [
+         {
+          "path": "/view/slots/main/children/2/children/0",
+          "type": "TextArea",
+          "visible": true,
+          "formId": "csv",
+          "name": "csv",
+          "label": "CSV 内容",
+          "value": "",
+          "maxLength": 4096
+         },
+         {
+          "path": "/view/slots/main/children/2/children/1",
+          "type": "Button",
+          "visible": true,
+          "label": "导入",
+          "command": "importCsv",
+          "variant": "secondary",
+          "disabled": false,
+          "confirm": null
+         }
+        ]
+       }
+      ]
+     }
+    ],
+    "forms": {
+     "csv": {}
+    },
+    "selections": {},
+    "notice": {
+     "kind": "ok",
+     "text": "导入：完成，1 条记录已原子提交"
+    },
+    "busy": false,
+    "staleInput": false
+   }
+  }
+ ]
+}

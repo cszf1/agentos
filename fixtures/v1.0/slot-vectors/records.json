@@ -1,0 +1,2475 @@
+{
+ "appId": "9efaf674-4561-4c6b-9860-cf44e09fdd01",
+ "bundles": {
+  "v1": {
+   "formatVersion": 1,
+   "manifest": {
+    "appId": "9efaf674-4561-4c6b-9860-cf44e09fdd01",
+    "title": "待办清单",
+    "description": "记录任务并标记完成状态。",
+    "runtime": "declarative-v1",
+    "capabilities": [
+     "records.read",
+     "records.write"
+    ]
+   },
+   "data": {
+    "fields": {
+     "title": {
+      "type": "string",
+      "label": "任务",
+      "minLength": 1,
+      "maxLength": 200
+     },
+     "done": {
+      "type": "boolean",
+      "label": "已完成",
+      "default": false
+     }
+    }
+   },
+   "view": {
+    "kind": "records",
+    "titleField": "title",
+    "columns": [
+     "title",
+     "done"
+    ],
+    "formFields": [
+     "title",
+     "done"
+    ],
+    "searchField": "title",
+    "filters": [
+     "done"
+    ]
+   }
+  },
+  "v2": {
+   "formatVersion": 1,
+   "manifest": {
+    "appId": "9efaf674-4561-4c6b-9860-cf44e09fdd01",
+    "title": "待办清单 · 优先级",
+    "description": "记录任务、完成状态和优先级，并按优先级筛选。",
+    "runtime": "declarative-v1",
+    "capabilities": [
+     "records.read",
+     "records.write"
+    ]
+   },
+   "data": {
+    "fields": {
+     "title": {
+      "type": "string",
+      "label": "任务",
+      "minLength": 1,
+      "maxLength": 200
+     },
+     "done": {
+      "type": "boolean",
+      "label": "已完成",
+      "default": false
+     },
+     "priority": {
+      "type": "enum",
+      "label": "优先级",
+      "values": [
+       "low",
+       "normal",
+       "high"
+      ],
+      "default": "normal"
+     }
+    }
+   },
+   "view": {
+    "kind": "records",
+    "titleField": "title",
+    "columns": [
+     "title",
+     "done",
+     "priority"
+    ],
+    "formFields": [
+     "title",
+     "done",
+     "priority"
+    ],
+    "searchField": "title",
+    "filters": [
+     "done",
+     "priority"
+    ]
+   }
+  }
+ },
+ "cases": [
+  {
+   "name": "defaultDraft:v1",
+   "input": {
+    "op": "defaultDraft",
+    "bundle": {
+     "formatVersion": 1,
+     "manifest": {
+      "appId": "9efaf674-4561-4c6b-9860-cf44e09fdd01",
+      "title": "待办清单",
+      "description": "记录任务并标记完成状态。",
+      "runtime": "declarative-v1",
+      "capabilities": [
+       "records.read",
+       "records.write"
+      ]
+     },
+     "data": {
+      "fields": {
+       "title": {
+        "type": "string",
+        "label": "任务",
+        "minLength": 1,
+        "maxLength": 200
+       },
+       "done": {
+        "type": "boolean",
+        "label": "已完成",
+        "default": false
+       }
+      }
+     },
+     "view": {
+      "kind": "records",
+      "titleField": "title",
+      "columns": [
+       "title",
+       "done"
+      ],
+      "formFields": [
+       "title",
+       "done"
+      ],
+      "searchField": "title",
+      "filters": [
+       "done"
+      ]
+     }
+    }
+   },
+   "output": {
+    "title": "",
+    "done": false
+   }
+  },
+  {
+   "name": "list:v1:plain",
+   "input": {
+    "op": "list",
+    "bundle": {
+     "formatVersion": 1,
+     "manifest": {
+      "appId": "9efaf674-4561-4c6b-9860-cf44e09fdd01",
+      "title": "待办清单",
+      "description": "记录任务并标记完成状态。",
+      "runtime": "declarative-v1",
+      "capabilities": [
+       "records.read",
+       "records.write"
+      ]
+     },
+     "data": {
+      "fields": {
+       "title": {
+        "type": "string",
+        "label": "任务",
+        "minLength": 1,
+        "maxLength": 200
+       },
+       "done": {
+        "type": "boolean",
+        "label": "已完成",
+        "default": false
+       }
+      }
+     },
+     "view": {
+      "kind": "records",
+      "titleField": "title",
+      "columns": [
+       "title",
+       "done"
+      ],
+      "formFields": [
+       "title",
+       "done"
+      ],
+      "searchField": "title",
+      "filters": [
+       "done"
+      ]
+     }
+    },
+    "q": "",
+    "filters": {},
+    "offset": 0
+   },
+   "output": {
+    "methodId": "workspace.forward",
+    "routeId": "apps.records.list",
+    "params": {
+     "appId": "9efaf674-4561-4c6b-9860-cf44e09fdd01"
+    },
+    "body": {
+     "offset": 0,
+     "limit": 20
+    },
+    "write": false,
+    "idempotencyKey": "read"
+   }
+  },
+  {
+   "name": "list:v1:search",
+   "input": {
+    "op": "list",
+    "bundle": {
+     "formatVersion": 1,
+     "manifest": {
+      "appId": "9efaf674-4561-4c6b-9860-cf44e09fdd01",
+      "title": "待办清单",
+      "description": "记录任务并标记完成状态。",
+      "runtime": "declarative-v1",
+      "capabilities": [
+       "records.read",
+       "records.write"
+      ]
+     },
+     "data": {
+      "fields": {
+       "title": {
+        "type": "string",
+        "label": "任务",
+        "minLength": 1,
+        "maxLength": 200
+       },
+       "done": {
+        "type": "boolean",
+        "label": "已完成",
+        "default": false
+       }
+      }
+     },
+     "view": {
+      "kind": "records",
+      "titleField": "title",
+      "columns": [
+       "title",
+       "done"
+      ],
+      "formFields": [
+       "title",
+       "done"
+      ],
+      "searchField": "title",
+      "filters": [
+       "done"
+      ]
+     }
+    },
+    "q": "报告",
+    "filters": {
+     "done": false
+    },
+    "offset": 20
+   },
+   "output": {
+    "methodId": "workspace.forward",
+    "routeId": "apps.records.list",
+    "params": {
+     "appId": "9efaf674-4561-4c6b-9860-cf44e09fdd01"
+    },
+    "body": {
+     "q": "报告",
+     "filters": {
+      "done": false
+     },
+     "offset": 20,
+     "limit": 20
+    },
+    "write": false,
+    "idempotencyKey": "read"
+   }
+  },
+  {
+   "name": "defaultDraft:v2",
+   "input": {
+    "op": "defaultDraft",
+    "bundle": {
+     "formatVersion": 1,
+     "manifest": {
+      "appId": "9efaf674-4561-4c6b-9860-cf44e09fdd01",
+      "title": "待办清单 · 优先级",
+      "description": "记录任务、完成状态和优先级，并按优先级筛选。",
+      "runtime": "declarative-v1",
+      "capabilities": [
+       "records.read",
+       "records.write"
+      ]
+     },
+     "data": {
+      "fields": {
+       "title": {
+        "type": "string",
+        "label": "任务",
+        "minLength": 1,
+        "maxLength": 200
+       },
+       "done": {
+        "type": "boolean",
+        "label": "已完成",
+        "default": false
+       },
+       "priority": {
+        "type": "enum",
+        "label": "优先级",
+        "values": [
+         "low",
+         "normal",
+         "high"
+        ],
+        "default": "normal"
+       }
+      }
+     },
+     "view": {
+      "kind": "records",
+      "titleField": "title",
+      "columns": [
+       "title",
+       "done",
+       "priority"
+      ],
+      "formFields": [
+       "title",
+       "done",
+       "priority"
+      ],
+      "searchField": "title",
+      "filters": [
+       "done",
+       "priority"
+      ]
+     }
+    }
+   },
+   "output": {
+    "title": "",
+    "done": false,
+    "priority": "normal"
+   }
+  },
+  {
+   "name": "list:v2:plain",
+   "input": {
+    "op": "list",
+    "bundle": {
+     "formatVersion": 1,
+     "manifest": {
+      "appId": "9efaf674-4561-4c6b-9860-cf44e09fdd01",
+      "title": "待办清单 · 优先级",
+      "description": "记录任务、完成状态和优先级，并按优先级筛选。",
+      "runtime": "declarative-v1",
+      "capabilities": [
+       "records.read",
+       "records.write"
+      ]
+     },
+     "data": {
+      "fields": {
+       "title": {
+        "type": "string",
+        "label": "任务",
+        "minLength": 1,
+        "maxLength": 200
+       },
+       "done": {
+        "type": "boolean",
+        "label": "已完成",
+        "default": false
+       },
+       "priority": {
+        "type": "enum",
+        "label": "优先级",
+        "values": [
+         "low",
+         "normal",
+         "high"
+        ],
+        "default": "normal"
+       }
+      }
+     },
+     "view": {
+      "kind": "records",
+      "titleField": "title",
+      "columns": [
+       "title",
+       "done",
+       "priority"
+      ],
+      "formFields": [
+       "title",
+       "done",
+       "priority"
+      ],
+      "searchField": "title",
+      "filters": [
+       "done",
+       "priority"
+      ]
+     }
+    },
+    "q": "",
+    "filters": {},
+    "offset": 0
+   },
+   "output": {
+    "methodId": "workspace.forward",
+    "routeId": "apps.records.list",
+    "params": {
+     "appId": "9efaf674-4561-4c6b-9860-cf44e09fdd01"
+    },
+    "body": {
+     "offset": 0,
+     "limit": 20
+    },
+    "write": false,
+    "idempotencyKey": "read"
+   }
+  },
+  {
+   "name": "list:v2:search",
+   "input": {
+    "op": "list",
+    "bundle": {
+     "formatVersion": 1,
+     "manifest": {
+      "appId": "9efaf674-4561-4c6b-9860-cf44e09fdd01",
+      "title": "待办清单 · 优先级",
+      "description": "记录任务、完成状态和优先级，并按优先级筛选。",
+      "runtime": "declarative-v1",
+      "capabilities": [
+       "records.read",
+       "records.write"
+      ]
+     },
+     "data": {
+      "fields": {
+       "title": {
+        "type": "string",
+        "label": "任务",
+        "minLength": 1,
+        "maxLength": 200
+       },
+       "done": {
+        "type": "boolean",
+        "label": "已完成",
+        "default": false
+       },
+       "priority": {
+        "type": "enum",
+        "label": "优先级",
+        "values": [
+         "low",
+         "normal",
+         "high"
+        ],
+        "default": "normal"
+       }
+      }
+     },
+     "view": {
+      "kind": "records",
+      "titleField": "title",
+      "columns": [
+       "title",
+       "done",
+       "priority"
+      ],
+      "formFields": [
+       "title",
+       "done",
+       "priority"
+      ],
+      "searchField": "title",
+      "filters": [
+       "done",
+       "priority"
+      ]
+     }
+    },
+    "q": "报告",
+    "filters": {
+     "done": false
+    },
+    "offset": 20
+   },
+   "output": {
+    "methodId": "workspace.forward",
+    "routeId": "apps.records.list",
+    "params": {
+     "appId": "9efaf674-4561-4c6b-9860-cf44e09fdd01"
+    },
+    "body": {
+     "q": "报告",
+     "filters": {
+      "done": false
+     },
+     "offset": 20,
+     "limit": 20
+    },
+    "write": false,
+    "idempotencyKey": "read"
+   }
+  },
+  {
+   "name": "list:no-search-field",
+   "input": {
+    "op": "list",
+    "bundle": {
+     "formatVersion": 1,
+     "manifest": {
+      "appId": "9efaf674-4561-4c6b-9860-cf44e09fdd01",
+      "title": "待办清单 · 优先级",
+      "description": "记录任务、完成状态和优先级，并按优先级筛选。",
+      "runtime": "declarative-v1",
+      "capabilities": [
+       "records.read",
+       "records.write"
+      ]
+     },
+     "data": {
+      "fields": {
+       "title": {
+        "type": "string",
+        "label": "任务",
+        "minLength": 1,
+        "maxLength": 200
+       },
+       "done": {
+        "type": "boolean",
+        "label": "已完成",
+        "default": false
+       },
+       "priority": {
+        "type": "enum",
+        "label": "优先级",
+        "values": [
+         "low",
+         "normal",
+         "high"
+        ],
+        "default": "normal"
+       }
+      }
+     },
+     "view": {
+      "kind": "records",
+      "titleField": "title",
+      "columns": [
+       "title",
+       "done",
+       "priority"
+      ],
+      "formFields": [
+       "title",
+       "done",
+       "priority"
+      ],
+      "filters": [
+       "done",
+       "priority"
+      ]
+     }
+    },
+    "q": "ignored",
+    "filters": {},
+    "offset": 0
+   },
+   "output": {
+    "methodId": "workspace.forward",
+    "routeId": "apps.records.list",
+    "params": {
+     "appId": "9efaf674-4561-4c6b-9860-cf44e09fdd01"
+    },
+    "body": {
+     "offset": 0,
+     "limit": 20
+    },
+    "write": false,
+    "idempotencyKey": "read"
+   }
+  },
+  {
+   "name": "filter:bool-true",
+   "input": {
+    "op": "changeFilter",
+    "bundle": {
+     "formatVersion": 1,
+     "manifest": {
+      "appId": "9efaf674-4561-4c6b-9860-cf44e09fdd01",
+      "title": "待办清单 · 优先级",
+      "description": "记录任务、完成状态和优先级，并按优先级筛选。",
+      "runtime": "declarative-v1",
+      "capabilities": [
+       "records.read",
+       "records.write"
+      ]
+     },
+     "data": {
+      "fields": {
+       "title": {
+        "type": "string",
+        "label": "任务",
+        "minLength": 1,
+        "maxLength": 200
+       },
+       "done": {
+        "type": "boolean",
+        "label": "已完成",
+        "default": false
+       },
+       "priority": {
+        "type": "enum",
+        "label": "优先级",
+        "values": [
+         "low",
+         "normal",
+         "high"
+        ],
+        "default": "normal"
+       }
+      }
+     },
+     "view": {
+      "kind": "records",
+      "titleField": "title",
+      "columns": [
+       "title",
+       "done",
+       "priority"
+      ],
+      "formFields": [
+       "title",
+       "done",
+       "priority"
+      ],
+      "searchField": "title",
+      "filters": [
+       "done",
+       "priority"
+      ]
+     }
+    },
+    "filters": {},
+    "key": "done",
+    "value": "true"
+   },
+   "output": {
+    "done": true
+   }
+  },
+  {
+   "name": "filter:enum",
+   "input": {
+    "op": "changeFilter",
+    "bundle": {
+     "formatVersion": 1,
+     "manifest": {
+      "appId": "9efaf674-4561-4c6b-9860-cf44e09fdd01",
+      "title": "待办清单 · 优先级",
+      "description": "记录任务、完成状态和优先级，并按优先级筛选。",
+      "runtime": "declarative-v1",
+      "capabilities": [
+       "records.read",
+       "records.write"
+      ]
+     },
+     "data": {
+      "fields": {
+       "title": {
+        "type": "string",
+        "label": "任务",
+        "minLength": 1,
+        "maxLength": 200
+       },
+       "done": {
+        "type": "boolean",
+        "label": "已完成",
+        "default": false
+       },
+       "priority": {
+        "type": "enum",
+        "label": "优先级",
+        "values": [
+         "low",
+         "normal",
+         "high"
+        ],
+        "default": "normal"
+       }
+      }
+     },
+     "view": {
+      "kind": "records",
+      "titleField": "title",
+      "columns": [
+       "title",
+       "done",
+       "priority"
+      ],
+      "formFields": [
+       "title",
+       "done",
+       "priority"
+      ],
+      "searchField": "title",
+      "filters": [
+       "done",
+       "priority"
+      ]
+     }
+    },
+    "filters": {
+     "done": true
+    },
+    "key": "priority",
+    "value": "high"
+   },
+   "output": {
+    "done": true,
+    "priority": "high"
+   }
+  },
+  {
+   "name": "filter:clear",
+   "input": {
+    "op": "changeFilter",
+    "bundle": {
+     "formatVersion": 1,
+     "manifest": {
+      "appId": "9efaf674-4561-4c6b-9860-cf44e09fdd01",
+      "title": "待办清单 · 优先级",
+      "description": "记录任务、完成状态和优先级，并按优先级筛选。",
+      "runtime": "declarative-v1",
+      "capabilities": [
+       "records.read",
+       "records.write"
+      ]
+     },
+     "data": {
+      "fields": {
+       "title": {
+        "type": "string",
+        "label": "任务",
+        "minLength": 1,
+        "maxLength": 200
+       },
+       "done": {
+        "type": "boolean",
+        "label": "已完成",
+        "default": false
+       },
+       "priority": {
+        "type": "enum",
+        "label": "优先级",
+        "values": [
+         "low",
+         "normal",
+         "high"
+        ],
+        "default": "normal"
+       }
+      }
+     },
+     "view": {
+      "kind": "records",
+      "titleField": "title",
+      "columns": [
+       "title",
+       "done",
+       "priority"
+      ],
+      "formFields": [
+       "title",
+       "done",
+       "priority"
+      ],
+      "searchField": "title",
+      "filters": [
+       "done",
+       "priority"
+      ]
+     }
+    },
+    "filters": {
+     "done": true,
+     "priority": "high"
+    },
+    "key": "done",
+    "value": ""
+   },
+   "output": {
+    "priority": "high"
+   }
+  },
+  {
+   "name": "filter:version-drops-hidden",
+   "input": {
+    "op": "keepFilters",
+    "bundle": {
+     "formatVersion": 1,
+     "manifest": {
+      "appId": "9efaf674-4561-4c6b-9860-cf44e09fdd01",
+      "title": "待办清单",
+      "description": "记录任务并标记完成状态。",
+      "runtime": "declarative-v1",
+      "capabilities": [
+       "records.read",
+       "records.write"
+      ]
+     },
+     "data": {
+      "fields": {
+       "title": {
+        "type": "string",
+        "label": "任务",
+        "minLength": 1,
+        "maxLength": 200
+       },
+       "done": {
+        "type": "boolean",
+        "label": "已完成",
+        "default": false
+       }
+      }
+     },
+     "view": {
+      "kind": "records",
+      "titleField": "title",
+      "columns": [
+       "title",
+       "done"
+      ],
+      "formFields": [
+       "title",
+       "done"
+      ],
+      "searchField": "title",
+      "filters": [
+       "done"
+      ]
+     }
+    },
+    "filters": {
+     "done": true,
+     "priority": "high"
+    }
+   },
+   "output": {
+    "done": true
+   }
+  },
+  {
+   "name": "openEdit:v1-hides-priority",
+   "input": {
+    "op": "openEdit",
+    "bundle": {
+     "formatVersion": 1,
+     "manifest": {
+      "appId": "9efaf674-4561-4c6b-9860-cf44e09fdd01",
+      "title": "待办清单",
+      "description": "记录任务并标记完成状态。",
+      "runtime": "declarative-v1",
+      "capabilities": [
+       "records.read",
+       "records.write"
+      ]
+     },
+     "data": {
+      "fields": {
+       "title": {
+        "type": "string",
+        "label": "任务",
+        "minLength": 1,
+        "maxLength": 200
+       },
+       "done": {
+        "type": "boolean",
+        "label": "已完成",
+        "default": false
+       }
+      }
+     },
+     "view": {
+      "kind": "records",
+      "titleField": "title",
+      "columns": [
+       "title",
+       "done"
+      ],
+      "formFields": [
+       "title",
+       "done"
+      ],
+      "searchField": "title",
+      "filters": [
+       "done"
+      ]
+     }
+    },
+    "data": {
+     "title": "旧",
+     "done": false,
+     "priority": "high"
+    }
+   },
+   "output": {
+    "title": "旧",
+    "done": false
+   }
+  },
+  {
+   "name": "edit:v1-keeps-hidden-priority",
+   "input": {
+    "op": "edit",
+    "bundle": {
+     "formatVersion": 1,
+     "manifest": {
+      "appId": "9efaf674-4561-4c6b-9860-cf44e09fdd01",
+      "title": "待办清单",
+      "description": "记录任务并标记完成状态。",
+      "runtime": "declarative-v1",
+      "capabilities": [
+       "records.read",
+       "records.write"
+      ]
+     },
+     "data": {
+      "fields": {
+       "title": {
+        "type": "string",
+        "label": "任务",
+        "minLength": 1,
+        "maxLength": 200
+       },
+       "done": {
+        "type": "boolean",
+        "label": "已完成",
+        "default": false
+       }
+      }
+     },
+     "view": {
+      "kind": "records",
+      "titleField": "title",
+      "columns": [
+       "title",
+       "done"
+      ],
+      "formFields": [
+       "title",
+       "done"
+      ],
+      "searchField": "title",
+      "filters": [
+       "done"
+      ]
+     }
+    },
+    "appEpoch": 5,
+    "record": {
+     "id": "rec-1",
+     "recordVersion": 3,
+     "data": {
+      "title": "旧",
+      "done": false,
+      "priority": "high"
+     }
+    },
+    "draft": {
+     "title": "新",
+     "done": false
+    }
+   },
+   "output": {
+    "methodId": "workspace.forward",
+    "routeId": "apps.records.patch",
+    "params": {
+     "appId": "9efaf674-4561-4c6b-9860-cf44e09fdd01",
+     "recordId": "rec-1"
+    },
+    "body": {
+     "expectedAppEpoch": 5,
+     "expectedRecordVersion": 3,
+     "changes": {
+      "title": "新"
+     }
+    },
+    "write": true,
+    "idempotencyKey": "k"
+   }
+  },
+  {
+   "name": "edit:unchanged-closes",
+   "input": {
+    "op": "edit",
+    "bundle": {
+     "formatVersion": 1,
+     "manifest": {
+      "appId": "9efaf674-4561-4c6b-9860-cf44e09fdd01",
+      "title": "待办清单 · 优先级",
+      "description": "记录任务、完成状态和优先级，并按优先级筛选。",
+      "runtime": "declarative-v1",
+      "capabilities": [
+       "records.read",
+       "records.write"
+      ]
+     },
+     "data": {
+      "fields": {
+       "title": {
+        "type": "string",
+        "label": "任务",
+        "minLength": 1,
+        "maxLength": 200
+       },
+       "done": {
+        "type": "boolean",
+        "label": "已完成",
+        "default": false
+       },
+       "priority": {
+        "type": "enum",
+        "label": "优先级",
+        "values": [
+         "low",
+         "normal",
+         "high"
+        ],
+        "default": "normal"
+       }
+      }
+     },
+     "view": {
+      "kind": "records",
+      "titleField": "title",
+      "columns": [
+       "title",
+       "done",
+       "priority"
+      ],
+      "formFields": [
+       "title",
+       "done",
+       "priority"
+      ],
+      "searchField": "title",
+      "filters": [
+       "done",
+       "priority"
+      ]
+     }
+    },
+    "appEpoch": 5,
+    "record": {
+     "id": "rec-1",
+     "recordVersion": 3,
+     "data": {
+      "title": "旧",
+      "done": false,
+      "priority": "high"
+     }
+    },
+    "draft": {
+     "title": "旧",
+     "done": false,
+     "priority": "high"
+    }
+   },
+   "output": null
+  },
+  {
+   "name": "edit:v2-priority",
+   "input": {
+    "op": "edit",
+    "bundle": {
+     "formatVersion": 1,
+     "manifest": {
+      "appId": "9efaf674-4561-4c6b-9860-cf44e09fdd01",
+      "title": "待办清单 · 优先级",
+      "description": "记录任务、完成状态和优先级，并按优先级筛选。",
+      "runtime": "declarative-v1",
+      "capabilities": [
+       "records.read",
+       "records.write"
+      ]
+     },
+     "data": {
+      "fields": {
+       "title": {
+        "type": "string",
+        "label": "任务",
+        "minLength": 1,
+        "maxLength": 200
+       },
+       "done": {
+        "type": "boolean",
+        "label": "已完成",
+        "default": false
+       },
+       "priority": {
+        "type": "enum",
+        "label": "优先级",
+        "values": [
+         "low",
+         "normal",
+         "high"
+        ],
+        "default": "normal"
+       }
+      }
+     },
+     "view": {
+      "kind": "records",
+      "titleField": "title",
+      "columns": [
+       "title",
+       "done",
+       "priority"
+      ],
+      "formFields": [
+       "title",
+       "done",
+       "priority"
+      ],
+      "searchField": "title",
+      "filters": [
+       "done",
+       "priority"
+      ]
+     }
+    },
+    "appEpoch": 6,
+    "record": {
+     "id": "rec-1",
+     "recordVersion": 3,
+     "data": {
+      "title": "旧",
+      "done": false,
+      "priority": "high"
+     }
+    },
+    "draft": {
+     "title": "旧",
+     "done": true,
+     "priority": "low"
+    }
+   },
+   "output": {
+    "methodId": "workspace.forward",
+    "routeId": "apps.records.patch",
+    "params": {
+     "appId": "9efaf674-4561-4c6b-9860-cf44e09fdd01",
+     "recordId": "rec-1"
+    },
+    "body": {
+     "expectedAppEpoch": 6,
+     "expectedRecordVersion": 3,
+     "changes": {
+      "done": true,
+      "priority": "low"
+     }
+    },
+    "write": true,
+    "idempotencyKey": "k"
+   }
+  },
+  {
+   "name": "create:v2-defaults",
+   "input": {
+    "op": "create",
+    "appEpoch": 6,
+    "draft": {
+     "title": "",
+     "done": false,
+     "priority": "normal"
+    }
+   },
+   "output": {
+    "methodId": "workspace.forward",
+    "routeId": "apps.records.post",
+    "params": {
+     "appId": "9efaf674-4561-4c6b-9860-cf44e09fdd01"
+    },
+    "body": {
+     "expectedAppEpoch": 6,
+     "data": {
+      "title": "",
+      "done": false,
+      "priority": "normal"
+     }
+    },
+    "write": true,
+    "idempotencyKey": "k"
+   }
+  },
+  {
+   "name": "create:drops-undefined",
+   "input": {
+    "op": "create",
+    "appEpoch": 6,
+    "draft": {
+     "title": "x",
+     "n": {
+      "$missing": true
+     }
+    }
+   },
+   "output": {
+    "methodId": "workspace.forward",
+    "routeId": "apps.records.post",
+    "params": {
+     "appId": "9efaf674-4561-4c6b-9860-cf44e09fdd01"
+    },
+    "body": {
+     "expectedAppEpoch": 6,
+     "data": {
+      "title": "x"
+     }
+    },
+    "write": true,
+    "idempotencyKey": "k"
+   }
+  },
+  {
+   "name": "delete",
+   "input": {
+    "op": "delete",
+    "appEpoch": 6,
+    "record": {
+     "id": "rec-1",
+     "recordVersion": 3,
+     "data": {
+      "title": "旧",
+      "done": false,
+      "priority": "high"
+     }
+    }
+   },
+   "output": {
+    "methodId": "workspace.forward",
+    "routeId": "apps.records.delete",
+    "params": {
+     "appId": "9efaf674-4561-4c6b-9860-cf44e09fdd01",
+     "recordId": "rec-1"
+    },
+    "body": {
+     "expectedAppEpoch": 6,
+     "expectedRecordVersion": 3
+    },
+    "write": true,
+    "idempotencyKey": "k"
+   }
+  },
+  {
+   "name": "rebase:create-v2-to-v1",
+   "input": {
+    "op": "rebase",
+    "bundle": {
+     "formatVersion": 1,
+     "manifest": {
+      "appId": "9efaf674-4561-4c6b-9860-cf44e09fdd01",
+      "title": "待办清单",
+      "description": "记录任务并标记完成状态。",
+      "runtime": "declarative-v1",
+      "capabilities": [
+       "records.read",
+       "records.write"
+      ]
+     },
+     "data": {
+      "fields": {
+       "title": {
+        "type": "string",
+        "label": "任务",
+        "minLength": 1,
+        "maxLength": 200
+       },
+       "done": {
+        "type": "boolean",
+        "label": "已完成",
+        "default": false
+       }
+      }
+     },
+     "view": {
+      "kind": "records",
+      "titleField": "title",
+      "columns": [
+       "title",
+       "done"
+      ],
+      "formFields": [
+       "title",
+       "done"
+      ],
+      "searchField": "title",
+      "filters": [
+       "done"
+      ]
+     }
+    },
+    "mode": "create",
+    "draft": {
+     "title": "草稿",
+     "done": true,
+     "priority": "low"
+    }
+   },
+   "output": {
+    "title": "草稿",
+    "done": true
+   }
+  },
+  {
+   "name": "rebase:edit-v1-to-v2",
+   "input": {
+    "op": "rebase",
+    "bundle": {
+     "formatVersion": 1,
+     "manifest": {
+      "appId": "9efaf674-4561-4c6b-9860-cf44e09fdd01",
+      "title": "待办清单 · 优先级",
+      "description": "记录任务、完成状态和优先级，并按优先级筛选。",
+      "runtime": "declarative-v1",
+      "capabilities": [
+       "records.read",
+       "records.write"
+      ]
+     },
+     "data": {
+      "fields": {
+       "title": {
+        "type": "string",
+        "label": "任务",
+        "minLength": 1,
+        "maxLength": 200
+       },
+       "done": {
+        "type": "boolean",
+        "label": "已完成",
+        "default": false
+       },
+       "priority": {
+        "type": "enum",
+        "label": "优先级",
+        "values": [
+         "low",
+         "normal",
+         "high"
+        ],
+        "default": "normal"
+       }
+      }
+     },
+     "view": {
+      "kind": "records",
+      "titleField": "title",
+      "columns": [
+       "title",
+       "done",
+       "priority"
+      ],
+      "formFields": [
+       "title",
+       "done",
+       "priority"
+      ],
+      "searchField": "title",
+      "filters": [
+       "done",
+       "priority"
+      ]
+     }
+    },
+    "mode": "edit",
+    "draft": {
+     "title": "草稿"
+    }
+   },
+   "output": {
+    "title": "草稿"
+   }
+  },
+  {
+   "name": "deploy:switch-back",
+   "input": {
+    "op": "deploy",
+    "appEpoch": 6,
+    "revisionId": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+   },
+   "output": {
+    "methodId": "workspace.forward",
+    "routeId": "apps.deployments.post",
+    "params": {
+     "appId": "9efaf674-4561-4c6b-9860-cf44e09fdd01"
+    },
+    "body": {
+     "revisionId": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+     "expectedAppEpoch": 6
+    },
+    "write": true,
+    "idempotencyKey": "k"
+   }
+  },
+  {
+   "name": "issues:{\"title\":\"\"}",
+   "input": {
+    "op": "issues",
+    "bundle": {
+     "formatVersion": 1,
+     "manifest": {
+      "appId": "9efaf674-4561-4c6b-9860-cf44e09fdd01",
+      "title": "待办清单 · 优先级",
+      "description": "记录任务、完成状态和优先级，并按优先级筛选。",
+      "runtime": "declarative-v1",
+      "capabilities": [
+       "records.read",
+       "records.write"
+      ]
+     },
+     "data": {
+      "fields": {
+       "title": {
+        "type": "string",
+        "label": "任务",
+        "minLength": 1,
+        "maxLength": 200
+       },
+       "done": {
+        "type": "boolean",
+        "label": "已完成",
+        "default": false
+       },
+       "priority": {
+        "type": "enum",
+        "label": "优先级",
+        "values": [
+         "low",
+         "normal",
+         "high"
+        ],
+        "default": "normal"
+       },
+       "n": {
+        "type": "integer",
+        "label": "数量",
+        "minimum": 1,
+        "maximum": 10
+       },
+       "note": {
+        "type": "string",
+        "label": "备注",
+        "maxLength": 3
+       }
+      }
+     },
+     "view": {
+      "kind": "records",
+      "titleField": "title",
+      "columns": [
+       "title",
+       "done",
+       "priority"
+      ],
+      "formFields": [
+       "title",
+       "done",
+       "priority",
+       "n",
+       "note"
+      ],
+      "searchField": "title",
+      "filters": [
+       "done",
+       "priority"
+      ]
+     }
+    },
+    "draft": {
+     "title": ""
+    }
+   },
+   "output": {
+    "title": "must not be empty"
+   }
+  },
+  {
+   "name": "issues:{\"title\":\"😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+   "input": {
+    "op": "issues",
+    "bundle": {
+     "formatVersion": 1,
+     "manifest": {
+      "appId": "9efaf674-4561-4c6b-9860-cf44e09fdd01",
+      "title": "待办清单 · 优先级",
+      "description": "记录任务、完成状态和优先级，并按优先级筛选。",
+      "runtime": "declarative-v1",
+      "capabilities": [
+       "records.read",
+       "records.write"
+      ]
+     },
+     "data": {
+      "fields": {
+       "title": {
+        "type": "string",
+        "label": "任务",
+        "minLength": 1,
+        "maxLength": 200
+       },
+       "done": {
+        "type": "boolean",
+        "label": "已完成",
+        "default": false
+       },
+       "priority": {
+        "type": "enum",
+        "label": "优先级",
+        "values": [
+         "low",
+         "normal",
+         "high"
+        ],
+        "default": "normal"
+       },
+       "n": {
+        "type": "integer",
+        "label": "数量",
+        "minimum": 1,
+        "maximum": 10
+       },
+       "note": {
+        "type": "string",
+        "label": "备注",
+        "maxLength": 3
+       }
+      }
+     },
+     "view": {
+      "kind": "records",
+      "titleField": "title",
+      "columns": [
+       "title",
+       "done",
+       "priority"
+      ],
+      "formFields": [
+       "title",
+       "done",
+       "priority",
+       "n",
+       "note"
+      ],
+      "searchField": "title",
+      "filters": [
+       "done",
+       "priority"
+      ]
+     }
+    },
+    "draft": {
+     "title": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀"
+    }
+   },
+   "output": {}
+  },
+  {
+   "name": "issues:{\"title\":\"😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+   "input": {
+    "op": "issues",
+    "bundle": {
+     "formatVersion": 1,
+     "manifest": {
+      "appId": "9efaf674-4561-4c6b-9860-cf44e09fdd01",
+      "title": "待办清单 · 优先级",
+      "description": "记录任务、完成状态和优先级，并按优先级筛选。",
+      "runtime": "declarative-v1",
+      "capabilities": [
+       "records.read",
+       "records.write"
+      ]
+     },
+     "data": {
+      "fields": {
+       "title": {
+        "type": "string",
+        "label": "任务",
+        "minLength": 1,
+        "maxLength": 200
+       },
+       "done": {
+        "type": "boolean",
+        "label": "已完成",
+        "default": false
+       },
+       "priority": {
+        "type": "enum",
+        "label": "优先级",
+        "values": [
+         "low",
+         "normal",
+         "high"
+        ],
+        "default": "normal"
+       },
+       "n": {
+        "type": "integer",
+        "label": "数量",
+        "minimum": 1,
+        "maximum": 10
+       },
+       "note": {
+        "type": "string",
+        "label": "备注",
+        "maxLength": 3
+       }
+      }
+     },
+     "view": {
+      "kind": "records",
+      "titleField": "title",
+      "columns": [
+       "title",
+       "done",
+       "priority"
+      ],
+      "formFields": [
+       "title",
+       "done",
+       "priority",
+       "n",
+       "note"
+      ],
+      "searchField": "title",
+      "filters": [
+       "done",
+       "priority"
+      ]
+     }
+    },
+    "draft": {
+     "title": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀"
+    }
+   },
+   "output": {
+    "title": "must have at most 200 characters"
+   }
+  },
+  {
+   "name": "issues:{\"title\":\"ok\",\"priority\":\"urgent\"}",
+   "input": {
+    "op": "issues",
+    "bundle": {
+     "formatVersion": 1,
+     "manifest": {
+      "appId": "9efaf674-4561-4c6b-9860-cf44e09fdd01",
+      "title": "待办清单 · 优先级",
+      "description": "记录任务、完成状态和优先级，并按优先级筛选。",
+      "runtime": "declarative-v1",
+      "capabilities": [
+       "records.read",
+       "records.write"
+      ]
+     },
+     "data": {
+      "fields": {
+       "title": {
+        "type": "string",
+        "label": "任务",
+        "minLength": 1,
+        "maxLength": 200
+       },
+       "done": {
+        "type": "boolean",
+        "label": "已完成",
+        "default": false
+       },
+       "priority": {
+        "type": "enum",
+        "label": "优先级",
+        "values": [
+         "low",
+         "normal",
+         "high"
+        ],
+        "default": "normal"
+       },
+       "n": {
+        "type": "integer",
+        "label": "数量",
+        "minimum": 1,
+        "maximum": 10
+       },
+       "note": {
+        "type": "string",
+        "label": "备注",
+        "maxLength": 3
+       }
+      }
+     },
+     "view": {
+      "kind": "records",
+      "titleField": "title",
+      "columns": [
+       "title",
+       "done",
+       "priority"
+      ],
+      "formFields": [
+       "title",
+       "done",
+       "priority",
+       "n",
+       "note"
+      ],
+      "searchField": "title",
+      "filters": [
+       "done",
+       "priority"
+      ]
+     }
+    },
+    "draft": {
+     "title": "ok",
+     "priority": "urgent"
+    }
+   },
+   "output": {
+    "priority": "must be one of low, normal, high"
+   }
+  },
+  {
+   "name": "issues:{\"title\":\"ok\",\"n\":0}",
+   "input": {
+    "op": "issues",
+    "bundle": {
+     "formatVersion": 1,
+     "manifest": {
+      "appId": "9efaf674-4561-4c6b-9860-cf44e09fdd01",
+      "title": "待办清单 · 优先级",
+      "description": "记录任务、完成状态和优先级，并按优先级筛选。",
+      "runtime": "declarative-v1",
+      "capabilities": [
+       "records.read",
+       "records.write"
+      ]
+     },
+     "data": {
+      "fields": {
+       "title": {
+        "type": "string",
+        "label": "任务",
+        "minLength": 1,
+        "maxLength": 200
+       },
+       "done": {
+        "type": "boolean",
+        "label": "已完成",
+        "default": false
+       },
+       "priority": {
+        "type": "enum",
+        "label": "优先级",
+        "values": [
+         "low",
+         "normal",
+         "high"
+        ],
+        "default": "normal"
+       },
+       "n": {
+        "type": "integer",
+        "label": "数量",
+        "minimum": 1,
+        "maximum": 10
+       },
+       "note": {
+        "type": "string",
+        "label": "备注",
+        "maxLength": 3
+       }
+      }
+     },
+     "view": {
+      "kind": "records",
+      "titleField": "title",
+      "columns": [
+       "title",
+       "done",
+       "priority"
+      ],
+      "formFields": [
+       "title",
+       "done",
+       "priority",
+       "n",
+       "note"
+      ],
+      "searchField": "title",
+      "filters": [
+       "done",
+       "priority"
+      ]
+     }
+    },
+    "draft": {
+     "title": "ok",
+     "n": 0
+    }
+   },
+   "output": {
+    "n": "must be >= 1"
+   }
+  },
+  {
+   "name": "issues:{\"title\":\"ok\",\"n\":11}",
+   "input": {
+    "op": "issues",
+    "bundle": {
+     "formatVersion": 1,
+     "manifest": {
+      "appId": "9efaf674-4561-4c6b-9860-cf44e09fdd01",
+      "title": "待办清单 · 优先级",
+      "description": "记录任务、完成状态和优先级，并按优先级筛选。",
+      "runtime": "declarative-v1",
+      "capabilities": [
+       "records.read",
+       "records.write"
+      ]
+     },
+     "data": {
+      "fields": {
+       "title": {
+        "type": "string",
+        "label": "任务",
+        "minLength": 1,
+        "maxLength": 200
+       },
+       "done": {
+        "type": "boolean",
+        "label": "已完成",
+        "default": false
+       },
+       "priority": {
+        "type": "enum",
+        "label": "优先级",
+        "values": [
+         "low",
+         "normal",
+         "high"
+        ],
+        "default": "normal"
+       },
+       "n": {
+        "type": "integer",
+        "label": "数量",
+        "minimum": 1,
+        "maximum": 10
+       },
+       "note": {
+        "type": "string",
+        "label": "备注",
+        "maxLength": 3
+       }
+      }
+     },
+     "view": {
+      "kind": "records",
+      "titleField": "title",
+      "columns": [
+       "title",
+       "done",
+       "priority"
+      ],
+      "formFields": [
+       "title",
+       "done",
+       "priority",
+       "n",
+       "note"
+      ],
+      "searchField": "title",
+      "filters": [
+       "done",
+       "priority"
+      ]
+     }
+    },
+    "draft": {
+     "title": "ok",
+     "n": 11
+    }
+   },
+   "output": {
+    "n": "must be <= 10"
+   }
+  },
+  {
+   "name": "issues:{\"title\":\"ok\",\"n\":1.5}",
+   "input": {
+    "op": "issues",
+    "bundle": {
+     "formatVersion": 1,
+     "manifest": {
+      "appId": "9efaf674-4561-4c6b-9860-cf44e09fdd01",
+      "title": "待办清单 · 优先级",
+      "description": "记录任务、完成状态和优先级，并按优先级筛选。",
+      "runtime": "declarative-v1",
+      "capabilities": [
+       "records.read",
+       "records.write"
+      ]
+     },
+     "data": {
+      "fields": {
+       "title": {
+        "type": "string",
+        "label": "任务",
+        "minLength": 1,
+        "maxLength": 200
+       },
+       "done": {
+        "type": "boolean",
+        "label": "已完成",
+        "default": false
+       },
+       "priority": {
+        "type": "enum",
+        "label": "优先级",
+        "values": [
+         "low",
+         "normal",
+         "high"
+        ],
+        "default": "normal"
+       },
+       "n": {
+        "type": "integer",
+        "label": "数量",
+        "minimum": 1,
+        "maximum": 10
+       },
+       "note": {
+        "type": "string",
+        "label": "备注",
+        "maxLength": 3
+       }
+      }
+     },
+     "view": {
+      "kind": "records",
+      "titleField": "title",
+      "columns": [
+       "title",
+       "done",
+       "priority"
+      ],
+      "formFields": [
+       "title",
+       "done",
+       "priority",
+       "n",
+       "note"
+      ],
+      "searchField": "title",
+      "filters": [
+       "done",
+       "priority"
+      ]
+     }
+    },
+    "draft": {
+     "title": "ok",
+     "n": 1.5
+    }
+   },
+   "output": {
+    "n": "must be a safe integer"
+   }
+  },
+  {
+   "name": "issues:{\"title\":\"ok\",\"n\":5,\"note\":\"中文字\"}",
+   "input": {
+    "op": "issues",
+    "bundle": {
+     "formatVersion": 1,
+     "manifest": {
+      "appId": "9efaf674-4561-4c6b-9860-cf44e09fdd01",
+      "title": "待办清单 · 优先级",
+      "description": "记录任务、完成状态和优先级，并按优先级筛选。",
+      "runtime": "declarative-v1",
+      "capabilities": [
+       "records.read",
+       "records.write"
+      ]
+     },
+     "data": {
+      "fields": {
+       "title": {
+        "type": "string",
+        "label": "任务",
+        "minLength": 1,
+        "maxLength": 200
+       },
+       "done": {
+        "type": "boolean",
+        "label": "已完成",
+        "default": false
+       },
+       "priority": {
+        "type": "enum",
+        "label": "优先级",
+        "values": [
+         "low",
+         "normal",
+         "high"
+        ],
+        "default": "normal"
+       },
+       "n": {
+        "type": "integer",
+        "label": "数量",
+        "minimum": 1,
+        "maximum": 10
+       },
+       "note": {
+        "type": "string",
+        "label": "备注",
+        "maxLength": 3
+       }
+      }
+     },
+     "view": {
+      "kind": "records",
+      "titleField": "title",
+      "columns": [
+       "title",
+       "done",
+       "priority"
+      ],
+      "formFields": [
+       "title",
+       "done",
+       "priority",
+       "n",
+       "note"
+      ],
+      "searchField": "title",
+      "filters": [
+       "done",
+       "priority"
+      ]
+     }
+    },
+    "draft": {
+     "title": "ok",
+     "n": 5,
+     "note": "中文字"
+    }
+   },
+   "output": {}
+  },
+  {
+   "name": "issues:{\"title\":\"ok\",\"note\":\"中文字多\"}",
+   "input": {
+    "op": "issues",
+    "bundle": {
+     "formatVersion": 1,
+     "manifest": {
+      "appId": "9efaf674-4561-4c6b-9860-cf44e09fdd01",
+      "title": "待办清单 · 优先级",
+      "description": "记录任务、完成状态和优先级，并按优先级筛选。",
+      "runtime": "declarative-v1",
+      "capabilities": [
+       "records.read",
+       "records.write"
+      ]
+     },
+     "data": {
+      "fields": {
+       "title": {
+        "type": "string",
+        "label": "任务",
+        "minLength": 1,
+        "maxLength": 200
+       },
+       "done": {
+        "type": "boolean",
+        "label": "已完成",
+        "default": false
+       },
+       "priority": {
+        "type": "enum",
+        "label": "优先级",
+        "values": [
+         "low",
+         "normal",
+         "high"
+        ],
+        "default": "normal"
+       },
+       "n": {
+        "type": "integer",
+        "label": "数量",
+        "minimum": 1,
+        "maximum": 10
+       },
+       "note": {
+        "type": "string",
+        "label": "备注",
+        "maxLength": 3
+       }
+      }
+     },
+     "view": {
+      "kind": "records",
+      "titleField": "title",
+      "columns": [
+       "title",
+       "done",
+       "priority"
+      ],
+      "formFields": [
+       "title",
+       "done",
+       "priority",
+       "n",
+       "note"
+      ],
+      "searchField": "title",
+      "filters": [
+       "done",
+       "priority"
+      ]
+     }
+    },
+    "draft": {
+     "title": "ok",
+     "note": "中文字多"
+    }
+   },
+   "output": {
+    "note": "must have at most 3 characters"
+   }
+  },
+  {
+   "name": "issues:{\"title\":\"ok\",\"done\":\"true\"}",
+   "input": {
+    "op": "issues",
+    "bundle": {
+     "formatVersion": 1,
+     "manifest": {
+      "appId": "9efaf674-4561-4c6b-9860-cf44e09fdd01",
+      "title": "待办清单 · 优先级",
+      "description": "记录任务、完成状态和优先级，并按优先级筛选。",
+      "runtime": "declarative-v1",
+      "capabilities": [
+       "records.read",
+       "records.write"
+      ]
+     },
+     "data": {
+      "fields": {
+       "title": {
+        "type": "string",
+        "label": "任务",
+        "minLength": 1,
+        "maxLength": 200
+       },
+       "done": {
+        "type": "boolean",
+        "label": "已完成",
+        "default": false
+       },
+       "priority": {
+        "type": "enum",
+        "label": "优先级",
+        "values": [
+         "low",
+         "normal",
+         "high"
+        ],
+        "default": "normal"
+       },
+       "n": {
+        "type": "integer",
+        "label": "数量",
+        "minimum": 1,
+        "maximum": 10
+       },
+       "note": {
+        "type": "string",
+        "label": "备注",
+        "maxLength": 3
+       }
+      }
+     },
+     "view": {
+      "kind": "records",
+      "titleField": "title",
+      "columns": [
+       "title",
+       "done",
+       "priority"
+      ],
+      "formFields": [
+       "title",
+       "done",
+       "priority",
+       "n",
+       "note"
+      ],
+      "searchField": "title",
+      "filters": [
+       "done",
+       "priority"
+      ]
+     }
+    },
+    "draft": {
+     "title": "ok",
+     "done": "true"
+    }
+   },
+   "output": {
+    "done": "must be a boolean"
+   }
+  },
+  {
+   "name": "issues:{\"done\":false}",
+   "input": {
+    "op": "issues",
+    "bundle": {
+     "formatVersion": 1,
+     "manifest": {
+      "appId": "9efaf674-4561-4c6b-9860-cf44e09fdd01",
+      "title": "待办清单 · 优先级",
+      "description": "记录任务、完成状态和优先级，并按优先级筛选。",
+      "runtime": "declarative-v1",
+      "capabilities": [
+       "records.read",
+       "records.write"
+      ]
+     },
+     "data": {
+      "fields": {
+       "title": {
+        "type": "string",
+        "label": "任务",
+        "minLength": 1,
+        "maxLength": 200
+       },
+       "done": {
+        "type": "boolean",
+        "label": "已完成",
+        "default": false
+       },
+       "priority": {
+        "type": "enum",
+        "label": "优先级",
+        "values": [
+         "low",
+         "normal",
+         "high"
+        ],
+        "default": "normal"
+       },
+       "n": {
+        "type": "integer",
+        "label": "数量",
+        "minimum": 1,
+        "maximum": 10
+       },
+       "note": {
+        "type": "string",
+        "label": "备注",
+        "maxLength": 3
+       }
+      }
+     },
+     "view": {
+      "kind": "records",
+      "titleField": "title",
+      "columns": [
+       "title",
+       "done",
+       "priority"
+      ],
+      "formFields": [
+       "title",
+       "done",
+       "priority",
+       "n",
+       "note"
+      ],
+      "searchField": "title",
+      "filters": [
+       "done",
+       "priority"
+      ]
+     }
+    },
+    "draft": {
+     "done": false
+    }
+   },
+   "output": {}
+  },
+  {
+   "name": "fieldInput:integer:",
+   "input": {
+    "op": "fieldInput",
+    "field": {
+     "type": "integer",
+     "label": "数量",
+     "minimum": 1,
+     "maximum": 10
+    },
+    "raw": ""
+   },
+   "output": {
+    "$missing": true
+   }
+  },
+  {
+   "name": "fieldInput:integer:7",
+   "input": {
+    "op": "fieldInput",
+    "field": {
+     "type": "integer",
+     "label": "数量",
+     "minimum": 1,
+     "maximum": 10
+    },
+    "raw": "7"
+   },
+   "output": 7
+  },
+  {
+   "name": "fieldInput:integer:-3",
+   "input": {
+    "op": "fieldInput",
+    "field": {
+     "type": "integer",
+     "label": "数量",
+     "minimum": 1,
+     "maximum": 10
+    },
+    "raw": "-3"
+   },
+   "output": -3
+  },
+  {
+   "name": "fieldInput:boolean:true",
+   "input": {
+    "op": "fieldInput",
+    "field": {
+     "type": "boolean",
+     "label": "b"
+    },
+    "raw": true
+   },
+   "output": true
+  },
+  {
+   "name": "fieldInput:string:a",
+   "input": {
+    "op": "fieldInput",
+    "field": {
+     "type": "string",
+     "label": "s",
+     "maxLength": 5
+    },
+    "raw": "a"
+   },
+   "output": "a"
+  },
+  {
+   "name": "display:bool",
+   "input": {
+    "op": "display",
+    "field": {
+     "type": "boolean",
+     "label": "b"
+    },
+    "value": true
+   },
+   "output": "✓"
+  },
+  {
+   "name": "display:bool-false",
+   "input": {
+    "op": "display",
+    "field": {
+     "type": "boolean",
+     "label": "b"
+    },
+    "value": false
+   },
+   "output": "—"
+  },
+  {
+   "name": "display:missing",
+   "input": {
+    "op": "display",
+    "field": {
+     "type": "string",
+     "label": "s",
+     "maxLength": 3
+    },
+    "value": {
+     "$missing": true
+    }
+   },
+   "output": ""
+  },
+  {
+   "name": "display:int",
+   "input": {
+    "op": "display",
+    "field": {
+     "type": "integer",
+     "label": "数量",
+     "minimum": 1,
+     "maximum": 10
+    },
+    "value": 12
+   },
+   "output": "12"
+  },
+  {
+   "name": "key:network",
+   "input": {
+    "op": "keyAfter",
+    "outcome": "network"
+   },
+   "output": "keep"
+  },
+  {
+   "name": "key:server",
+   "input": {
+    "op": "keyAfter",
+    "outcome": "server"
+   },
+   "output": "fresh"
+  }
+ ]
+}

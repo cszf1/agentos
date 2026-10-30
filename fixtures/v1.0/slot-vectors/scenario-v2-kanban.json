@@ -1,0 +1,1819 @@
+{
+ "name": "v2-kanban",
+ "bundle": {
+  "formatVersion": 2,
+  "manifest": {
+   "appId": "9efaf674-4561-4c6b-9860-cf44e09fdd01",
+   "title": "待办看板",
+   "description": "按完成状态分列的看板，显示各优先级数量，支持批量完成。",
+   "runtime": "isolated-code-v1",
+   "capabilities": [
+    "records.read",
+    "records.write"
+   ]
+  },
+  "data": {
+   "fields": {
+    "title": {
+     "type": "string",
+     "label": "任务",
+     "minLength": 1,
+     "maxLength": 200
+    },
+    "done": {
+     "type": "boolean",
+     "label": "已完成",
+     "default": false
+    },
+    "priority": {
+     "type": "enum",
+     "label": "优先级",
+     "values": [
+      "low",
+      "normal",
+      "high"
+     ],
+     "default": "normal"
+    }
+   }
+  },
+  "code": {
+   "entry": "src/app.ts",
+   "files": {}
+  },
+  "runtimeLockId": "core-v1@1",
+  "queries": {
+   "main": {
+    "description": "看板数据和统计",
+    "inputSchema": {
+     "type": "object",
+     "properties": {}
+    },
+    "outputSchema": {
+     "type": "object",
+     "required": [
+      "items",
+      "total",
+      "open",
+      "byPriority"
+     ],
+     "properties": {
+      "items": {
+       "type": "array",
+       "maxItems": 1000,
+       "items": {
+        "type": "object",
+        "required": [
+         "id",
+         "title",
+         "done",
+         "priority",
+         "priorityLabel"
+        ],
+        "properties": {
+         "id": {
+          "type": "string",
+          "maxLength": 64
+         },
+         "title": {
+          "type": "string",
+          "maxLength": 200
+         },
+         "done": {
+          "type": "boolean"
+         },
+         "priority": {
+          "type": "string",
+          "enum": [
+           "low",
+           "normal",
+           "high"
+          ]
+         },
+         "priorityLabel": {
+          "type": "string",
+          "maxLength": 8
+         }
+        }
+       }
+      },
+      "total": {
+       "type": "integer",
+       "minimum": 0
+      },
+      "open": {
+       "type": "integer",
+       "minimum": 0
+      },
+      "byPriority": {
+       "type": "object",
+       "required": [
+        "high",
+        "normal",
+        "low"
+       ],
+       "properties": {
+        "high": {
+         "type": "integer"
+        },
+        "normal": {
+         "type": "integer"
+        },
+        "low": {
+         "type": "integer"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "commands": {
+   "add": {
+    "description": "新建任务",
+    "inputSchema": {
+     "type": "object",
+     "required": [
+      "title"
+     ],
+     "properties": {
+      "title": {
+       "type": "string",
+       "minLength": 1,
+       "maxLength": 200
+      },
+      "priority": {
+       "type": "string",
+       "enum": [
+        "low",
+        "normal",
+        "high"
+       ]
+      }
+     }
+    },
+    "outputSchema": {
+     "type": "object",
+     "required": [
+      "created"
+     ],
+     "properties": {
+      "created": {
+       "type": "integer"
+      }
+     }
+    },
+    "operations": [
+     "create"
+    ],
+    "writableFields": [
+     "title",
+     "priority"
+    ]
+   },
+   "completeMany": {
+    "description": "批量完成所选任务",
+    "inputSchema": {
+     "type": "object",
+     "required": [
+      "recordIds"
+     ],
+     "properties": {
+      "recordIds": {
+       "type": "array",
+       "minItems": 1,
+       "maxItems": 100,
+       "items": {
+        "type": "string",
+        "maxLength": 64
+       }
+      }
+     }
+    },
+    "outputSchema": {
+     "type": "object",
+     "required": [
+      "completed"
+     ],
+     "properties": {
+      "completed": {
+       "type": "integer"
+      }
+     }
+    },
+    "operations": [
+     "update"
+    ],
+    "writableFields": [
+     "done"
+    ]
+   }
+  },
+  "exports": [],
+  "imports": [],
+  "view": {
+   "kind": "slot-tree-v1",
+   "dataSources": {
+    "board": {
+     "queryId": "main",
+     "input": {}
+    }
+   },
+   "slots": {
+    "toolbar": {
+     "type": "Stack",
+     "props": {
+      "direction": "horizontal",
+      "gap": "sm"
+     },
+     "children": [
+      {
+       "type": "Button",
+       "props": {
+        "label": "批量完成",
+        "command": "completeMany",
+        "variant": "primary",
+        "input": {
+         "selection": {
+          "selectionId": "picked",
+          "as": "recordIds"
+         }
+        }
+       }
+      }
+     ]
+    },
+    "main": {
+     "type": "Stack",
+     "props": {
+      "gap": "md"
+     },
+     "children": [
+      {
+       "type": "Grid",
+       "props": {
+        "columns": 4,
+        "gap": "sm"
+       },
+       "children": [
+        {
+         "type": "Metric",
+         "props": {
+          "label": "未完成",
+          "value": {
+           "$bind": {
+            "from": "query",
+            "source": "board",
+            "pointer": "/open"
+           }
+          }
+         }
+        },
+        {
+         "type": "Metric",
+         "props": {
+          "label": "高优先级",
+          "value": {
+           "$bind": {
+            "from": "query",
+            "source": "board",
+            "pointer": "/byPriority/high"
+           }
+          }
+         }
+        },
+        {
+         "type": "Metric",
+         "props": {
+          "label": "普通",
+          "value": {
+           "$bind": {
+            "from": "query",
+            "source": "board",
+            "pointer": "/byPriority/normal"
+           }
+          }
+         }
+        },
+        {
+         "type": "Metric",
+         "props": {
+          "label": "低优先级",
+          "value": {
+           "$bind": {
+            "from": "query",
+            "source": "board",
+            "pointer": "/byPriority/low"
+           }
+          }
+         }
+        }
+       ]
+      },
+      {
+       "type": "Kanban",
+       "props": {
+        "items": {
+         "$bind": {
+          "from": "query",
+          "source": "board",
+          "pointer": "/items"
+         }
+        },
+        "groupPointer": "/done",
+        "groups": [
+         {
+          "value": false,
+          "label": "未完成"
+         },
+         {
+          "value": true,
+          "label": "已完成"
+         }
+        ],
+        "cardTitlePointer": "/title",
+        "cardFields": [
+         {
+          "pointer": "/priorityLabel",
+          "label": "优先级"
+         }
+        ],
+        "rowId": "/id",
+        "selectionId": "picked"
+       }
+      },
+      {
+       "type": "Form",
+       "props": {
+        "formId": "newTask",
+        "title": "新建任务"
+       },
+       "children": [
+        {
+         "type": "TextInput",
+         "props": {
+          "name": "title",
+          "label": "任务",
+          "required": true,
+          "maxLength": 200
+         }
+        },
+        {
+         "type": "Select",
+         "props": {
+          "name": "priority",
+          "label": "优先级",
+          "options": [
+           {
+            "value": "high",
+            "label": "高"
+           },
+           {
+            "value": "normal",
+            "label": "普通"
+           },
+           {
+            "value": "low",
+            "label": "低"
+           }
+          ]
+         }
+        },
+        {
+         "type": "Button",
+         "props": {
+          "label": "添加",
+          "command": "add",
+          "input": {
+           "form": "newTask"
+          }
+         }
+        }
+       ]
+      }
+     ]
+    }
+   }
+  }
+ },
+ "app": {
+  "appId": "9efaf674-4561-4c6b-9860-cf44e09fdd01",
+  "appEpoch": 3,
+  "revisionId": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+ },
+ "validation": {
+  "valid": true
+ },
+ "steps": [
+  {
+   "op": "init",
+   "expect": {
+    "result": null,
+    "error": null,
+    "snapshot": [
+     {
+      "path": "/view/slots/toolbar",
+      "type": "Stack",
+      "visible": true,
+      "direction": "horizontal",
+      "gap": "sm",
+      "children": [
+       {
+        "path": "/view/slots/toolbar/children/0",
+        "type": "Button",
+        "visible": true,
+        "label": "批量完成",
+        "command": "completeMany",
+        "variant": "primary",
+        "disabled": false,
+        "confirm": null
+       }
+      ]
+     },
+     {
+      "path": "/view/slots/main",
+      "type": "Stack",
+      "visible": true,
+      "direction": "vertical",
+      "gap": "md",
+      "children": [
+       {
+        "path": "/view/slots/main/children/0",
+        "type": "Grid",
+        "visible": true,
+        "columns": 4,
+        "gap": "sm",
+        "children": [
+         {
+          "path": "/view/slots/main/children/0/children/0",
+          "type": "Metric",
+          "visible": true,
+          "label": "未完成",
+          "value": "",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/1",
+          "type": "Metric",
+          "visible": true,
+          "label": "高优先级",
+          "value": "",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/2",
+          "type": "Metric",
+          "visible": true,
+          "label": "普通",
+          "value": "",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/3",
+          "type": "Metric",
+          "visible": true,
+          "label": "低优先级",
+          "value": "",
+          "unit": null
+         }
+        ]
+       },
+       {
+        "path": "/view/slots/main/children/1",
+        "type": "Kanban",
+        "visible": true,
+        "selectionId": "picked",
+        "columns": [
+         {
+          "label": "未完成",
+          "count": 0,
+          "cards": []
+         },
+         {
+          "label": "已完成",
+          "count": 0,
+          "cards": []
+         }
+        ]
+       },
+       {
+        "path": "/view/slots/main/children/2",
+        "type": "Form",
+        "visible": true,
+        "formId": "newTask",
+        "title": "新建任务",
+        "children": [
+         {
+          "path": "/view/slots/main/children/2/children/0",
+          "type": "TextInput",
+          "visible": true,
+          "formId": "newTask",
+          "name": "title",
+          "label": "任务",
+          "value": "",
+          "mode": "text",
+          "maxLength": 200,
+          "placeholder": ""
+         },
+         {
+          "path": "/view/slots/main/children/2/children/1",
+          "type": "Select",
+          "visible": true,
+          "formId": "newTask",
+          "name": "priority",
+          "label": "优先级",
+          "value": "",
+          "allowDefault": true,
+          "options": [
+           {
+            "value": "high",
+            "label": "高"
+           },
+           {
+            "value": "normal",
+            "label": "普通"
+           },
+           {
+            "value": "low",
+            "label": "低"
+           }
+          ]
+         },
+         {
+          "path": "/view/slots/main/children/2/children/2",
+          "type": "Button",
+          "visible": true,
+          "label": "添加",
+          "command": "add",
+          "variant": "secondary",
+          "disabled": false,
+          "confirm": null
+         }
+        ]
+       }
+      ]
+     }
+    ],
+    "forms": {},
+    "selections": {},
+    "notice": null,
+    "busy": false,
+    "staleInput": false
+   }
+  },
+  {
+   "op": "load",
+   "source": "board",
+   "output": {
+    "open": 1,
+    "byPriority": {
+     "high": 1
+    },
+    "items": [
+     {
+      "id": "a",
+      "title": "甲",
+      "done": false,
+      "priorityLabel": "高"
+     },
+     {
+      "id": "b",
+      "title": "乙",
+      "done": "false"
+     }
+    ]
+   },
+   "revisionId": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "appEpoch": 3,
+   "expect": {
+    "result": true,
+    "error": null,
+    "snapshot": [
+     {
+      "path": "/view/slots/toolbar",
+      "type": "Stack",
+      "visible": true,
+      "direction": "horizontal",
+      "gap": "sm",
+      "children": [
+       {
+        "path": "/view/slots/toolbar/children/0",
+        "type": "Button",
+        "visible": true,
+        "label": "批量完成",
+        "command": "completeMany",
+        "variant": "primary",
+        "disabled": false,
+        "confirm": null
+       }
+      ]
+     },
+     {
+      "path": "/view/slots/main",
+      "type": "Stack",
+      "visible": true,
+      "direction": "vertical",
+      "gap": "md",
+      "children": [
+       {
+        "path": "/view/slots/main/children/0",
+        "type": "Grid",
+        "visible": true,
+        "columns": 4,
+        "gap": "sm",
+        "children": [
+         {
+          "path": "/view/slots/main/children/0/children/0",
+          "type": "Metric",
+          "visible": true,
+          "label": "未完成",
+          "value": "1",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/1",
+          "type": "Metric",
+          "visible": true,
+          "label": "高优先级",
+          "value": "1",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/2",
+          "type": "Metric",
+          "visible": true,
+          "label": "普通",
+          "value": "",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/3",
+          "type": "Metric",
+          "visible": true,
+          "label": "低优先级",
+          "value": "",
+          "unit": null
+         }
+        ]
+       },
+       {
+        "path": "/view/slots/main/children/1",
+        "type": "Kanban",
+        "visible": true,
+        "selectionId": "picked",
+        "columns": [
+         {
+          "label": "未完成",
+          "count": 1,
+          "cards": [
+           {
+            "id": "a",
+            "selected": false,
+            "title": "甲",
+            "fields": [
+             "优先级：高"
+            ]
+           }
+          ]
+         },
+         {
+          "label": "已完成",
+          "count": 0,
+          "cards": []
+         }
+        ]
+       },
+       {
+        "path": "/view/slots/main/children/2",
+        "type": "Form",
+        "visible": true,
+        "formId": "newTask",
+        "title": "新建任务",
+        "children": [
+         {
+          "path": "/view/slots/main/children/2/children/0",
+          "type": "TextInput",
+          "visible": true,
+          "formId": "newTask",
+          "name": "title",
+          "label": "任务",
+          "value": "",
+          "mode": "text",
+          "maxLength": 200,
+          "placeholder": ""
+         },
+         {
+          "path": "/view/slots/main/children/2/children/1",
+          "type": "Select",
+          "visible": true,
+          "formId": "newTask",
+          "name": "priority",
+          "label": "优先级",
+          "value": "",
+          "allowDefault": true,
+          "options": [
+           {
+            "value": "high",
+            "label": "高"
+           },
+           {
+            "value": "normal",
+            "label": "普通"
+           },
+           {
+            "value": "low",
+            "label": "低"
+           }
+          ]
+         },
+         {
+          "path": "/view/slots/main/children/2/children/2",
+          "type": "Button",
+          "visible": true,
+          "label": "添加",
+          "command": "add",
+          "variant": "secondary",
+          "disabled": false,
+          "confirm": null
+         }
+        ]
+       }
+      ]
+     }
+    ],
+    "forms": {},
+    "selections": {},
+    "notice": null,
+    "busy": false,
+    "staleInput": false
+   }
+  },
+  {
+   "op": "type",
+   "formId": "newTask",
+   "name": "title",
+   "raw": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+   "expect": {
+    "result": null,
+    "error": null,
+    "snapshot": [
+     {
+      "path": "/view/slots/toolbar",
+      "type": "Stack",
+      "visible": true,
+      "direction": "horizontal",
+      "gap": "sm",
+      "children": [
+       {
+        "path": "/view/slots/toolbar/children/0",
+        "type": "Button",
+        "visible": true,
+        "label": "批量完成",
+        "command": "completeMany",
+        "variant": "primary",
+        "disabled": false,
+        "confirm": null
+       }
+      ]
+     },
+     {
+      "path": "/view/slots/main",
+      "type": "Stack",
+      "visible": true,
+      "direction": "vertical",
+      "gap": "md",
+      "children": [
+       {
+        "path": "/view/slots/main/children/0",
+        "type": "Grid",
+        "visible": true,
+        "columns": 4,
+        "gap": "sm",
+        "children": [
+         {
+          "path": "/view/slots/main/children/0/children/0",
+          "type": "Metric",
+          "visible": true,
+          "label": "未完成",
+          "value": "1",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/1",
+          "type": "Metric",
+          "visible": true,
+          "label": "高优先级",
+          "value": "1",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/2",
+          "type": "Metric",
+          "visible": true,
+          "label": "普通",
+          "value": "",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/3",
+          "type": "Metric",
+          "visible": true,
+          "label": "低优先级",
+          "value": "",
+          "unit": null
+         }
+        ]
+       },
+       {
+        "path": "/view/slots/main/children/1",
+        "type": "Kanban",
+        "visible": true,
+        "selectionId": "picked",
+        "columns": [
+         {
+          "label": "未完成",
+          "count": 1,
+          "cards": [
+           {
+            "id": "a",
+            "selected": false,
+            "title": "甲",
+            "fields": [
+             "优先级：高"
+            ]
+           }
+          ]
+         },
+         {
+          "label": "已完成",
+          "count": 0,
+          "cards": []
+         }
+        ]
+       },
+       {
+        "path": "/view/slots/main/children/2",
+        "type": "Form",
+        "visible": true,
+        "formId": "newTask",
+        "title": "新建任务",
+        "children": [
+         {
+          "path": "/view/slots/main/children/2/children/0",
+          "type": "TextInput",
+          "visible": true,
+          "formId": "newTask",
+          "name": "title",
+          "label": "任务",
+          "value": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+          "mode": "text",
+          "maxLength": 200,
+          "placeholder": ""
+         },
+         {
+          "path": "/view/slots/main/children/2/children/1",
+          "type": "Select",
+          "visible": true,
+          "formId": "newTask",
+          "name": "priority",
+          "label": "优先级",
+          "value": "",
+          "allowDefault": true,
+          "options": [
+           {
+            "value": "high",
+            "label": "高"
+           },
+           {
+            "value": "normal",
+            "label": "普通"
+           },
+           {
+            "value": "low",
+            "label": "低"
+           }
+          ]
+         },
+         {
+          "path": "/view/slots/main/children/2/children/2",
+          "type": "Button",
+          "visible": true,
+          "label": "添加",
+          "command": "add",
+          "variant": "secondary",
+          "disabled": false,
+          "confirm": null
+         }
+        ]
+       }
+      ]
+     }
+    ],
+    "forms": {
+     "newTask": {
+      "title": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀"
+     }
+    },
+    "selections": {},
+    "notice": null,
+    "busy": false,
+    "staleInput": false
+   }
+  },
+  {
+   "op": "click",
+   "path": "/view/slots/main/children/2/children/2",
+   "expect": {
+    "result": {
+     "kind": "request",
+     "notice": {
+      "kind": "info",
+      "text": "添加：已提交，执行中…"
+     },
+     "request": {
+      "methodId": "workspace.forward",
+      "routeId": "apps.commands.post",
+      "params": {
+       "appId": "9efaf674-4561-4c6b-9860-cf44e09fdd01",
+       "commandId": "add"
+      },
+      "body": {
+       "expectedAppEpoch": 3,
+       "input": {
+        "title": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀"
+       }
+      },
+      "write": true,
+      "idempotencyKey": "k1"
+     }
+    },
+    "error": null,
+    "snapshot": [
+     {
+      "path": "/view/slots/toolbar",
+      "type": "Stack",
+      "visible": true,
+      "direction": "horizontal",
+      "gap": "sm",
+      "children": [
+       {
+        "path": "/view/slots/toolbar/children/0",
+        "type": "Button",
+        "visible": true,
+        "label": "批量完成",
+        "command": "completeMany",
+        "variant": "primary",
+        "disabled": true,
+        "confirm": null
+       }
+      ]
+     },
+     {
+      "path": "/view/slots/main",
+      "type": "Stack",
+      "visible": true,
+      "direction": "vertical",
+      "gap": "md",
+      "children": [
+       {
+        "path": "/view/slots/main/children/0",
+        "type": "Grid",
+        "visible": true,
+        "columns": 4,
+        "gap": "sm",
+        "children": [
+         {
+          "path": "/view/slots/main/children/0/children/0",
+          "type": "Metric",
+          "visible": true,
+          "label": "未完成",
+          "value": "1",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/1",
+          "type": "Metric",
+          "visible": true,
+          "label": "高优先级",
+          "value": "1",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/2",
+          "type": "Metric",
+          "visible": true,
+          "label": "普通",
+          "value": "",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/3",
+          "type": "Metric",
+          "visible": true,
+          "label": "低优先级",
+          "value": "",
+          "unit": null
+         }
+        ]
+       },
+       {
+        "path": "/view/slots/main/children/1",
+        "type": "Kanban",
+        "visible": true,
+        "selectionId": "picked",
+        "columns": [
+         {
+          "label": "未完成",
+          "count": 1,
+          "cards": [
+           {
+            "id": "a",
+            "selected": false,
+            "title": "甲",
+            "fields": [
+             "优先级：高"
+            ]
+           }
+          ]
+         },
+         {
+          "label": "已完成",
+          "count": 0,
+          "cards": []
+         }
+        ]
+       },
+       {
+        "path": "/view/slots/main/children/2",
+        "type": "Form",
+        "visible": true,
+        "formId": "newTask",
+        "title": "新建任务",
+        "children": [
+         {
+          "path": "/view/slots/main/children/2/children/0",
+          "type": "TextInput",
+          "visible": true,
+          "formId": "newTask",
+          "name": "title",
+          "label": "任务",
+          "value": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+          "mode": "text",
+          "maxLength": 200,
+          "placeholder": ""
+         },
+         {
+          "path": "/view/slots/main/children/2/children/1",
+          "type": "Select",
+          "visible": true,
+          "formId": "newTask",
+          "name": "priority",
+          "label": "优先级",
+          "value": "",
+          "allowDefault": true,
+          "options": [
+           {
+            "value": "high",
+            "label": "高"
+           },
+           {
+            "value": "normal",
+            "label": "普通"
+           },
+           {
+            "value": "low",
+            "label": "低"
+           }
+          ]
+         },
+         {
+          "path": "/view/slots/main/children/2/children/2",
+          "type": "Button",
+          "visible": true,
+          "label": "添加",
+          "command": "add",
+          "variant": "secondary",
+          "disabled": true,
+          "confirm": null
+         }
+        ]
+       }
+      ]
+     }
+    ],
+    "forms": {
+     "newTask": {
+      "title": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀"
+     }
+    },
+    "selections": {},
+    "notice": {
+     "kind": "info",
+     "text": "添加：已提交，执行中…"
+    },
+    "busy": true,
+    "staleInput": false
+   }
+  },
+  {
+   "op": "type",
+   "formId": "newTask",
+   "name": "title",
+   "raw": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+   "expect": {
+    "result": null,
+    "error": null,
+    "snapshot": [
+     {
+      "path": "/view/slots/toolbar",
+      "type": "Stack",
+      "visible": true,
+      "direction": "horizontal",
+      "gap": "sm",
+      "children": [
+       {
+        "path": "/view/slots/toolbar/children/0",
+        "type": "Button",
+        "visible": true,
+        "label": "批量完成",
+        "command": "completeMany",
+        "variant": "primary",
+        "disabled": true,
+        "confirm": null
+       }
+      ]
+     },
+     {
+      "path": "/view/slots/main",
+      "type": "Stack",
+      "visible": true,
+      "direction": "vertical",
+      "gap": "md",
+      "children": [
+       {
+        "path": "/view/slots/main/children/0",
+        "type": "Grid",
+        "visible": true,
+        "columns": 4,
+        "gap": "sm",
+        "children": [
+         {
+          "path": "/view/slots/main/children/0/children/0",
+          "type": "Metric",
+          "visible": true,
+          "label": "未完成",
+          "value": "1",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/1",
+          "type": "Metric",
+          "visible": true,
+          "label": "高优先级",
+          "value": "1",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/2",
+          "type": "Metric",
+          "visible": true,
+          "label": "普通",
+          "value": "",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/3",
+          "type": "Metric",
+          "visible": true,
+          "label": "低优先级",
+          "value": "",
+          "unit": null
+         }
+        ]
+       },
+       {
+        "path": "/view/slots/main/children/1",
+        "type": "Kanban",
+        "visible": true,
+        "selectionId": "picked",
+        "columns": [
+         {
+          "label": "未完成",
+          "count": 1,
+          "cards": [
+           {
+            "id": "a",
+            "selected": false,
+            "title": "甲",
+            "fields": [
+             "优先级：高"
+            ]
+           }
+          ]
+         },
+         {
+          "label": "已完成",
+          "count": 0,
+          "cards": []
+         }
+        ]
+       },
+       {
+        "path": "/view/slots/main/children/2",
+        "type": "Form",
+        "visible": true,
+        "formId": "newTask",
+        "title": "新建任务",
+        "children": [
+         {
+          "path": "/view/slots/main/children/2/children/0",
+          "type": "TextInput",
+          "visible": true,
+          "formId": "newTask",
+          "name": "title",
+          "label": "任务",
+          "value": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+          "mode": "text",
+          "maxLength": 200,
+          "placeholder": ""
+         },
+         {
+          "path": "/view/slots/main/children/2/children/1",
+          "type": "Select",
+          "visible": true,
+          "formId": "newTask",
+          "name": "priority",
+          "label": "优先级",
+          "value": "",
+          "allowDefault": true,
+          "options": [
+           {
+            "value": "high",
+            "label": "高"
+           },
+           {
+            "value": "normal",
+            "label": "普通"
+           },
+           {
+            "value": "low",
+            "label": "低"
+           }
+          ]
+         },
+         {
+          "path": "/view/slots/main/children/2/children/2",
+          "type": "Button",
+          "visible": true,
+          "label": "添加",
+          "command": "add",
+          "variant": "secondary",
+          "disabled": true,
+          "confirm": null
+         }
+        ]
+       }
+      ]
+     }
+    ],
+    "forms": {
+     "newTask": {
+      "title": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀"
+     }
+    },
+    "selections": {},
+    "notice": {
+     "kind": "info",
+     "text": "添加：已提交，执行中…"
+    },
+    "busy": true,
+    "staleInput": false
+   }
+  },
+  {
+   "op": "click",
+   "path": "/view/slots/main/children/2/children/2",
+   "expect": {
+    "result": {
+     "kind": "none"
+    },
+    "error": null,
+    "snapshot": [
+     {
+      "path": "/view/slots/toolbar",
+      "type": "Stack",
+      "visible": true,
+      "direction": "horizontal",
+      "gap": "sm",
+      "children": [
+       {
+        "path": "/view/slots/toolbar/children/0",
+        "type": "Button",
+        "visible": true,
+        "label": "批量完成",
+        "command": "completeMany",
+        "variant": "primary",
+        "disabled": true,
+        "confirm": null
+       }
+      ]
+     },
+     {
+      "path": "/view/slots/main",
+      "type": "Stack",
+      "visible": true,
+      "direction": "vertical",
+      "gap": "md",
+      "children": [
+       {
+        "path": "/view/slots/main/children/0",
+        "type": "Grid",
+        "visible": true,
+        "columns": 4,
+        "gap": "sm",
+        "children": [
+         {
+          "path": "/view/slots/main/children/0/children/0",
+          "type": "Metric",
+          "visible": true,
+          "label": "未完成",
+          "value": "1",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/1",
+          "type": "Metric",
+          "visible": true,
+          "label": "高优先级",
+          "value": "1",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/2",
+          "type": "Metric",
+          "visible": true,
+          "label": "普通",
+          "value": "",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/3",
+          "type": "Metric",
+          "visible": true,
+          "label": "低优先级",
+          "value": "",
+          "unit": null
+         }
+        ]
+       },
+       {
+        "path": "/view/slots/main/children/1",
+        "type": "Kanban",
+        "visible": true,
+        "selectionId": "picked",
+        "columns": [
+         {
+          "label": "未完成",
+          "count": 1,
+          "cards": [
+           {
+            "id": "a",
+            "selected": false,
+            "title": "甲",
+            "fields": [
+             "优先级：高"
+            ]
+           }
+          ]
+         },
+         {
+          "label": "已完成",
+          "count": 0,
+          "cards": []
+         }
+        ]
+       },
+       {
+        "path": "/view/slots/main/children/2",
+        "type": "Form",
+        "visible": true,
+        "formId": "newTask",
+        "title": "新建任务",
+        "children": [
+         {
+          "path": "/view/slots/main/children/2/children/0",
+          "type": "TextInput",
+          "visible": true,
+          "formId": "newTask",
+          "name": "title",
+          "label": "任务",
+          "value": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+          "mode": "text",
+          "maxLength": 200,
+          "placeholder": ""
+         },
+         {
+          "path": "/view/slots/main/children/2/children/1",
+          "type": "Select",
+          "visible": true,
+          "formId": "newTask",
+          "name": "priority",
+          "label": "优先级",
+          "value": "",
+          "allowDefault": true,
+          "options": [
+           {
+            "value": "high",
+            "label": "高"
+           },
+           {
+            "value": "normal",
+            "label": "普通"
+           },
+           {
+            "value": "low",
+            "label": "低"
+           }
+          ]
+         },
+         {
+          "path": "/view/slots/main/children/2/children/2",
+          "type": "Button",
+          "visible": true,
+          "label": "添加",
+          "command": "add",
+          "variant": "secondary",
+          "disabled": true,
+          "confirm": null
+         }
+        ]
+       }
+      ]
+     }
+    ],
+    "forms": {
+     "newTask": {
+      "title": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀"
+     }
+    },
+    "selections": {},
+    "notice": {
+     "kind": "info",
+     "text": "添加：已提交，执行中…"
+    },
+    "busy": true,
+    "staleInput": false
+   }
+  },
+  {
+   "op": "type",
+   "formId": "newTask",
+   "name": "title",
+   "raw": "",
+   "expect": {
+    "result": null,
+    "error": null,
+    "snapshot": [
+     {
+      "path": "/view/slots/toolbar",
+      "type": "Stack",
+      "visible": true,
+      "direction": "horizontal",
+      "gap": "sm",
+      "children": [
+       {
+        "path": "/view/slots/toolbar/children/0",
+        "type": "Button",
+        "visible": true,
+        "label": "批量完成",
+        "command": "completeMany",
+        "variant": "primary",
+        "disabled": true,
+        "confirm": null
+       }
+      ]
+     },
+     {
+      "path": "/view/slots/main",
+      "type": "Stack",
+      "visible": true,
+      "direction": "vertical",
+      "gap": "md",
+      "children": [
+       {
+        "path": "/view/slots/main/children/0",
+        "type": "Grid",
+        "visible": true,
+        "columns": 4,
+        "gap": "sm",
+        "children": [
+         {
+          "path": "/view/slots/main/children/0/children/0",
+          "type": "Metric",
+          "visible": true,
+          "label": "未完成",
+          "value": "1",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/1",
+          "type": "Metric",
+          "visible": true,
+          "label": "高优先级",
+          "value": "1",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/2",
+          "type": "Metric",
+          "visible": true,
+          "label": "普通",
+          "value": "",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/3",
+          "type": "Metric",
+          "visible": true,
+          "label": "低优先级",
+          "value": "",
+          "unit": null
+         }
+        ]
+       },
+       {
+        "path": "/view/slots/main/children/1",
+        "type": "Kanban",
+        "visible": true,
+        "selectionId": "picked",
+        "columns": [
+         {
+          "label": "未完成",
+          "count": 1,
+          "cards": [
+           {
+            "id": "a",
+            "selected": false,
+            "title": "甲",
+            "fields": [
+             "优先级：高"
+            ]
+           }
+          ]
+         },
+         {
+          "label": "已完成",
+          "count": 0,
+          "cards": []
+         }
+        ]
+       },
+       {
+        "path": "/view/slots/main/children/2",
+        "type": "Form",
+        "visible": true,
+        "formId": "newTask",
+        "title": "新建任务",
+        "children": [
+         {
+          "path": "/view/slots/main/children/2/children/0",
+          "type": "TextInput",
+          "visible": true,
+          "formId": "newTask",
+          "name": "title",
+          "label": "任务",
+          "value": "",
+          "mode": "text",
+          "maxLength": 200,
+          "placeholder": ""
+         },
+         {
+          "path": "/view/slots/main/children/2/children/1",
+          "type": "Select",
+          "visible": true,
+          "formId": "newTask",
+          "name": "priority",
+          "label": "优先级",
+          "value": "",
+          "allowDefault": true,
+          "options": [
+           {
+            "value": "high",
+            "label": "高"
+           },
+           {
+            "value": "normal",
+            "label": "普通"
+           },
+           {
+            "value": "low",
+            "label": "低"
+           }
+          ]
+         },
+         {
+          "path": "/view/slots/main/children/2/children/2",
+          "type": "Button",
+          "visible": true,
+          "label": "添加",
+          "command": "add",
+          "variant": "secondary",
+          "disabled": true,
+          "confirm": null
+         }
+        ]
+       }
+      ]
+     }
+    ],
+    "forms": {
+     "newTask": {
+      "title": ""
+     }
+    },
+    "selections": {},
+    "notice": {
+     "kind": "info",
+     "text": "添加：已提交，执行中…"
+    },
+    "busy": true,
+    "staleInput": false
+   }
+  },
+  {
+   "op": "click",
+   "path": "/view/slots/main/children/2/children/2",
+   "expect": {
+    "result": {
+     "kind": "none"
+    },
+    "error": null,
+    "snapshot": [
+     {
+      "path": "/view/slots/toolbar",
+      "type": "Stack",
+      "visible": true,
+      "direction": "horizontal",
+      "gap": "sm",
+      "children": [
+       {
+        "path": "/view/slots/toolbar/children/0",
+        "type": "Button",
+        "visible": true,
+        "label": "批量完成",
+        "command": "completeMany",
+        "variant": "primary",
+        "disabled": true,
+        "confirm": null
+       }
+      ]
+     },
+     {
+      "path": "/view/slots/main",
+      "type": "Stack",
+      "visible": true,
+      "direction": "vertical",
+      "gap": "md",
+      "children": [
+       {
+        "path": "/view/slots/main/children/0",
+        "type": "Grid",
+        "visible": true,
+        "columns": 4,
+        "gap": "sm",
+        "children": [
+         {
+          "path": "/view/slots/main/children/0/children/0",
+          "type": "Metric",
+          "visible": true,
+          "label": "未完成",
+          "value": "1",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/1",
+          "type": "Metric",
+          "visible": true,
+          "label": "高优先级",
+          "value": "1",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/2",
+          "type": "Metric",
+          "visible": true,
+          "label": "普通",
+          "value": "",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/3",
+          "type": "Metric",
+          "visible": true,
+          "label": "低优先级",
+          "value": "",
+          "unit": null
+         }
+        ]
+       },
+       {
+        "path": "/view/slots/main/children/1",
+        "type": "Kanban",
+        "visible": true,
+        "selectionId": "picked",
+        "columns": [
+         {
+          "label": "未完成",
+          "count": 1,
+          "cards": [
+           {
+            "id": "a",
+            "selected": false,
+            "title": "甲",
+            "fields": [
+             "优先级：高"
+            ]
+           }
+          ]
+         },
+         {
+          "label": "已完成",
+          "count": 0,
+          "cards": []
+         }
+        ]
+       },
+       {
+        "path": "/view/slots/main/children/2",
+        "type": "Form",
+        "visible": true,
+        "formId": "newTask",
+        "title": "新建任务",
+        "children": [
+         {
+          "path": "/view/slots/main/children/2/children/0",
+          "type": "TextInput",
+          "visible": true,
+          "formId": "newTask",
+          "name": "title",
+          "label": "任务",
+          "value": "",
+          "mode": "text",
+          "maxLength": 200,
+          "placeholder": ""
+         },
+         {
+          "path": "/view/slots/main/children/2/children/1",
+          "type": "Select",
+          "visible": true,
+          "formId": "newTask",
+          "name": "priority",
+          "label": "优先级",
+          "value": "",
+          "allowDefault": true,
+          "options": [
+           {
+            "value": "high",
+            "label": "高"
+           },
+           {
+            "value": "normal",
+            "label": "普通"
+           },
+           {
+            "value": "low",
+            "label": "低"
+           }
+          ]
+         },
+         {
+          "path": "/view/slots/main/children/2/children/2",
+          "type": "Button",
+          "visible": true,
+          "label": "添加",
+          "command": "add",
+          "variant": "secondary",
+          "disabled": true,
+          "confirm": null
+         }
+        ]
+       }
+      ]
+     }
+    ],
+    "forms": {
+     "newTask": {
+      "title": ""
+     }
+    },
+    "selections": {},
+    "notice": {
+     "kind": "info",
+     "text": "添加：已提交，执行中…"
+    },
+    "busy": true,
+    "staleInput": false
+   }
+  }
+ ]
+}

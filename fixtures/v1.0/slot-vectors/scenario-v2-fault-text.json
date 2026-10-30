@@ -1,0 +1,544 @@
+{
+ "name": "v2-fault-text",
+ "bundle": {
+  "formatVersion": 2,
+  "manifest": {
+   "appId": "f00dfa11-0000-4000-8000-00000000fa11",
+   "title": "故障实验室",
+   "description": "平台维护的故障样例（测试用）。",
+   "runtime": "isolated-code-v1",
+   "capabilities": [
+    "records.read",
+    "records.write"
+   ]
+  },
+  "data": {
+   "fields": {
+    "note": {
+     "type": "string",
+     "label": "备注",
+     "maxLength": 80,
+     "default": ""
+    }
+   }
+  },
+  "code": {
+   "entry": "src/app.ts",
+   "files": {}
+  },
+  "runtimeLockId": "core-v1@1",
+  "queries": {
+   "main": {
+    "inputSchema": {
+     "type": "object",
+     "properties": {}
+    },
+    "outputSchema": {
+     "type": "object",
+     "required": [
+      "ok"
+     ],
+     "properties": {
+      "ok": {
+       "type": "boolean"
+      },
+      "detail": {
+       "type": "string",
+       "maxLength": 4000
+      }
+     }
+    }
+   },
+   "spin": {
+    "inputSchema": {
+     "type": "object",
+     "properties": {}
+    },
+    "outputSchema": {
+     "type": "object",
+     "required": [
+      "ok"
+     ],
+     "properties": {
+      "ok": {
+       "type": "boolean"
+      },
+      "detail": {
+       "type": "string",
+       "maxLength": 4000
+      }
+     }
+    }
+   },
+   "hog": {
+    "inputSchema": {
+     "type": "object",
+     "properties": {}
+    },
+    "outputSchema": {
+     "type": "object",
+     "required": [
+      "ok"
+     ],
+     "properties": {
+      "ok": {
+       "type": "boolean"
+      },
+      "detail": {
+       "type": "string",
+       "maxLength": 4000
+      }
+     }
+    }
+   },
+   "probe": {
+    "inputSchema": {
+     "type": "object",
+     "properties": {}
+    },
+    "outputSchema": {
+     "type": "object",
+     "required": [
+      "ok"
+     ],
+     "properties": {
+      "ok": {
+       "type": "boolean"
+      },
+      "detail": {
+       "type": "string",
+       "maxLength": 4000
+      }
+     }
+    }
+   },
+   "forkbomb": {
+    "inputSchema": {
+     "type": "object",
+     "properties": {}
+    },
+    "outputSchema": {
+     "type": "object",
+     "required": [
+      "ok"
+     ],
+     "properties": {
+      "ok": {
+       "type": "boolean"
+      },
+      "detail": {
+       "type": "string",
+       "maxLength": 4000
+      }
+     }
+    }
+   },
+   "tmpfill": {
+    "inputSchema": {
+     "type": "object",
+     "properties": {}
+    },
+    "outputSchema": {
+     "type": "object",
+     "required": [
+      "ok"
+     ],
+     "properties": {
+      "ok": {
+       "type": "boolean"
+      },
+      "detail": {
+       "type": "string",
+       "maxLength": 4000
+      }
+     }
+    }
+   },
+   "logflood": {
+    "inputSchema": {
+     "type": "object",
+     "properties": {}
+    },
+    "outputSchema": {
+     "type": "object",
+     "required": [
+      "ok"
+     ],
+     "properties": {
+      "ok": {
+       "type": "boolean"
+      },
+      "detail": {
+       "type": "string",
+       "maxLength": 4000
+      }
+     }
+    }
+   },
+   "forge": {
+    "inputSchema": {
+     "type": "object",
+     "properties": {}
+    },
+    "outputSchema": {
+     "type": "object",
+     "required": [
+      "ok"
+     ],
+     "properties": {
+      "ok": {
+       "type": "boolean"
+      },
+      "detail": {
+       "type": "string",
+       "maxLength": 4000
+      }
+     }
+    }
+   },
+   "slow": {
+    "inputSchema": {
+     "type": "object",
+     "required": [
+      "ms"
+     ],
+     "properties": {
+      "ms": {
+       "type": "integer",
+       "minimum": 0,
+       "maximum": 60000
+      }
+     }
+    },
+    "outputSchema": {
+     "type": "object",
+     "required": [
+      "ok"
+     ],
+     "properties": {
+      "ok": {
+       "type": "boolean"
+      },
+      "detail": {
+       "type": "string",
+       "maxLength": 4000
+      }
+     }
+    }
+   },
+   "big": {
+    "inputSchema": {
+     "type": "object",
+     "properties": {}
+    },
+    "outputSchema": {
+     "type": "object",
+     "required": [
+      "ok",
+      "blob"
+     ],
+     "properties": {
+      "ok": {
+       "type": "boolean"
+      },
+      "blob": {
+       "type": "string",
+       "maxLength": 200000
+      }
+     }
+    }
+   },
+   "nested": {
+    "inputSchema": {
+     "type": "object",
+     "properties": {}
+    },
+    "outputSchema": {
+     "type": "object",
+     "required": [
+      "ok"
+     ],
+     "properties": {
+      "ok": {
+       "type": "boolean"
+      },
+      "detail": {
+       "type": "string",
+       "maxLength": 4000
+      }
+     }
+    }
+   }
+  },
+  "commands": {
+   "touch": {
+    "inputSchema": {
+     "type": "object",
+     "properties": {}
+    },
+    "outputSchema": {
+     "type": "object",
+     "required": [
+      "n"
+     ],
+     "properties": {
+      "n": {
+       "type": "integer"
+      }
+     }
+    },
+    "operations": [
+     "update"
+    ],
+    "writableFields": [
+     "note"
+    ]
+   },
+   "slowTouch": {
+    "inputSchema": {
+     "type": "object",
+     "required": [
+      "ms"
+     ],
+     "properties": {
+      "ms": {
+       "type": "integer",
+       "minimum": 0,
+       "maximum": 60000
+      }
+     }
+    },
+    "outputSchema": {
+     "type": "object",
+     "required": [
+      "n"
+     ],
+     "properties": {
+      "n": {
+       "type": "integer"
+      }
+     }
+    },
+    "operations": [
+     "update"
+    ],
+    "writableFields": [
+     "note"
+    ]
+   },
+   "sneaky": {
+    "inputSchema": {
+     "type": "object",
+     "properties": {}
+    },
+    "outputSchema": {
+     "type": "object",
+     "required": [
+      "n"
+     ],
+     "properties": {
+      "n": {
+       "type": "integer"
+      }
+     }
+    },
+    "operations": [
+     "update"
+    ],
+    "writableFields": [
+     "note"
+    ]
+   },
+   "add": {
+    "inputSchema": {
+     "type": "object",
+     "required": [
+      "n"
+     ],
+     "properties": {
+      "n": {
+       "type": "integer",
+       "minimum": 1,
+       "maximum": 100
+      }
+     }
+    },
+    "outputSchema": {
+     "type": "object",
+     "required": [
+      "n"
+     ],
+     "properties": {
+      "n": {
+       "type": "integer"
+      }
+     }
+    },
+    "operations": [
+     "create"
+    ],
+    "writableFields": [
+     "note"
+    ]
+   }
+  },
+  "exports": [
+   {
+    "exportName": "slow",
+    "queryId": "slow",
+    "contractVersion": 1,
+    "description": "sleeps the given milliseconds (test)"
+   },
+   {
+    "exportName": "big",
+    "queryId": "big",
+    "contractVersion": 1,
+    "description": "returns ~70 KB (test)"
+   },
+   {
+    "exportName": "nested",
+    "queryId": "nested",
+    "contractVersion": 1,
+    "description": "tries a nested service call (test)"
+   }
+  ],
+  "imports": [],
+  "view": {
+   "kind": "slot-tree-v1",
+   "dataSources": {
+    "m": {
+     "queryId": "main",
+     "input": {}
+    }
+   },
+   "slots": {
+    "main": {
+     "type": "Text",
+     "props": {
+      "text": {
+       "$bind": {
+        "from": "query",
+        "source": "m",
+        "pointer": "/detail"
+       }
+      }
+     }
+    }
+   }
+  }
+ },
+ "app": {
+  "appId": "f00dfa11-0000-4000-8000-00000000fa11",
+  "appEpoch": 3,
+  "revisionId": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+ },
+ "validation": {
+  "valid": true
+ },
+ "steps": [
+  {
+   "op": "init",
+   "expect": {
+    "result": null,
+    "error": null,
+    "snapshot": [
+     {
+      "path": "/view/slots/main",
+      "type": "Text",
+      "visible": true,
+      "text": "",
+      "variant": "body"
+     }
+    ],
+    "forms": {},
+    "selections": {},
+    "notice": null,
+    "busy": false,
+    "staleInput": false
+   }
+  },
+  {
+   "op": "load",
+   "source": "m",
+   "output": {
+    "detail": "<script>alert(1)</script> import QtQuick; Qt.quit() file:///etc/passwd https://x.example"
+   },
+   "revisionId": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "appEpoch": 3,
+   "expect": {
+    "result": true,
+    "error": null,
+    "snapshot": [
+     {
+      "path": "/view/slots/main",
+      "type": "Text",
+      "visible": true,
+      "text": "<script>alert(1)</script> import QtQuick; Qt.quit() file:///etc/passwd https://x.example",
+      "variant": "body"
+     }
+    ],
+    "forms": {},
+    "selections": {},
+    "notice": null,
+    "busy": false,
+    "staleInput": false
+   }
+  },
+  {
+   "op": "load",
+   "source": "m",
+   "output": {
+    "detail": {
+     "html": "<b>x</b>"
+    }
+   },
+   "revisionId": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "appEpoch": 3,
+   "expect": {
+    "result": true,
+    "error": null,
+    "snapshot": [
+     {
+      "path": "/view/slots/main",
+      "type": "Text",
+      "visible": true,
+      "text": "{\"html\":\"<b>x</b>\"}",
+      "variant": "body"
+     }
+    ],
+    "forms": {},
+    "selections": {},
+    "notice": null,
+    "busy": false,
+    "staleInput": false
+   }
+  },
+  {
+   "op": "load",
+   "source": "m",
+   "output": {
+    "detail": null
+   },
+   "revisionId": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "appEpoch": 3,
+   "expect": {
+    "result": true,
+    "error": null,
+    "snapshot": [
+     {
+      "path": "/view/slots/main",
+      "type": "Text",
+      "visible": true,
+      "text": "",
+      "variant": "body"
+     }
+    ],
+    "forms": {},
+    "selections": {},
+    "notice": null,
+    "busy": false,
+    "staleInput": false
+   }
+  }
+ ]
+}

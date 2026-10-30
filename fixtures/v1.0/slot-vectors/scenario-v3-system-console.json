@@ -1,0 +1,3837 @@
+{
+ "name": "v3-system-console",
+ "bundle": {
+  "formatVersion": 3,
+  "manifest": {
+   "appId": "6b0c3d2e-1f4a-4b5c-8d9e-0a1b2c3d4e5f",
+   "title": "系统控制台",
+   "description": "查看演示服务、受管目录、测试网络和串口的真实状态，并生成需要确认的系统计划。",
+   "runtime": "isolated-code-v2",
+   "capabilities": [
+    "records.read"
+   ]
+  },
+  "data": {
+   "fields": {
+    "note": {
+     "type": "string",
+     "label": "备注",
+     "maxLength": 80,
+     "default": "系统控制台"
+    }
+   }
+  },
+  "code": {
+   "entry": "src/app.ts",
+   "files": {}
+  },
+  "runtimeLockId": "core-v2@1",
+  "queries": {
+   "main": {
+    "description": "系统概览",
+    "inputSchema": {
+     "type": "object",
+     "properties": {}
+    },
+    "outputSchema": {
+     "type": "object",
+     "required": [
+      "svc",
+      "cpu",
+      "memory",
+      "exports",
+      "lab",
+      "serial",
+      "observedAt",
+      "quality"
+     ],
+     "properties": {
+      "svc": {
+       "type": "string",
+       "maxLength": 200
+      },
+      "cpu": {
+       "type": "string",
+       "maxLength": 60
+      },
+      "memory": {
+       "type": "string",
+       "maxLength": 60
+      },
+      "exports": {
+       "type": "string",
+       "maxLength": 200
+      },
+      "lab": {
+       "type": "string",
+       "maxLength": 200
+      },
+      "serial": {
+       "type": "string",
+       "maxLength": 200
+      },
+      "observedAt": {
+       "type": "string",
+       "maxLength": 40
+      },
+      "quality": {
+       "type": "string",
+       "maxLength": 20
+      }
+     }
+    },
+    "providerReads": [
+     {
+      "bindingAlias": "svc",
+      "capabilityId": "service.describe"
+     },
+     {
+      "bindingAlias": "exports",
+      "capabilityId": "file.list"
+     },
+     {
+      "bindingAlias": "lab",
+      "capabilityId": "network.policy_status"
+     },
+     {
+      "bindingAlias": "dev",
+      "capabilityId": "serial.status"
+     }
+    ]
+   },
+   "telemetry": {
+    "description": "演示服务的资源用量与遥测",
+    "inputSchema": {
+     "type": "object",
+     "properties": {}
+    },
+    "outputSchema": {
+     "type": "object",
+     "required": [
+      "usage",
+      "telemetry"
+     ],
+     "properties": {
+      "usage": {
+       "type": "string",
+       "maxLength": 200
+      },
+      "telemetry": {
+       "type": "string",
+       "maxLength": 200
+      }
+     }
+    },
+    "providerReads": [
+     {
+      "bindingAlias": "svc",
+      "capabilityId": "service.metrics"
+     },
+     {
+      "bindingAlias": "svc",
+      "capabilityId": "telemetry.summary"
+     }
+    ]
+   }
+  },
+  "commands": {},
+  "exports": [],
+  "imports": [],
+  "system": {
+   "bindings": [
+    {
+     "alias": "svc",
+     "resourceKind": "service",
+     "description": "要观察和控制的服务",
+     "capabilities": [
+      {
+       "capabilityId": "service.describe",
+       "contractVersion": 1
+      },
+      {
+       "capabilityId": "service.metrics",
+       "contractVersion": 1
+      },
+      {
+       "capabilityId": "service.ensure_state",
+       "contractVersion": 1
+      },
+      {
+       "capabilityId": "service.set_limit",
+       "contractVersion": 1
+      },
+      {
+       "capabilityId": "telemetry.summary",
+       "contractVersion": 1
+      }
+     ]
+    },
+    {
+     "alias": "exports",
+     "resourceKind": "managed-root",
+     "description": "写入报告的受管目录",
+     "capabilities": [
+      {
+       "capabilityId": "file.list",
+       "contractVersion": 1
+      },
+      {
+       "capabilityId": "file.read_text",
+       "contractVersion": 1
+      },
+      {
+       "capabilityId": "file.write_text_atomic",
+       "contractVersion": 1
+      }
+     ]
+    },
+    {
+     "alias": "lab",
+     "resourceKind": "lab-network",
+     "description": "测试网络",
+     "capabilities": [
+      {
+       "capabilityId": "network.policy_status",
+       "contractVersion": 1
+      },
+      {
+       "capabilityId": "network.apply_profile",
+       "contractVersion": 1
+      }
+     ]
+    },
+    {
+     "alias": "dev",
+     "resourceKind": "serial",
+     "description": "串口设备",
+     "capabilities": [
+      {
+       "capabilityId": "serial.status",
+       "contractVersion": 1
+      },
+      {
+       "capabilityId": "serial.exchange",
+       "contractVersion": 1
+      }
+     ]
+    }
+   ],
+   "actions": {
+    "setCpu": {
+     "description": "设置服务 CPU 上限",
+     "bindingAlias": "svc",
+     "capabilityId": "service.set_limit",
+     "contractVersion": 1,
+     "inputSchema": {
+      "type": "object",
+      "required": [
+       "percent"
+      ],
+      "properties": {
+       "percent": {
+        "type": "integer",
+        "minimum": 10,
+        "maximum": 200
+       }
+      }
+     },
+     "previewSchema": {
+      "type": "object",
+      "required": [
+       "text"
+      ],
+      "properties": {
+       "text": {
+        "type": "string",
+        "maxLength": 200
+       }
+      }
+     },
+     "observations": [
+      {
+       "bindingAlias": "svc",
+       "capabilityId": "service.describe"
+      }
+     ]
+    },
+    "startService": {
+     "description": "启动服务",
+     "bindingAlias": "svc",
+     "capabilityId": "service.ensure_state",
+     "contractVersion": 1,
+     "inputSchema": {
+      "type": "object",
+      "properties": {}
+     },
+     "previewSchema": {
+      "type": "object",
+      "required": [
+       "text"
+      ],
+      "properties": {
+       "text": {
+        "type": "string",
+        "maxLength": 200
+       }
+      }
+     },
+     "observations": [
+      {
+       "bindingAlias": "svc",
+       "capabilityId": "service.describe"
+      }
+     ]
+    },
+    "stopService": {
+     "description": "停止服务",
+     "bindingAlias": "svc",
+     "capabilityId": "service.ensure_state",
+     "contractVersion": 1,
+     "inputSchema": {
+      "type": "object",
+      "properties": {}
+     },
+     "previewSchema": {
+      "type": "object",
+      "required": [
+       "text"
+      ],
+      "properties": {
+       "text": {
+        "type": "string",
+        "maxLength": 200
+       }
+      }
+     },
+     "observations": [
+      {
+       "bindingAlias": "svc",
+       "capabilityId": "service.describe"
+      }
+     ]
+    },
+    "writeReport": {
+     "description": "把状态报告写入受管目录",
+     "bindingAlias": "exports",
+     "capabilityId": "file.write_text_atomic",
+     "contractVersion": 1,
+     "inputSchema": {
+      "type": "object",
+      "required": [
+       "name"
+      ],
+      "properties": {
+       "name": {
+        "type": "string",
+        "maxLength": 40
+       }
+      }
+     },
+     "previewSchema": {
+      "type": "object",
+      "required": [
+       "text"
+      ],
+      "properties": {
+       "text": {
+        "type": "string",
+        "maxLength": 200
+       }
+      }
+     },
+     "observations": [
+      {
+       "bindingAlias": "exports",
+       "capabilityId": "file.read_text"
+      }
+     ]
+    },
+    "applyProfile": {
+     "description": "切换测试网络策略",
+     "bindingAlias": "lab",
+     "capabilityId": "network.apply_profile",
+     "contractVersion": 1,
+     "inputSchema": {
+      "type": "object",
+      "required": [
+       "profileId"
+      ],
+      "properties": {
+       "profileId": {
+        "type": "string",
+        "enum": [
+         "local-allow",
+         "local-deny"
+        ]
+       }
+      }
+     },
+     "previewSchema": {
+      "type": "object",
+      "required": [
+       "text"
+      ],
+      "properties": {
+       "text": {
+        "type": "string",
+        "maxLength": 200
+       }
+      }
+     },
+     "observations": [
+      {
+       "bindingAlias": "lab",
+       "capabilityId": "network.policy_status"
+      }
+     ]
+    },
+    "sample": {
+     "description": "向串口设备请求 3 个采样",
+     "bindingAlias": "dev",
+     "capabilityId": "serial.exchange",
+     "contractVersion": 1,
+     "inputSchema": {
+      "type": "object",
+      "properties": {}
+     },
+     "previewSchema": {
+      "type": "object",
+      "required": [
+       "text"
+      ],
+      "properties": {
+       "text": {
+        "type": "string",
+        "maxLength": 200
+       }
+      }
+     },
+     "observations": [
+      {
+       "bindingAlias": "dev",
+       "capabilityId": "serial.status"
+      }
+     ]
+    }
+   }
+  },
+  "view": {
+   "kind": "slot-tree-v2",
+   "dataSources": {
+    "main": {
+     "queryId": "main",
+     "input": {}
+    },
+    "tele": {
+     "queryId": "telemetry",
+     "input": {}
+    }
+   },
+   "refresh": {
+    "intervalSeconds": 10
+   },
+   "slots": {
+    "main": {
+     "type": "Stack",
+     "children": [
+      {
+       "type": "Grid",
+       "props": {
+        "columns": 2
+       },
+       "children": [
+        {
+         "type": "Metric",
+         "props": {
+          "label": "服务",
+          "value": {
+           "$bind": {
+            "from": "query",
+            "source": "main",
+            "pointer": "/svc"
+           }
+          }
+         }
+        },
+        {
+         "type": "Metric",
+         "props": {
+          "label": "CPU 上限",
+          "value": {
+           "$bind": {
+            "from": "query",
+            "source": "main",
+            "pointer": "/cpu"
+           }
+          }
+         }
+        },
+        {
+         "type": "Metric",
+         "props": {
+          "label": "内存上限",
+          "value": {
+           "$bind": {
+            "from": "query",
+            "source": "main",
+            "pointer": "/memory"
+           }
+          }
+         }
+        },
+        {
+         "type": "Metric",
+         "props": {
+          "label": "受管目录",
+          "value": {
+           "$bind": {
+            "from": "query",
+            "source": "main",
+            "pointer": "/exports"
+           }
+          }
+         }
+        },
+        {
+         "type": "Metric",
+         "props": {
+          "label": "测试网络",
+          "value": {
+           "$bind": {
+            "from": "query",
+            "source": "main",
+            "pointer": "/lab"
+           }
+          }
+         }
+        },
+        {
+         "type": "Metric",
+         "props": {
+          "label": "串口",
+          "value": {
+           "$bind": {
+            "from": "query",
+            "source": "main",
+            "pointer": "/serial"
+           }
+          }
+         }
+        }
+       ]
+      },
+      {
+       "type": "Text",
+       "props": {
+        "variant": "muted",
+        "text": {
+         "$bind": {
+          "from": "query",
+          "source": "main",
+          "pointer": "/observedAt"
+         }
+        }
+       }
+      },
+      {
+       "type": "Text",
+       "props": {
+        "text": {
+         "$bind": {
+          "from": "query",
+          "source": "tele",
+          "pointer": "/usage"
+         }
+        }
+       }
+      },
+      {
+       "type": "Text",
+       "props": {
+        "variant": "muted",
+        "text": {
+         "$bind": {
+          "from": "query",
+          "source": "tele",
+          "pointer": "/telemetry"
+         }
+        }
+       }
+      },
+      {
+       "type": "Form",
+       "props": {
+        "formId": "cpu",
+        "title": "CPU 上限"
+       },
+       "children": [
+        {
+         "type": "TextInput",
+         "props": {
+          "name": "percent",
+          "label": "上限（单个逻辑 CPU 的百分比）",
+          "mode": "integer",
+          "required": true,
+          "minimum": 10,
+          "maximum": 200
+         }
+        },
+        {
+         "type": "SystemActionButton",
+         "props": {
+          "label": "生成 CPU 上限计划",
+          "action": "setCpu",
+          "variant": "primary",
+          "input": {
+           "form": "cpu"
+          }
+         }
+        }
+       ]
+      },
+      {
+       "type": "Stack",
+       "props": {
+        "direction": "horizontal"
+       },
+       "children": [
+        {
+         "type": "SystemActionButton",
+         "props": {
+          "label": "启动服务",
+          "action": "startService"
+         }
+        },
+        {
+         "type": "SystemActionButton",
+         "props": {
+          "label": "停止服务",
+          "action": "stopService",
+          "variant": "danger"
+         }
+        },
+        {
+         "type": "SystemActionButton",
+         "props": {
+          "label": "写入状态报告",
+          "action": "writeReport",
+          "input": {
+           "constant": {
+            "name": "status-report"
+           }
+          }
+         }
+        },
+        {
+         "type": "SystemActionButton",
+         "props": {
+          "label": "阻断测试流量",
+          "action": "applyProfile",
+          "input": {
+           "constant": {
+            "profileId": "local-deny"
+           }
+          }
+         }
+        },
+        {
+         "type": "SystemActionButton",
+         "props": {
+          "label": "放行测试流量",
+          "action": "applyProfile",
+          "input": {
+           "constant": {
+            "profileId": "local-allow"
+           }
+          }
+         }
+        },
+        {
+         "type": "SystemActionButton",
+         "props": {
+          "label": "串口采样",
+          "action": "sample"
+         }
+        }
+       ]
+      }
+     ]
+    }
+   }
+  }
+ },
+ "app": {
+  "appId": "6b0c3d2e-1f4a-4b5c-8d9e-0a1b2c3d4e5f",
+  "appEpoch": 3,
+  "revisionId": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+ },
+ "validation": {
+  "valid": true
+ },
+ "steps": [
+  {
+   "op": "init",
+   "expect": {
+    "result": null,
+    "error": null,
+    "snapshot": [
+     {
+      "path": "/view/slots/main",
+      "type": "Stack",
+      "visible": true,
+      "direction": "vertical",
+      "gap": "md",
+      "children": [
+       {
+        "path": "/view/slots/main/children/0",
+        "type": "Grid",
+        "visible": true,
+        "columns": 2,
+        "gap": "md",
+        "children": [
+         {
+          "path": "/view/slots/main/children/0/children/0",
+          "type": "Metric",
+          "visible": true,
+          "label": "服务",
+          "value": "",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/1",
+          "type": "Metric",
+          "visible": true,
+          "label": "CPU 上限",
+          "value": "",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/2",
+          "type": "Metric",
+          "visible": true,
+          "label": "内存上限",
+          "value": "",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/3",
+          "type": "Metric",
+          "visible": true,
+          "label": "受管目录",
+          "value": "",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/4",
+          "type": "Metric",
+          "visible": true,
+          "label": "测试网络",
+          "value": "",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/5",
+          "type": "Metric",
+          "visible": true,
+          "label": "串口",
+          "value": "",
+          "unit": null
+         }
+        ]
+       },
+       {
+        "path": "/view/slots/main/children/1",
+        "type": "Text",
+        "visible": true,
+        "text": "",
+        "variant": "muted"
+       },
+       {
+        "path": "/view/slots/main/children/2",
+        "type": "Text",
+        "visible": true,
+        "text": "",
+        "variant": "body"
+       },
+       {
+        "path": "/view/slots/main/children/3",
+        "type": "Text",
+        "visible": true,
+        "text": "",
+        "variant": "muted"
+       },
+       {
+        "path": "/view/slots/main/children/4",
+        "type": "Form",
+        "visible": true,
+        "formId": "cpu",
+        "title": "CPU 上限",
+        "children": [
+         {
+          "path": "/view/slots/main/children/4/children/0",
+          "type": "TextInput",
+          "visible": true,
+          "formId": "cpu",
+          "name": "percent",
+          "label": "上限（单个逻辑 CPU 的百分比）",
+          "value": "",
+          "mode": "integer",
+          "maxLength": 16,
+          "placeholder": ""
+         },
+         {
+          "path": "/view/slots/main/children/4/children/1",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "生成 CPU 上限计划",
+          "action": "setCpu",
+          "variant": "primary",
+          "disabled": false
+         }
+        ]
+       },
+       {
+        "path": "/view/slots/main/children/5",
+        "type": "Stack",
+        "visible": true,
+        "direction": "horizontal",
+        "gap": "md",
+        "children": [
+         {
+          "path": "/view/slots/main/children/5/children/0",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "启动服务",
+          "action": "startService",
+          "variant": "secondary",
+          "disabled": false
+         },
+         {
+          "path": "/view/slots/main/children/5/children/1",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "停止服务",
+          "action": "stopService",
+          "variant": "danger",
+          "disabled": false
+         },
+         {
+          "path": "/view/slots/main/children/5/children/2",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "写入状态报告",
+          "action": "writeReport",
+          "variant": "secondary",
+          "disabled": false
+         },
+         {
+          "path": "/view/slots/main/children/5/children/3",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "阻断测试流量",
+          "action": "applyProfile",
+          "variant": "secondary",
+          "disabled": false
+         },
+         {
+          "path": "/view/slots/main/children/5/children/4",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "放行测试流量",
+          "action": "applyProfile",
+          "variant": "secondary",
+          "disabled": false
+         },
+         {
+          "path": "/view/slots/main/children/5/children/5",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "串口采样",
+          "action": "sample",
+          "variant": "secondary",
+          "disabled": false
+         }
+        ]
+       }
+      ]
+     }
+    ],
+    "forms": {},
+    "selections": {},
+    "notice": null,
+    "busy": false,
+    "staleInput": false
+   }
+  },
+  {
+   "op": "load",
+   "source": "main",
+   "output": {
+    "svc": "demo.service",
+    "cpu": "50%",
+    "memory": "256 MiB",
+    "exports": 3,
+    "lab": "deny",
+    "serial": null,
+    "observedAt": "2026-10-30T10:00:00Z"
+   },
+   "revisionId": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "appEpoch": 3,
+   "expect": {
+    "result": true,
+    "error": null,
+    "snapshot": [
+     {
+      "path": "/view/slots/main",
+      "type": "Stack",
+      "visible": true,
+      "direction": "vertical",
+      "gap": "md",
+      "children": [
+       {
+        "path": "/view/slots/main/children/0",
+        "type": "Grid",
+        "visible": true,
+        "columns": 2,
+        "gap": "md",
+        "children": [
+         {
+          "path": "/view/slots/main/children/0/children/0",
+          "type": "Metric",
+          "visible": true,
+          "label": "服务",
+          "value": "demo.service",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/1",
+          "type": "Metric",
+          "visible": true,
+          "label": "CPU 上限",
+          "value": "50%",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/2",
+          "type": "Metric",
+          "visible": true,
+          "label": "内存上限",
+          "value": "256 MiB",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/3",
+          "type": "Metric",
+          "visible": true,
+          "label": "受管目录",
+          "value": "3",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/4",
+          "type": "Metric",
+          "visible": true,
+          "label": "测试网络",
+          "value": "deny",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/5",
+          "type": "Metric",
+          "visible": true,
+          "label": "串口",
+          "value": "",
+          "unit": null
+         }
+        ]
+       },
+       {
+        "path": "/view/slots/main/children/1",
+        "type": "Text",
+        "visible": true,
+        "text": "2026-10-30T10:00:00Z",
+        "variant": "muted"
+       },
+       {
+        "path": "/view/slots/main/children/2",
+        "type": "Text",
+        "visible": true,
+        "text": "",
+        "variant": "body"
+       },
+       {
+        "path": "/view/slots/main/children/3",
+        "type": "Text",
+        "visible": true,
+        "text": "",
+        "variant": "muted"
+       },
+       {
+        "path": "/view/slots/main/children/4",
+        "type": "Form",
+        "visible": true,
+        "formId": "cpu",
+        "title": "CPU 上限",
+        "children": [
+         {
+          "path": "/view/slots/main/children/4/children/0",
+          "type": "TextInput",
+          "visible": true,
+          "formId": "cpu",
+          "name": "percent",
+          "label": "上限（单个逻辑 CPU 的百分比）",
+          "value": "",
+          "mode": "integer",
+          "maxLength": 16,
+          "placeholder": ""
+         },
+         {
+          "path": "/view/slots/main/children/4/children/1",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "生成 CPU 上限计划",
+          "action": "setCpu",
+          "variant": "primary",
+          "disabled": false
+         }
+        ]
+       },
+       {
+        "path": "/view/slots/main/children/5",
+        "type": "Stack",
+        "visible": true,
+        "direction": "horizontal",
+        "gap": "md",
+        "children": [
+         {
+          "path": "/view/slots/main/children/5/children/0",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "启动服务",
+          "action": "startService",
+          "variant": "secondary",
+          "disabled": false
+         },
+         {
+          "path": "/view/slots/main/children/5/children/1",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "停止服务",
+          "action": "stopService",
+          "variant": "danger",
+          "disabled": false
+         },
+         {
+          "path": "/view/slots/main/children/5/children/2",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "写入状态报告",
+          "action": "writeReport",
+          "variant": "secondary",
+          "disabled": false
+         },
+         {
+          "path": "/view/slots/main/children/5/children/3",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "阻断测试流量",
+          "action": "applyProfile",
+          "variant": "secondary",
+          "disabled": false
+         },
+         {
+          "path": "/view/slots/main/children/5/children/4",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "放行测试流量",
+          "action": "applyProfile",
+          "variant": "secondary",
+          "disabled": false
+         },
+         {
+          "path": "/view/slots/main/children/5/children/5",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "串口采样",
+          "action": "sample",
+          "variant": "secondary",
+          "disabled": false
+         }
+        ]
+       }
+      ]
+     }
+    ],
+    "forms": {},
+    "selections": {},
+    "notice": null,
+    "busy": false,
+    "staleInput": false
+   }
+  },
+  {
+   "op": "load",
+   "source": "tele",
+   "output": {
+    "usage": "cpu 2%",
+    "telemetry": "ok"
+   },
+   "revisionId": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "appEpoch": 3,
+   "expect": {
+    "result": true,
+    "error": null,
+    "snapshot": [
+     {
+      "path": "/view/slots/main",
+      "type": "Stack",
+      "visible": true,
+      "direction": "vertical",
+      "gap": "md",
+      "children": [
+       {
+        "path": "/view/slots/main/children/0",
+        "type": "Grid",
+        "visible": true,
+        "columns": 2,
+        "gap": "md",
+        "children": [
+         {
+          "path": "/view/slots/main/children/0/children/0",
+          "type": "Metric",
+          "visible": true,
+          "label": "服务",
+          "value": "demo.service",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/1",
+          "type": "Metric",
+          "visible": true,
+          "label": "CPU 上限",
+          "value": "50%",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/2",
+          "type": "Metric",
+          "visible": true,
+          "label": "内存上限",
+          "value": "256 MiB",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/3",
+          "type": "Metric",
+          "visible": true,
+          "label": "受管目录",
+          "value": "3",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/4",
+          "type": "Metric",
+          "visible": true,
+          "label": "测试网络",
+          "value": "deny",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/5",
+          "type": "Metric",
+          "visible": true,
+          "label": "串口",
+          "value": "",
+          "unit": null
+         }
+        ]
+       },
+       {
+        "path": "/view/slots/main/children/1",
+        "type": "Text",
+        "visible": true,
+        "text": "2026-10-30T10:00:00Z",
+        "variant": "muted"
+       },
+       {
+        "path": "/view/slots/main/children/2",
+        "type": "Text",
+        "visible": true,
+        "text": "cpu 2%",
+        "variant": "body"
+       },
+       {
+        "path": "/view/slots/main/children/3",
+        "type": "Text",
+        "visible": true,
+        "text": "ok",
+        "variant": "muted"
+       },
+       {
+        "path": "/view/slots/main/children/4",
+        "type": "Form",
+        "visible": true,
+        "formId": "cpu",
+        "title": "CPU 上限",
+        "children": [
+         {
+          "path": "/view/slots/main/children/4/children/0",
+          "type": "TextInput",
+          "visible": true,
+          "formId": "cpu",
+          "name": "percent",
+          "label": "上限（单个逻辑 CPU 的百分比）",
+          "value": "",
+          "mode": "integer",
+          "maxLength": 16,
+          "placeholder": ""
+         },
+         {
+          "path": "/view/slots/main/children/4/children/1",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "生成 CPU 上限计划",
+          "action": "setCpu",
+          "variant": "primary",
+          "disabled": false
+         }
+        ]
+       },
+       {
+        "path": "/view/slots/main/children/5",
+        "type": "Stack",
+        "visible": true,
+        "direction": "horizontal",
+        "gap": "md",
+        "children": [
+         {
+          "path": "/view/slots/main/children/5/children/0",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "启动服务",
+          "action": "startService",
+          "variant": "secondary",
+          "disabled": false
+         },
+         {
+          "path": "/view/slots/main/children/5/children/1",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "停止服务",
+          "action": "stopService",
+          "variant": "danger",
+          "disabled": false
+         },
+         {
+          "path": "/view/slots/main/children/5/children/2",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "写入状态报告",
+          "action": "writeReport",
+          "variant": "secondary",
+          "disabled": false
+         },
+         {
+          "path": "/view/slots/main/children/5/children/3",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "阻断测试流量",
+          "action": "applyProfile",
+          "variant": "secondary",
+          "disabled": false
+         },
+         {
+          "path": "/view/slots/main/children/5/children/4",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "放行测试流量",
+          "action": "applyProfile",
+          "variant": "secondary",
+          "disabled": false
+         },
+         {
+          "path": "/view/slots/main/children/5/children/5",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "串口采样",
+          "action": "sample",
+          "variant": "secondary",
+          "disabled": false
+         }
+        ]
+       }
+      ]
+     }
+    ],
+    "forms": {},
+    "selections": {},
+    "notice": null,
+    "busy": false,
+    "staleInput": false
+   }
+  },
+  {
+   "op": "click",
+   "path": "/view/slots/main/children/4/children/1",
+   "expect": {
+    "result": {
+     "kind": "error",
+     "notice": {
+      "kind": "error",
+      "text": "上限（单个逻辑 CPU 的百分比）不能为空"
+     }
+    },
+    "error": null,
+    "snapshot": [
+     {
+      "path": "/view/slots/main",
+      "type": "Stack",
+      "visible": true,
+      "direction": "vertical",
+      "gap": "md",
+      "children": [
+       {
+        "path": "/view/slots/main/children/0",
+        "type": "Grid",
+        "visible": true,
+        "columns": 2,
+        "gap": "md",
+        "children": [
+         {
+          "path": "/view/slots/main/children/0/children/0",
+          "type": "Metric",
+          "visible": true,
+          "label": "服务",
+          "value": "demo.service",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/1",
+          "type": "Metric",
+          "visible": true,
+          "label": "CPU 上限",
+          "value": "50%",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/2",
+          "type": "Metric",
+          "visible": true,
+          "label": "内存上限",
+          "value": "256 MiB",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/3",
+          "type": "Metric",
+          "visible": true,
+          "label": "受管目录",
+          "value": "3",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/4",
+          "type": "Metric",
+          "visible": true,
+          "label": "测试网络",
+          "value": "deny",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/5",
+          "type": "Metric",
+          "visible": true,
+          "label": "串口",
+          "value": "",
+          "unit": null
+         }
+        ]
+       },
+       {
+        "path": "/view/slots/main/children/1",
+        "type": "Text",
+        "visible": true,
+        "text": "2026-10-30T10:00:00Z",
+        "variant": "muted"
+       },
+       {
+        "path": "/view/slots/main/children/2",
+        "type": "Text",
+        "visible": true,
+        "text": "cpu 2%",
+        "variant": "body"
+       },
+       {
+        "path": "/view/slots/main/children/3",
+        "type": "Text",
+        "visible": true,
+        "text": "ok",
+        "variant": "muted"
+       },
+       {
+        "path": "/view/slots/main/children/4",
+        "type": "Form",
+        "visible": true,
+        "formId": "cpu",
+        "title": "CPU 上限",
+        "children": [
+         {
+          "path": "/view/slots/main/children/4/children/0",
+          "type": "TextInput",
+          "visible": true,
+          "formId": "cpu",
+          "name": "percent",
+          "label": "上限（单个逻辑 CPU 的百分比）",
+          "value": "",
+          "mode": "integer",
+          "maxLength": 16,
+          "placeholder": ""
+         },
+         {
+          "path": "/view/slots/main/children/4/children/1",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "生成 CPU 上限计划",
+          "action": "setCpu",
+          "variant": "primary",
+          "disabled": false
+         }
+        ]
+       },
+       {
+        "path": "/view/slots/main/children/5",
+        "type": "Stack",
+        "visible": true,
+        "direction": "horizontal",
+        "gap": "md",
+        "children": [
+         {
+          "path": "/view/slots/main/children/5/children/0",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "启动服务",
+          "action": "startService",
+          "variant": "secondary",
+          "disabled": false
+         },
+         {
+          "path": "/view/slots/main/children/5/children/1",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "停止服务",
+          "action": "stopService",
+          "variant": "danger",
+          "disabled": false
+         },
+         {
+          "path": "/view/slots/main/children/5/children/2",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "写入状态报告",
+          "action": "writeReport",
+          "variant": "secondary",
+          "disabled": false
+         },
+         {
+          "path": "/view/slots/main/children/5/children/3",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "阻断测试流量",
+          "action": "applyProfile",
+          "variant": "secondary",
+          "disabled": false
+         },
+         {
+          "path": "/view/slots/main/children/5/children/4",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "放行测试流量",
+          "action": "applyProfile",
+          "variant": "secondary",
+          "disabled": false
+         },
+         {
+          "path": "/view/slots/main/children/5/children/5",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "串口采样",
+          "action": "sample",
+          "variant": "secondary",
+          "disabled": false
+         }
+        ]
+       }
+      ]
+     }
+    ],
+    "forms": {},
+    "selections": {},
+    "notice": {
+     "kind": "error",
+     "text": "上限（单个逻辑 CPU 的百分比）不能为空"
+    },
+    "busy": false,
+    "staleInput": false
+   }
+  },
+  {
+   "op": "type",
+   "formId": "cpu",
+   "name": "percent",
+   "raw": "300",
+   "expect": {
+    "result": null,
+    "error": null,
+    "snapshot": [
+     {
+      "path": "/view/slots/main",
+      "type": "Stack",
+      "visible": true,
+      "direction": "vertical",
+      "gap": "md",
+      "children": [
+       {
+        "path": "/view/slots/main/children/0",
+        "type": "Grid",
+        "visible": true,
+        "columns": 2,
+        "gap": "md",
+        "children": [
+         {
+          "path": "/view/slots/main/children/0/children/0",
+          "type": "Metric",
+          "visible": true,
+          "label": "服务",
+          "value": "demo.service",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/1",
+          "type": "Metric",
+          "visible": true,
+          "label": "CPU 上限",
+          "value": "50%",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/2",
+          "type": "Metric",
+          "visible": true,
+          "label": "内存上限",
+          "value": "256 MiB",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/3",
+          "type": "Metric",
+          "visible": true,
+          "label": "受管目录",
+          "value": "3",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/4",
+          "type": "Metric",
+          "visible": true,
+          "label": "测试网络",
+          "value": "deny",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/5",
+          "type": "Metric",
+          "visible": true,
+          "label": "串口",
+          "value": "",
+          "unit": null
+         }
+        ]
+       },
+       {
+        "path": "/view/slots/main/children/1",
+        "type": "Text",
+        "visible": true,
+        "text": "2026-10-30T10:00:00Z",
+        "variant": "muted"
+       },
+       {
+        "path": "/view/slots/main/children/2",
+        "type": "Text",
+        "visible": true,
+        "text": "cpu 2%",
+        "variant": "body"
+       },
+       {
+        "path": "/view/slots/main/children/3",
+        "type": "Text",
+        "visible": true,
+        "text": "ok",
+        "variant": "muted"
+       },
+       {
+        "path": "/view/slots/main/children/4",
+        "type": "Form",
+        "visible": true,
+        "formId": "cpu",
+        "title": "CPU 上限",
+        "children": [
+         {
+          "path": "/view/slots/main/children/4/children/0",
+          "type": "TextInput",
+          "visible": true,
+          "formId": "cpu",
+          "name": "percent",
+          "label": "上限（单个逻辑 CPU 的百分比）",
+          "value": "300",
+          "mode": "integer",
+          "maxLength": 16,
+          "placeholder": ""
+         },
+         {
+          "path": "/view/slots/main/children/4/children/1",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "生成 CPU 上限计划",
+          "action": "setCpu",
+          "variant": "primary",
+          "disabled": false
+         }
+        ]
+       },
+       {
+        "path": "/view/slots/main/children/5",
+        "type": "Stack",
+        "visible": true,
+        "direction": "horizontal",
+        "gap": "md",
+        "children": [
+         {
+          "path": "/view/slots/main/children/5/children/0",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "启动服务",
+          "action": "startService",
+          "variant": "secondary",
+          "disabled": false
+         },
+         {
+          "path": "/view/slots/main/children/5/children/1",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "停止服务",
+          "action": "stopService",
+          "variant": "danger",
+          "disabled": false
+         },
+         {
+          "path": "/view/slots/main/children/5/children/2",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "写入状态报告",
+          "action": "writeReport",
+          "variant": "secondary",
+          "disabled": false
+         },
+         {
+          "path": "/view/slots/main/children/5/children/3",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "阻断测试流量",
+          "action": "applyProfile",
+          "variant": "secondary",
+          "disabled": false
+         },
+         {
+          "path": "/view/slots/main/children/5/children/4",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "放行测试流量",
+          "action": "applyProfile",
+          "variant": "secondary",
+          "disabled": false
+         },
+         {
+          "path": "/view/slots/main/children/5/children/5",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "串口采样",
+          "action": "sample",
+          "variant": "secondary",
+          "disabled": false
+         }
+        ]
+       }
+      ]
+     }
+    ],
+    "forms": {
+     "cpu": {
+      "percent": 300
+     }
+    },
+    "selections": {},
+    "notice": {
+     "kind": "error",
+     "text": "上限（单个逻辑 CPU 的百分比）不能为空"
+    },
+    "busy": false,
+    "staleInput": false
+   }
+  },
+  {
+   "op": "click",
+   "path": "/view/slots/main/children/4/children/1",
+   "expect": {
+    "result": {
+     "kind": "error",
+     "notice": {
+      "kind": "error",
+      "text": "上限（单个逻辑 CPU 的百分比）不能大于 200"
+     }
+    },
+    "error": null,
+    "snapshot": [
+     {
+      "path": "/view/slots/main",
+      "type": "Stack",
+      "visible": true,
+      "direction": "vertical",
+      "gap": "md",
+      "children": [
+       {
+        "path": "/view/slots/main/children/0",
+        "type": "Grid",
+        "visible": true,
+        "columns": 2,
+        "gap": "md",
+        "children": [
+         {
+          "path": "/view/slots/main/children/0/children/0",
+          "type": "Metric",
+          "visible": true,
+          "label": "服务",
+          "value": "demo.service",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/1",
+          "type": "Metric",
+          "visible": true,
+          "label": "CPU 上限",
+          "value": "50%",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/2",
+          "type": "Metric",
+          "visible": true,
+          "label": "内存上限",
+          "value": "256 MiB",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/3",
+          "type": "Metric",
+          "visible": true,
+          "label": "受管目录",
+          "value": "3",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/4",
+          "type": "Metric",
+          "visible": true,
+          "label": "测试网络",
+          "value": "deny",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/5",
+          "type": "Metric",
+          "visible": true,
+          "label": "串口",
+          "value": "",
+          "unit": null
+         }
+        ]
+       },
+       {
+        "path": "/view/slots/main/children/1",
+        "type": "Text",
+        "visible": true,
+        "text": "2026-10-30T10:00:00Z",
+        "variant": "muted"
+       },
+       {
+        "path": "/view/slots/main/children/2",
+        "type": "Text",
+        "visible": true,
+        "text": "cpu 2%",
+        "variant": "body"
+       },
+       {
+        "path": "/view/slots/main/children/3",
+        "type": "Text",
+        "visible": true,
+        "text": "ok",
+        "variant": "muted"
+       },
+       {
+        "path": "/view/slots/main/children/4",
+        "type": "Form",
+        "visible": true,
+        "formId": "cpu",
+        "title": "CPU 上限",
+        "children": [
+         {
+          "path": "/view/slots/main/children/4/children/0",
+          "type": "TextInput",
+          "visible": true,
+          "formId": "cpu",
+          "name": "percent",
+          "label": "上限（单个逻辑 CPU 的百分比）",
+          "value": "300",
+          "mode": "integer",
+          "maxLength": 16,
+          "placeholder": ""
+         },
+         {
+          "path": "/view/slots/main/children/4/children/1",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "生成 CPU 上限计划",
+          "action": "setCpu",
+          "variant": "primary",
+          "disabled": false
+         }
+        ]
+       },
+       {
+        "path": "/view/slots/main/children/5",
+        "type": "Stack",
+        "visible": true,
+        "direction": "horizontal",
+        "gap": "md",
+        "children": [
+         {
+          "path": "/view/slots/main/children/5/children/0",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "启动服务",
+          "action": "startService",
+          "variant": "secondary",
+          "disabled": false
+         },
+         {
+          "path": "/view/slots/main/children/5/children/1",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "停止服务",
+          "action": "stopService",
+          "variant": "danger",
+          "disabled": false
+         },
+         {
+          "path": "/view/slots/main/children/5/children/2",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "写入状态报告",
+          "action": "writeReport",
+          "variant": "secondary",
+          "disabled": false
+         },
+         {
+          "path": "/view/slots/main/children/5/children/3",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "阻断测试流量",
+          "action": "applyProfile",
+          "variant": "secondary",
+          "disabled": false
+         },
+         {
+          "path": "/view/slots/main/children/5/children/4",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "放行测试流量",
+          "action": "applyProfile",
+          "variant": "secondary",
+          "disabled": false
+         },
+         {
+          "path": "/view/slots/main/children/5/children/5",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "串口采样",
+          "action": "sample",
+          "variant": "secondary",
+          "disabled": false
+         }
+        ]
+       }
+      ]
+     }
+    ],
+    "forms": {
+     "cpu": {
+      "percent": 300
+     }
+    },
+    "selections": {},
+    "notice": {
+     "kind": "error",
+     "text": "上限（单个逻辑 CPU 的百分比）不能大于 200"
+    },
+    "busy": false,
+    "staleInput": false
+   }
+  },
+  {
+   "op": "type",
+   "formId": "cpu",
+   "name": "percent",
+   "raw": "80",
+   "expect": {
+    "result": null,
+    "error": null,
+    "snapshot": [
+     {
+      "path": "/view/slots/main",
+      "type": "Stack",
+      "visible": true,
+      "direction": "vertical",
+      "gap": "md",
+      "children": [
+       {
+        "path": "/view/slots/main/children/0",
+        "type": "Grid",
+        "visible": true,
+        "columns": 2,
+        "gap": "md",
+        "children": [
+         {
+          "path": "/view/slots/main/children/0/children/0",
+          "type": "Metric",
+          "visible": true,
+          "label": "服务",
+          "value": "demo.service",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/1",
+          "type": "Metric",
+          "visible": true,
+          "label": "CPU 上限",
+          "value": "50%",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/2",
+          "type": "Metric",
+          "visible": true,
+          "label": "内存上限",
+          "value": "256 MiB",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/3",
+          "type": "Metric",
+          "visible": true,
+          "label": "受管目录",
+          "value": "3",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/4",
+          "type": "Metric",
+          "visible": true,
+          "label": "测试网络",
+          "value": "deny",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/5",
+          "type": "Metric",
+          "visible": true,
+          "label": "串口",
+          "value": "",
+          "unit": null
+         }
+        ]
+       },
+       {
+        "path": "/view/slots/main/children/1",
+        "type": "Text",
+        "visible": true,
+        "text": "2026-10-30T10:00:00Z",
+        "variant": "muted"
+       },
+       {
+        "path": "/view/slots/main/children/2",
+        "type": "Text",
+        "visible": true,
+        "text": "cpu 2%",
+        "variant": "body"
+       },
+       {
+        "path": "/view/slots/main/children/3",
+        "type": "Text",
+        "visible": true,
+        "text": "ok",
+        "variant": "muted"
+       },
+       {
+        "path": "/view/slots/main/children/4",
+        "type": "Form",
+        "visible": true,
+        "formId": "cpu",
+        "title": "CPU 上限",
+        "children": [
+         {
+          "path": "/view/slots/main/children/4/children/0",
+          "type": "TextInput",
+          "visible": true,
+          "formId": "cpu",
+          "name": "percent",
+          "label": "上限（单个逻辑 CPU 的百分比）",
+          "value": "80",
+          "mode": "integer",
+          "maxLength": 16,
+          "placeholder": ""
+         },
+         {
+          "path": "/view/slots/main/children/4/children/1",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "生成 CPU 上限计划",
+          "action": "setCpu",
+          "variant": "primary",
+          "disabled": false
+         }
+        ]
+       },
+       {
+        "path": "/view/slots/main/children/5",
+        "type": "Stack",
+        "visible": true,
+        "direction": "horizontal",
+        "gap": "md",
+        "children": [
+         {
+          "path": "/view/slots/main/children/5/children/0",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "启动服务",
+          "action": "startService",
+          "variant": "secondary",
+          "disabled": false
+         },
+         {
+          "path": "/view/slots/main/children/5/children/1",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "停止服务",
+          "action": "stopService",
+          "variant": "danger",
+          "disabled": false
+         },
+         {
+          "path": "/view/slots/main/children/5/children/2",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "写入状态报告",
+          "action": "writeReport",
+          "variant": "secondary",
+          "disabled": false
+         },
+         {
+          "path": "/view/slots/main/children/5/children/3",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "阻断测试流量",
+          "action": "applyProfile",
+          "variant": "secondary",
+          "disabled": false
+         },
+         {
+          "path": "/view/slots/main/children/5/children/4",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "放行测试流量",
+          "action": "applyProfile",
+          "variant": "secondary",
+          "disabled": false
+         },
+         {
+          "path": "/view/slots/main/children/5/children/5",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "串口采样",
+          "action": "sample",
+          "variant": "secondary",
+          "disabled": false
+         }
+        ]
+       }
+      ]
+     }
+    ],
+    "forms": {
+     "cpu": {
+      "percent": 80
+     }
+    },
+    "selections": {},
+    "notice": {
+     "kind": "error",
+     "text": "上限（单个逻辑 CPU 的百分比）不能大于 200"
+    },
+    "busy": false,
+    "staleInput": false
+   }
+  },
+  {
+   "op": "click",
+   "path": "/view/slots/main/children/4/children/1",
+   "expect": {
+    "result": {
+     "kind": "request",
+     "notice": {
+      "kind": "info",
+      "text": "生成 CPU 上限计划：正在生成计划（尚未执行）…"
+     },
+     "request": {
+      "methodId": "workspace.forward",
+      "routeId": "apps.systemactions.post",
+      "params": {
+       "appId": "6b0c3d2e-1f4a-4b5c-8d9e-0a1b2c3d4e5f",
+       "handlerId": "setCpu"
+      },
+      "body": {
+       "expectedAppEpoch": 3,
+       "input": {
+        "percent": 80
+       }
+      },
+      "write": true,
+      "idempotencyKey": "k1"
+     }
+    },
+    "error": null,
+    "snapshot": [
+     {
+      "path": "/view/slots/main",
+      "type": "Stack",
+      "visible": true,
+      "direction": "vertical",
+      "gap": "md",
+      "children": [
+       {
+        "path": "/view/slots/main/children/0",
+        "type": "Grid",
+        "visible": true,
+        "columns": 2,
+        "gap": "md",
+        "children": [
+         {
+          "path": "/view/slots/main/children/0/children/0",
+          "type": "Metric",
+          "visible": true,
+          "label": "服务",
+          "value": "demo.service",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/1",
+          "type": "Metric",
+          "visible": true,
+          "label": "CPU 上限",
+          "value": "50%",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/2",
+          "type": "Metric",
+          "visible": true,
+          "label": "内存上限",
+          "value": "256 MiB",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/3",
+          "type": "Metric",
+          "visible": true,
+          "label": "受管目录",
+          "value": "3",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/4",
+          "type": "Metric",
+          "visible": true,
+          "label": "测试网络",
+          "value": "deny",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/5",
+          "type": "Metric",
+          "visible": true,
+          "label": "串口",
+          "value": "",
+          "unit": null
+         }
+        ]
+       },
+       {
+        "path": "/view/slots/main/children/1",
+        "type": "Text",
+        "visible": true,
+        "text": "2026-10-30T10:00:00Z",
+        "variant": "muted"
+       },
+       {
+        "path": "/view/slots/main/children/2",
+        "type": "Text",
+        "visible": true,
+        "text": "cpu 2%",
+        "variant": "body"
+       },
+       {
+        "path": "/view/slots/main/children/3",
+        "type": "Text",
+        "visible": true,
+        "text": "ok",
+        "variant": "muted"
+       },
+       {
+        "path": "/view/slots/main/children/4",
+        "type": "Form",
+        "visible": true,
+        "formId": "cpu",
+        "title": "CPU 上限",
+        "children": [
+         {
+          "path": "/view/slots/main/children/4/children/0",
+          "type": "TextInput",
+          "visible": true,
+          "formId": "cpu",
+          "name": "percent",
+          "label": "上限（单个逻辑 CPU 的百分比）",
+          "value": "80",
+          "mode": "integer",
+          "maxLength": 16,
+          "placeholder": ""
+         },
+         {
+          "path": "/view/slots/main/children/4/children/1",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "生成 CPU 上限计划",
+          "action": "setCpu",
+          "variant": "primary",
+          "disabled": true
+         }
+        ]
+       },
+       {
+        "path": "/view/slots/main/children/5",
+        "type": "Stack",
+        "visible": true,
+        "direction": "horizontal",
+        "gap": "md",
+        "children": [
+         {
+          "path": "/view/slots/main/children/5/children/0",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "启动服务",
+          "action": "startService",
+          "variant": "secondary",
+          "disabled": true
+         },
+         {
+          "path": "/view/slots/main/children/5/children/1",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "停止服务",
+          "action": "stopService",
+          "variant": "danger",
+          "disabled": true
+         },
+         {
+          "path": "/view/slots/main/children/5/children/2",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "写入状态报告",
+          "action": "writeReport",
+          "variant": "secondary",
+          "disabled": true
+         },
+         {
+          "path": "/view/slots/main/children/5/children/3",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "阻断测试流量",
+          "action": "applyProfile",
+          "variant": "secondary",
+          "disabled": true
+         },
+         {
+          "path": "/view/slots/main/children/5/children/4",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "放行测试流量",
+          "action": "applyProfile",
+          "variant": "secondary",
+          "disabled": true
+         },
+         {
+          "path": "/view/slots/main/children/5/children/5",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "串口采样",
+          "action": "sample",
+          "variant": "secondary",
+          "disabled": true
+         }
+        ]
+       }
+      ]
+     }
+    ],
+    "forms": {
+     "cpu": {
+      "percent": 80
+     }
+    },
+    "selections": {},
+    "notice": {
+     "kind": "info",
+     "text": "生成 CPU 上限计划：正在生成计划（尚未执行）…"
+    },
+    "busy": true,
+    "staleInput": false
+   }
+  },
+  {
+   "op": "respond",
+   "outcome": {
+    "network": true
+   },
+   "expect": {
+    "result": {
+     "notice": {
+      "kind": "error",
+      "text": "连接中断，可以点“重试”（不会重复提交）"
+     },
+     "reload": false,
+     "openPlan": null
+    },
+    "error": null,
+    "snapshot": [
+     {
+      "path": "/view/slots/main",
+      "type": "Stack",
+      "visible": true,
+      "direction": "vertical",
+      "gap": "md",
+      "children": [
+       {
+        "path": "/view/slots/main/children/0",
+        "type": "Grid",
+        "visible": true,
+        "columns": 2,
+        "gap": "md",
+        "children": [
+         {
+          "path": "/view/slots/main/children/0/children/0",
+          "type": "Metric",
+          "visible": true,
+          "label": "服务",
+          "value": "demo.service",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/1",
+          "type": "Metric",
+          "visible": true,
+          "label": "CPU 上限",
+          "value": "50%",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/2",
+          "type": "Metric",
+          "visible": true,
+          "label": "内存上限",
+          "value": "256 MiB",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/3",
+          "type": "Metric",
+          "visible": true,
+          "label": "受管目录",
+          "value": "3",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/4",
+          "type": "Metric",
+          "visible": true,
+          "label": "测试网络",
+          "value": "deny",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/5",
+          "type": "Metric",
+          "visible": true,
+          "label": "串口",
+          "value": "",
+          "unit": null
+         }
+        ]
+       },
+       {
+        "path": "/view/slots/main/children/1",
+        "type": "Text",
+        "visible": true,
+        "text": "2026-10-30T10:00:00Z",
+        "variant": "muted"
+       },
+       {
+        "path": "/view/slots/main/children/2",
+        "type": "Text",
+        "visible": true,
+        "text": "cpu 2%",
+        "variant": "body"
+       },
+       {
+        "path": "/view/slots/main/children/3",
+        "type": "Text",
+        "visible": true,
+        "text": "ok",
+        "variant": "muted"
+       },
+       {
+        "path": "/view/slots/main/children/4",
+        "type": "Form",
+        "visible": true,
+        "formId": "cpu",
+        "title": "CPU 上限",
+        "children": [
+         {
+          "path": "/view/slots/main/children/4/children/0",
+          "type": "TextInput",
+          "visible": true,
+          "formId": "cpu",
+          "name": "percent",
+          "label": "上限（单个逻辑 CPU 的百分比）",
+          "value": "80",
+          "mode": "integer",
+          "maxLength": 16,
+          "placeholder": ""
+         },
+         {
+          "path": "/view/slots/main/children/4/children/1",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "生成 CPU 上限计划",
+          "action": "setCpu",
+          "variant": "primary",
+          "disabled": false
+         }
+        ]
+       },
+       {
+        "path": "/view/slots/main/children/5",
+        "type": "Stack",
+        "visible": true,
+        "direction": "horizontal",
+        "gap": "md",
+        "children": [
+         {
+          "path": "/view/slots/main/children/5/children/0",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "启动服务",
+          "action": "startService",
+          "variant": "secondary",
+          "disabled": false
+         },
+         {
+          "path": "/view/slots/main/children/5/children/1",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "停止服务",
+          "action": "stopService",
+          "variant": "danger",
+          "disabled": false
+         },
+         {
+          "path": "/view/slots/main/children/5/children/2",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "写入状态报告",
+          "action": "writeReport",
+          "variant": "secondary",
+          "disabled": false
+         },
+         {
+          "path": "/view/slots/main/children/5/children/3",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "阻断测试流量",
+          "action": "applyProfile",
+          "variant": "secondary",
+          "disabled": false
+         },
+         {
+          "path": "/view/slots/main/children/5/children/4",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "放行测试流量",
+          "action": "applyProfile",
+          "variant": "secondary",
+          "disabled": false
+         },
+         {
+          "path": "/view/slots/main/children/5/children/5",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "串口采样",
+          "action": "sample",
+          "variant": "secondary",
+          "disabled": false
+         }
+        ]
+       }
+      ]
+     }
+    ],
+    "forms": {
+     "cpu": {
+      "percent": 80
+     }
+    },
+    "selections": {},
+    "notice": {
+     "kind": "error",
+     "text": "连接中断，可以点“重试”（不会重复提交）"
+    },
+    "busy": false,
+    "staleInput": false
+   }
+  },
+  {
+   "op": "click",
+   "path": "/view/slots/main/children/4/children/1",
+   "expect": {
+    "result": {
+     "kind": "request",
+     "notice": {
+      "kind": "info",
+      "text": "生成 CPU 上限计划：正在生成计划（尚未执行）…"
+     },
+     "request": {
+      "methodId": "workspace.forward",
+      "routeId": "apps.systemactions.post",
+      "params": {
+       "appId": "6b0c3d2e-1f4a-4b5c-8d9e-0a1b2c3d4e5f",
+       "handlerId": "setCpu"
+      },
+      "body": {
+       "expectedAppEpoch": 3,
+       "input": {
+        "percent": 80
+       }
+      },
+      "write": true,
+      "idempotencyKey": "k1"
+     }
+    },
+    "error": null,
+    "snapshot": [
+     {
+      "path": "/view/slots/main",
+      "type": "Stack",
+      "visible": true,
+      "direction": "vertical",
+      "gap": "md",
+      "children": [
+       {
+        "path": "/view/slots/main/children/0",
+        "type": "Grid",
+        "visible": true,
+        "columns": 2,
+        "gap": "md",
+        "children": [
+         {
+          "path": "/view/slots/main/children/0/children/0",
+          "type": "Metric",
+          "visible": true,
+          "label": "服务",
+          "value": "demo.service",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/1",
+          "type": "Metric",
+          "visible": true,
+          "label": "CPU 上限",
+          "value": "50%",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/2",
+          "type": "Metric",
+          "visible": true,
+          "label": "内存上限",
+          "value": "256 MiB",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/3",
+          "type": "Metric",
+          "visible": true,
+          "label": "受管目录",
+          "value": "3",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/4",
+          "type": "Metric",
+          "visible": true,
+          "label": "测试网络",
+          "value": "deny",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/5",
+          "type": "Metric",
+          "visible": true,
+          "label": "串口",
+          "value": "",
+          "unit": null
+         }
+        ]
+       },
+       {
+        "path": "/view/slots/main/children/1",
+        "type": "Text",
+        "visible": true,
+        "text": "2026-10-30T10:00:00Z",
+        "variant": "muted"
+       },
+       {
+        "path": "/view/slots/main/children/2",
+        "type": "Text",
+        "visible": true,
+        "text": "cpu 2%",
+        "variant": "body"
+       },
+       {
+        "path": "/view/slots/main/children/3",
+        "type": "Text",
+        "visible": true,
+        "text": "ok",
+        "variant": "muted"
+       },
+       {
+        "path": "/view/slots/main/children/4",
+        "type": "Form",
+        "visible": true,
+        "formId": "cpu",
+        "title": "CPU 上限",
+        "children": [
+         {
+          "path": "/view/slots/main/children/4/children/0",
+          "type": "TextInput",
+          "visible": true,
+          "formId": "cpu",
+          "name": "percent",
+          "label": "上限（单个逻辑 CPU 的百分比）",
+          "value": "80",
+          "mode": "integer",
+          "maxLength": 16,
+          "placeholder": ""
+         },
+         {
+          "path": "/view/slots/main/children/4/children/1",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "生成 CPU 上限计划",
+          "action": "setCpu",
+          "variant": "primary",
+          "disabled": true
+         }
+        ]
+       },
+       {
+        "path": "/view/slots/main/children/5",
+        "type": "Stack",
+        "visible": true,
+        "direction": "horizontal",
+        "gap": "md",
+        "children": [
+         {
+          "path": "/view/slots/main/children/5/children/0",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "启动服务",
+          "action": "startService",
+          "variant": "secondary",
+          "disabled": true
+         },
+         {
+          "path": "/view/slots/main/children/5/children/1",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "停止服务",
+          "action": "stopService",
+          "variant": "danger",
+          "disabled": true
+         },
+         {
+          "path": "/view/slots/main/children/5/children/2",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "写入状态报告",
+          "action": "writeReport",
+          "variant": "secondary",
+          "disabled": true
+         },
+         {
+          "path": "/view/slots/main/children/5/children/3",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "阻断测试流量",
+          "action": "applyProfile",
+          "variant": "secondary",
+          "disabled": true
+         },
+         {
+          "path": "/view/slots/main/children/5/children/4",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "放行测试流量",
+          "action": "applyProfile",
+          "variant": "secondary",
+          "disabled": true
+         },
+         {
+          "path": "/view/slots/main/children/5/children/5",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "串口采样",
+          "action": "sample",
+          "variant": "secondary",
+          "disabled": true
+         }
+        ]
+       }
+      ]
+     }
+    ],
+    "forms": {
+     "cpu": {
+      "percent": 80
+     }
+    },
+    "selections": {},
+    "notice": {
+     "kind": "info",
+     "text": "生成 CPU 上限计划：正在生成计划（尚未执行）…"
+    },
+    "busy": true,
+    "staleInput": false
+   }
+  },
+  {
+   "op": "respond",
+   "outcome": {
+    "plan": "confirmationRequired",
+    "actionId": "act-1"
+   },
+   "expect": {
+    "result": {
+     "notice": {
+      "kind": "info",
+      "text": "生成 CPU 上限计划：计划已生成，等待你在 AgentOS 确认框中确认（尚未执行）"
+     },
+     "reload": false,
+     "openPlan": "act-1"
+    },
+    "error": null,
+    "snapshot": [
+     {
+      "path": "/view/slots/main",
+      "type": "Stack",
+      "visible": true,
+      "direction": "vertical",
+      "gap": "md",
+      "children": [
+       {
+        "path": "/view/slots/main/children/0",
+        "type": "Grid",
+        "visible": true,
+        "columns": 2,
+        "gap": "md",
+        "children": [
+         {
+          "path": "/view/slots/main/children/0/children/0",
+          "type": "Metric",
+          "visible": true,
+          "label": "服务",
+          "value": "demo.service",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/1",
+          "type": "Metric",
+          "visible": true,
+          "label": "CPU 上限",
+          "value": "50%",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/2",
+          "type": "Metric",
+          "visible": true,
+          "label": "内存上限",
+          "value": "256 MiB",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/3",
+          "type": "Metric",
+          "visible": true,
+          "label": "受管目录",
+          "value": "3",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/4",
+          "type": "Metric",
+          "visible": true,
+          "label": "测试网络",
+          "value": "deny",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/5",
+          "type": "Metric",
+          "visible": true,
+          "label": "串口",
+          "value": "",
+          "unit": null
+         }
+        ]
+       },
+       {
+        "path": "/view/slots/main/children/1",
+        "type": "Text",
+        "visible": true,
+        "text": "2026-10-30T10:00:00Z",
+        "variant": "muted"
+       },
+       {
+        "path": "/view/slots/main/children/2",
+        "type": "Text",
+        "visible": true,
+        "text": "cpu 2%",
+        "variant": "body"
+       },
+       {
+        "path": "/view/slots/main/children/3",
+        "type": "Text",
+        "visible": true,
+        "text": "ok",
+        "variant": "muted"
+       },
+       {
+        "path": "/view/slots/main/children/4",
+        "type": "Form",
+        "visible": true,
+        "formId": "cpu",
+        "title": "CPU 上限",
+        "children": [
+         {
+          "path": "/view/slots/main/children/4/children/0",
+          "type": "TextInput",
+          "visible": true,
+          "formId": "cpu",
+          "name": "percent",
+          "label": "上限（单个逻辑 CPU 的百分比）",
+          "value": "80",
+          "mode": "integer",
+          "maxLength": 16,
+          "placeholder": ""
+         },
+         {
+          "path": "/view/slots/main/children/4/children/1",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "生成 CPU 上限计划",
+          "action": "setCpu",
+          "variant": "primary",
+          "disabled": false
+         }
+        ]
+       },
+       {
+        "path": "/view/slots/main/children/5",
+        "type": "Stack",
+        "visible": true,
+        "direction": "horizontal",
+        "gap": "md",
+        "children": [
+         {
+          "path": "/view/slots/main/children/5/children/0",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "启动服务",
+          "action": "startService",
+          "variant": "secondary",
+          "disabled": false
+         },
+         {
+          "path": "/view/slots/main/children/5/children/1",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "停止服务",
+          "action": "stopService",
+          "variant": "danger",
+          "disabled": false
+         },
+         {
+          "path": "/view/slots/main/children/5/children/2",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "写入状态报告",
+          "action": "writeReport",
+          "variant": "secondary",
+          "disabled": false
+         },
+         {
+          "path": "/view/slots/main/children/5/children/3",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "阻断测试流量",
+          "action": "applyProfile",
+          "variant": "secondary",
+          "disabled": false
+         },
+         {
+          "path": "/view/slots/main/children/5/children/4",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "放行测试流量",
+          "action": "applyProfile",
+          "variant": "secondary",
+          "disabled": false
+         },
+         {
+          "path": "/view/slots/main/children/5/children/5",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "串口采样",
+          "action": "sample",
+          "variant": "secondary",
+          "disabled": false
+         }
+        ]
+       }
+      ]
+     }
+    ],
+    "forms": {
+     "cpu": {
+      "percent": 80
+     }
+    },
+    "selections": {},
+    "notice": {
+     "kind": "info",
+     "text": "生成 CPU 上限计划：计划已生成，等待你在 AgentOS 确认框中确认（尚未执行）"
+    },
+    "busy": false,
+    "staleInput": false
+   }
+  },
+  {
+   "op": "click",
+   "path": "/view/slots/main/children/5/children/2",
+   "expect": {
+    "result": {
+     "kind": "request",
+     "notice": {
+      "kind": "info",
+      "text": "写入状态报告：正在生成计划（尚未执行）…"
+     },
+     "request": {
+      "methodId": "workspace.forward",
+      "routeId": "apps.systemactions.post",
+      "params": {
+       "appId": "6b0c3d2e-1f4a-4b5c-8d9e-0a1b2c3d4e5f",
+       "handlerId": "writeReport"
+      },
+      "body": {
+       "expectedAppEpoch": 3,
+       "input": {
+        "name": "status-report"
+       }
+      },
+      "write": true,
+      "idempotencyKey": "k2"
+     }
+    },
+    "error": null,
+    "snapshot": [
+     {
+      "path": "/view/slots/main",
+      "type": "Stack",
+      "visible": true,
+      "direction": "vertical",
+      "gap": "md",
+      "children": [
+       {
+        "path": "/view/slots/main/children/0",
+        "type": "Grid",
+        "visible": true,
+        "columns": 2,
+        "gap": "md",
+        "children": [
+         {
+          "path": "/view/slots/main/children/0/children/0",
+          "type": "Metric",
+          "visible": true,
+          "label": "服务",
+          "value": "demo.service",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/1",
+          "type": "Metric",
+          "visible": true,
+          "label": "CPU 上限",
+          "value": "50%",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/2",
+          "type": "Metric",
+          "visible": true,
+          "label": "内存上限",
+          "value": "256 MiB",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/3",
+          "type": "Metric",
+          "visible": true,
+          "label": "受管目录",
+          "value": "3",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/4",
+          "type": "Metric",
+          "visible": true,
+          "label": "测试网络",
+          "value": "deny",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/5",
+          "type": "Metric",
+          "visible": true,
+          "label": "串口",
+          "value": "",
+          "unit": null
+         }
+        ]
+       },
+       {
+        "path": "/view/slots/main/children/1",
+        "type": "Text",
+        "visible": true,
+        "text": "2026-10-30T10:00:00Z",
+        "variant": "muted"
+       },
+       {
+        "path": "/view/slots/main/children/2",
+        "type": "Text",
+        "visible": true,
+        "text": "cpu 2%",
+        "variant": "body"
+       },
+       {
+        "path": "/view/slots/main/children/3",
+        "type": "Text",
+        "visible": true,
+        "text": "ok",
+        "variant": "muted"
+       },
+       {
+        "path": "/view/slots/main/children/4",
+        "type": "Form",
+        "visible": true,
+        "formId": "cpu",
+        "title": "CPU 上限",
+        "children": [
+         {
+          "path": "/view/slots/main/children/4/children/0",
+          "type": "TextInput",
+          "visible": true,
+          "formId": "cpu",
+          "name": "percent",
+          "label": "上限（单个逻辑 CPU 的百分比）",
+          "value": "80",
+          "mode": "integer",
+          "maxLength": 16,
+          "placeholder": ""
+         },
+         {
+          "path": "/view/slots/main/children/4/children/1",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "生成 CPU 上限计划",
+          "action": "setCpu",
+          "variant": "primary",
+          "disabled": true
+         }
+        ]
+       },
+       {
+        "path": "/view/slots/main/children/5",
+        "type": "Stack",
+        "visible": true,
+        "direction": "horizontal",
+        "gap": "md",
+        "children": [
+         {
+          "path": "/view/slots/main/children/5/children/0",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "启动服务",
+          "action": "startService",
+          "variant": "secondary",
+          "disabled": true
+         },
+         {
+          "path": "/view/slots/main/children/5/children/1",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "停止服务",
+          "action": "stopService",
+          "variant": "danger",
+          "disabled": true
+         },
+         {
+          "path": "/view/slots/main/children/5/children/2",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "写入状态报告",
+          "action": "writeReport",
+          "variant": "secondary",
+          "disabled": true
+         },
+         {
+          "path": "/view/slots/main/children/5/children/3",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "阻断测试流量",
+          "action": "applyProfile",
+          "variant": "secondary",
+          "disabled": true
+         },
+         {
+          "path": "/view/slots/main/children/5/children/4",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "放行测试流量",
+          "action": "applyProfile",
+          "variant": "secondary",
+          "disabled": true
+         },
+         {
+          "path": "/view/slots/main/children/5/children/5",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "串口采样",
+          "action": "sample",
+          "variant": "secondary",
+          "disabled": true
+         }
+        ]
+       }
+      ]
+     }
+    ],
+    "forms": {
+     "cpu": {
+      "percent": 80
+     }
+    },
+    "selections": {},
+    "notice": {
+     "kind": "info",
+     "text": "写入状态报告：正在生成计划（尚未执行）…"
+    },
+    "busy": true,
+    "staleInput": false
+   }
+  },
+  {
+   "op": "respond",
+   "outcome": {
+    "plan": "standing",
+    "actionId": "act-2"
+   },
+   "expect": {
+    "result": {
+     "notice": {
+      "kind": "info",
+      "text": "写入状态报告：已按持续授权提交，执行结果见操作中心"
+     },
+     "reload": false,
+     "openPlan": "act-2"
+    },
+    "error": null,
+    "snapshot": [
+     {
+      "path": "/view/slots/main",
+      "type": "Stack",
+      "visible": true,
+      "direction": "vertical",
+      "gap": "md",
+      "children": [
+       {
+        "path": "/view/slots/main/children/0",
+        "type": "Grid",
+        "visible": true,
+        "columns": 2,
+        "gap": "md",
+        "children": [
+         {
+          "path": "/view/slots/main/children/0/children/0",
+          "type": "Metric",
+          "visible": true,
+          "label": "服务",
+          "value": "demo.service",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/1",
+          "type": "Metric",
+          "visible": true,
+          "label": "CPU 上限",
+          "value": "50%",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/2",
+          "type": "Metric",
+          "visible": true,
+          "label": "内存上限",
+          "value": "256 MiB",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/3",
+          "type": "Metric",
+          "visible": true,
+          "label": "受管目录",
+          "value": "3",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/4",
+          "type": "Metric",
+          "visible": true,
+          "label": "测试网络",
+          "value": "deny",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/5",
+          "type": "Metric",
+          "visible": true,
+          "label": "串口",
+          "value": "",
+          "unit": null
+         }
+        ]
+       },
+       {
+        "path": "/view/slots/main/children/1",
+        "type": "Text",
+        "visible": true,
+        "text": "2026-10-30T10:00:00Z",
+        "variant": "muted"
+       },
+       {
+        "path": "/view/slots/main/children/2",
+        "type": "Text",
+        "visible": true,
+        "text": "cpu 2%",
+        "variant": "body"
+       },
+       {
+        "path": "/view/slots/main/children/3",
+        "type": "Text",
+        "visible": true,
+        "text": "ok",
+        "variant": "muted"
+       },
+       {
+        "path": "/view/slots/main/children/4",
+        "type": "Form",
+        "visible": true,
+        "formId": "cpu",
+        "title": "CPU 上限",
+        "children": [
+         {
+          "path": "/view/slots/main/children/4/children/0",
+          "type": "TextInput",
+          "visible": true,
+          "formId": "cpu",
+          "name": "percent",
+          "label": "上限（单个逻辑 CPU 的百分比）",
+          "value": "80",
+          "mode": "integer",
+          "maxLength": 16,
+          "placeholder": ""
+         },
+         {
+          "path": "/view/slots/main/children/4/children/1",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "生成 CPU 上限计划",
+          "action": "setCpu",
+          "variant": "primary",
+          "disabled": false
+         }
+        ]
+       },
+       {
+        "path": "/view/slots/main/children/5",
+        "type": "Stack",
+        "visible": true,
+        "direction": "horizontal",
+        "gap": "md",
+        "children": [
+         {
+          "path": "/view/slots/main/children/5/children/0",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "启动服务",
+          "action": "startService",
+          "variant": "secondary",
+          "disabled": false
+         },
+         {
+          "path": "/view/slots/main/children/5/children/1",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "停止服务",
+          "action": "stopService",
+          "variant": "danger",
+          "disabled": false
+         },
+         {
+          "path": "/view/slots/main/children/5/children/2",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "写入状态报告",
+          "action": "writeReport",
+          "variant": "secondary",
+          "disabled": false
+         },
+         {
+          "path": "/view/slots/main/children/5/children/3",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "阻断测试流量",
+          "action": "applyProfile",
+          "variant": "secondary",
+          "disabled": false
+         },
+         {
+          "path": "/view/slots/main/children/5/children/4",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "放行测试流量",
+          "action": "applyProfile",
+          "variant": "secondary",
+          "disabled": false
+         },
+         {
+          "path": "/view/slots/main/children/5/children/5",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "串口采样",
+          "action": "sample",
+          "variant": "secondary",
+          "disabled": false
+         }
+        ]
+       }
+      ]
+     }
+    ],
+    "forms": {
+     "cpu": {
+      "percent": 80
+     }
+    },
+    "selections": {},
+    "notice": {
+     "kind": "info",
+     "text": "写入状态报告：已按持续授权提交，执行结果见操作中心"
+    },
+    "busy": false,
+    "staleInput": false
+   }
+  },
+  {
+   "op": "click",
+   "path": "/view/slots/main/children/5/children/3",
+   "expect": {
+    "result": {
+     "kind": "request",
+     "notice": {
+      "kind": "info",
+      "text": "阻断测试流量：正在生成计划（尚未执行）…"
+     },
+     "request": {
+      "methodId": "workspace.forward",
+      "routeId": "apps.systemactions.post",
+      "params": {
+       "appId": "6b0c3d2e-1f4a-4b5c-8d9e-0a1b2c3d4e5f",
+       "handlerId": "applyProfile"
+      },
+      "body": {
+       "expectedAppEpoch": 3,
+       "input": {
+        "profileId": "local-deny"
+       }
+      },
+      "write": true,
+      "idempotencyKey": "k3"
+     }
+    },
+    "error": null,
+    "snapshot": [
+     {
+      "path": "/view/slots/main",
+      "type": "Stack",
+      "visible": true,
+      "direction": "vertical",
+      "gap": "md",
+      "children": [
+       {
+        "path": "/view/slots/main/children/0",
+        "type": "Grid",
+        "visible": true,
+        "columns": 2,
+        "gap": "md",
+        "children": [
+         {
+          "path": "/view/slots/main/children/0/children/0",
+          "type": "Metric",
+          "visible": true,
+          "label": "服务",
+          "value": "demo.service",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/1",
+          "type": "Metric",
+          "visible": true,
+          "label": "CPU 上限",
+          "value": "50%",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/2",
+          "type": "Metric",
+          "visible": true,
+          "label": "内存上限",
+          "value": "256 MiB",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/3",
+          "type": "Metric",
+          "visible": true,
+          "label": "受管目录",
+          "value": "3",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/4",
+          "type": "Metric",
+          "visible": true,
+          "label": "测试网络",
+          "value": "deny",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/5",
+          "type": "Metric",
+          "visible": true,
+          "label": "串口",
+          "value": "",
+          "unit": null
+         }
+        ]
+       },
+       {
+        "path": "/view/slots/main/children/1",
+        "type": "Text",
+        "visible": true,
+        "text": "2026-10-30T10:00:00Z",
+        "variant": "muted"
+       },
+       {
+        "path": "/view/slots/main/children/2",
+        "type": "Text",
+        "visible": true,
+        "text": "cpu 2%",
+        "variant": "body"
+       },
+       {
+        "path": "/view/slots/main/children/3",
+        "type": "Text",
+        "visible": true,
+        "text": "ok",
+        "variant": "muted"
+       },
+       {
+        "path": "/view/slots/main/children/4",
+        "type": "Form",
+        "visible": true,
+        "formId": "cpu",
+        "title": "CPU 上限",
+        "children": [
+         {
+          "path": "/view/slots/main/children/4/children/0",
+          "type": "TextInput",
+          "visible": true,
+          "formId": "cpu",
+          "name": "percent",
+          "label": "上限（单个逻辑 CPU 的百分比）",
+          "value": "80",
+          "mode": "integer",
+          "maxLength": 16,
+          "placeholder": ""
+         },
+         {
+          "path": "/view/slots/main/children/4/children/1",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "生成 CPU 上限计划",
+          "action": "setCpu",
+          "variant": "primary",
+          "disabled": true
+         }
+        ]
+       },
+       {
+        "path": "/view/slots/main/children/5",
+        "type": "Stack",
+        "visible": true,
+        "direction": "horizontal",
+        "gap": "md",
+        "children": [
+         {
+          "path": "/view/slots/main/children/5/children/0",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "启动服务",
+          "action": "startService",
+          "variant": "secondary",
+          "disabled": true
+         },
+         {
+          "path": "/view/slots/main/children/5/children/1",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "停止服务",
+          "action": "stopService",
+          "variant": "danger",
+          "disabled": true
+         },
+         {
+          "path": "/view/slots/main/children/5/children/2",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "写入状态报告",
+          "action": "writeReport",
+          "variant": "secondary",
+          "disabled": true
+         },
+         {
+          "path": "/view/slots/main/children/5/children/3",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "阻断测试流量",
+          "action": "applyProfile",
+          "variant": "secondary",
+          "disabled": true
+         },
+         {
+          "path": "/view/slots/main/children/5/children/4",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "放行测试流量",
+          "action": "applyProfile",
+          "variant": "secondary",
+          "disabled": true
+         },
+         {
+          "path": "/view/slots/main/children/5/children/5",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "串口采样",
+          "action": "sample",
+          "variant": "secondary",
+          "disabled": true
+         }
+        ]
+       }
+      ]
+     }
+    ],
+    "forms": {
+     "cpu": {
+      "percent": 80
+     }
+    },
+    "selections": {},
+    "notice": {
+     "kind": "info",
+     "text": "阻断测试流量：正在生成计划（尚未执行）…"
+    },
+    "busy": true,
+    "staleInput": false
+   }
+  },
+  {
+   "op": "respond",
+   "outcome": {
+    "apiError": "BROKER_UNAVAILABLE",
+    "message": "broker down"
+   },
+   "expect": {
+    "result": {
+     "notice": {
+      "kind": "error",
+      "text": "系统执行服务不可用，系统写入已暂停（BROKER_UNAVAILABLE）"
+     },
+     "reload": false,
+     "openPlan": null
+    },
+    "error": null,
+    "snapshot": [
+     {
+      "path": "/view/slots/main",
+      "type": "Stack",
+      "visible": true,
+      "direction": "vertical",
+      "gap": "md",
+      "children": [
+       {
+        "path": "/view/slots/main/children/0",
+        "type": "Grid",
+        "visible": true,
+        "columns": 2,
+        "gap": "md",
+        "children": [
+         {
+          "path": "/view/slots/main/children/0/children/0",
+          "type": "Metric",
+          "visible": true,
+          "label": "服务",
+          "value": "demo.service",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/1",
+          "type": "Metric",
+          "visible": true,
+          "label": "CPU 上限",
+          "value": "50%",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/2",
+          "type": "Metric",
+          "visible": true,
+          "label": "内存上限",
+          "value": "256 MiB",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/3",
+          "type": "Metric",
+          "visible": true,
+          "label": "受管目录",
+          "value": "3",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/4",
+          "type": "Metric",
+          "visible": true,
+          "label": "测试网络",
+          "value": "deny",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/0/children/5",
+          "type": "Metric",
+          "visible": true,
+          "label": "串口",
+          "value": "",
+          "unit": null
+         }
+        ]
+       },
+       {
+        "path": "/view/slots/main/children/1",
+        "type": "Text",
+        "visible": true,
+        "text": "2026-10-30T10:00:00Z",
+        "variant": "muted"
+       },
+       {
+        "path": "/view/slots/main/children/2",
+        "type": "Text",
+        "visible": true,
+        "text": "cpu 2%",
+        "variant": "body"
+       },
+       {
+        "path": "/view/slots/main/children/3",
+        "type": "Text",
+        "visible": true,
+        "text": "ok",
+        "variant": "muted"
+       },
+       {
+        "path": "/view/slots/main/children/4",
+        "type": "Form",
+        "visible": true,
+        "formId": "cpu",
+        "title": "CPU 上限",
+        "children": [
+         {
+          "path": "/view/slots/main/children/4/children/0",
+          "type": "TextInput",
+          "visible": true,
+          "formId": "cpu",
+          "name": "percent",
+          "label": "上限（单个逻辑 CPU 的百分比）",
+          "value": "80",
+          "mode": "integer",
+          "maxLength": 16,
+          "placeholder": ""
+         },
+         {
+          "path": "/view/slots/main/children/4/children/1",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "生成 CPU 上限计划",
+          "action": "setCpu",
+          "variant": "primary",
+          "disabled": false
+         }
+        ]
+       },
+       {
+        "path": "/view/slots/main/children/5",
+        "type": "Stack",
+        "visible": true,
+        "direction": "horizontal",
+        "gap": "md",
+        "children": [
+         {
+          "path": "/view/slots/main/children/5/children/0",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "启动服务",
+          "action": "startService",
+          "variant": "secondary",
+          "disabled": false
+         },
+         {
+          "path": "/view/slots/main/children/5/children/1",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "停止服务",
+          "action": "stopService",
+          "variant": "danger",
+          "disabled": false
+         },
+         {
+          "path": "/view/slots/main/children/5/children/2",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "写入状态报告",
+          "action": "writeReport",
+          "variant": "secondary",
+          "disabled": false
+         },
+         {
+          "path": "/view/slots/main/children/5/children/3",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "阻断测试流量",
+          "action": "applyProfile",
+          "variant": "secondary",
+          "disabled": false
+         },
+         {
+          "path": "/view/slots/main/children/5/children/4",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "放行测试流量",
+          "action": "applyProfile",
+          "variant": "secondary",
+          "disabled": false
+         },
+         {
+          "path": "/view/slots/main/children/5/children/5",
+          "type": "SystemActionButton",
+          "visible": true,
+          "label": "串口采样",
+          "action": "sample",
+          "variant": "secondary",
+          "disabled": false
+         }
+        ]
+       }
+      ]
+     }
+    ],
+    "forms": {
+     "cpu": {
+      "percent": 80
+     }
+    },
+    "selections": {},
+    "notice": {
+     "kind": "error",
+     "text": "系统执行服务不可用，系统写入已暂停（BROKER_UNAVAILABLE）"
+    },
+    "busy": false,
+    "staleInput": false
+   }
+  }
+ ]
+}

@@ -1,0 +1,495 @@
+{
+ "name": "v2-cross-app-overview",
+ "bundle": {
+  "formatVersion": 2,
+  "manifest": {
+   "appId": "5a1d2f4e-7c3b-4e8a-9f10-2b3c4d5e6f70",
+   "title": "工作概览",
+   "description": "汇总待办应用的任务总数和剩余工时。",
+   "runtime": "isolated-code-v1",
+   "capabilities": [
+    "records.read"
+   ]
+  },
+  "data": {
+   "fields": {
+    "note": {
+     "type": "string",
+     "label": "备注",
+     "maxLength": 80,
+     "default": "工作概览"
+    }
+   }
+  },
+  "code": {
+   "entry": "src/app.ts",
+   "files": {}
+  },
+  "runtimeLockId": "core-v1@1",
+  "queries": {
+   "main": {
+    "description": "概览数据",
+    "inputSchema": {
+     "type": "object",
+     "properties": {}
+    },
+    "outputSchema": {
+     "type": "object",
+     "required": [
+      "connected",
+      "total",
+      "remainingMinutes",
+      "message"
+     ],
+     "properties": {
+      "connected": {
+       "type": "boolean"
+      },
+      "total": {
+       "type": "integer",
+       "minimum": 0
+      },
+      "remainingMinutes": {
+       "type": "integer",
+       "minimum": 0
+      },
+      "message": {
+       "type": "string",
+       "maxLength": 300
+      }
+     }
+    }
+   }
+  },
+  "commands": {},
+  "exports": [],
+  "imports": [
+   {
+    "alias": "todo",
+    "description": "待办应用的 summary 服务",
+    "inputSchema": {
+     "type": "object",
+     "properties": {}
+    },
+    "outputSchema": {
+     "type": "object",
+     "required": [
+      "total",
+      "open",
+      "remainingMinutes"
+     ],
+     "properties": {
+      "total": {
+       "type": "integer",
+       "minimum": 0
+      },
+      "open": {
+       "type": "integer",
+       "minimum": 0
+      },
+      "remainingMinutes": {
+       "type": "integer",
+       "minimum": 0
+      }
+     }
+    }
+   }
+  ],
+  "view": {
+   "kind": "slot-tree-v1",
+   "dataSources": {
+    "overview": {
+     "queryId": "main",
+     "input": {}
+    }
+   },
+   "refresh": {
+    "intervalSeconds": 10
+   },
+   "slots": {
+    "main": {
+     "type": "Stack",
+     "props": {
+      "gap": "md"
+     },
+     "children": [
+      {
+       "type": "Alert",
+       "props": {
+        "status": "warning",
+        "text": {
+         "$bind": {
+          "from": "query",
+          "source": "overview",
+          "pointer": "/message"
+         }
+        }
+       },
+       "visibleWhen": {
+        "value": {
+         "$bind": {
+          "from": "query",
+          "source": "overview",
+          "pointer": "/connected"
+         }
+        },
+        "op": "eq",
+        "equals": false
+       }
+      },
+      {
+       "type": "Grid",
+       "props": {
+        "columns": 2,
+        "gap": "md"
+       },
+       "children": [
+        {
+         "type": "Metric",
+         "props": {
+          "label": "任务总数",
+          "value": {
+           "$bind": {
+            "from": "query",
+            "source": "overview",
+            "pointer": "/total"
+           }
+          }
+         }
+        },
+        {
+         "type": "Metric",
+         "props": {
+          "label": "剩余工时",
+          "value": {
+           "$bind": {
+            "from": "query",
+            "source": "overview",
+            "pointer": "/remainingMinutes"
+           }
+          },
+          "unit": "分钟"
+         }
+        }
+       ]
+      }
+     ]
+    }
+   }
+  }
+ },
+ "app": {
+  "appId": "5a1d2f4e-7c3b-4e8a-9f10-2b3c4d5e6f70",
+  "appEpoch": 3,
+  "revisionId": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+ },
+ "validation": {
+  "valid": true
+ },
+ "steps": [
+  {
+   "op": "init",
+   "expect": {
+    "result": null,
+    "error": null,
+    "snapshot": [
+     {
+      "path": "/view/slots/main",
+      "type": "Stack",
+      "visible": true,
+      "direction": "vertical",
+      "gap": "md",
+      "children": [
+       {
+        "path": "/view/slots/main/children/0",
+        "type": "Alert",
+        "visible": false
+       },
+       {
+        "path": "/view/slots/main/children/1",
+        "type": "Grid",
+        "visible": true,
+        "columns": 2,
+        "gap": "md",
+        "children": [
+         {
+          "path": "/view/slots/main/children/1/children/0",
+          "type": "Metric",
+          "visible": true,
+          "label": "任务总数",
+          "value": "",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/1/children/1",
+          "type": "Metric",
+          "visible": true,
+          "label": "剩余工时",
+          "value": "",
+          "unit": "分钟"
+         }
+        ]
+       }
+      ]
+     }
+    ],
+    "forms": {},
+    "selections": {},
+    "notice": null,
+    "busy": false,
+    "staleInput": false
+   }
+  },
+  {
+   "op": "queries",
+   "expect": {
+    "result": [
+     {
+      "methodId": "workspace.forward",
+      "routeId": "apps.queries.post",
+      "params": {
+       "appId": "5a1d2f4e-7c3b-4e8a-9f10-2b3c4d5e6f70",
+       "queryId": "main"
+      },
+      "body": {
+       "expectedAppEpoch": 3,
+       "input": {}
+      },
+      "write": true,
+      "idempotencyKey": "q:overview"
+     }
+    ],
+    "error": null,
+    "snapshot": [
+     {
+      "path": "/view/slots/main",
+      "type": "Stack",
+      "visible": true,
+      "direction": "vertical",
+      "gap": "md",
+      "children": [
+       {
+        "path": "/view/slots/main/children/0",
+        "type": "Alert",
+        "visible": false
+       },
+       {
+        "path": "/view/slots/main/children/1",
+        "type": "Grid",
+        "visible": true,
+        "columns": 2,
+        "gap": "md",
+        "children": [
+         {
+          "path": "/view/slots/main/children/1/children/0",
+          "type": "Metric",
+          "visible": true,
+          "label": "任务总数",
+          "value": "",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/1/children/1",
+          "type": "Metric",
+          "visible": true,
+          "label": "剩余工时",
+          "value": "",
+          "unit": "分钟"
+         }
+        ]
+       }
+      ]
+     }
+    ],
+    "forms": {},
+    "selections": {},
+    "notice": null,
+    "busy": false,
+    "staleInput": false
+   }
+  },
+  {
+   "op": "load",
+   "source": "overview",
+   "output": {
+    "connected": false,
+    "message": "服务未连接：请在服务面板授权",
+    "total": null
+   },
+   "revisionId": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "appEpoch": 3,
+   "expect": {
+    "result": true,
+    "error": null,
+    "snapshot": [
+     {
+      "path": "/view/slots/main",
+      "type": "Stack",
+      "visible": true,
+      "direction": "vertical",
+      "gap": "md",
+      "children": [
+       {
+        "path": "/view/slots/main/children/0",
+        "type": "Alert",
+        "visible": true,
+        "status": "warning",
+        "text": "服务未连接：请在服务面板授权"
+       },
+       {
+        "path": "/view/slots/main/children/1",
+        "type": "Grid",
+        "visible": true,
+        "columns": 2,
+        "gap": "md",
+        "children": [
+         {
+          "path": "/view/slots/main/children/1/children/0",
+          "type": "Metric",
+          "visible": true,
+          "label": "任务总数",
+          "value": "",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/1/children/1",
+          "type": "Metric",
+          "visible": true,
+          "label": "剩余工时",
+          "value": "",
+          "unit": "分钟"
+         }
+        ]
+       }
+      ]
+     }
+    ],
+    "forms": {},
+    "selections": {},
+    "notice": null,
+    "busy": false,
+    "staleInput": false
+   }
+  },
+  {
+   "op": "load",
+   "source": "overview",
+   "output": {
+    "connected": true,
+    "total": 5,
+    "remainingMinutes": 120
+   },
+   "revisionId": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "appEpoch": 3,
+   "expect": {
+    "result": true,
+    "error": null,
+    "snapshot": [
+     {
+      "path": "/view/slots/main",
+      "type": "Stack",
+      "visible": true,
+      "direction": "vertical",
+      "gap": "md",
+      "children": [
+       {
+        "path": "/view/slots/main/children/0",
+        "type": "Alert",
+        "visible": false
+       },
+       {
+        "path": "/view/slots/main/children/1",
+        "type": "Grid",
+        "visible": true,
+        "columns": 2,
+        "gap": "md",
+        "children": [
+         {
+          "path": "/view/slots/main/children/1/children/0",
+          "type": "Metric",
+          "visible": true,
+          "label": "任务总数",
+          "value": "5",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/1/children/1",
+          "type": "Metric",
+          "visible": true,
+          "label": "剩余工时",
+          "value": "120",
+          "unit": "分钟"
+         }
+        ]
+       }
+      ]
+     }
+    ],
+    "forms": {},
+    "selections": {},
+    "notice": null,
+    "busy": false,
+    "staleInput": false
+   }
+  },
+  {
+   "op": "load",
+   "source": "overview",
+   "output": {
+    "total": 5
+   },
+   "revisionId": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "appEpoch": 3,
+   "expect": {
+    "result": true,
+    "error": null,
+    "snapshot": [
+     {
+      "path": "/view/slots/main",
+      "type": "Stack",
+      "visible": true,
+      "direction": "vertical",
+      "gap": "md",
+      "children": [
+       {
+        "path": "/view/slots/main/children/0",
+        "type": "Alert",
+        "visible": false
+       },
+       {
+        "path": "/view/slots/main/children/1",
+        "type": "Grid",
+        "visible": true,
+        "columns": 2,
+        "gap": "md",
+        "children": [
+         {
+          "path": "/view/slots/main/children/1/children/0",
+          "type": "Metric",
+          "visible": true,
+          "label": "任务总数",
+          "value": "5",
+          "unit": null
+         },
+         {
+          "path": "/view/slots/main/children/1/children/1",
+          "type": "Metric",
+          "visible": true,
+          "label": "剩余工时",
+          "value": "",
+          "unit": "分钟"
+         }
+        ]
+       }
+      ]
+     }
+    ],
+    "forms": {},
+    "selections": {},
+    "notice": null,
+    "busy": false,
+    "staleInput": false
+   }
+  }
+ ]
+}
