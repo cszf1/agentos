@@ -5,6 +5,7 @@ mod db;
 mod exec;
 mod maintenance;
 mod policy;
+mod registry;
 mod server;
 mod state;
 

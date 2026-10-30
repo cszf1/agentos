@@ -71,9 +71,11 @@ in {
       "d /etc/agentos/broker 0755 root root -"
     ];
 
+    # A real root-owned file (not a store symlink): the broker refuses a policy it cannot prove root-only.
+    environment.etc."agentos/broker/policy.json".mode = "0444";
     environment.etc."agentos/broker/policy.json".text = builtins.toJSON {
       policyFormat = 1;
-      machineInstallId = "pending-machine-registry";
+      machineInstallId = "machine-registry";
       hosts = [ ];
       managedRoots = [ ];
       units = [ ];
@@ -134,7 +136,6 @@ in {
       wantedBy = [ "multi-user.target" ];
       after = [ "agentos-machine.service" "dbus.service" ];
       unitConfig.StartLimitIntervalSec = 0;
-      preStart = "[ -f /var/lib/agentos-broker/broker.sqlite ] || ${native}/bin/agentos-broker admin install-db";
       serviceConfig = {
         Type = "notify";
         NotifyAccess = "main";

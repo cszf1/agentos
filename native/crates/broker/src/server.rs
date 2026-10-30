@@ -45,11 +45,25 @@ pub fn serve() -> i32 {
         }
     };
     let instance_id = format!("bi_{}", agentos_protocol::random_hex(8));
+    // v1.0: the machine identity comes from agentos-machined (spec §19.4); the log is created for it on first start.
+    let machine_mode = pol.machine_install_id == crate::registry::MACHINE_REGISTRY_ID;
+    let mut pol = pol;
+    if machine_mode {
+        pol.machine_install_id = crate::registry::machine_install_id();
+        if !std::path::Path::new(db::DB_PATH).exists() {
+            if let Err(e) = db::create(db::DB_PATH, &pol.machine_install_id, &pver) {
+                eprintln!("agentos-broker: cannot create the log: {e}");
+                return 1;
+            }
+        }
+    }
     let (conn, diag) = match db::open_existing(db::DB_PATH) {
         Ok(c) => {
             let id = db::meta(&c, "machine_install_id").unwrap_or_default();
             if id != pol.machine_install_id {
                 (None, Some(format!("BROKER_IDENTITY_MISMATCH: log belongs to install {id}, policy names {}", pol.machine_install_id)))
+            } else if let Err(e) = crate::registry::ensure_schema(&c) {
+                (None, Some(format!("BROKER_HISTORY_MISSING: machine registry tables: {e}")))
             } else {
                 (Some(c), None)
             }
@@ -85,6 +99,10 @@ pub fn serve() -> i32 {
         exec::reconcile_all(&b);
         let eb = b.clone();
         std::thread::spawn(move || exec::executor_loop(eb));
+        if machine_mode {
+            let rb = b.clone();
+            std::thread::spawn(move || crate::registry::sync_loop(rb));
+        }
     }
     let _ = std::fs::remove_file(SOCKET_PATH);
     let listener = match UnixListener::bind(SOCKET_PATH) {
@@ -95,7 +113,8 @@ pub fn serve() -> i32 {
         }
     };
     // Explicit owner (the registered host uid), group agentos-broker, mode 0660; SO_PEERCRED is checked anyway.
-    let _ = std::fs::set_permissions(SOCKET_PATH, std::fs::Permissions::from_mode(0o660));
+    // Machine mode: several execution UIDs connect; the kernel peer check below is the authority (mode 0666).
+    let _ = std::fs::set_permissions(SOCKET_PATH, std::fs::Permissions::from_mode(if machine_mode { 0o666 } else { 0o660 }));
     let owner = b.policy.hosts.first().map(|h| h.uid).unwrap_or(0);
     let gid = group_id("agentos-broker").unwrap_or(0);
     let c = std::ffi::CString::new(SOCKET_PATH).unwrap();
@@ -143,7 +162,8 @@ pub struct Session {
 fn handle_conn(b: &Shared, s: UnixStream) {
     let Ok(pc) = peer_cred(&s) else { return };
     // Only installed host UIDs may talk to the broker at all (the socket mode is a second layer).
-    if !b.policy.hosts.iter().any(|h| h.uid == pc.uid) {
+    let machine_host = b.db.lock().unwrap().as_ref().and_then(|c| crate::registry::machine_host(c, pc.uid, None)).is_some();
+    if !b.policy.hosts.iter().any(|h| h.uid == pc.uid) && !machine_host {
         let mut w = &s;
         let _ = write_frame(
             &mut w,
@@ -181,6 +201,35 @@ fn handle_conn(b: &Shared, s: UnixStream) {
         };
         // Protocol 1 methods keep v=1; protocol-2 (maintenance) methods require v=2 and are never served under v=1, so a
         // maintenance request cannot be downgraded to a user/action request (v0.4 spec §13.3, V4-B08).
+        // Protocol 3 (v1.0, spec §14.3): a write wrapped in the workspace envelope, checked against the synced
+        // machine directory first; the inner body then runs through the same fixed handler.
+        if req.v == crate::registry::PROTOCOL_V3 {
+            let out = if !crate::registry::METHODS_V3.contains(&req.method.as_str()) {
+                Err(BErr::new("CAPABILITY_VERSION_UNSUPPORTED", format!("method {} is not a protocol-3 write", req.method)))
+            } else {
+                match crate::registry::check_v3(b, sess.uid, &req.params) {
+                    Ok(body) => {
+                        let inner = Request { v: req.v, id: req.id.clone(), method: req.method.clone(), params: body };
+                        if METHODS_V2.contains(&req.method.as_str()) {
+                            crate::maintenance::dispatch(b, &mut sess, &inner.method, &inner.params)
+                        } else {
+                            dispatch_v(b, &mut sess, &inner, true)
+                        }
+                    }
+                    Err(e) => Err(e),
+                }
+            };
+            match out {
+                Ok(result) => {
+                    let mut w = &s;
+                    if write_frame(&mut w, json!({"v": 3, "id": req.id, "ok": true, "result": result}).to_string().as_bytes()).is_err() {
+                        return;
+                    }
+                }
+                Err(e) => reply_err(&s, &req.id, e),
+            }
+            continue;
+        }
         let is_v2 = METHODS_V2.contains(&req.method.as_str());
         if (is_v2 && req.v != PROTOCOL_V2) || (!is_v2 && req.v != PROTOCOL_VERSION) {
             reply_err(
@@ -192,6 +241,14 @@ fn handle_conn(b: &Shared, s: UnixStream) {
                 ),
             );
             continue;
+        }
+        if is_v2 && req.method != "maintenance-state" {
+            if let Some(store) = req.params.get("identity").and_then(|i| i.get("storeUuid")).and_then(|x| x.as_str()) {
+                if let Err(e) = reject_legacy_write(b, store) {
+                    reply_err(&s, &req.id, e);
+                    continue;
+                }
+            }
         }
         let out = if is_v2 { crate::maintenance::dispatch(b, &mut sess, &req.method, &req.params) } else { dispatch(b, &mut sess, &req) };
         match out {
@@ -265,23 +322,27 @@ fn reject_legacy_write(b: &Shared, store: &str) -> Result<(), BErr> {
 }
 
 fn dispatch(b: &Shared, sess: &mut Session, req: &Request) -> Result<Value, BErr> {
+    dispatch_v(b, sess, req, false)
+}
+
+fn dispatch_v(b: &Shared, sess: &mut Session, req: &Request, v3: bool) -> Result<Value, BErr> {
     match req.method.as_str() {
         "handshake" => handshake(b, sess, &req.params),
         "describe" => describe(b, sess, &req.params),
         "read" => exec::read(b, &p::<ReadParams>(&req.params)?, |c, id| check_identity_db(b, c, sess, id, false)),
         "grant-sync" => {
             let body: GrantSyncParams = p(&req.params)?;
-            reject_legacy_write(b, &body.identity.store_uuid)?;
+            if !v3 { reject_legacy_write(b, &body.identity.store_uuid)?; }
             grant_sync(b, sess, &body)
         }
         "grant-revoke" => {
             let body: GrantRevokeParams = p(&req.params)?;
-            reject_legacy_write(b, &body.identity.store_uuid)?;
+            if !v3 { reject_legacy_write(b, &body.identity.store_uuid)?; }
             grant_revoke(b, sess, &body)
         }
         "submit" => {
             let env: WriteEnvelope = p(&req.params)?;
-            reject_legacy_write(b, &env.store_uuid)?;
+            if !v3 { reject_legacy_write(b, &env.store_uuid)?; }
             exec::submit(b, &env, |c, id| check_identity_db(b, c, sess, id, false))
         }
         "operation-get" => {
@@ -294,7 +355,7 @@ fn dispatch(b: &Shared, sess: &mut Session, req: &Request) -> Result<Value, BErr
         }
         "operation-cancel" => {
             let body: CancelParams = p(&req.params)?;
-            reject_legacy_write(b, &body.identity.store_uuid)?;
+            if !v3 { reject_legacy_write(b, &body.identity.store_uuid)?; }
             exec::cancel(b, &body, |c, id| check_identity_db(b, c, sess, id, false))
         }
         "operation-resolve" => exec::resolve(b, &p(&req.params)?, |c, id| check_identity_db(b, c, sess, id, false)),
@@ -329,7 +390,10 @@ fn handshake(b: &Shared, sess: &mut Session, v: &Value) -> Result<Value, BErr> {
     if !token_ok(&h.store_uuid, 64) || !token_ok(&h.client_nonce, 64) {
         return Err(BErr::new("INVALID_SYSTEM_PLAN", "malformed handshake"));
     }
-    let host = b.policy.hosts.iter().find(|x| x.uid == sess.uid && x.store_uuid == h.store_uuid);
+    let mhost = b.db.lock().unwrap().as_ref().and_then(|c| crate::registry::machine_host(c, sess.uid, Some(&h.store_uuid)));
+    let host = b.policy.hosts.iter().find(|x| x.uid == sess.uid && x.store_uuid == h.store_uuid).cloned().or_else(|| {
+        mhost.as_ref().map(|(store, ws, _)| crate::policy::HostEntry { uid: sess.uid, store_uuid: store.clone(), workspace_path_id: ws.clone() })
+    });
     if host.is_none() {
         return Err(BErr::new("BROKER_POLICY_DENIED", "this uid is not registered for that workspace"));
     }
