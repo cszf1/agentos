@@ -266,3 +266,111 @@ with subtest("power cut at every ESP publish point leaves only the complete old 
         assert NEW in r["removed"], r
         print(pt, machine.succeed("df -k /boot | tail -1"))
         old_entries_complete()
+
+with subtest("commit window: a crash after the intent or after the default resolves from facts; business stays closed until committed; nothing repeats (U10)"):
+    import uuid
+    efi = "/sys/firmware/efi/efivars/LoaderEntryDefault-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f"
+    C1 = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
+    C2 = "ffffffff-ffff-4fff-8fff-ffffffffffff"
+    machine.succeed("cat > /root/mcall.py <<'PY'\nimport json, socket, struct, sys\ns = socket.socket(socket.AF_UNIX); s.connect('/run/agentos/machine/machine.sock')\nb = json.dumps({'op': sys.argv[1], 'args': json.loads(sys.argv[2])}).encode()\ns.sendall(struct.pack('>I', len(b)) + b)\nn = struct.unpack('>I', s.recv(4, socket.MSG_WAITALL))[0]\nprint(s.recv(n, socket.MSG_WAITALL).decode())\nPY")
+    def mcall(op, args):
+        return json.loads(machine.succeed(f"python3 /root/mcall.py {op} '{json.dumps(args)}'"))
+    def mok(op, args):
+        r = mcall(op, args)
+        assert r["ok"], (op, r)
+        return r["data"]
+    def msql(q):
+        return machine.succeed(f"sqlite3 /var/lib/agentos-machine/machine.sqlite \"{q}\"").strip()
+    def default_entry():
+        return machine.succeed(f"tail -c +5 {efi} | tr -d '\\000'").strip()
+    T = "AGENTOS_TEST_FAULTS=1 AGENTOS_TEST_SKIP_HEALTH_GATE=1"
+    def ctl(args):
+        return json.loads(machine.succeed(f"{T} agentosctl update {args}"))
+    def reboot():
+        machine.shutdown()
+        machine.start()
+        machine.wait_for_unit("multi-user.target", timeout=600)
+        machine.wait_until_succeeds("test -S /run/agentos/machine/machine.sock", timeout=120)
+    machine.wait_until_succeeds("test -S /run/agentos/machine/machine.sock", timeout=120)
+    fb = json.loads(machine.succeed("printf 'alice-pw-1' | agentosctl firstboot --admin alice --workspace A"))
+    ws = fb["workspaceId"]
+    comp = json.dumps({"machineSchema": [1, 2], "workspaceSchema": [5, 5], "brokerSchema": [4, 4], "brokerProtocol": [3, 3], "nativeRpc": [1, 1]}).replace('"', '\\"')
+    seq0 = int(msql("SELECT IFNULL(MAX(release_sequence), 0) FROM releases"))
+    for k, rid in enumerate((CAND, C1, C2), 1):
+        msql(f"INSERT INTO releases (release_id, manifest_hash, release_sequence, closure_path, compatibility_json, migration_class, verification_state, support_until, created_at) VALUES ('{rid}', 'sha256:{rid}', {seq0 + k}, '/nix/store/{rid}', '{comp}', 'none', 'verified', 4102444800000, 1)")
+    mok("releases.setCurrent", {"releaseId": CAND, "knownGood": True})
+    assert default_entry() == f"agentos-{CAND}.conf", default_entry()
+    def cycle(rid, known):
+        """open → … → armed (the update holds the machine barrier) → one-shot trial boot → reconcile: validating"""
+        uid = str(uuid.uuid4())
+        mok("updates.open", {"updateId": uid, "toReleaseId": rid, "plan": {"to": rid}})
+        for st in ("downloading", "staged", "waiting_confirmation", "quiescing"):
+            mok("updates.advance", {"updateId": uid, "to": st, "fields": {}})
+        b = mok("barrier.hold", {"ownerKind": "update", "ownerId": uid, "scope": {}})["barrierId"]
+        mok("updates.advance", {"updateId": uid, "to": "armed", "fields": {"barrierId": b, "candidateEntryId": f"agentos-{rid}.conf", "previousEntryId": f"agentos-{known}.conf"}})
+        write_entry(rid)
+        uw(f"arm --esp /boot --release-id {rid} --known-good {known}")
+        reboot()
+        assert booted_release() == rid, booted_release()
+        r = ctl("reconcile")
+        print("reconcile (trial boot)", r)
+        assert r["action"]["action"] == "enter_validating" and r["state"] == "validating", r
+        bid = machine.succeed("cat /proc/sys/kernel/random/boot_id").strip()
+        u = mok("updates.get", {"updateId": uid})
+        assert u["trialBootId"] == bid and u["commitIntent"] is False, u
+        # business stays closed during the trial: no workspace starts under the update's barrier
+        r = mcall("workspaces.rootStart", {"workspaceId": ws})
+        assert not r["ok"] and r["error"]["code"] == "CHECKPOINT_INCOMPLETE", r
+        assert msql(f"SELECT state FROM workspaces WHERE workspace_id='{ws}'") != "running"
+        return uid
+    def committed_once(uid, rid):
+        assert msql(f"SELECT COUNT(*) FROM root_audit WHERE kind='update.state' AND scope_id='{uid}' AND outcome='committed'") == "1"
+        assert msql(f"SELECT COUNT(*) FROM root_audit WHERE kind='update.commit_intent' AND scope_id='{uid}'") == "1"
+        assert msql("SELECT current_release_id || '|' || known_good_release_id FROM machine_meta") == f"{rid}|{rid}"
+        assert msql("SELECT COUNT(*) FROM barriers WHERE state='held'") == "0"
+        assert msql("SELECT schema_version FROM machine_meta") == "2"
+        r = ctl("reconcile")                                                   # a second pass finds nothing to do
+        assert r["action"] == "none", r
+    # (1) crash after the commit intent, before the default: the firmware boots known-good (the one-shot is spent);
+    # reconcile writes the default again from the intent, then commits once
+    u1 = cycle(C1, CAND)
+    rc, o = machine.execute(f"{T} AGENTOS_FAULT_POINT=update.commit.after_intent agentosctl update commit --update-id {u1} 2>&1")
+    print(o)
+    assert rc != 0 and "fault injected" in o, (rc, o)
+    u = mok("updates.get", {"updateId": u1})
+    assert u["state"] == "validating" and u["commitIntent"] is True, u
+    assert default_entry() == f"agentos-{CAND}.conf", default_entry()
+    machine.crash()
+    machine.start()
+    machine.wait_for_unit("multi-user.target", timeout=600)
+    machine.wait_until_succeeds("test -S /run/agentos/machine/machine.sock", timeout=120)
+    assert booted_release() == CAND, booted_release()
+    r = ctl("reconcile")
+    print("reconcile after intent crash", r)
+    assert r["action"]["action"] == "resume_commit_set_default" and r["state"] == "committed", r
+    assert default_entry() == f"agentos-{C1}.conf", default_entry()
+    committed_once(u1, C1)
+    reboot()
+    assert booted_release() == C1, booted_release()
+    # the business opens only now
+    mok("workspaces.rootStart", {"workspaceId": ws})
+    mok("workspaces.rootStop", {"workspaceId": ws})
+    # (2) crash after the default was written and read back, before machined recorded committed: the next boot is
+    # the candidate from the persistent default; reconcile finishes the commit without writing anything twice
+    r = uw(f"gc --esp /boot --keep {C1}")
+    assert CAND in r["removed"], r
+    u2 = cycle(C2, C1)
+    rc, o = machine.execute(f"{T} AGENTOS_FAULT_POINT=update.commit.after_default agentosctl update commit --update-id {u2} 2>&1")
+    print(o)
+    assert rc != 0 and "fault injected" in o, (rc, o)
+    assert mok("updates.get", {"updateId": u2})["state"] == "validating"
+    assert default_entry() == f"agentos-{C2}.conf", default_entry()
+    machine.crash()
+    machine.start()
+    machine.wait_for_unit("multi-user.target", timeout=600)
+    machine.wait_until_succeeds("test -S /run/agentos/machine/machine.sock", timeout=120)
+    assert booted_release() == C2, booted_release()
+    r = ctl("reconcile")
+    print("reconcile after default crash", r)
+    assert r["action"]["action"] == "finish_commit" and r["state"] == "committed", r
+    committed_once(u2, C2)
