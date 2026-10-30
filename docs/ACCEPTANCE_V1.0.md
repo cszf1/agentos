@@ -114,7 +114,7 @@
 | V1-U07 | 启动项写入断电 | 通过 | KVM VM（Actions）＋单元/集成 | m7-update：known-good 与候选条目完整、default 为 known-good；update-worker Rust 测试覆盖各发布点中断。VM 断电未做。 m7-update（run 41133427331，5c1364f，KVM）全部子测试通过，含“power cut at every ESP publish point”：在 boot.after_copy_linux、boot.after_copy_initrd、boot.before_dir_publish、boot.before_entry、boot.after_entry 五个发布点让 update-worker 死掉后直接 machine.crash()（不关机、不 sync），每次重启都从持久 default（known-good）启动、one-shot 为空、known-good 条目与内核/initrd 逐字节完整；可见条目总是指向完整资产，目录发布前没有任何候选残留（只有 .tmp），after_entry 之后是完整候选；同一命令从残留续作得到完整候选。（此前 run 41131384220 暴露的 FAT 目录项丢失已由 5c1364f 每个发布点 syncfs ESP 修复。） |
 | V1-U08 | 单次试启动 | 通过 | KVM VM（Actions） | m7-update：one-shot 只启动候选一次、default 不变；无 init 的坏候选复位后进入 default，不无限重试。 |
 | V1-U09 | 健康门槛 | 通过 | KVM VM（Actions）＋单元/集成 | update-worker health 单元测试（假 ready、仅 SSH、Qt 不出帧、schema 不兼容）。m5-desktop（run 41109619857，7ab4cf1，KVM）U09 子测试通过：agentos-update-worker health 先做正对照（全部探针 60 秒为绿，healthy=true），再分别制造 Qt 不出帧（shell 画布进程失败 → shell_canvas 失败）、工作区 schema 超出发行范围（workspaces_compatible 失败）、假 ready（broker 单元 active 但身份 socket 不在 → broker_identity 失败）、仅 SSH（无 greeter、无 machined → greeter_frame 与 machine_identity 失败），每种都 healthy=false。m7-update（run 41109624800，KVM）U09 子测试通过：健康门槛不过时 commit 以 NEEDS_ATTENTION（greeter_frame）拒绝，持久 default 保持 known-good 条目不变。 |
-| V1-U10 | 提交窗口恢复 | 部分 | KVM VM（Actions）＋单元/集成 | m7-update：commit 写入并读回 default；Rust U10 覆盖各断点对账。 |
+| V1-U10 | 提交窗口恢复 | 通过 | KVM VM（Actions）＋单元/集成 | m7-update：commit 写入并读回 default；Rust U10 覆盖各断点对账。 m7-update（run 41138550778，03d6241，KVM）全部子测试通过，含“commit window: a crash after the intent or after the default resolves from facts; business stays closed until committed; nothing repeats”：commit intent 记录后崩溃、default 写入后崩溃两个断点重启后由开机对账单元按 machined 事实完成提交（default 读回正确），推迟的 machine schema 迁移只执行一次（root_audit 中 committed 恰 1 条），试启动期间工作区 rootStart 被 update barrier 拒绝（未提前开放业务），重复 reconcile 无动作；其余断点（profile/DB）由 Rust U10 单元覆盖。 |
 | V1-U11 | 兼容回退 | 部分 | KVM VM（Actions）＋单元/集成 | 实现（决定 25）：machine schema 迁移只在更新 commit 时执行（试启动期间库保持旧 schema，known-good 回退仍可打开）；任何切换发行（含 known-good 回退）要求目标发行 compatibility 范围包含当前实际数据版本（machineSchema/workspaceSchema/brokerSchema/brokerProtocol/nativeRpc），否则 ROLLBACK_INCOMPATIBLE、不写 current/known-good；回退不做降级迁移、不降低更新高水位、记录与撤权保留；新程序拒绝打开更新的 machine schema。Rust 单元（agentos-v1 cargo test 通过）：native/crates/machine/src/tests.rs u11_migration_waits_for_commit_and_rollback_needs_a_compatible_generation、w10_schema_1_database_migrates_to_2_keeping_every_row。 m10-sched（run 41125659087，KVM）U11 子测试通过：机器运行新代际（machine schema 2），只声明 schema 1 的已登记发行 known-good 回退被 ROLLBACK_INCOMPATIBLE 拒绝且 current/known-good/高水位不变；声明 1..2 的发行被接受，高水位、用户与最新撤权保留。**未满足**：两个发行都是 machined 登记行（无真实闭包），没有真正启动回到旧代际并读回新代际写入的记录。 |
 | V1-U12 | 保留与回收 | 通过 | KVM VM（Actions）＋单元/集成 | m7-update：GC 只移除未 pin 的登记条目，NixOS 自有条目保留；Rust U12。 |
 
@@ -165,7 +165,7 @@
 
 ## 统计
 
-未通过 12 项，通过 64 项，部分 24 项（共 100 项）。
+未通过 12 项，通过 65 项，部分 23 项（共 100 项）。
 
 ## 回归与偶发失败记录
 
