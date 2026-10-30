@@ -8,7 +8,7 @@ import { requestHash } from "@agentos/core";
 import { startRig, submit, waitRun, type AgentRig, lastTranscript } from "../agent-helpers.js";
 import { publish } from "../sandbox/util.js";
 import { codeFixture } from "../fixtures-v02.js";
-import { assertTelemetryMatches, Broker, hasBroker, installed, simCtl, storeUUID, systemctl, waitUntil } from "../v03.js";
+import { assertTelemetryMatches, Broker, hasBroker, installed, pauseInstalledHost, simCtl, storeUUID, systemctl, waitUntil } from "../v03.js";
 
 /**
  * Host + real broker + real rootless sandbox (ABI-2 runner): grants, provider reads, trusted previews, confirmation,
@@ -55,7 +55,9 @@ run("v0.3 host system path (real broker, real sandbox)", () => {
   };
   const plan = (h: string, input: unknown) => caps().planFromApp(appId, h, input, rig.core.apps.requireApp(appId).epoch);
 
+  let resumeHost: () => void = () => {};
   beforeAll(async () => {
+    resumeHost = pauseInstalledHost();
     rig = await startRig({ storeUuid: storeUUID() });
     await waitUntil(() => caps().state().brokerReady, (x) => x === true, 20_000, 200);
     // test hygiene: release quarantines left by earlier runs (their unknown facts stay recorded)
@@ -71,6 +73,7 @@ run("v0.3 host system path (real broker, real sandbox)", () => {
   }, 900_000);
   afterAll(async () => {
     await rig?.close();
+    resumeHost();
   });
 
   it("V3-C02/G03 a v3 app runs on ABI 2; without a connection reads fail honestly (no data invented)", async () => {

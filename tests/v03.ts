@@ -48,6 +48,21 @@ export function systemctl(...args: string[]): string {
   return sudo(["systemctl", ...args]);
 }
 
+/**
+ * The rig takes the installed store's UUID (the broker policy names it). The machine's own Host (user unit
+ * agentos-host.service) owns that store too: its reconciler removes every container labelled with the store that has
+ * no row in ITS database — the rig's app containers — so the rig's apps lose their bridge mid-test (B01 v03 chain:
+ * "connection closed", then INSTANCE_NOT_READY in every later case). One store has one Host (single writer, spec
+ * B05): stop the installed Host while a rig uses its store and start it again afterwards.
+ */
+export function pauseInstalledHost(): () => void {
+  const user = (args: string[]) => spawnSync("systemctl", ["--user", ...args], { encoding: "utf8" });
+  if (user(["is-active", "agentos-host.service"]).stdout.trim() !== "active") return () => {};
+  const r = user(["stop", "agentos-host.service"]);
+  if (r.status !== 0) throw new Error(`could not stop the installed Host for the store-sharing rig: ${r.stderr}`);
+  return () => void user(["start", "agentos-host.service"]);
+}
+
 export function unitActive(unit: string): string {
   return spawnSync("systemctl", ["is-active", unit], { encoding: "utf8" }).stdout.trim();
 }

@@ -13,8 +13,8 @@ PageFrame {
     PText { text: "版本"; font.bold: true }
     Repeater { model: shell.revisions
         delegate: Row { spacing: 8
-            PText { width: 360 * shell.uiScale; text: (row.label || row.revisionId) + (row.active ? "（当前）" : ""); elide: Text.ElideMiddle; maximumLineCount: 1 }
+            PText { width: 360 * shell.uiScale; text: (row.title || row.revisionId) + (row.isActive ? "（当前）" : ""); elide: Text.ElideMiddle; maximumLineCount: 1 }
             PText { text: row.createdAt || ""; variant: "small" }
-            AButton { label: "切换到此版本"; enabled: !row.active; onClicked: shell.act("app.deploy", { appId: app.appId, revisionId: row.revisionId, appEpoch: row.appEpoch || 0 }, "切换版本") } } }
+            AButton { label: "切换到此版本"; enabled: !row.isActive; onClicked: shell.act("app.deploy", { appId: app.appId, revisionId: row.revisionId, appEpoch: app.appEpoch }, "切换版本") } } }
     ActionsList { prefix: "app." }
 }

@@ -26,7 +26,7 @@ def hsql(q):
 
 def e2e(phase, timeout):
     out = f"/tmp/e2e-{phase}"
-    script = (f"cd /tmp && env QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software AGENTOS_E2E_PHASE={phase} "
+    script = (f"cd /tmp && env QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software AGENTOS_E2E_PHASE={phase} QTEST_FUNCTION_TIMEOUT={timeout * 1000} "
               f"agentos-shell-e2e -maxwarnings 0 > {out} 2>&1; echo rc=$? >> {out}; echo done >> {out}\n")
     machine.succeed(f"echo {base64.b64encode(script.encode()).decode()} | base64 -d > {out}.sh && chmod 0644 {out}.sh && rm -f {out}")
     machine.send_key("alt-f1")
