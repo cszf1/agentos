@@ -36,7 +36,7 @@ assert ua != ub
 for ws in (ws_a, ws_b):
     machine.wait_until_succeeds(f"test -s /var/lib/agentos/workspaces/{ws}/data/agent.sqlite", timeout=120)
 for u in (bob, carol):
-    r = call(1, [{"methodId": "members.setRole", "workspaceId": ws_a, "body": {"userId": u, "role": "editor"}}], "sr" + u[:4])[0]
+    r = call(1, [{"methodId": "members.setRole", "workspaceId": ws_a, "idempotencyKey": str(uuid.uuid4()), "body": {"userId": u, "role": "editor"}}], "sr" + u[:4])[0]
     assert r["status"] == 200, r
 
 with subtest("a backup that dies under its barrier freezes every workspace; abandon releases it (R02)"):

@@ -70,9 +70,9 @@ def until_synced(n, req, tag, tries=20):
     return r
 
 with subtest("viewer: reads, cannot write, cannot manage members (I04)"):
-    r = call(1, [{"methodId": "members.setRole", "workspaceId": ws_a, "body": {"userId": bob, "role": "viewer"}}], "v1")[0]
+    r = call(1, [{"methodId": "members.setRole", "workspaceId": ws_a, "idempotencyKey": str(uuid.uuid4()), "body": {"userId": bob, "role": "viewer"}}], "v1")[0]
     assert r["status"] == 200, r
-    r = call(1, [{"methodId": "members.setRole", "workspaceId": ws_a, "body": {"userId": bob, "role": "editor"}}], "v1b")[0]
+    r = call(1, [{"methodId": "members.setRole", "workspaceId": ws_a, "idempotencyKey": str(uuid.uuid4()), "body": {"userId": bob, "role": "editor"}}], "v1b")[0]
     assert code(r) == "PLAN_STALE", r   # a stale view (no expectedMemberVersion) cannot change an existing member
     lst = call(2, [{"methodId": "workspaces.list"}], "v2")[0]
     assert [w["workspaceId"] for w in lst["body"]["workspaces"]] == [ws_a] and lst["body"]["workspaces"][0]["role"] == "viewer", lst
@@ -82,12 +82,12 @@ with subtest("viewer: reads, cannot write, cannot manage members (I04)"):
     assert r["status"] == 404 and code(r) == "NOT_FOUND_OR_FORBIDDEN", r
     r = call(2, [{"methodId": "members.list", "workspaceId": ws_a}], "v5")[0]
     assert code(r) == "NOT_FOUND_OR_FORBIDDEN", r
-    r = call(2, [{"methodId": "members.setRole", "workspaceId": ws_a, "body": {"userId": carol, "role": "viewer"}}], "v6")[0]
+    r = call(2, [{"methodId": "members.setRole", "workspaceId": ws_a, "idempotencyKey": str(uuid.uuid4()), "body": {"userId": carol, "role": "viewer"}}], "v6")[0]
     assert code(r) == "NOT_FOUND_OR_FORBIDDEN", r
 
 with subtest("editor writes data but cannot take owner actions; owner can (I04)"):
     mv = int(sql(f"SELECT member_version FROM workspace_members WHERE workspace_id='{ws_a}' AND user_id='{bob}'"))
-    r = call(1, [{"methodId": "members.setRole", "workspaceId": ws_a, "body": {"userId": bob, "role": "editor", "expectedMemberVersion": mv}}], "e1")[0]
+    r = call(1, [{"methodId": "members.setRole", "workspaceId": ws_a, "idempotencyKey": str(uuid.uuid4()), "body": {"userId": bob, "role": "editor", "expectedMemberVersion": mv}}], "e1")[0]
     assert r["status"] == 200, r
     r = until_synced(2, fwd(ws_a, "maintenance.control.post", body={"action": "pause"}, idem="ed-1"), "e2")
     assert r["status"] == 404 and code(r) == "NOT_FOUND_OR_FORBIDDEN", r   # Host matrix: approve_policy is owner only
@@ -136,7 +136,7 @@ with subtest("revocation while the Host runs: writes stop at once, completes onl
     assert ws_a not in json.dumps(lst), lst
 
 with subtest("revocation while the Host is stopped stays 'revoking' until that Host acks (I08)"):
-    r = call(1, [{"methodId": "members.setRole", "workspaceId": ws_a, "body": {"userId": carol, "role": "viewer"}}], "f1")[0]
+    r = call(1, [{"methodId": "members.setRole", "workspaceId": ws_a, "idempotencyKey": str(uuid.uuid4()), "body": {"userId": carol, "role": "viewer"}}], "f1")[0]
     assert r["status"] == 200, r
     r = until_synced(3, fwd(ws_a, "state.list"), "f2")
     assert r["status"] == 200, r
@@ -158,7 +158,7 @@ with subtest("revocation while the Host is stopped stays 'revoking' until that H
 with subtest("the last owner cannot be removed; a disabled account gets nothing new (I09)"):
     r = call(1, [{"methodId": "members.revoke", "workspaceId": ws_a, "idempotencyKey": str(uuid.uuid4()), "body": {"userId": alice}}], "o1")[0]
     assert code(r) == "CONFLICT", r
-    r = call(1, [{"methodId": "members.setRole", "workspaceId": ws_a, "body": {"userId": alice, "role": "viewer"}}], "o2")[0]
+    r = call(1, [{"methodId": "members.setRole", "workspaceId": ws_a, "idempotencyKey": str(uuid.uuid4()), "body": {"userId": alice, "role": "viewer"}}], "o2")[0]
     assert r["status"] != 200, r
     p = call(1, [{"methodId": "machine.users.disable", "idempotencyKey": str(uuid.uuid4()), "body": {"userId": bob}}], "o3")[0]
     assert p["status"] == 201, p
