@@ -43,8 +43,18 @@ pub fn sha_file(p: &Path) -> UR<String> {
     Ok(format!("sha256:{}", hex::encode(h.finalize())))
 }
 
+/// fsync a directory and then the whole filesystem it is on. On the FAT ESP an fsync of the directory alone did not
+/// make its entries durable across a power cut (m7 run 41131384220: the FAT allocation of copied assets survived while
+/// the directory entries naming them — the temp dir, the published dir — were lost; the clusters leaked and a later
+/// entry pointed at nothing), so every publish point also syncfs()es the ESP.
 pub fn fsync_dir(p: &Path) -> UR<()> {
-    File::open(p).and_then(|f| f.sync_all()).map_err(io("WRITE_FAILED"))
+    use std::os::fd::AsRawFd;
+    let f = File::open(p).map_err(io("WRITE_FAILED"))?;
+    f.sync_all().map_err(io("WRITE_FAILED"))?;
+    if unsafe { libc::syncfs(f.as_raw_fd()) } != 0 {
+        return Err(io("WRITE_FAILED")(std::io::Error::last_os_error()));
+    }
+    Ok(())
 }
 
 fn fault(p: &str) {
@@ -141,9 +151,12 @@ impl Esp {
                 return uerr("UPDATE_PRECONDITION", format!("ESP has {free} bytes free, the candidate needs {need}; nothing written"));
             }
             std::fs::create_dir(&tmp).map_err(io("WRITE_FAILED"))?;
+            // the temp dir is durable before any cluster is allocated in it, so a cut leaves a removable .tmp-*
+            fsync_dir(&self.assets())?;
             for (src, name) in [(c.kernel, "linux"), (c.initrd, "initrd")] {
                 std::fs::copy(src, tmp.join(name)).map_err(io("WRITE_FAILED"))?;
                 File::open(tmp.join(name)).and_then(|f| f.sync_all()).map_err(io("WRITE_FAILED"))?;
+                fsync_dir(&tmp)?;
                 fault(&format!("boot.after_copy_{name}"));
             }
             fsync_dir(&tmp)?;
@@ -187,6 +200,7 @@ impl Esp {
                     if n.starts_with(".tmp-") || (n.starts_with('.') && n.ends_with(".tmp")) {
                         let _ = std::fs::remove_dir_all(d.path()).or_else(|_| std::fs::remove_file(d.path()));
                         out.push(n);
+                        fsync_dir(&dir)?;
                     }
                 }
             }
@@ -208,6 +222,7 @@ impl Esp {
             let _ = std::fs::remove_file(self.entries().join(&id));
             fsync_dir(&self.entries())?;
             let _ = std::fs::remove_dir_all(self.assets().join(&rid));
+            fsync_dir(&self.assets())?;
             removed.push(rid);
         }
         let mut r = reg.clone();
