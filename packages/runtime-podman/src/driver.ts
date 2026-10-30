@@ -20,7 +20,8 @@ export interface PodmanDriverOptions {
 export interface ReleaseImageIndex {
   formatVersion: 1;
   archive: string;
-  images: { name: string; recipeHash: string; role: string; profileId: string }[];
+  /** imageId is the content ID the signed release manifest lists in ociDigests (os/packages/oci.nix). */
+  images: { name: string; recipeHash: string; role: string; profileId: string; imageId?: string }[];
 }
 
 /**
@@ -175,7 +176,8 @@ export class PodmanDriver implements RuntimeDriver {
     const idxFile = path.join(dir, "index.json");
     if (!existsSync(idxFile)) return null;
     const idx = JSON.parse(readFileSync(idxFile, "utf8")) as ReleaseImageIndex;
-    if (idx.formatVersion !== 1 || !idx.images.some((i) => i.name === image.name && i.recipeHash === image.recipeHash)) return null;
+    const entry = idx.formatVersion === 1 ? idx.images.find((i) => i.name === image.name && i.recipeHash === image.recipeHash) : undefined;
+    if (!entry) return null;
     if (!this.releaseImport) {
       this.releaseImport = this.importImage(path.join(dir, path.basename(idx.archive))).then(() => undefined);
       this.releaseImport.catch(() => { this.releaseImport = null; });
@@ -186,6 +188,13 @@ export class PodmanDriver implements RuntimeDriver {
     if (got.labels?.["agentos.recipe"] !== image.recipeHash) {
       await this.api.json<unknown>("DELETE", `/libpod/images/${encodeURIComponent(image.name)}?force=true`).catch(() => undefined);
       throw new PodmanError(409, `release image ${image.name} carries recipe ${got.labels?.["agentos.recipe"] ?? "none"}, expected ${image.recipeHash}`);
+    }
+    // V1-U04: the imported content must be exactly the image the signed manifest approved (ociDigests = imageIds).
+    const want = entry.imageId?.replace(/^sha256:/, "");
+    const have = String(got.id ?? "").replace(/^sha256:/, "");
+    if (!want || want !== have) {
+      await this.api.json<unknown>("DELETE", `/libpod/images/${encodeURIComponent(image.name)}?force=true`).catch(() => undefined);
+      throw new PodmanError(409, `release image ${image.name} has content ${have.slice(0, 19) || "unknown"}, the release approved ${want?.slice(0, 19) ?? "nothing"}`);
     }
     this.assertSafeEnv(got);
     return got;
