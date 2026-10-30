@@ -292,8 +292,8 @@ with subtest("commit window: a crash after the intent or after the default resol
         machine.wait_for_unit("multi-user.target", timeout=600)
         machine.wait_until_succeeds("test -S /run/agentos/machine/machine.sock", timeout=120)
     machine.wait_until_succeeds("test -S /run/agentos/machine/machine.sock", timeout=120)
-    fb = json.loads(machine.succeed("printf 'alice-pw-1' | agentosctl firstboot --admin alice --workspace A"))
-    ws = fb["workspaceId"]
+    ws = msql("SELECT workspace_id FROM workspaces ORDER BY created_at LIMIT 1")   # first boot ran in the U04 subtest
+    assert ws, "no workspace"
     comp = json.dumps({"machineSchema": [1, 2], "workspaceSchema": [5, 5], "brokerSchema": [4, 4], "brokerProtocol": [3, 3], "nativeRpc": [1, 1]}).replace('"', '\\"')
     seq0 = int(msql("SELECT IFNULL(MAX(release_sequence), 0) FROM releases"))
     for k, rid in enumerate((CAND, C1, C2), 1):
