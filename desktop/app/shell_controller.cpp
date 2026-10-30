@@ -893,7 +893,23 @@ void ShellController::onEvent(const RpcEvent& e) {
     refreshPage();
     return;
   }
-  if (t == QLatin1String("app.changed") || t == QLatin1String("data.changed")) {
+  // The Host's own event kinds (app.created/activated/archived/restored…, run.*): the app list and the task list are
+  // re-read from the Host (an event is a hint, never data — spec §9.2). Without this the real-gateway Shell kept the
+  // list it loaded at bind time (m13: run succeeded, Apps still empty).
+  if (t.startsWith(QLatin1String("app.")) && t != QLatin1String("app.changed")) {
+    request(QStringLiteral("state"), JValue::object(), [this](const RpcReply& r) {
+      if (r.ok()) applyApps(r.body);
+    });
+  }
+  if (t.startsWith(QLatin1String("run.")) && (page_ == QLatin1String("home") || page_ == QLatin1String("tasks"))) {
+    request(QStringLiteral("runs.list"), JValue::object({{QStringLiteral("workspaceId"), ws_}}), [this](const RpcReply& r) {
+      if (r.ok()) {
+        runs_->setItems(r.body.get(QStringLiteral("items")));
+        emit pagesChanged();
+      }
+    });
+  }
+  if (t == QLatin1String("app.changed") || t == QLatin1String("data.changed") || t == QLatin1String("app.activated") || t.startsWith(QLatin1String("record."))) {
     const QString appId = e.data.get(QStringLiteral("appId")).stringOr(QString());
     if (views_.contains(appId)) {
       request(QStringLiteral("apps.get"), JValue::object({{QStringLiteral("appId"), appId}}), [this, appId](const RpcReply& r) {

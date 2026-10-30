@@ -166,9 +166,6 @@ with subtest("machined unreachable: bound sessions degrade (reads, brief writes)
     print(machine.succeed(f"sqlite3 {OSB} \"SELECT payload_json FROM events WHERE kind='machine.unreachable' ORDER BY rowid DESC LIMIT 1\""))
     st_run = machine.succeed(f"sqlite3 {OSB} \"SELECT status FROM runs WHERE id='{rid8}'\"").strip()
     assert st_run in ("queued", "running"), st_run                       # waiting, not failed/stopped as 'budget'
-    # a new session cannot be bound (identity needs machined): visible reason
-    out = tty_run(2, f"{RPC} '[{{\"methodId\":\"session.bind\"}}]'", "/tmp/s8b")
-    assert "STORE_UNAVAILABLE" in out and "unreachable" in out, out
     time.sleep(max(0, 33 - (time.time() - t_stop)))
     assert len([e for e in fm_log() if e["ev"] == "start"]) == n0, "a model request went out while machined was unreachable"
     machine.succeed("touch /tmp/s8-go2")
@@ -178,6 +175,11 @@ with subtest("machined unreachable: bound sessions degrade (reads, brief writes)
     assert rd2["status"] == 200, rd2                                     # reads still served within the read grace
     assert st2["body"]["machine"]["writesOpen"] is False, st2
     assert machine.succeed(f"sqlite3 {OSB} \"SELECT COUNT(*) FROM runs WHERE intent='做一个喝水记录应用'\"").strip() == "0"   # refused write left nothing
+    # a new session cannot be bound (identity needs machined): visible reason. Done after the held connection ended:
+    # switching the VT takes the foreground from alice's session and retires its epoch.
+    machine.wait_until_succeeds("grep -q '^done$' /tmp/s8.out", timeout=60)
+    out = tty_run(2, f"{RPC} '[{{\"methodId\":\"session.bind\"}}]'", "/tmp/s8b")
+    assert "STORE_UNAVAILABLE" in out and "unreachable" in out, out
     ua = machine.succeed(f"stat -c %u /var/lib/agentos/workspaces/{ws_a}/data").strip()
     ub = machine.succeed(f"stat -c %u /var/lib/agentos/workspaces/{ws_b}/data").strip()
     for u in (ua, ub):
