@@ -110,7 +110,7 @@
 | V1-U03 | 首启身份 | 部分 | KVM VM（Actions）（已写，CI 待结果） | m6-qcow2：同一模板两个克隆各自替换模板磁盘密钥后首启，machineInstallId 不同；重启后要求新口令且身份保持；m6-install 同一盘重复 firstboot 被拒。5fd7da2 轮 m6-qcow2 与 build-qcow2（run 41080892538）仍在运行，CI 待结果。 |
 | V1-U04 | 签名与内容 | 部分 | 单元/集成 | access.test.ts 发行准入：坏签名/过期/重放/破坏性迁移被拒；update-worker 单元测试校验内容 hash。篡改闭包/OCI 的端到端与 require-sigs 未在 VM 做（发行配置保持 require-sigs=true）。 |
 | V1-U05 | 序列与密钥轮换 | 部分 | 单元/集成 | directory.test.ts：旧 sequence 被拒、known-good 回退不降高水位；密钥轮换未测。 |
-| V1-U06 | 下载与低空间 | 未通过 | 未验收 | 下载断线与低空间未做。 |
+| V1-U06 | 下载与低空间 | 部分 | 单元/集成（VM 已写，CI 待结果） | agentos-update-worker arm 先做前置检查（native/crates/update-worker/src/preflight.rs）：ESP 可用 ≥16 MiB、store 可用 ≥ max(候选闭包所需, 256 MiB)、无市电且电池 <40% 未充电则拒绝（UPDATE_PRECONDITION），拒绝时不写 one-shot、不改 default/条目。Rust u06_preflight_refuses_low_space_and_low_battery_and_arms_nothing 本轮通过；m7-update U06 子测试（真实 bootctl：低电/空间不足不 armed、loader 状态不变）已写，CI 待结果。下载断线续传：nix copy 以 store 路径为原子单位，已到路径保留，未在 VM 中断网复测。 |
 | V1-U07 | 启动项写入断电 | 部分 | KVM VM（Actions）＋单元/集成 | m7-update：known-good 与候选条目完整、default 为 known-good；update-worker Rust 测试覆盖各发布点中断。VM 断电未做。 |
 | V1-U08 | 单次试启动 | 通过 | KVM VM（Actions） | m7-update：one-shot 只启动候选一次、default 不变；无 init 的坏候选复位后进入 default，不无限重试。 |
 | V1-U09 | 健康门槛 | 部分 | 单元/集成 | update-worker health 单元测试（假 ready、仅 SSH、Qt 不出帧、schema 不兼容）；VM 中未做。 |
@@ -165,7 +165,7 @@
 
 ## 统计
 
-未通过 29 项，通过 22 项，部分 49 项（共 100 项）。
+未通过 28 项，通过 22 项，部分 50 项（共 100 项）。
 
 ## 回归与偶发失败记录
 
