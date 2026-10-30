@@ -49,7 +49,7 @@
 |---|---|---|---|---|
 | V1-W01 | 真实 | 通过 | KVM VM（Actions） | m2-identity：两工作区不同执行 UID、各自 subuid 段与 0700 数据目录；双方 UID 与登录用户都不能读对方 os.sqlite。 |
 | V1-W02 | 容器逃逸入口 | 通过 | KVM VM（Actions） | m5-desktop（run 41090848802，KVM）子测试“app container from the release images, offline…”通过：离线（删除默认路由）从发行 OCI 导入镜像（prefetch 4 个 lock，未拉取 docker.io），agentos-runtime doctor 在应用策略下启动探针容器：容器内不存在 /run/user/*/wayland-*、bus、podman、pipewire/pulse，无 /tmp/.X11-unix、system bus、/run/agentos/gateway(.sock)、/run/agentos/machine、/run/agentos-broker、Nix daemon socket、/nix/store、/var/lib/agentos、/var/lib/agentos-machine、/run/podman、systemd private，环境无 WAYLAND_DISPLAY/DISPLAY/DBUS_SESSION_BUS_ADDRESS/XDG_RUNTIME_DIR/AGENTOS_GATEWAY_SOCKET；同时断言宿主侧 Wayland socket 确实存在。另：无网络（ENETUNREACH）、只读根、CapEff=0、NoNewPrivs=1、Seccomp=2。检查脚本 packages/host/src/runtime-ops.ts（doctor）。 |
-| V1-W03 | 创建断点 | 部分 | 单元/集成 | directory.test.ts：半创建工作区不可见。Rust 单元（本轮 agentos-v1 cargo test 通过）native/crates/machine/src/tests.rs w03_each_creation_breakpoint_resumes_to_exactly_one_workspace_without_takeover：在 account（useradd 已执行、回执未写）/directory/databases/linger 各断点注入崩溃→重开同一 machine.sqlite（模拟重启）→resume_creations 恰好恢复 1 个工作区；同 createId 重试返回同一工作区且 stopped；只有 1 个执行账户；第二个工作区 UID/subuid 不冲突；同名但 GECOS 标记不是本次创建的既有账户以 CONFLICT 拒绝、不被接管。**未满足**：VM 中真实 SIGKILL machined 于各断点未做。 |
+| V1-W03 | 创建断点 | 通过 | KVM VM（Actions）＋单元/集成 | directory.test.ts：半创建工作区不可见。Rust 单元 native/crates/machine/src/tests.rs w03_each_creation_breakpoint_resumes_to_exactly_one_workspace_without_takeover（account/directory/databases/linger 各断点崩溃→重开→恰好恢复 1 个；同 createId 重试同一工作区；UID/subuid 不冲突；GECOS 标记不是本次创建的既有账户以 CONFLICT 拒绝、不接管）。VM：m14-create（run 41117825047，09a7215，KVM）全部子测试通过——真实 machined 在 account（useradd 已执行）、databases（workspace-init 已写 os.sqlite）、registry（已置 stopped）三个步骤的效果之后、回执写入之前被 SIGKILL（测试专用崩溃点：仅当单元带 AGENTOS_TEST_FAULTS=1 时读取一次性 /run/agentos-test/machine-fault；发行审计把该变量列为违规），systemd 重启后从自身日志续作；客户端用同一幂等键重试得到同一个 stopped 工作区，该 createId 的步骤全部 done，只多出 1 个执行账户（GECOS=agentos-ws <createId>、UID 一致），工作区列表只出现一次，能正常 attach 启动 Host；最终 4 个工作区 UID 与 subuid 段各不相同，/etc/subuid 无重复段。 |
 | V1-W04 | 两工作区并行 | 通过 | KVM VM（Actions） | m3-members：两个 Host 在不同 UID 下并行；SIGKILL A 的 Host 后 B 仍正常应答，A 由 systemd 重启后恢复。 CI：run 41088865318 中 I04/I03/W04/I06/I08 通过，I09 子测试失败——禁用 bob 被 machined 以 CONFLICT 拒绝（bob 是工作区 “Bob” 的唯一 owner，须先转移所有权），属正确行为、断言有误；已改为断言该拒绝并禁用一个不拥有工作区的新用户，重跑 run 41090308175，I09/I10/W07/I11 CI 待结果。 |
 | V1-W05 | 切换与迟到响应 | 部分 | 单元/集成 | desktop/tests/flows_test.cpp（Qt offscreen，agentos-shell 构建 checkPhase 中 9 个 ctest 套件全过，Actions build-shell run 41096046435）：workspaceSwitchDropsLateResponses——A 的查询应答在切到 B 后到达被丢弃（lateDropped+1），A 的视图（表单/选择/缓存）被销毁，事件订阅移到 B，A 的 membership.revoked 事件不再作用；本轮新增 rapidRoundTripDropsAnswersFromTheEarlierVisit——A→B→A 快速往返，第一次访问 A 时挂起的应答在回到 A 后到达仍被丢弃（同 workspaceId、旧 scope），新 A 视图不含该正文，订阅最终在 A。ShellController 按 workspaceId+clientEpoch+storeUUID+scopeGen 过滤应答。**未满足**：未在真实会话（VM 中 Qt Shell 对真实 gateway）快速切换。 |
 | V1-W06 | 接受后切换 | 通过 | KVM VM（Actions） | m11-ops（run 41089329164）KVM 通过：已接受 run 后 attach B，同幂等键重试回到 A 得到同一 runId，B 的 runs.list 不含、runs.get 不可见，A 中只有一份。断网重试由同幂等键覆盖。 |
@@ -165,7 +165,7 @@
 
 ## 统计
 
-未通过 13 项，通过 45 项，部分 42 项（共 100 项）。
+未通过 13 项，通过 46 项，部分 41 项（共 100 项）。
 
 ## 回归与偶发失败记录
 
