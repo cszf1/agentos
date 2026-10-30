@@ -783,7 +783,10 @@ impl Machine {
     }
 
     pub fn members(&self, actor: &str, ws: &str) -> R<Vec<Value>> {
-        self.membership(actor, ws)?;
+        // Member management, listing included, is an owner action (spec §9.2 table: members.list … owner).
+        if self.membership(actor, ws)?.0 != Role::Owner {
+            return Err(MErr::hidden());
+        }
         let snap = Self::member_snapshot(&self.c, ws)?;
         Ok(snap["members"].as_array().cloned().unwrap_or_default())
     }

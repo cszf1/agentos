@@ -68,6 +68,7 @@
         # KVM runs (CI) may use several vCPUs; "-tcg" variants are single-vCPU for hosts without KVM (RCU stalls).
         m2-identity = test "m2" ./tests/m2-identity.nix { };
         m2-identity-tcg = test "m2" ./tests/m2-identity.nix { cores = 1; };
+        m3-members = test "m3" ./tests/m3-members.nix { };
         m6-install = import ./tests/m6-install.nix { inherit pkgs releaseModules nixpkgs; mkSystem = mk; };
         m6-qcow2 = import ./tests/m6-qcow2.nix { inherit pkgs releaseModules nixpkgs; mkSystem = mk; };
         m7-update = test "m7" ./tests/m7-update.nix { };

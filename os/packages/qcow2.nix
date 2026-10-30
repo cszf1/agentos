@@ -44,4 +44,4 @@ vm.runInLinuxVM (pkgs.runCommand name {
   sync
   umount -R /mnt
   cryptsetup close agentos-root
-''
+'')
