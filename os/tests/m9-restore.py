@@ -125,11 +125,12 @@ with subtest("root-side facts newer than the set still hold: bob revoked, carol 
     assert ws_a not in json.dumps(lst), lst
 
 with subtest("broker log lost: diagnostics only, never an empty log (R11)"):
-    machine.succeed("systemctl stop agentos-broker.service; cp -a /var/lib/agentos-broker /tmp/broker-keep; rm -f /var/lib/agentos-broker/broker.sqlite*")
+    # agentos-broker.path would start the broker again the moment it stops (before the log is removed): hold it
+    machine.succeed("systemctl stop agentos-broker.path agentos-broker.service; cp -a /var/lib/agentos-broker /tmp/broker-keep; rm -f /var/lib/agentos-broker/broker.sqlite*")
     machine.succeed("systemctl start agentos-broker.service")
     machine.wait_until_succeeds("journalctl -u agentos-broker -b --no-pager | grep -q BROKER_HISTORY_MISSING", timeout=60)
     machine.fail("test -f /var/lib/agentos-broker/broker.sqlite")
-    machine.succeed("systemctl stop agentos-broker.service; cp -a /tmp/broker-keep/. /var/lib/agentos-broker/; systemctl start agentos-broker.service")
+    machine.succeed("systemctl stop agentos-broker.service; cp -a /tmp/broker-keep/. /var/lib/agentos-broker/; systemctl start agentos-broker.service agentos-broker.path")
     machine.wait_for_unit("agentos-broker.service")
 
 with subtest("machine directory lost: recovery mode, then an explicit new identity; old state kept as evidence (R11)"):
