@@ -57,7 +57,7 @@ def revocation_diag(rid):
 
 def wait_revoked(rid, timeout=90):
     try:
-        machine.wait_until_succeeds(f"test \"$(sqlite3 /var/lib/agentos-machine/machine.sqlite \\\"SELECT state FROM revocations WHERE revocation_id='{rid}'\\\")\" = revoked", timeout=timeout)
+        machine.wait_until_succeeds(f"sqlite3 /var/lib/agentos-machine/machine.sqlite \"SELECT state FROM revocations WHERE revocation_id='{rid}'\" | grep -qx revoked", timeout=timeout)
     except BaseException:
         revocation_diag(rid)
         raise

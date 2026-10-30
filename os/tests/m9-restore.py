@@ -76,7 +76,7 @@ with subtest("one machine set over both workspaces, taken under one barrier, bot
 with subtest("after the backup: revoke bob, disable carol, leave a machine plan open"):
     r = call(1, [{"methodId": "members.revoke", "workspaceId": ws_a, "idempotencyKey": str(uuid.uuid4()), "body": {"userId": bob}}], "rv")[0]
     assert r["status"] == 202, r
-    machine.wait_until_succeeds(f"test \"$(sqlite3 /var/lib/agentos-machine/machine.sqlite \\\"SELECT state FROM workspace_members WHERE workspace_id='{ws_a}' AND user_id='{bob}'\\\")\" = revoked", timeout=90)
+    machine.wait_until_succeeds(f"sqlite3 /var/lib/agentos-machine/machine.sqlite \"SELECT state FROM workspace_members WHERE workspace_id='{ws_a}' AND user_id='{bob}'\" | grep -qx revoked", timeout=90)
     p = call(1, [{"methodId": "machine.users.disable", "idempotencyKey": str(uuid.uuid4()), "body": {"userId": carol}}], "dc")[0]
     ok = call(1, [{"methodId": "machine.actions.confirm", "idempotencyKey": str(uuid.uuid4()), "body": {"operationId": p["body"]["operationId"], "planHash": p["body"]["planHash"], "password": "alice-pw-1"}}], "dcc")[0]
     assert '"succeeded"' in json.dumps(ok), ok
