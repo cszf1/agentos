@@ -90,13 +90,43 @@ run("host maintenance: keep a registered unit running through broker protocol 2"
       }
     }, (e) => e === uc.data.controlEpoch, 30_000, 500);
 
+    // The broker's admission counts follow the real resource across runs (spec §12.3): an admission left by an earlier run
+    // of this suite (or an aborted one) inside the cooldown makes the broker refuse with CIRCUIT_OPEN before the fault
+    // point is reached. Wait the cooldown out rather than mistaking it for a recovery failure; an exhausted hour/24 h cap
+    // cannot be waited out inside one test and is reported as such.
+    {
+      const bw = await new Broker().open();
+      const ms = await bw.client.maintenanceState(bw.identity);
+      bw.close();
+      const p = (ms.policies as { policyId: string; bounds?: { cooldownSeconds?: number; perHour?: number; per24h?: number }; attempts?: { lastHour: number; last24h: number; lastAdmittedAtMs: number | null } }[]).find((x) => x.policyId === created.data.policyId);
+      const cap = (ms.installCaps as { cooldownSeconds: number; perHour: number; per24h: number }[] | undefined)?.[0];
+      const cooldownMs = Math.max(p?.bounds?.cooldownSeconds ?? 0, cap?.cooldownSeconds ?? 0) * 1000;
+      const perHour = Math.min(p?.bounds?.perHour ?? Infinity, cap?.perHour ?? Infinity);
+      const per24h = Math.min(p?.bounds?.per24h ?? Infinity, cap?.per24h ?? Infinity);
+      expect(p?.attempts?.lastHour ?? 0, `hourly cap exhausted by earlier runs: ${JSON.stringify(p?.attempts)}`).toBeLessThan(perHour);
+      expect(p?.attempts?.last24h ?? 0, `24 h cap exhausted by earlier runs: ${JSON.stringify(p?.attempts)}`).toBeLessThan(per24h);
+      const last = p?.attempts?.lastAdmittedAtMs;
+      if (last) {
+        const wait = last + cooldownMs + 2_000 - Date.now();
+        if (wait > 0) {
+          console.log(`[host-maintenance] waiting ${Math.ceil(wait / 1000)} s for the broker cooldown left by an earlier admission`);
+          await new Promise((r) => setTimeout(r, wait));
+        }
+      }
+    }
+
     // restart the host with the fault point armed, start the check, and wait for the SIGKILL
     await stopHost(host!);
     await start({ AGENTOS_FAULTS: "1", AGENTOS_FAULT_POINT: POINT });
     const chk = await c.req("POST", "/api/maintenance/checks", { templateId: "service-ensure-running", target: { kind: "service", id: res!.resourceId } });
     expect(chk.status, JSON.stringify(chk)).toBe(202);
     const jobId = chk.data.jobId as string;
-    await waitUntil(() => host!.proc.exitCode !== null || host!.proc.signalCode !== null, (x) => x, 120_000, 200);
+    try {
+      await waitUntil(() => host!.proc.exitCode !== null || host!.proc.signalCode !== null, (x) => x, 120_000, 200);
+    } catch (e) {
+      const js = await c.get(`/api/maintenance/jobs/${jobId}`).catch(() => null);
+      throw new Error(`host not killed at ${POINT} within 120 s; job: ${JSON.stringify(js?.data ?? null)} (${(e as Error).message})`);
+    }
     expect(host!.logs.join("")).toContain(`[fault] ${POINT}`);
 
     // restart: the job resumes from os.sqlite alone; the same operation is found or delivered once
@@ -113,5 +143,5 @@ run("host maintenance: keep a registered unit running through broker protocol 2"
     } finally {
       b.close();
     }
-  }, 600_000);
+  }, 1_500_000);
 });
