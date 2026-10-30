@@ -115,7 +115,7 @@
 | V1-U08 | 单次试启动 | 通过 | KVM VM（Actions） | m7-update：one-shot 只启动候选一次、default 不变；无 init 的坏候选复位后进入 default，不无限重试。 |
 | V1-U09 | 健康门槛 | 部分 | 单元/集成 | update-worker health 单元测试（假 ready、仅 SSH、Qt 不出帧、schema 不兼容）；VM 中未做。 |
 | V1-U10 | 提交窗口恢复 | 部分 | KVM VM（Actions）＋单元/集成 | m7-update：commit 写入并读回 default；Rust U10 覆盖各断点对账。 |
-| V1-U11 | 兼容回退 | 未通过 | 未验收 | 未做。 |
+| V1-U11 | 兼容回退 | 部分 | 单元/集成 | 实现（决定 25）：machine schema 迁移只在更新 commit 时执行（试启动期间库保持旧 schema，known-good 回退仍可打开）；任何切换发行（含 known-good 回退）要求目标发行 compatibility 范围包含当前实际数据版本（machineSchema/workspaceSchema/brokerSchema/brokerProtocol/nativeRpc），否则 ROLLBACK_INCOMPATIBLE、不写 current/known-good；回退不做降级迁移、不降低更新高水位、记录与撤权保留；新程序拒绝打开更新的 machine schema。Rust 单元（agentos-v1 cargo test 通过）：native/crates/machine/src/tests.rs u11_migration_waits_for_commit_and_rollback_needs_a_compatible_generation、w10_schema_1_database_migrates_to_2_keeping_every_row。VM 中真实回退到兼容旧代际未做。 |
 | V1-U12 | 保留与回收 | 通过 | KVM VM（Actions）＋单元/集成 | m7-update：GC 只移除未 pin 的登记条目，NixOS 自有条目保留；Rust U12。 |
 
 ## 备份恢复
@@ -165,7 +165,7 @@
 
 ## 统计
 
-未通过 19 项，通过 35 项，部分 46 项（共 100 项）。
+未通过 18 项，通过 35 项，部分 47 项（共 100 项）。
 
 ## 回归与偶发失败记录
 
