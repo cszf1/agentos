@@ -327,7 +327,7 @@ impl Machine {
             return Err(MErr::new("INVALID_REQUEST", "login name must match ^[a-z][a-z0-9-]{0,31}$ and role admin|user"));
         }
         self.meta()?;
-        let marker = format!("agentos-user:{provisioning_id}");
+        let marker = format!("agentos-user {provisioning_id}");
         let intent = json!({ "loginName": login_name, "role": role });
         // allocate: pick the login UID and the userId in one transaction with the intent, so a retry reuses them.
         let (user_id, uid) = self.tx(|c| {
@@ -523,7 +523,7 @@ impl Machine {
         let login = row["execLogin"].as_str().unwrap_or_default().to_string();
         let store = row["storeUUID"].as_str().unwrap_or_default().to_string();
         let sub = row["subuidStart"].as_u64().unwrap_or(0) as u32;
-        let marker = format!("agentos-ws:{create_id}");
+        let marker = format!("agentos-ws {create_id}");
         let home = self.paths.ws_root(ws);
         let intent = json!({ "workspaceId": ws, "executionUid": uid });
         for step in &WORKSPACE_STEPS[1..] {
