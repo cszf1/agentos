@@ -1,3 +1,4 @@
+import { userDomain } from "@agentos/core";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { AgentOsError, isV3, parseDto, type CodeBundleV3 } from "@agentos/contracts";
 import type { SystemCapabilities, UserWriteMeta } from "@agentos/core";
@@ -34,7 +35,7 @@ export function registerSystemRoutes(
    * otherwise do the work, then record the receipt. Final domain errors are stored as receipts too.
    */
   const asyncWrite = async <T>(cap: string, meta: UserWriteMeta, work: () => Promise<{ status: number; body: T }>) => {
-    const prior = core.store.get<{ request_hash: string }>("SELECT request_hash FROM operations WHERE principal = 'user:local' AND operation_key = ?", meta.operationKey);
+    const prior = core.store.get<{ request_hash: string }>("SELECT request_hash FROM operations WHERE principal = ? AND operation_key = ?", userDomain(), meta.operationKey);
     if (prior) return core.gateway.write(cap, { principal, ...meta }, () => {
       throw new AgentOsError("INTERNAL" as never, "unreachable: receipt exists");
     });

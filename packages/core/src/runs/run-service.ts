@@ -82,7 +82,7 @@ export const DEFAULT_RUN_SETTINGS: RunSettings = {
   maxStageAttempts: LIMITS.maxStageAttemptsPerRun,
 };
 
-export type StopReason = "user" | "budget" | "deadline" | "target_changed" | "maintenance_paused" | "restore";
+export type StopReason = "user" | "budget" | "deadline" | "target_changed" | "maintenance_paused" | "restore" | "membership_revoked";
 
 /** system_plan budgets (spec §9.3): 180 s, 6 model requests, 20 tool tasks, 3 invalid plan attempts. */
 export const SYSTEM_PLAN_RUN_SETTINGS: RunSettings = { deadlineMs: 180_000, maxModelRequests: 6, maxToolTasks: 20, maxStageAttempts: 3 };

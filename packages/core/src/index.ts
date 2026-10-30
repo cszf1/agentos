@@ -30,6 +30,7 @@ export * from "./providers/system-info.js";
 export * from "./faults.js";
 export * from "./user-actions.js";
 export * from "./model-budgets/budgets.js";
+export * from "./identity/context.js";
 export * from "./scheduling/target-leases.js";
 export * from "./scheduling/run-scheduler.js";
 export * from "./maintenance/policy-service.js";

@@ -10,6 +10,7 @@ import { assertLocalFs, assertLockHeld } from "./lock.js";
 import { SessionAuth, ensureSecrets } from "./auth.js";
 import { buildServer, type HostRuntime } from "./http.js";
 import { MaintenanceHost } from "./maintenance-host.js";
+import { MachineMode, machineModeFromEnv } from "./machine-mode.js";
 
 export const RESTORE_MARKER = "restore-in-progress";
 
@@ -69,8 +70,23 @@ export async function main(): Promise<void> {
 
   // reserve the port early; business endpoints answer 503 until ready
   const server = buildServer(rt);
-  await server.listen({ host: config.host, port: config.port });
-  log.info("listening", { host: config.host, port: config.port });
+  // v1.0 machine mode (spec §8.1, §9.1): no TCP listener; the only entry is the root gateway the Host dials itself.
+  const mmCfg = machineModeFromEnv(process.env);
+  let machineMode: MachineMode | null = null;
+  if (mmCfg) {
+    machineMode = new MachineMode(mmCfg, rt, server);
+    rt.machine = { workspaceId: mmCfg.workspaceId, storeUUID: mmCfg.storeUUID, bridgeSecret: machineMode.bridgeSecret };
+    await server.ready();
+    try {
+      await machineMode.start();
+    } catch (e) {
+      fail(log, "machine registration failed; not serving this workspace", { error: (e as Error).message });
+    }
+    log.info("machine mode", { workspaceId: mmCfg.workspaceId, instanceId: machineMode.instanceId });
+  } else {
+    await server.listen({ host: config.host, port: config.port });
+    log.info("listening", { host: config.host, port: config.port });
+  }
 
   let shuttingDown = false;
   const shutdown = async (signal: string) => {
@@ -97,6 +113,7 @@ export async function main(): Promise<void> {
     await closing;
     await rt.sys?.shutdown().catch((e) => log.warn("runtime shutdown incomplete; the next start reconciles", { error: (e as Error).message }));
     await rt.caps?.shutdown().catch(() => undefined);
+    await machineMode?.stop();
     await server.close().catch(() => undefined);
     core.store.close();
     log.info("stopped");

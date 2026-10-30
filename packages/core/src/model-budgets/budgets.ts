@@ -53,7 +53,17 @@ export interface RouteBindingRow {
 
 export type Admission =
   | { ok: true; attemptId: string; maxTokens: number; background: boolean; subject: string }
-  | { ok: false; reason: string; code: "MODEL_BUDGET_EXCEEDED" | "RUN_IDENTITY_MISMATCH" | "EXECUTION_EPOCH_STALE" | "FORBIDDEN" | "DEADLINE" };
+  | { ok: false; reason: string; code: "MODEL_BUDGET_EXCEEDED" | "RUN_IDENTITY_MISMATCH" | "EXECUTION_EPOCH_STALE" | "FORBIDDEN" | "DEADLINE" | "MEMBERSHIP_REVOKED" | "MACHINE_CAPACITY" };
+
+/**
+ * v1.0 machine admission (spec §13.1): every model request also holds a machine permit. Implemented by the Host's
+ * link to agentos-machined; null outside machine mode. `acquire` resolves once the permit is reserved (or denied).
+ */
+export interface MachineGate {
+  acquire(req: { ownerKind: "run" | "compaction"; ownerId: string; executionEpoch: number; attemptId: string; background: boolean; userId: string | null; memberVersion: number; deadlineMs: number; bodyHash: string }, signal?: AbortSignal): Promise<{ ok: true; permitId: string } | { ok: false; reason: string; code: "MACHINE_CAPACITY" | "MEMBERSHIP_REVOKED" | "DEADLINE" }>;
+  use(permitId: string, memberVersion: number): Promise<boolean>;
+  release(permitId: string, usage: "used" | "unused" | "unknown", usageJson?: unknown): void;
+}
 
 interface Waiter {
   background: boolean;
@@ -83,10 +93,23 @@ export class ModelBudgets {
   /** for tests and diagnostics */
   readonly stats = { admitted: 0, denied: 0, networkStarts: 0, waitedForeground: 0, waitedBackground: 0, maxConcurrent: 0 };
 
+  /** v1.0 machine-level permit gate (null = single-workspace development mode). */
+  machineGate: MachineGate | null = null;
+  #permitOf = new Map<string, string>();
+
   constructor(
     private readonly store: Store,
     private readonly runs: RunService,
   ) {}
+
+  /** Subject of a route for the machine permit key: owner, execution epoch, initiator and memberVersion. */
+  #subjectOf(b: RouteBindingRow): { ownerKind: "run" | "compaction"; ownerId: string; executionEpoch: number; userId: string | null; memberVersion: number } | null {
+    if (b.route_purpose === "compaction" && b.route_subject_id) return { ownerKind: "compaction", ownerId: b.route_subject_id, executionEpoch: b.route_epoch, userId: null, memberVersion: 1 };
+    if (!b.run_id) return null;
+    const r = this.store.get<{ execution_epoch: number; initiator_user_id: string | null; member_version: number | null }>("SELECT execution_epoch, initiator_user_id, member_version FROM runs WHERE id = ?", b.run_id);
+    if (!r) return null;
+    return { ownerKind: "run", ownerId: b.run_id, executionEpoch: r.execution_epoch, userId: r.initiator_user_id, memberVersion: r.member_version ?? 1 };
+  }
 
   private now(): string {
     return iso(this.store.clock.now());
@@ -216,14 +239,41 @@ export class ModelBudgets {
     if (deadline <= this.store.clock.now()) return this.#deny("the task deadline passed", "DEADLINE");
     const got = await this.#acquire(background, deadline, signal);
     if (!got) return this.#deny("no model permit before the task deadline", "DEADLINE");
+    const attemptId = randomUUID();
+    let permitId: string | null = null;
+    const subj = this.#subjectOf(b0);
+    if (this.machineGate && subj) {
+      // Machine permit first (spec §13.1); the workspace's own final checks below run after it is held.
+      const m = await this.machineGate.acquire({ ...subj, attemptId, background, deadlineMs: deadline, bodyHash: `sha256:${configHash}` }, signal);
+      if (!m.ok) {
+        this.#release(background);
+        if (m.code !== "DEADLINE" && b0.run_id) this.runs.requestStop(b0.run_id, m.code === "MEMBERSHIP_REVOKED" ? "membership_revoked" : "budget");
+        return this.#deny(m.reason, m.code);
+      }
+      permitId = m.permitId;
+    }
     let res: Admission;
     try {
-      res = this.store.tx((): Admission => this.#reserveInTx(routeId, configHash, background));
+      res = this.store.tx((): Admission => this.#reserveInTx(routeId, configHash, background, attemptId));
     } catch (e) {
       this.#release(background);
+      if (permitId) this.machineGate?.release(permitId, "unused");
       throw e;
     }
+    if (res.ok && permitId && this.machineGate) {
+      // Final machine step: in_use only with the same memberVersion; a revocation in between returns the permit unused.
+      const used = await this.machineGate.use(permitId, subj!.memberVersion);
+      if (!used) {
+        this.store.tx(() => this.store.run("UPDATE model_attempts SET state = 'denied', ended_at = ? WHERE attempt_id = ? AND state = 'running'", this.now(), res.ok ? res.attemptId : ""));
+        this.machineGate.release(permitId, "unused");
+        this.#release(background);
+        if (b0.run_id) this.runs.requestStop(b0.run_id, "membership_revoked");
+        return this.#deny("the machine permit was revoked before the request was sent", "MEMBERSHIP_REVOKED");
+      }
+      this.#permitOf.set(res.attemptId, permitId);
+    }
     if (!res.ok) {
+      if (permitId) this.machineGate?.release(permitId, "unused");
       this.#release(background);
       if (res.code === "MODEL_BUDGET_EXCEEDED" || res.code === "DEADLINE") {
         const b = this.binding(routeId);
@@ -247,7 +297,7 @@ export class ModelBudgets {
     return { ok: false, reason, code };
   }
 
-  #reserveInTx(routeId: string, configHash: string, background: boolean): Admission {
+  #reserveInTx(routeId: string, configHash: string, background: boolean, attemptId: string = randomUUID()): Admission {
     const s = this.store;
     const b = this.binding(routeId);
     if (!b) return { ok: false, reason: "no trusted binding for this model route", code: "RUN_IDENTITY_MISMATCH" };
@@ -285,6 +335,12 @@ export class ModelBudgets {
       if (row.execution_epoch !== b.route_epoch) return { ok: false, reason: "the route belongs to an earlier execution of this task", code: "EXECUTION_EPOCH_STALE" };
       if (row.status !== "running") return { ok: false, reason: `run is ${row.status}`, code: "FORBIDDEN" };
       if (row.deadline_at === null || Date.parse(row.deadline_at) <= nowMs) return { ok: false, reason: "deadline passed", code: "DEADLINE" };
+      // v1.0 (spec §7.3, §13.1): the initiator's membership is re-read here, after every permit is held.
+      const init = s.get<{ initiator_user_id: string | null; member_version: number | null }>("SELECT initiator_user_id, member_version FROM runs WHERE id = ?", row.id);
+      if (init?.initiator_user_id) {
+        const mm = s.get<{ member_version: number; state: string }>("SELECT member_version, state FROM membership_mirror WHERE user_id = ?", init.initiator_user_id);
+        if (!mm || mm.state !== "active" || mm.member_version !== init.member_version) return { ok: false, reason: "the member who started this task no longer has that membership", code: "MEMBERSHIP_REVOKED" };
+      }
       const st = this.runs.settingsFor(row);
       if (row.model_request_count >= st.maxModelRequests) return { ok: false, reason: `model request budget (${st.maxModelRequests}) exhausted`, code: "MODEL_BUDGET_EXCEEDED" };
       maxTokens = st.maxOutputTokens ?? MODE_BUDGETS[(row.mode ?? "build") as RunMode].maxOutputTokens;
@@ -302,7 +358,6 @@ export class ModelBudgets {
       if (bg.n >= lim.backgroundModelRequestsPer24h) return this.#undoRun(runId, maxTokens, `background model budget (${lim.backgroundModelRequestsPer24h} requests / 24 h) exhausted`);
       if ((bg.out ?? 0) + maxTokens > lim.backgroundOutputTokensPer24h) return this.#undoRun(runId, maxTokens, `background output budget (${lim.backgroundOutputTokensPer24h} tokens / 24 h) exhausted`);
     }
-    const attemptId = randomUUID();
     s.run(
       `INSERT INTO model_attempts (attempt_id, run_id, job_id, compaction_job_id, conversation_id, route_id, route_epoch, execution_epoch, purpose, background, config_hash, reserved_output, state, started_at, host_boot_id)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?)`,
@@ -346,6 +401,13 @@ export class ModelBudgets {
         );
       });
     } finally {
+      const permit = this.#permitOf.get(attemptId);
+      if (permit && this.machineGate) {
+        this.#permitOf.delete(attemptId);
+        const known = outcome.usage && typeof outcome.usage.output === "number";
+        // A request that may have reached the provider is never refunded (spec §13.1): unknown, not unused.
+        this.machineGate.release(permit, known ? "used" : "unknown", outcome.usage ?? null);
+      }
       this.#release(background);
     }
   }

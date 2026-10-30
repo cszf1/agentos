@@ -17,5 +17,5 @@
   security.polkit.enable = true;
   virtualisation.podman.enable = true;
   environment.systemPackages = with pkgs; [ btrfs-progs cryptsetup sqlite age podman ];
-  systemd.coredump.extraConfig = "Storage=none\nProcessSizeMax=0";
+  systemd.coredump.settings.Coredump = { Storage = "none"; ProcessSizeMax = 0; };
 }

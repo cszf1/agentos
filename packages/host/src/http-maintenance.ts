@@ -1,3 +1,4 @@
+import { userDomain } from "@agentos/core";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { AgentOsError, MAINTENANCE_TEMPLATES, V4_LIMITS, type MaintenanceTemplateId, type PolicyCreateBody } from "@agentos/contracts";
 import type { UserWriteMeta } from "@agentos/core";
@@ -336,7 +337,7 @@ export function registerMaintenanceRoutes(
     h.withWrite(async () => {
       const meta = h.writeMeta(req);
       const b = obj(req.body ?? {}, ["allowProviderContent", "instructions"]);
-      const prior = core.store.get<{ result_json: string }>("SELECT result_json FROM operations WHERE principal = 'user:local' AND operation_key = ?", meta.operationKey);
+      const prior = core.store.get<{ result_json: string }>("SELECT result_json FROM operations WHERE principal = ? AND operation_key = ?", userDomain(), meta.operationKey);
       if (prior) return h.ok(reply, 202, write("conversations.compact", meta, () => ({ status: 202, body: null })).body);
       // read-only checks first (async Pi reads); the job is created only inside the gateway write, after the client
       // epoch, Idempotency-Key and request hash were accepted, so a refused request leaves nothing behind (spec §22.1)

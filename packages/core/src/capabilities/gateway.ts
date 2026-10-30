@@ -1,5 +1,6 @@
 import { AgentOsError, canonicalJson, sha256Hex, type Capability } from "@agentos/contracts";
 import { iso, type Store } from "../persistence/store.js";
+import { actionOf, checkMember, currentIdentity, userDomain } from "../identity/context.js";
 
 /**
  * Who is calling. Built only by the host (HTTP session) or the Pi adapter (tool context);
@@ -15,11 +16,11 @@ export type Principal =
 export function principalKey(p: Principal): string {
   switch (p.kind) {
     case "user":
-      return "user:local";
+      return userDomain();
     case "run":
       return `run:${p.runId}`;
     case "app":
-      return p.viaUser ? "user:local" : `app:${p.appId}`;
+      return p.viaUser ? userDomain() : `app:${p.appId}`;
     case "maintenance":
       return `maintenance:${p.jobId}`;
   }
@@ -89,6 +90,15 @@ export interface WriteRequest {
   requestHash: string;
   /** Checked inside the transaction before the receipt lookup (HTTP sessions only). */
   clientEpoch?: number;
+  /** v1.0: owner of the task a cancel/transcript request targets (own-task rules of spec §7.1). */
+  taskOwnerUserId?: string | null;
+}
+
+/** v1.0 member check for user-originated writes; no-op outside machine mode (no trusted identity). */
+function memberGate(store: Store, capability: string, req: WriteRequest): void {
+  const p = req.principal;
+  if (!currentIdentity()) return;
+  if (p.kind === "user" || (p.kind === "app" && p.viaUser)) checkMember(store, actionOf(capability), { taskOwnerUserId: req.taskOwnerUserId });
 }
 
 export interface WriteResult<T> {
@@ -127,6 +137,7 @@ export class CapabilityGateway {
    */
   admit(capability: string, req: WriteRequest): void {
     authorize(capability, req.principal);
+    memberGate(this.store, capability, req);
     if (req.clientEpoch !== undefined) {
       const epoch = this.store.meta().client_epoch;
       if (req.clientEpoch !== epoch) {
@@ -140,6 +151,8 @@ export class CapabilityGateway {
     const pkey = principalKey(req.principal);
     const s = this.store;
     const result = s.tx((): WriteResult<T> | { error: AgentOsError } => {
+      // Membership is re-read at commit: a revocation that landed after admission rejects this write.
+      memberGate(s, capability, req);
       if (req.clientEpoch !== undefined) {
         const epoch = s.meta().client_epoch;
         if (req.clientEpoch !== epoch) {

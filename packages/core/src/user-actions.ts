@@ -1,4 +1,5 @@
-import { AgentOsError, type RecordEnvelope, type RunCreateBody, type RunView } from "@agentos/contracts";
+import { currentIdentity } from "./identity/context.js";
+import { AgentOsError, canonicalJson, sha256Hex, type RecordEnvelope, type RunCreateBody, type RunView } from "@agentos/contracts";
 import type { Store } from "./persistence/store.js";
 import type { AppService, ActivateResult } from "./apps/app-service.js";
 import type { RecordService } from "./records/record-service.js";
@@ -65,14 +66,21 @@ export class UserActions {
 
   /** Spec §7.1: a valid request is persisted and queued (202 + runId + queue state); only a full queue refuses it. */
   submitRun(meta: UserWriteMeta, body: RunCreateBody): WriteResult<{ runId: string; targetAppId: string | null; status: string; queueState: string; waitReason: string | null }> {
-    return this.gateway.write("runs.submit", { principal: { kind: "user" }, ...meta }, () => ({
-      status: 202,
-      body: this.runs.accept(body, meta.operationKey, meta.requestHash),
-    }));
+    return this.gateway.write("runs.submit", { principal: { kind: "user" }, ...meta }, () => {
+      const out = this.runs.accept(body, meta.operationKey, meta.requestHash);
+      // v1.0 (spec §6.2, §15.2): the run freezes who accepted it, under which memberVersion and scope.
+      const id = currentIdentity();
+      if (id) {
+        const scope = sha256Hex(canonicalJson({ workspaceId: id.workspaceId, userId: id.userId, memberVersion: id.memberVersion, role: id.role, mode: body.mode ?? "build", targetAppId: out.targetAppId }));
+        this.store.run("UPDATE runs SET initiator_user_id = ?, member_version = ?, scope_hash = ? WHERE id = ?", id.userId, id.memberVersion, `sha256:${scope}`, out.runId);
+      }
+      return { status: 202, body: out };
+    });
   }
 
   cancelRun(meta: UserWriteMeta, runId: string): WriteResult<RunView> {
-    return this.gateway.write("runs.cancel", { principal: { kind: "user" }, ...meta }, () => this.runs.cancel(runId));
+    const owner = this.store.get<{ initiator_user_id: string | null }>("SELECT initiator_user_id FROM runs WHERE id = ?", runId)?.initiator_user_id ?? null;
+    return this.gateway.write("runs.cancel", { principal: { kind: "user" }, ...meta, taskOwnerUserId: owner }, () => this.runs.cancel(runId));
   }
 
   get storeRef(): Store {

@@ -260,8 +260,44 @@ function arg(name: string): string | undefined {
   return i >= 0 ? process.argv[i + 1] : undefined;
 }
 
+/**
+ * v1.0 (spec §8.2, §15.2): machined's fixed `databases` provisioning step, run as the workspace's execution UID.
+ * Creates os.sqlite at schema 5 bound to the registered workspaceId/storeUUID. Re-running with the same identity is a
+ * no-op; an existing store of another identity is never adopted or overwritten.
+ */
+function workspaceInit(): void {
+  const ws = arg("--workspace-id") ?? "";
+  const store = arg("--store-uuid") ?? "";
+  const dir = arg("--data-dir") ?? "";
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+  if (!uuid.test(ws) || !uuid.test(store) || !path.isAbsolute(dir)) throw new Error("usage: agentos-admin workspace-init --workspace-id <uuid> --store-uuid <uuid> --data-dir <abs>");
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const file = path.join(dir, "os.sqlite");
+  const existed = fs.existsSync(file);
+  process.env.AGENTOS_STORE_UUID = store;
+  const core = openCore(file);
+  try {
+    const m = core.store.get<{ store_uuid: string; workspace_id: string | null; schema_version: number }>("SELECT store_uuid, workspace_id, schema_version FROM meta WHERE id = 1")!;
+    if (m.store_uuid !== store) throw new Error(`refusing: ${file} belongs to store ${m.store_uuid}`);
+    if (m.workspace_id !== null && m.workspace_id !== ws) throw new Error(`refusing: ${file} belongs to workspace ${m.workspace_id}`);
+    if (m.workspace_id === null) core.store.tx(() => core.store.run("UPDATE meta SET workspace_id = ?, identity_protocol_version = 2 WHERE id = 1", ws));
+    process.stdout.write(`${JSON.stringify({ ok: true, workspaceId: ws, storeUUID: store, schemaVersion: m.schema_version, created: !existed })}\n`);
+  } finally {
+    core.store.close();
+  }
+}
+
 export function adminMain(): void {
   const cmd = process.argv[2];
+  if (cmd === "workspace-init") {
+    try {
+      workspaceInit();
+    } catch (e) {
+      process.stderr.write(`${JSON.stringify({ ok: false, error: (e as Error).message })}\n`);
+      process.exit(1);
+    }
+    return;
+  }
   const config = loadConfig();
   const lockFile = path.join(config.dataDir, "host.lock");
   try {

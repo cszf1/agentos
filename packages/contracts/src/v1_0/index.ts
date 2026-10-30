@@ -45,3 +45,4 @@ export {
   type ReleaseManifest,
   type MigrationClass,
 } from "./release.js";
+export { FORWARD_ROUTES, forwardPath, type ForwardRoute } from "./forward-routes.js";

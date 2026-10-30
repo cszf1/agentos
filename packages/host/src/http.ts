@@ -18,7 +18,7 @@ import {
   type RecordPatchBody,
   type RunCreateBody,
   type StateView, isCodeBundle, AGENT_PROFILES, V4_LIMITS } from "@agentos/contracts";
-import { fault, readSystemInfo, type AgentEngine, type Core, type RunCoordinator, type RuntimeSystem, type SystemCapabilities, type UserWriteMeta } from "@agentos/core";
+import { currentIdentity, fault, readSystemInfo, userDomain, checkMember, type AgentEngine, type Core, type RunCoordinator, type RuntimeSystem, type SystemCapabilities, type UserWriteMeta } from "@agentos/core";
 import { registerSystemRoutes } from "./http-system.js";
 import { registerMaintenanceRoutes } from "./http-maintenance.js";
 import { COOKIE, parseCookies, type SessionAuth } from "./auth.js";
@@ -57,6 +57,10 @@ export interface HostRuntime {
   caps: SystemCapabilities | null;
   /** v0.4 background control loops (maintenance, online GC, candidates, root sync, compaction). */
   maint?: import("./maintenance-host.js").MaintenanceHost | null;
+  /** v1.0 machine mode: workspace identity and the per-process secret the in-process bridge stamps on its requests. */
+  machine?: { workspaceId: string; storeUUID: string; bridgeSecret: string } | null;
+  /** v1.0: id of the machine barrier currently freezing business writes (spec §23.2), null when none. */
+  barrier?: string | null;
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -77,6 +81,7 @@ export function buildServer(rt: HostRuntime): FastifyInstance {
     reply.header("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
     reply.header("Cache-Control", "no-store");
     const host = req.headers.host ?? "";
+    if (rt.machine && req.headers["x-agentos-bridge"] === rt.machine.bridgeSecret) return;
     if (!config.allowedHosts.includes(host)) {
       return sendError(reply, new AgentOsError("FORBIDDEN", "host not allowed"));
     }
@@ -133,6 +138,13 @@ export function buildServer(rt: HostRuntime): FastifyInstance {
   const clientEpoch = () => core.store.meta().client_epoch;
 
   const requireSession = (req: FastifyRequest) => {
+    // Machine mode (v1.0): the only entry is the gateway bridge, which runs the request inside the trusted identity
+    // context; there is no TCP listener and no cookie (spec §8.1, §9.1).
+    if (rt.machine) {
+      if (!currentIdentity() || req.headers["x-agentos-bridge"] !== rt.machine.bridgeSecret) throw new AgentOsError("SESSION_REQUIRED", "requests reach this workspace only through the session gateway");
+      checkMember(core.store, "read");
+      return;
+    }
     const cookie = parseCookies(req.headers.cookie)[COOKIE];
     if (!rt.auth.verify(cookie, clientEpoch())) throw new AgentOsError("AUTH_REQUIRED", "sign in with the local token");
   };
@@ -145,13 +157,14 @@ export function buildServer(rt: HostRuntime): FastifyInstance {
   const writeMeta = (req: FastifyRequest): UserWriteMeta => {
     requireSession(req);
     requireReady();
+    if (rt.barrier) throw new AgentOsError("CHECKPOINT_INCOMPLETE", "a machine barrier holds writes; try again after it is released");
     if (!rt.status.writable) throw new AgentOsError("RECOVERY_BLOCKED", rt.status.agentDiagnostic ?? "workspace recovery is required; writes are paused");
     const key = String(req.headers["idempotency-key"] ?? "");
     if (!UUID.test(key)) throw new AgentOsError("INVALID_REQUEST", "Idempotency-Key must be a lowercase UUID");
     const ep = Number(req.headers["x-agentos-epoch"]);
     if (!Number.isSafeInteger(ep)) throw new AgentOsError("INVALID_REQUEST", "X-AgentOS-Epoch header is required");
     const normPath = (req.routeOptions.url ?? req.url).replace(/:(\w+)/g, (_m, p: string) => `:${p}=${String((req.params as Record<string, string>)[p])}`);
-    const requestHash = sha256Hex(canonicalJson({ method: req.method, path: normPath, principal: "user:local", body: req.body ?? null }));
+    const requestHash = sha256Hex(canonicalJson({ method: req.method, path: normPath, principal: userDomain(), body: req.body ?? null }));
     return { operationKey: key, requestHash, clientEpoch: ep };
   };
 
@@ -301,6 +314,8 @@ export function buildServer(rt: HostRuntime): FastifyInstance {
     const v = UUID.test(req.params.runId) ? runView(req.params.runId) : null;
     if (!v) throw new AgentOsError("NOT_FOUND", "run not found");
     const row = core.runs.requireRun(v.runId);
+    // Spec §7.1: viewer none, editor own tasks, owner every task of the workspace.
+    checkMember(core.store, "read_own_task", { taskOwnerUserId: core.store.get<{ u: string | null }>("SELECT initiator_user_id AS u FROM runs WHERE id = ?", row.id)?.u ?? null });
     if (!rt.engine) return ok(reply, 200, { final: true, items: [] });
     const final = !["queued", "running", "cancel_requested", "blocked"].includes(v.status);
     if (row.legacy_root === 1) {
