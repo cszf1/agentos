@@ -237,6 +237,26 @@ fn s07_background_yields_to_foreground() {
 }
 
 #[test]
+fn s03_no_owner_waits_for_one_class_while_holding_another() {
+    let (t, w) = setup();
+    let a = &w[0];
+    let mut m = rq(a, mv(&t, a), false);
+    let held = t.m.request_permit(&a.0, &m).unwrap();
+    assert_eq!(state(&held), "reserved");
+    // the same run asks for the build slot while it still holds its model permit → refused, nothing queued
+    m.resource_class = "build".into();
+    m.attempt_id = uuid();
+    assert_eq!(t.m.request_permit(&a.0, &m).unwrap_err().code, "MACHINE_CAPACITY");
+    // another owner may wait for build; after the model permit is released the run may ask for build too
+    let other = t.m.request_permit(&a.0, &PermitRequest { owner_id: format!("run-{}", uuid()), resource_class: "build".into(), ..rq(a, mv(&t, a), false) }).unwrap();
+    assert_eq!(state(&other), "reserved");
+    done(&t, &held);
+    m.attempt_id = uuid();
+    let b = t.m.request_permit(&a.0, &m).unwrap();
+    assert!(matches!(state(&b).as_str(), "queued" | "reserved"), "{b}");
+}
+
+#[test]
 fn r02_barrier_freezes_starts_and_host_joins() {
     let (mut t, w) = setup();
     let a = &w[0];

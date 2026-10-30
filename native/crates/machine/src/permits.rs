@@ -94,6 +94,16 @@ impl Machine {
                     }
                 }
             }
+            // §13.2 / V1-S03: no waiting for one class while holding another (a run holding a model permit must
+            // not queue for the build slot, or two workspaces can wait on each other's slots).
+            let holds_other: i64 = c.query_row(
+                "SELECT COUNT(*) FROM machine_permits WHERE workspace_id = ?1 AND owner_kind = ?2 AND owner_id = ?3 AND resource_class != ?4 AND state IN ('reserved','in_use')",
+                params![rq.workspace_id, rq.owner_kind, rq.owner_id, rq.resource_class],
+                |r| r.get(0),
+            )?;
+            if holds_other > 0 {
+                return Err(MErr::new("MACHINE_CAPACITY", "release the permit this owner already holds before waiting for another resource class"));
+            }
             let ws_state: Option<String> = c.query_row("SELECT state FROM workspaces WHERE workspace_id = ?1", [&rq.workspace_id], |r| r.get(0)).optional()?;
             if ws_state.as_deref() != Some("running") {
                 return Err(MErr::new("WORKSPACE_FENCED", "workspace is not running"));
