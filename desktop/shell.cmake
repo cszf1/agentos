@@ -48,3 +48,14 @@ add_test(NAME first_frame_within_5s COMMAND agentos-shell --first-frame-probe)
 set_tests_properties(first_frame_within_5s PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software;AGENTOS_GATEWAY_SOCKET=/nonexistent/none.sock;HOME=${CMAKE_CURRENT_BINARY_DIR}"
   PASS_REGULAR_EXPRESSION "firstFrameMs" TIMEOUT 60)
 add_test(NAME no_webengine COMMAND ${CMAKE_COMMAND} -DBIN=$<TARGET_FILE:agentos-shell> -DCACHE=${CMAKE_BINARY_DIR}/CMakeCache.txt -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/no_webengine.cmake)
+
+# VM-check-only driver (spec §32 D08/M06/O03 in m13-native): the same controller and QML against a REAL gateway.
+# Never built for a release (off by default; os/packages builds it as a separate test-only derivation).
+option(AGENTOS_E2E "build agentos-shell-e2e (VM checks only)" OFF)
+if(AGENTOS_E2E)
+  add_executable(agentos-shell-e2e tests/e2e_test.cpp tests/gui_support.hpp)
+  target_include_directories(agentos-shell-e2e PRIVATE tests)
+  target_link_libraries(agentos-shell-e2e PRIVATE agentos_ui Qt6::Test)
+  target_compile_definitions(agentos-shell-e2e PRIVATE AGENTOS_FIXTURES="${AGENTOS_FIXTURES_ABS}" AGENTOS_TEST_OUT="/tmp/agentos-e2e")
+  install(TARGETS agentos-shell-e2e RUNTIME DESTINATION bin)
+endif()
