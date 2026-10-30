@@ -60,6 +60,11 @@
         agentos-installer = installerPkg;
         agentos-iso = installerSystem.config.system.build.isoImage;
         agentos-qcow2 = qcow2;
+        # V1-B08: file-level audit of the formal release closure (report.json; the build fails on any finding)
+        agentos-audit = pkgs.runCommand "agentos-release-audit" { nativeBuildInputs = [ pkgs.python3 ]; } ''
+          mkdir -p $out
+          python3 ${./release-audit.py} ${toplevel} ${pkgs.closureInfo { rootPaths = [ toplevel ]; }}/store-paths | tee $out/report.json
+        '';
         m0-toplevel = self.nixosConfigurations.m0-proto.config.system.build.toplevel;
       };
       nixosConfigurations.agentos = agentosSystem;
