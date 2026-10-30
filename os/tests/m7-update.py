@@ -312,9 +312,12 @@ with subtest("commit window: a crash after the intent or after the default resol
         uw(f"arm --esp /boot --release-id {rid} --known-good {known}")
         reboot()
         assert booted_release() == rid, booted_release()
-        r = ctl("reconcile")
-        print("reconcile (trial boot)", r)
-        assert r["action"]["action"] == "enter_validating" and r["state"] == "validating", r
+        machine.wait_for_unit("agentos-update-reconcile.service")       # the boot unit entered validation
+        print(machine.succeed("journalctl -b -o cat --no-pager -u agentos-update-reconcile.service | tail -40"))
+        machine.succeed("journalctl -b -o cat --no-pager -u agentos-update-reconcile.service | grep -q enter_validating")
+        r = ctl("reconcile")                                               # running it again changes nothing
+        print("reconcile (trial boot, again)", r)
+        assert r["action"]["action"] == "none" and r["state"] == "validating", r
         bid = machine.succeed("cat /proc/sys/kernel/random/boot_id").strip()
         u = mok("updates.get", {"updateId": uid})
         assert u["trialBootId"] == bid and u["commitIntent"] is False, u
@@ -345,9 +348,10 @@ with subtest("commit window: a crash after the intent or after the default resol
     machine.wait_for_unit("multi-user.target", timeout=600)
     machine.wait_until_succeeds("test -S /run/agentos/machine/machine.sock", timeout=120)
     assert booted_release() == CAND, booted_release()
-    r = ctl("reconcile")
-    print("reconcile after intent crash", r)
-    assert r["action"]["action"] == "resume_commit_set_default" and r["state"] == "committed", r
+    machine.wait_for_unit("agentos-update-reconcile.service")
+    print(machine.succeed("journalctl -b -o cat --no-pager -u agentos-update-reconcile.service | tail -40"))
+    machine.succeed("journalctl -b -o cat --no-pager -u agentos-update-reconcile.service | grep -q resume_commit_set_default")
+    assert mok("updates.get", {"updateId": u1})["state"] == "committed"
     assert default_entry() == f"agentos-{C1}.conf", default_entry()
     committed_once(u1, C1)
     reboot()
@@ -370,7 +374,8 @@ with subtest("commit window: a crash after the intent or after the default resol
     machine.wait_for_unit("multi-user.target", timeout=600)
     machine.wait_until_succeeds("test -S /run/agentos/machine/machine.sock", timeout=120)
     assert booted_release() == C2, booted_release()
-    r = ctl("reconcile")
-    print("reconcile after default crash", r)
-    assert r["action"]["action"] == "finish_commit" and r["state"] == "committed", r
+    machine.wait_for_unit("agentos-update-reconcile.service")
+    print(machine.succeed("journalctl -b -o cat --no-pager -u agentos-update-reconcile.service | tail -40"))
+    machine.succeed("journalctl -b -o cat --no-pager -u agentos-update-reconcile.service | grep -q finish_commit")
+    assert mok("updates.get", {"updateId": u2})["state"] == "committed"
     committed_once(u2, C2)

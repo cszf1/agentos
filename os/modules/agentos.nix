@@ -132,6 +132,24 @@ in {
       };
     };
 
+    # Every boot (spec §21.2–21.3, V1-U08/U10): resolve an open update from machined's facts and what the loader
+    # booted — enter validation on the trial boot, record a rollback, or finish a commit whose intent was recorded
+    # (rewriting the default if a crash came before it). No open update: nothing to do. Before any login.
+    agentos-update-reconcile = {
+      description = "AgentOS update reconciliation at boot";
+      wantedBy = [ "multi-user.target" ];
+      wants = [ "agentos-machine.service" ];
+      after = [ "agentos-machine.service" ];
+      before = [ "display-manager.service" ];
+      path = [ pkgs.systemd pkgs.coreutils ];
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        # before first boot or in recovery mode machined has nothing to resolve; that is not a boot failure
+        ExecStart = "-${native}/bin/agentosctl update reconcile";
+      };
+    };
+
     agentos-session-gateway = {
       description = "AgentOS session gateway";
       wantedBy = [ "multi-user.target" ];
