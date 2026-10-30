@@ -8,7 +8,7 @@ stdenv.mkDerivation (finalAttrs: {
     inherit (finalAttrs) pname version src;
     pnpm = pnpm_10;
     fetcherVersion = 2;
-    hash = lib.fakeHash;
+    hash = "sha256-a8IpDeZ+Hjs8eDoNEH9v5KjjHLlhDBJfJIrHEMq+7DQ=";
   };
   env.PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD = "1";
   buildPhase = ''
