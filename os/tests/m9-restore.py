@@ -48,6 +48,11 @@ with subtest("a backup that dies under its barrier freezes every workspace; aban
     assert rc == 9, o
     assert sql("SELECT COUNT(*) FROM barriers WHERE state='held'") == "1"
     assert not host_running(ua) and not host_running(ub)       # both pairs stopped before any snapshot
+    # home writers and GC: under the barrier no process of either execution UID runs at all (Host and its GC, rootless
+    # Podman/pause, anything writing the workspace home); only the user manager itself may stay
+    for u in (ua, ub):
+        left = machine.succeed(f"pgrep -u {u} -l | grep -vE ' (systemd|\\(sd-pam\\))$' || true").strip()
+        assert left == "", (u, left)
     for ws, tag in ((ws_a, "f1"), (ws_b, "f2")):
         r = call(1, [{"methodId": "workspaces.attach", "workspaceId": ws, "idempotencyKey": str(uuid.uuid4()), "body": {}}], tag)[0]
         assert r["status"] != 200, r                           # no participant can start under the barrier
