@@ -1,5 +1,6 @@
 //! Versioned types, limits and strict parsing shared by every native AgentOS component (spec §6 native/crates/protocol).
 pub mod canonical;
+pub mod v1_json;
 pub mod dto;
 pub mod frame;
 pub mod fsutil;
@@ -11,6 +12,16 @@ pub mod sysd;
 pub mod worker;
 
 pub use canonical::{canonical_json, domain_hash, sha256_hex};
+
+pub fn admit_write_protocol(min_write_protocol: i64, request_protocol: u32) -> Result<(), &'static str> {
+    if request_protocol != 1 && request_protocol != 2 && request_protocol != 3 {
+        return Err("unknown protocol");
+    }
+    if min_write_protocol >= 3 && request_protocol < 3 {
+        return Err("legacy protocol cannot write");
+    }
+    Ok(())
+}
 
 /// Current unix time in milliseconds.
 pub fn now_ms() -> u64 {

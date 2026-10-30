@@ -256,14 +256,34 @@ pub fn check_identity_db(b: &Broker, c: &rusqlite::Connection, sess: &Session, i
     Ok((state, inc))
 }
 
+fn reject_legacy_write(b: &Shared, store: &str) -> Result<(), BErr> {
+    let mut g = b.db.lock().unwrap();
+    let c = db_or_diag(b, &mut g)?;
+    let min = db::min_write_protocol(c, store)?;
+    agentos_protocol::admit_write_protocol(min, 1).map_err(|m| BErr::new("CAPABILITY_VERSION_UNSUPPORTED", m))?;
+    Ok(())
+}
+
 fn dispatch(b: &Shared, sess: &mut Session, req: &Request) -> Result<Value, BErr> {
     match req.method.as_str() {
         "handshake" => handshake(b, sess, &req.params),
         "describe" => describe(b, sess, &req.params),
         "read" => exec::read(b, &p::<ReadParams>(&req.params)?, |c, id| check_identity_db(b, c, sess, id, false)),
-        "grant-sync" => grant_sync(b, sess, &p(&req.params)?),
-        "grant-revoke" => grant_revoke(b, sess, &p(&req.params)?),
-        "submit" => exec::submit(b, &p(&req.params)?, |c, id| check_identity_db(b, c, sess, id, false)),
+        "grant-sync" => {
+            let body: GrantSyncParams = p(&req.params)?;
+            reject_legacy_write(b, &body.identity.store_uuid)?;
+            grant_sync(b, sess, &body)
+        }
+        "grant-revoke" => {
+            let body: GrantRevokeParams = p(&req.params)?;
+            reject_legacy_write(b, &body.identity.store_uuid)?;
+            grant_revoke(b, sess, &body)
+        }
+        "submit" => {
+            let env: WriteEnvelope = p(&req.params)?;
+            reject_legacy_write(b, &env.store_uuid)?;
+            exec::submit(b, &env, |c, id| check_identity_db(b, c, sess, id, false))
+        }
         "operation-get" => {
             let r: OperationRef = p(&req.params)?;
             let mut g = b.db.lock().unwrap();
@@ -272,7 +292,11 @@ fn dispatch(b: &Shared, sess: &mut Session, req: &Request) -> Result<Value, BErr
             op_view(c, &b.install_id, &r.identity.store_uuid, inc, &r.operation_id)?
                 .ok_or_else(|| BErr::new("NOT_FOUND", "no such operation in this incarnation"))
         }
-        "operation-cancel" => exec::cancel(b, &p(&req.params)?, |c, id| check_identity_db(b, c, sess, id, false)),
+        "operation-cancel" => {
+            let body: CancelParams = p(&req.params)?;
+            reject_legacy_write(b, &body.identity.store_uuid)?;
+            exec::cancel(b, &body, |c, id| check_identity_db(b, c, sess, id, false))
+        }
         "operation-resolve" => exec::resolve(b, &p(&req.params)?, |c, id| check_identity_db(b, c, sess, id, false)),
         "history-sync" => history(b, sess, &p(&req.params)?),
         "workspace-quiesce" => exec::quiesce(b, &p(&req.params)?, |c, id| check_identity_db(b, c, sess, id, false)),

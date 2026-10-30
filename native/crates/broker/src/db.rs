@@ -3,7 +3,16 @@
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::Value;
 
-pub const SCHEMA_VERSION: i64 = 3;
+pub const SCHEMA_VERSION: i64 = 4;
+
+const SCHEMA_V4: &str = r#"
+CREATE TABLE IF NOT EXISTS workspace_protocol (
+  store_uuid TEXT PRIMARY KEY,
+  min_write_protocol INTEGER NOT NULL,
+  registry_seq INTEGER NOT NULL,
+  revocation_high_water INTEGER NOT NULL
+) STRICT;
+"#;
 
 /// v0.4 (spec §21.2): maintenance policies, workspace maintenance state, target control epochs and the rolling
 /// attempt counts (authority for privileged maintenance), plus the maintenance origin of an operation. Additive.
@@ -231,15 +240,18 @@ pub fn open_existing(path: &str) -> Result<Connection, String> {
     match v.and_then(|s| s.parse::<i64>().ok()) {
         Some(SCHEMA_VERSION) => Ok(c),
         Some(1) => {
-            // v0.3 log → v0.4: additive tables only; history, tombstones and incarnations are untouched.
-            c.execute_batch(&format!("BEGIN IMMEDIATE; {SCHEMA_V2} {SCHEMA_V3} UPDATE broker_meta SET value='3' WHERE key='schema_version'; COMMIT;"))
-                .map_err(|e| format!("BROKER_HISTORY_MISSING: schema upgrade 1→3 failed: {e}"))?;
+            c.execute_batch(&format!("BEGIN IMMEDIATE; {SCHEMA_V2} {SCHEMA_V3} {SCHEMA_V4} UPDATE broker_meta SET value='4' WHERE key='schema_version'; COMMIT;"))
+                .map_err(|e| format!("BROKER_HISTORY_MISSING: schema upgrade 1→4 failed: {e}"))?;
             Ok(c)
         }
         Some(2) => {
-            // early v0.4 log: per-incarnation keys; every row is copied.
-            c.execute_batch(&format!("BEGIN IMMEDIATE; {SCHEMA_V3} UPDATE broker_meta SET value='3' WHERE key='schema_version'; COMMIT;"))
-                .map_err(|e| format!("BROKER_HISTORY_MISSING: schema upgrade 2→3 failed: {e}"))?;
+            c.execute_batch(&format!("BEGIN IMMEDIATE; {SCHEMA_V3} {SCHEMA_V4} UPDATE broker_meta SET value='4' WHERE key='schema_version'; COMMIT;"))
+                .map_err(|e| format!("BROKER_HISTORY_MISSING: schema upgrade 2→4 failed: {e}"))?;
+            Ok(c)
+        }
+        Some(3) => {
+            c.execute_batch(&format!("BEGIN IMMEDIATE; {SCHEMA_V4} UPDATE broker_meta SET value='4' WHERE key='schema_version'; COMMIT;"))
+                .map_err(|e| format!("BROKER_HISTORY_MISSING: schema upgrade 3→4 failed: {e}"))?;
             Ok(c)
         }
         Some(n) if n > SCHEMA_VERSION => Err(format!("BROKER_HISTORY_MISSING: log schema {n} is newer than this broker ({SCHEMA_VERSION})")),
@@ -261,6 +273,7 @@ pub fn create(path: &str, install_id: &str, policy_version: &str) -> Result<Conn
     c.execute_batch(SCHEMA).map_err(|e| format!("schema: {e}"))?;
     c.execute_batch(SCHEMA_V2).map_err(|e| format!("schema v2: {e}"))?;
     c.execute_batch(SCHEMA_V3).map_err(|e| format!("schema v3: {e}"))?;
+    c.execute_batch(SCHEMA_V4).map_err(|e| format!("schema v4: {e}"))?;
     let now = agentos_protocol::now_ms() as i64;
     for (k, v) in [
         ("schema_version", SCHEMA_VERSION.to_string()),
@@ -300,4 +313,45 @@ pub fn audit(
         params![seq, kind, store, inc, op, grant, summary.to_string(), agentos_protocol::now_ms() as i64],
     )?;
     Ok(seq)
+}
+
+/// Missing row means the workspace has not been raised to protocol 3.
+pub fn min_write_protocol(c: &Connection, store: &str) -> rusqlite::Result<i64> {
+    Ok(c.query_row("SELECT min_write_protocol FROM workspace_protocol WHERE store_uuid=?1", params![store], |r| r.get(0)).optional()?.unwrap_or(1))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn v3_log_upgrades_and_legacy_writes_stay_open_until_marked() {
+        let path = std::env::temp_dir().join(format!("agentos-broker-v4-{}", agentos_protocol::random_hex(4)));
+        let path = path.to_str().unwrap();
+        let _ = std::fs::remove_file(path);
+        let c = Connection::open(path).unwrap();
+        pragmas(&c).unwrap();
+        c.execute_batch(SCHEMA).unwrap();
+        c.execute_batch(SCHEMA_V2).unwrap();
+        c.execute_batch(SCHEMA_V3).unwrap();
+        c.execute("INSERT INTO broker_meta(key,value) VALUES ('schema_version','3')", []).unwrap();
+        c.execute("INSERT INTO broker_meta(key,value) VALUES ('machine_install_id','m')", []).unwrap();
+        c.execute(
+            "INSERT INTO effect_operations(machine_install_id,store_uuid,incarnation,operation_id,action_id,plan_hash,request_hash,envelope_json,capability_id,resource_id,resource_generation,replay_class,state,deadline_ms,accepted_seq,updated_seq,created_at,updated_at) VALUES ('m','store',1,'op','a','p','r','{}','cap','res',1,'read','accepted',1,1,1,1,1)",
+            [],
+        )
+        .unwrap();
+        drop(c);
+        let c = open_existing(path).unwrap();
+        assert_eq!(meta(&c, "schema_version").as_deref(), Some("4"));
+        let n: i64 = c.query_row("SELECT COUNT(*) FROM effect_operations", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 1);
+        assert_eq!(min_write_protocol(&c, "store").unwrap(), 1);
+        c.execute("INSERT INTO workspace_protocol(store_uuid,min_write_protocol,registry_seq,revocation_high_water) VALUES ('store',3,1,0)", []).unwrap();
+        assert_eq!(min_write_protocol(&c, "store").unwrap(), 3);
+        assert!(agentos_protocol::admit_write_protocol(3, 1).is_err());
+        assert!(agentos_protocol::admit_write_protocol(1, 1).is_ok());
+        drop(c);
+        let _ = std::fs::remove_file(path);
+    }
 }
