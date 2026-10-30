@@ -27,7 +27,10 @@ export default defineConfig({
       { resolve: { alias }, test: { name: "maintenance-recovery", include: ["tests/maintenance-recovery/**/*.test.ts"], testTimeout: 400_000, hookTimeout: 120_000, pool: "forks", poolOptions: { forks: { singleFork: true } } } },
       { resolve: { alias }, test: { name: "gc-online", include: ["tests/gc-online/**/*.test.ts"], testTimeout: 300_000, hookTimeout: 120_000, pool: "forks" } },
       { resolve: { alias }, test: { name: "compaction", include: ["tests/compaction/**/*.test.ts"], testTimeout: 120_000, hookTimeout: 120_000, pool: "forks" } },
-      { resolve: { alias }, test: { name: "recovery", include: ["tests/recovery/**/*.test.ts"], testTimeout: 400_000, hookTimeout: 120_000, pool: "forks" } },
+      { resolve: { alias }, test: { name: "recovery", include: ["tests/recovery/**/*.test.ts"], exclude: ["tests/recovery/v04-perf.test.ts"], testTimeout: 400_000, hookTimeout: 120_000, pool: "forks" } },
+      // V4-O05 measures p95 latency ratios: it must not share the CPU with the recovery files' real processes and
+      // podman builds (run in parallel it once read 1.38 against 1.25), so it is its own serial project.
+      { resolve: { alias }, test: { name: "perf", include: ["tests/recovery/v04-perf.test.ts"], testTimeout: 400_000, hookTimeout: 120_000, pool: "forks", poolOptions: { forks: { singleFork: true } } } },
       // v0.3: real native stack (installed broker/workers, lab namespace, PTY fixture); serial: one broker, one store.
       { resolve: { alias }, test: { name: "native", include: ["tests/native/**/*.test.ts"], testTimeout: 120_000, hookTimeout: 120_000, pool: "forks", poolOptions: { forks: { singleFork: true } }} },
       { resolve: { alias }, test: { name: "broker-recovery", include: ["tests/broker-recovery/**/*.test.ts"], testTimeout: 180_000, hookTimeout: 120_000, pool: "forks", poolOptions: { forks: { singleFork: true } }} },
