@@ -13,7 +13,11 @@ export interface HostProc {
   exit: Promise<number | null>;
 }
 
-let nextPort = 4400 + Math.floor(Math.random() * 400);
+// Each vitest worker gets its own port block. A shared random base let two test files start Hosts on the same port:
+// the second Host failed to bind while waitHttp was answered by the other file's Host, and the test then read an
+// auth-token that its own (dead) Host never wrote (the intermittent recovery R08 "ENOENT auth-token").
+const POOL = Number(process.env.VITEST_POOL_ID ?? process.env.VITEST_WORKER_ID ?? 0) % 40;
+let nextPort = 20000 + POOL * 600 + Math.floor(Math.random() * 100);
 
 export function freshPort(): number {
   return nextPort++;
@@ -49,12 +53,14 @@ export async function waitHttp(h: HostProc, timeoutMs = 20_000): Promise<void> {
   let exited = false;
   void h.exit.then(() => (exited = true));
   for (;;) {
-    if (exited) throw new Error(`host exited early:\n${h.logs.join("")}`);
+    if (exited || h.proc.exitCode !== null || h.proc.signalCode !== null) throw new Error(`host exited early:\n${h.logs.join("")}`);
     try {
       const r = await fetch(`http://127.0.0.1:${h.port}/api/state`);
       if (r.status === 401 || r.status === 200) {
         // the shell is up; wait until startup phase finished
         const ready = await fetch(`http://127.0.0.1:${h.port}/health/ready`);
+        // the answer must come from THIS Host (still alive), not another process on the same port
+        if (h.proc.exitCode !== null || h.proc.signalCode !== null) throw new Error(`host exited early:\n${h.logs.join("")}`);
         if (ready.status === 200 || h.logs.join("").includes('"msg":"ready"') || h.logs.join("").includes("pairing failed") || h.logs.join("").includes("recovery blocked")) return;
       }
     } catch {

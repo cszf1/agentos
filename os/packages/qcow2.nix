@@ -6,7 +6,7 @@
 { lib, pkgs, vmTools, qemu, system, installer, name ? "agentos-qcow2", diskGiB ? 64 }:
 let
   vm = vmTools.override {
-    rootModules = [ "virtio_pci" "virtio_mmio" "virtio_blk" "virtio_balloon" "virtio_rng" "ext4" "virtiofs" "crc32c_generic"
+    rootModules = [ "virtio_pci" "virtio_mmio" "virtio_blk" "virtio_balloon" "virtio_rng" "ext4" "virtiofs" "crc32c"
       "dm_mod" "dm_crypt" "btrfs" "vfat" "nls_cp437" "nls_iso8859_1" ];
   };
   closure = pkgs.closureInfo { rootPaths = [ system ]; };
