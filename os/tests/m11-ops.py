@@ -176,3 +176,45 @@ with subtest("logout with run-when-logged-out on: the accepted run continues in 
     rc, o = machine.execute(f"su -s /bin/sh alice -c '{RPC} \"[{{\\\"methodId\\\":\\\"session.bind\\\"}}]\"' 2>&1")
     print(o)
     assert '"status": 200' not in o, o
+
+with subtest("VM power cut with a model request in flight: identity kept, the held permit is charged unknown, workspaces start again (O06 power cut)"):
+    machine.succeed(f"echo 90 > {FM}/hold")
+    s0 = starts(ws_a)
+    rid = run(2, ws_a, "做一个断电前的应用", "pc1")                    # bob (editor in A), still logged in on tty2
+    machine.wait_until_succeeds(f"test $(grep -c '\"ev\": \"start\", \"ws\": \"{ws_a}\"' {FM}/log.jsonl) -gt {s0}", timeout=120)
+    mid = sql("SELECT machine_install_id FROM machine_meta")
+    held = sql(f"SELECT permit_id FROM machine_permits WHERE workspace_id='{ws_a}' AND state='in_use'").split()
+    assert held, sql("SELECT permit_id, workspace_id, state FROM machine_permits WHERE state IN ('reserved','in_use')")
+    machine.crash()                                                    # QEMU stops at once: no shutdown, no flush by us
+    machine.start()
+    machine.wait_for_unit("agentos-machine.service")
+    machine.wait_for_unit("agentos-session-gateway.service")
+    machine.wait_for_unit("agentos-broker.service")
+    assert sql("SELECT machine_install_id FROM machine_meta") == mid
+    print(machine.succeed("journalctl -b -u agentos-machine.service -o cat --no-pager | grep 'permits reconciled' || true"))
+    for p in held:
+        st = sql(f"SELECT state || ':' || IFNULL(usage_status,'') FROM machine_permits WHERE permit_id='{p}'")
+        print("permit after power cut", p, st)
+        assert st == "released:unknown", st                           # another boot: the holder is gone; maybe-sent is charged
+    assert sql("SELECT COUNT(*) FROM machine_permits WHERE state IN ('reserved','in_use','reconciling')") == "0"
+    machine.succeed("sqlite3 /var/lib/agentos-machine/machine.sqlite 'PRAGMA integrity_check' | grep -qx ok")
+    tty_login(1, "alice", "alice-pw-1")
+    r = call(1, [{"methodId": "workspaces.list"}], "pcl")[0]
+    assert r["status"] == 200, r
+    for ws, tag in ((ws_a, "pca"), (ws_b, "pcb")):
+        r = call(1, [{"methodId": "workspaces.attach", "workspaceId": ws, "idempotencyKey": str(uuid.uuid4()), "body": {}}], tag)[0]
+        assert r["status"] == 200, r
+    ua = machine.succeed(f"stat -c %u /var/lib/agentos/workspaces/{ws_a}/data").strip()
+    machine.wait_until_succeeds(f"pgrep -u {ua} -f packages/host/dist/main.js", timeout=120)
+    machine.succeed(f"runuser -u $(id -nu {ua}) -- sqlite3 /var/lib/agentos/workspaces/{ws_a}/data/os.sqlite 'PRAGMA integrity_check' | grep -qx ok")
+    ok = False
+    for _ in range(30):
+        r = call(1, [fwd(ws_a, "runs.list")], "pcr")[0]
+        if r["status"] == 200:
+            ok = True
+            break
+        time.sleep(3)
+    assert ok, r
+    att = attempts(ws_a, rid)
+    print("attempts of the cut run", att)
+    assert "completed" not in att, att                                # the cut request is never reported as completed
