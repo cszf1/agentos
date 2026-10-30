@@ -15,7 +15,12 @@ def tty_login(n, user, pw):
 
 def tty_run(n, cmd, out):
     # Run inside the real tty login session (seat0); results go to a file the test reads back.
-    machine.send_chars(f"{cmd} > {out} 2>&1; echo done >> {out}\n")
+    # Typing long lines through the emulated keyboard drops characters under TCG: type only a short command and
+    # let a root-written script (world-readable) carry the payload.
+    import base64
+    script = f"{cmd} > {out} 2>&1; echo done >> {out}\n"
+    machine.succeed(f"echo {base64.b64encode(script.encode()).decode()} | base64 -d > {out}.sh && chmod 0644 {out}.sh && rm -f {out}")
+    machine.send_chars(f"sh {out}.sh\n")
     try:
         machine.wait_until_succeeds(f"grep -q '^done$' {out}", timeout=200)
     except BaseException:
