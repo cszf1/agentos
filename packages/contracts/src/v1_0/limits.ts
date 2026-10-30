@@ -1,0 +1,16 @@
+export const V1_LIMITS = {
+  maxUsers: 4,
+  maxWorkspaces: 4,
+  maxRunningWorkspaces: 2,
+  maxModelPermits: 2,
+  maxBackgroundModelPermits: 1,
+  maxBuildPermits: 1,
+  maxIoPermits: 1,
+  nativeFrameBytes: 4 * 1024 * 1024,
+  nativeInflight: 32,
+  loginUidStart: 10_000,
+  executionUidStart: 20_000,
+  subuidRange: 65_536,
+  ownerTransferMs: 24 * 60 * 60 * 1000,
+  confirmTicketMs: 60_000,
+} as const;

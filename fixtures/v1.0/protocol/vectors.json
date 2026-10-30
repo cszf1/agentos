@@ -1,0 +1,71 @@
+{
+  "generatedBy": "scripts/v1-vectors.mjs",
+  "hashes": [
+    {
+      "name": "write",
+      "domain": "agentos.broker.workspace-write.v3",
+      "value": {
+        "machineInstallId": "11111111-1111-4111-8111-111111111111",
+        "workspaceId": "44444444-4444-4444-8444-444444444444",
+        "storeUUID": "66666666-6666-4666-8666-666666666666",
+        "workspaceIncarnation": 2,
+        "executionUid": 20000,
+        "principalKind": "user",
+        "userId": "22222222-2222-4222-8222-222222222222",
+        "memberVersion": 1,
+        "runId": null,
+        "executionEpoch": null,
+        "machineControlEpoch": 4,
+        "requestId": "55555555-5555-4555-8555-555555555555",
+        "deadline": 1700000000000,
+        "bodyHash": "sha256:48055efc221f0f7171cd9d9bc628b50f28dd233718c3648aba97b34b7e99f272"
+      },
+      "hash": "sha256:e91f1018a1d75d1b04b7680d2e588241f0f241c00b7539c7e27cf0b59e110a06"
+    },
+    {
+      "name": "body",
+      "domain": "agentos.broker.body.v3",
+      "value": {
+        "hello": "世界",
+        "n": 1,
+        "ok": true,
+        "empty": null
+      },
+      "hash": "sha256:48055efc221f0f7171cd9d9bc628b50f28dd233718c3648aba97b34b7e99f272"
+    },
+    {
+      "name": "nested",
+      "domain": "agentos.test.v1",
+      "value": {
+        "b": 1,
+        "a": [
+          true,
+          null,
+          "x\"\n"
+        ]
+      },
+      "hash": "sha256:869066c4147d781c54dbbaef61153efd3fc4f398eb5c437994ffe98f7dd33f19"
+    }
+  ],
+  "strict": [
+    {
+      "name": "duplicate",
+      "text": "{\"a\":1,\"a\":2}",
+      "ok": false
+    },
+    {
+      "name": "object",
+      "text": "{\"b\":1,\"a\":2}",
+      "ok": true
+    },
+    {
+      "name": "nonfinite",
+      "text": "1e309",
+      "ok": false
+    }
+  ],
+  "frame": {
+    "payload": "{\"a\":1}",
+    "hex": "000000077b2261223a317d"
+  }
+}

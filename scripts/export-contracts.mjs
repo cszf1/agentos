@@ -22,6 +22,14 @@ const files = {
   "provider-catalog.json": { catalogVersion: c.CATALOG_VERSION, capabilities: c.CAPABILITIES },
   "broker-protocol.json": { protocolVersion: c.BROKER_PROTOCOL_VERSION, socket: c.BROKER_SOCKET, maxFrameBytes: c.MAX_BROKER_FRAME, maxJsonDepth: c.MAX_JSON_DEPTH, methods: c.BROKER_METHODS, writeEnvelope: c.WRITE_ENVELOPE_SCHEMA, grantSync: c.GRANT_SYNC_SCHEMA, hashDomains: ["agentos.broker.write.v1", "agentos.broker.grant.v1", "agentos.system-plan.v1", "agentos.system-params.v1"] },
   "system-limits.json": { system: c.SYSTEM_LIMITS, v3: c.V3_LIMITS, runnerAbis: c.SUPPORTED_RUNNER_ABIS, componentsV2: c.COMPONENT_TYPES_V2, v03ErrorCodes: c.V03_ERROR_CODES },
+  "v1.json": {
+    limits: c.V1_LIMITS,
+    routes: c.NATIVE_ROUTES,
+    nativeRpc: c.NATIVE_RPC_VERSION,
+    writeDomain: c.WORKSPACE_WRITE_DOMAIN,
+    bodyDomain: c.WORKSPACE_BODY_DOMAIN,
+    releaseDomain: c.RELEASE_DOMAIN,
+  },
 };
 const check = process.argv.includes("--check");
 let bad = 0;
