@@ -14,3 +14,4 @@ desktop/build/
 desktop/build/
 desktop/tests/out/
 os/result*
+__pycache__/

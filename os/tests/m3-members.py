@@ -220,6 +220,15 @@ with subtest("stop and archive keep the data; an archived workspace does not sta
     machine.succeed(f"test -s /var/lib/agentos/workspaces/{ws_a}/data/os.sqlite")
     r = call(1, [{"methodId": "workspaces.attach", "workspaceId": ws_a, "idempotencyKey": "att-a3", "body": {}}], "s3")[0]
     assert r["status"] != 200, r
+    # restore: the owner starts the archived workspace again; the same data comes back under the same execution UID
+    r = call(1, [{"methodId": "workspaces.start", "workspaceId": ws_a, "idempotencyKey": "start-a3", "body": {}}], "s4")[0]
+    assert r["status"] in (200, 202), r
+    assert sql(f"SELECT state FROM workspaces WHERE workspace_id='{ws_a}'") in ("starting", "running"), r
+    machine.wait_until_succeeds(f"pgrep -u {ua} -f packages/host/dist/main.js", timeout=90)    # a real instance again
+    r = call(1, [{"methodId": "workspaces.attach", "workspaceId": ws_a, "idempotencyKey": "att-a4", "body": {}}], "s5")[0]
+    assert r["status"] == 200, r
+    machine.succeed(f"test $(stat -c %u /var/lib/agentos/workspaces/{ws_a}/data/os.sqlite) = {ua}")
+    assert sql(f"SELECT COUNT(*) FROM root_audit WHERE kind='workspace.unarchive' AND scope_id='{ws_a}'") == "1"
 
 with subtest("PAM passwords given to the gateway are not in argv, logs or machine state (I11)"):
     machine.succeed("(for i in $(seq 1 400); do cat /proc/[0-9]*/cmdline 2>/dev/null | tr '\\0' ' ' >> /root/argv.log; echo >> /root/argv.log; sleep 0.05; done) >/dev/null 2>&1 &")
