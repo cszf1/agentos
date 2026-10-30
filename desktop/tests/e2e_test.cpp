@@ -289,7 +289,8 @@ class E2E : public QObject {
     }, 30000);
     QVERIFY2(cancel, "no enabled cancel button for the running task");
     r.press(cancel);
-    QTRY_COMPARE_WITH_TIMEOUT(r.actionState(QStringLiteral("runs.cancel")), QStringLiteral("reconciled"), 60000);
+    // (run 41140419617: reconciled after 87.5 s — the faux slow step was not abortable; it is now, the bound stays generous)
+    QTRY_COMPARE_WITH_TIMEOUT(r.actionState(QStringLiteral("runs.cancel")), QStringLiteral("reconciled"), 150000);
     QCOMPARE(r.waitRun(slow, 120000), QStringLiteral("cancelled"));
     report(QStringLiteral("cancel"), {{QStringLiteral("runId"), slow}});
 

@@ -37,7 +37,6 @@ function textOf(m: Msg): string {
   return "";
 }
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 function marker(intent: string, name: string): string | undefined {
   const m = intent.match(new RegExp(`\\[faux:${name}(?::([^\\]]*))?\\]`));
@@ -155,7 +154,15 @@ export async function fauxBuilderResponse(context: TranscriptContext, _options: 
   }
   const intent = userText.split("User request:\n")[1]?.split("\n\nFollow the fixed tool order")[0]?.split("\n\nTool order:")[0] ?? userText;
   const delay = marker(intent, "slow");
-  if (delay !== undefined) await sleep(Number(delay) || 1000);
+  if (delay !== undefined) {
+    // an abortable wait: a cancelled run's in-flight (faux) request ends at once, as a real provider stream does
+    const signal = (_options as { signal?: AbortSignal } | undefined)?.signal;
+    await new Promise<void>((res) => {
+      const t = setTimeout(res, Number(delay) || 1000);
+      signal?.addEventListener("abort", () => (clearTimeout(t), res()), { once: true });
+    });
+    if (signal?.aborted) return fauxAssistantMessage("", { stopReason: "aborted", errorMessage: "aborted" });
+  }
   if (marker(intent, "model-error") !== undefined) {
     return fauxAssistantMessage("", { stopReason: "error", errorMessage: "faux upstream error" });
   }

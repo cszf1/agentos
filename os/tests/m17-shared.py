@@ -45,6 +45,17 @@ with subtest("the administrator registers one unit for two workspaces under diff
     machine.succeed(f"echo {b64} | base64 -d > /etc/agentos/broker/policy.json.new && chmod 0444 /etc/agentos/broker/policy.json.new && mv -f /etc/agentos/broker/policy.json.new /etc/agentos/broker/policy.json")
     machine.succeed("systemctl restart agentos-broker.service")
     machine.wait_for_unit("agentos-broker.service")
+    # Each Host mirrors the broker's catalog at boot (and on its 30 s refresh once its link is back). Run 41141352527
+    # never saw the new units within 3 minutes after the broker restart, so each workspace is restarted here: a
+    # fresh Host handshakes with the restarted broker and syncs the catalog before admitting anything.
+    for ws, tag in ((ws_a, "a"), (ws_b, "b")):
+        uidw = int(sql(f"SELECT execution_uid FROM workspaces WHERE workspace_id='{ws}'"))
+        r = call(1, [{"methodId": "workspaces.stop", "workspaceId": ws, "idempotencyKey": str(uuid.uuid4()), "body": {}}], "st" + tag)[0]
+        assert r["status"] == 200, r
+        machine.wait_until_fails(f"pgrep -u {uidw} -f packages/host/dist/main.js", timeout=60)
+        r = call(1, [{"methodId": "workspaces.attach", "workspaceId": ws, "idempotencyKey": str(uuid.uuid4()), "body": {}}], "re" + tag)[0]
+        assert r["status"] == 200, r
+        machine.wait_until_succeeds(f"pgrep -u {uidw} -f packages/host/dist/main.js", timeout=120)
 
 rid = {}
 with subtest("each workspace sees the unit as its own resource and enables keep-running maintenance (broker-confirmed)"):
@@ -57,6 +68,8 @@ with subtest("each workspace sees the unit as its own resource and enables keep-
             time.sleep(2)
         svc = [x for x in items if x.get("kind") == "service"]
         print(ws, "service resources", svc)
+        if len(svc) != 1:
+            print(machine.execute("journalctl -u agentos-broker --no-pager | tail -30; journalctl --no-pager | grep -iE 'broker|describe' | grep agentos-host | tail -20")[1])
         assert len(svc) == 1 and svc[0]["status"] == "available", items
         rid[ws] = svc[0]["resourceId"]
         r = F(ws, "maintenance.control.post", {"action": "resume"}, write=True, tag=f"mc{tag}")

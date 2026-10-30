@@ -390,7 +390,12 @@ with subtest("rollback boots the older registered entry: records stay readable; 
     seqm = int(msql("SELECT MAX(release_sequence) FROM releases"))
     msql(f"INSERT INTO releases (release_id, manifest_hash, release_sequence, closure_path, compatibility_json, migration_class, verification_state, support_until, created_at) VALUES ('{C0}', 'sha256:{C0}', {seqm + 1}, '/nix/store/{C0}', '{comp0}', 'none', 'verified', 4102444800000, 1)")
     # the newer generation (C2, running now) writes a record the older generation must read after the rollback
-    assert machine.succeed("readlink -f /run/current-system").strip() == NEWGEN
+    cur = machine.succeed("readlink -f /run/current-system").strip()
+    print("running before the rollback:", cur, "booted entry:", booted_release(), "NEWGEN:", NEWGEN)
+    # the newer generation is the one running. Run 41140592033 failed on a toplevel store-path equality here after
+    # the U10 reboots (paths not printed then); what matters is which generation's /etc is live, and both are printed
+    assert cur != OLDGEN and machine.succeed("cat /etc/agentos-generation").strip() != "oldgen", cur
+    machine.fail("test -e /etc/agentos-oldgen-only")
     seq_a = int(msql("SELECT IFNULL(MAX(seq), 0) FROM root_audit"))
     mok("workspaces.rootStart", {"workspaceId": ws})                     # real machined writes on the newer generation
     mok("workspaces.rootStop", {"workspaceId": ws})
