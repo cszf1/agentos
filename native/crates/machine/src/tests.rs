@@ -588,8 +588,24 @@ fn u11_migration_waits_for_commit_and_rollback_needs_a_compatible_generation() {
     drop(m);
     let m = Machine::open(paths.clone(), Box::new(Fake::default())).unwrap();
     assert_eq!(crate::db::live_schema(&m.c), 1, "reopening during the trial does not migrate either");
-    m.advance_update("11111111-1111-4111-8111-111111111111", "validating", &serde_json::json!({})).unwrap();
-    m.advance_update("11111111-1111-4111-8111-111111111111", "committed", &serde_json::json!({})).unwrap();
+    // U10: a commit intent is only taken by a validating update, is idempotent, and alone migrates nothing
+    let uid = "11111111-1111-4111-8111-111111111111";
+    assert_eq!(m.record_commit_intent(uid).unwrap_err().code, "CONFLICT");
+    m.advance_update(uid, "validating", &serde_json::json!({})).unwrap();
+    assert_eq!(m.update(uid).unwrap()["commitIntent"], false);
+    assert_eq!(m.record_commit_intent(uid).unwrap()["commitIntent"], true);
+    m.record_commit_intent(uid).unwrap();
+    let n: i64 = m.c.query_row("SELECT COUNT(*) FROM root_audit WHERE kind = 'update.commit_intent' AND scope_id = ?1", [uid], |r| r.get(0)).unwrap();
+    assert_eq!(n, 1);
+    assert_eq!(crate::db::live_schema(&m.c), 1, "the intent alone does not migrate");
+    drop(m);
+    let m = Machine::open(paths.clone(), Box::new(Fake::default())).unwrap();
+    assert_eq!(m.update(uid).unwrap()["commitIntent"], true, "the intent survives a restart");
+    assert_eq!(crate::db::live_schema(&m.c), 1);
+    m.advance_update(uid, "committed", &serde_json::json!({})).unwrap();
+    m.advance_update(uid, "committed", &serde_json::json!({})).unwrap(); // a resumed commit repeats nothing
+    let n: i64 = m.c.query_row("SELECT COUNT(*) FROM root_audit WHERE kind = 'update.state' AND scope_id = ?1 AND outcome = 'committed'", [uid], |r| r.get(0)).unwrap();
+    assert_eq!(n, 1);
     // commit: now the new generation writes schema 2
     assert_eq!(crate::db::live_schema(&m.c), 2);
     let (cur, hw): (String, i64) = m.c.query_row("SELECT current_release_id, accepted_release_sequence FROM machine_meta", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
