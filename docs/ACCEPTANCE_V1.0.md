@@ -108,7 +108,7 @@
 | V1-U01 | 离线空机安装 | 部分 | KVM VM（Actions）（已写，CI 待结果）；实盘需实体机，未验收 | m6-install：离线（无默认路由、无 substituter）安装到 virtio 盘，systemd-boot→LUKS2→Btrfs 启动，首启进入未登记机器。离线 OCI 已进发行闭包（build-oci 通过，见 B04），发行镜像中应用容器启动失败的根因已修（见 B04），m5 重跑待结果。5fd7da2 轮 m6-install（run 41080892538）仍在运行，CI 待结果。实体盘未测：跑法见文末。 |
 | V1-U02 | 磁盘重验/中断 | 部分 | KVM VM（Actions）（已写，CI 待结果）；实盘需实体机，未验收 | m6-install：小盘/系统盘被拒、计划后磁盘变化被拒且不写入、复制中崩溃只在同一盘续作。5fd7da2 轮 m6-install 仍在运行，CI 待结果。真实 WWN/serial 需实体盘。 |
 | V1-U03 | 首启身份 | 部分 | KVM VM（Actions）（已写，CI 待结果） | m6-qcow2：同一模板两个克隆各自替换模板磁盘密钥后首启，machineInstallId 不同；重启后要求新口令且身份保持；m6-install 同一盘重复 firstboot 被拒。5fd7da2 轮 m6-qcow2 与 build-qcow2（run 41080892538）仍在运行，CI 待结果。 |
-| V1-U04 | 签名与内容 | 部分 | 单元/集成 | machined 发行校验（Rust 单元，agentos-v1 cargo test 通过）：native/crates/machine/src/tests.rs u04_u05_signatures_content_sequence_and_trusted_key_rotation——篡改 manifest（改 baseClosurePath）、错误私钥签名、未知 keyId、缺字段、非法 OCI digest、无可信时间全部 UPDATE_SIGNATURE_INVALID；update-worker tests/update.rs closure_content_must_match_the_signed_list_exactly：闭包 NAR hash 必须与签名清单完全一致（多/少/缺路径均拒绝），require_sigs_on 拒绝 require-sigs=false；发行配置 os/modules/base.nix require-sigs = true。未满足：Host 导入发行 OCI 时只核对名称/recipeHash/label/Env，没有把导入后的镜像 ID 与 manifest ociDigests 比对（OCI 归档在签名闭包内，篡改需破坏 Nix store，但逐镜像 digest 核对未做）；VM 端到端篡改未做。 |
+| V1-U04 | 签名与内容 | 部分 | KVM VM（Actions）（OCI 镜像 ID；篡改子测试已写，CI 待结果）＋单元/集成 | machined 发行校验（Rust 单元，agentos-v1 cargo test 通过）：native/crates/machine/src/tests.rs u04_u05_signatures_content_sequence_and_trusted_key_rotation——篡改 manifest、错误私钥、未知 keyId、缺字段、非法 OCI digest、无可信时间全部 UPDATE_SIGNATURE_INVALID；update-worker tests/update.rs closure_content_must_match_the_signed_list_exactly；require_sigs_on；发行配置 require-sigs = true。Host 导入发行 OCI 后镜像 ID 必须等于签名清单 ociDigests（7941b6b），m5-desktop（run 41102571678，KVM）发行镜像应用容器子测试在该检查下通过。本轮新增 agentosctl update digest/trust-key/verify（签名、密钥、字段、序号、到期、store 中闭包 NAR hash 与清单完全一致、随发行的 OCI index 镜像 ID 与 ociDigests 完全一致、OCI 归档存在；任何文件缺失即拒绝）与 m7-update U04 子测试：openssl ed25519 真签名，篡改 manifest/签名、非可信密钥签名、未知 keyId、闭包多/少/不在 store、OCI ID 不符/归档缺失、签名/manifest/index 文件缺失、无可信时间全部被拒，且未登记任何发行，nix require-sigs=true。CI 待结果。 |
 | V1-U05 | 序列与密钥轮换 | 通过 | 单元/集成 | Rust 单元（agentos-v1 cargo test 通过）：native/crates/machine/src/tests.rs u04_u05_signatures_content_sequence_and_trusted_key_rotation——更低/相同 sequence 与同 releaseId 不同内容为 RELEASE_REPLAYED，过期清单拒绝；轮换声明必须由当前受信密钥签名（伪造签名/未知签名者无效果），受信轮换后新钥可用、旧钥被吊销且其签名的清单被拒；u11_migration_waits_for_commit_and_rollback_needs_a_compatible_generation：known-good 回退不降低 accepted_release_sequence。directory.test.ts 同样覆盖旧 sequence 与高水位。 |
 | V1-U06 | 下载与低空间 | 部分 | KVM VM（Actions）＋单元/集成 | agentos-update-worker arm 先做前置检查（native/crates/update-worker/src/preflight.rs）：ESP 可用 ≥16 MiB、store 可用 ≥ max(候选闭包所需, 256 MiB)、无市电且电池 <40% 未充电则拒绝（UPDATE_PRECONDITION），拒绝时不写 one-shot、不改 default/条目。Rust u06_* 通过；m7-update U06 子测试 KVM 通过（run 41089647759，真实 bootctl：低电/空间不足不 armed、loader 状态与条目不变）。**未满足**：下载断线续传未在 VM 中断网复测（nix copy 以 store 路径为原子单位，已到路径保留）。 |
 | V1-U07 | 启动项写入断电 | 部分 | KVM VM（Actions）＋单元/集成 | m7-update：known-good 与候选条目完整、default 为 known-good；update-worker Rust 测试覆盖各发布点中断。VM 断电未做。 |
@@ -132,8 +132,8 @@
 | V1-R08 | 半恢复整机 | 通过 | KVM VM（Actions） | m9-restore（run 41088874992）：恢复在第一个工作区替换后被切断 → 保持 restore-in-progress，任何工作区都不启动；--restore-id 续作完成。 |
 | V1-R09 | 缓存与 | 未通过 | 未验收 | 未做。 |
 | V1-R10 | 异机克隆 | 未通过 | 未验收 | 未做。 |
-| V1-R11 | 根侧日志丢失 | 部分 | KVM VM（Actions）（已写，CI 待结果） | m9-restore：broker 日志丢失只进诊断模式（BROKER_HISTORY_MISSING）不建空库；machine.sqlite 丢失进入恢复模式、显式 recover --new-identity、旧状态移入 lost-<ms>/。run 41088874992 中 broker 子测试失败——agentos-broker.path 在测试删除日志前就把 broker 重新拉起，测试未暂停 path 单元；已修，重跑 run 41090998716，CI 待结果。 |
-| V1-R12 | 空间与快照保留 | 未通过 | 未验收 | 未做。 |
+| V1-R11 | 根侧日志丢失 | 通过 | KVM VM（Actions） | m9-restore（run 41100319437，ef17ee4，KVM）两个 R11 子测试通过：broker 日志丢失只进诊断模式（BROKER_HISTORY_MISSING，从 firstboot 前时间点起查），不建空库；machine.sqlite 丢失时 machined 进入恢复模式（不建空库、不开 socket、写 recovery-required），agentosctl recover --new-identity 后旧状态移入 root-only lost-<ms>/ 作证据，新身份启动。 |
+| V1-R12 | 空间与快照保留 | 部分 | KVM VM（Actions）（已写，CI 待结果）＋单元/集成 | Rust 单元 native/crates/machine/src/tests.rs r12_full_or_read_only_disk_stops_new_effects_keeps_receipts_pins_and_local_label（agentos-v1 通过）：statvfs <256 MiB 或只读 → 新 permit/新工作区/新检查点集合 MACHINE_CAPACITY，已持有 permit 仍可用完并写收据，撤权照常；保留最新 3 个完整集合与全部 pinned、唯一完整集合不可删；本地集合标 location=local、offMachineCopy=false，export_state 只能 none→exporting→exported→verified。本轮新增 agentosctl backup export（native/crates/machine/src/ctl.rs）：对 machined 记录的完整集合（manifest hash 必须一致）逐工作区 age 加密写到目标、machine-set.json 也加密，写完置 exported，再从目标读回逐个核对 sha256 后才置 verified；失败回 none。backup 改为先开集合（满盘/只读在停任何工作区之前被拒）并在失败时把原来运行的工作区重新启动。m9-restore 新子测试（R12）：导出前 export_state=none；导出后 verified、offMachineCopy=true，副本可解密为可校验集合；篡改的 machine-set.json 被拒且不写目标；快照目录只读挂载时 agentosctl backup 以 MACHINE_CAPACITY 被拒、无 barrier 残留、两个 Host 仍在运行，workspaces.create 被拒，既有集合 complete/verified 保留。CI 待结果。 |
 
 ## v0.4 迁移
 
@@ -165,7 +165,7 @@
 
 ## 统计
 
-未通过 18 项，通过 36 项，部分 46 项（共 100 项）。
+未通过 17 项，通过 37 项，部分 46 项（共 100 项）。
 
 ## 回归与偶发失败记录
 
