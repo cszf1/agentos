@@ -563,6 +563,11 @@ pub fn route(gw: &Gw, conn: u64, uid: u32, pid: u32, dbus: &zbus::blocking::Conn
         return bind(gw, conn, uid, pid, dbus);
     }
     if e.method == "session.status" {
+        // Answer from a fresh contact, not from whatever the registry loop saw last (up to 250 ms + one call ago):
+        // m10 S08 read "reachable" right after machined stopped because no gateway call had failed yet.
+        if gw.since_machine_ok().map(|d| d > Duration::from_millis(200)).unwrap_or(true) {
+            let _ = gw.machine("status", json!({}));
+        }
         let st = live(gw, conn, dbus);
         let sessions = gw.sessions.lock().unwrap();
         let s = sessions.get(&conn).ok_or_else(|| err("SESSION_REQUIRED", "not bound"))?;
