@@ -180,6 +180,10 @@ impl Executor for RealExecutor {
                 Ok((format!("user:{n}"), 1, json!({ "loginName": n, "role": p["role"] })))
             }
             "users.disable" => Ok((format!("user:{}", p["userId"].as_str().unwrap_or_default()), 1, json!({ "userId": p["userId"] }))),
+            "workspaces.runWhenLoggedOut" => {
+                let ws = p["workspaceId"].as_str().unwrap_or_default();
+                Ok((format!("workspace:{ws}:runWhenLoggedOut"), 1, json!({ "workspaceId": ws, "enabled": p["enabled"] })))
+            }
             "updates.activate" | "updates.rollback" | "restores.confirm" | "workspaces.delete" => Ok((format!("{kind}:{}", p["id"].as_str().unwrap_or_default()), 1, json!({ "id": p["id"] }))),
             _ => Err(MErr::new("INVALID_REQUEST", "unknown kind")),
         }
@@ -276,6 +280,11 @@ impl Executor for RealExecutor {
                 Ok(u)
             }
             "users.disable" => m.disable_user(p["userId"].as_str().unwrap_or_default(), &uuid()),
+            "workspaces.runWhenLoggedOut" => {
+                let enabled = p["enabled"].as_bool().ok_or_else(|| MErr::new("INVALID_REQUEST", "enabled"))?;
+                m.set_run_when_logged_out(op["initiator"].as_str().unwrap_or_default(), p["workspaceId"].as_str().unwrap_or_default(), enabled)?;
+                Ok(json!({ "runWhenLoggedOut": enabled }))
+            }
             _ => Err(MErr::new("HARDWARE_UNSUPPORTED", "this action is performed by its fixed worker")),
         }
     }
@@ -298,7 +307,7 @@ impl Executor for RealExecutor {
                     Some(true)
                 }
             }
-            "users.create" | "users.disable" => Some(!dispatched.is_null() && dispatched.get("code").is_none()),
+            "users.create" | "users.disable" | "workspaces.runWhenLoggedOut" => Some(!dispatched.is_null() && dispatched.get("code").is_none()),
             _ => None,
         }
     }

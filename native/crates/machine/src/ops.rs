@@ -28,6 +28,8 @@ pub const KINDS: &[(&str, bool)] = &[
     ("updates.rollback", true),
     ("restores.confirm", true),
     ("workspaces.delete", true),
+    // Owner setting (spec §9.3, §27.1, V1-W08): owner of the workspace only, checked at plan and again at dispatch.
+    ("workspaces.runWhenLoggedOut", false),
 ];
 
 pub fn kind_admin(kind: &str) -> R<bool> {
@@ -91,6 +93,16 @@ impl Machine {
         }
         if kind != "restores.confirm" {
             self.require_restore_idle()?;
+        }
+        if kind == "workspaces.runWhenLoggedOut" {
+            let ws = params_v["workspaceId"].as_str().ok_or_else(|| MErr::new("INVALID_REQUEST", "workspaceId is required"))?;
+            if !params_v["enabled"].is_boolean() {
+                return Err(MErr::new("INVALID_REQUEST", "enabled must be a boolean"));
+            }
+            let (role, _) = self.membership(&p.user_id, ws)?;
+            if role != crate::dir::Role::Owner {
+                return Err(MErr::hidden());
+            }
         }
         let (resource_id, generation, impact) = ex.probe(kind, params_v)?;
         let epoch = self.control_epoch()?;

@@ -42,14 +42,41 @@ r = call(1, [{"methodId": "members.setRole", "workspaceId": ws_a, "idempotencyKe
 assert r["status"] == 200, r
 
 with subtest("runWhenLoggedOut: off by default, owner only (W08)"):
+    # §16.1 has no settings route: the owner changes it through a fixed machine action (plan → confirm).
+    def rwlo(n, enabled, tag):
+        pl = call(n, [{"methodId": "machine.actions.plan", "idempotencyKey": str(uuid.uuid4()), "body": {"kind": "workspaces.runWhenLoggedOut", "params": {"workspaceId": ws_a, "enabled": enabled}}}], tag)[0]
+        if pl["status"] != 201:
+            return pl
+        return call(n, [{"methodId": "machine.actions.confirm", "idempotencyKey": str(uuid.uuid4()), "body": {"operationId": pl["body"]["operationId"], "planHash": pl["body"]["planHash"]}}], tag + "c")[0]
     assert sql(f"SELECT run_when_logged_out FROM workspaces WHERE workspace_id='{ws_a}'") == "0"
-    r = call(2, [{"methodId": "workspaces.setRunWhenLoggedOut", "workspaceId": ws_a, "body": {"enabled": True}}], "w1")[0]
-    assert r["status"] != 200, r                                   # an editor cannot let the workspace run logged out
+    r = rwlo(2, True, "w1")
+    assert r["status"] != 200 and r["status"] != 201, r            # an editor cannot let the workspace run logged out
     assert sql(f"SELECT run_when_logged_out FROM workspaces WHERE workspace_id='{ws_a}'") == "0"
-    r = call(1, [{"methodId": "workspaces.setRunWhenLoggedOut", "workspaceId": ws_a, "body": {"enabled": True}}], "w2")[0]
-    assert r["status"] == 200, r
-    r = call(1, [{"methodId": "workspaces.setRunWhenLoggedOut", "workspaceId": ws_a, "body": {"enabled": False}}], "w3")[0]
-    assert r["status"] == 200, r
+    r = rwlo(1, True, "w2")
+    assert r["status"] == 200 and r["body"]["state"] == "succeeded", r
+    assert sql(f"SELECT run_when_logged_out FROM workspaces WHERE workspace_id='{ws_a}'") == "1"
+    r = rwlo(1, False, "w3")
+    assert r["status"] == 200 and r["body"]["state"] == "succeeded", r
+    assert sql(f"SELECT run_when_logged_out FROM workspaces WHERE workspace_id='{ws_a}'") == "0"
+
+with subtest("support bundle: root only, 0600, no passwords, no full machine identity (O08)"):
+    machine.fail("su - bob -c 'agentosctl support-bundle --out /tmp/sb.json'")
+    out = json.loads(must("agentosctl support-bundle --out /root/sb.json"))
+    assert out["ok"], out
+    assert machine.succeed("stat -c %a /root/sb.json").strip() == "600"
+    body = machine.succeed("cat /root/sb.json")
+    mid = sql("SELECT machine_install_id FROM machine_meta")
+    for secret in ("alice-pw-1", "bob-pw-1"):
+        assert secret not in body, secret
+    assert mid and mid not in body, "full machine identity in the bundle"
+    b = json.loads(body)
+    assert b["kind"] == "agentos.support-bundle.v1" and b["machineIdentityDigest"].startswith("sha256:")
+    assert {w["workspaceId"] for w in b["workspaces"]} == {ws_a, ws_b}, b["workspaces"]
+    # the audit log is append-only: the bundle does not rotate or trim it
+    first = sql("SELECT MIN(seq) FROM root_audit")
+    n1 = int(sql("SELECT COUNT(*) FROM root_audit"))
+    must("agentosctl support-bundle --out /root/sb2.json")
+    assert sql("SELECT MIN(seq) FROM root_audit") == first and int(sql("SELECT COUNT(*) FROM root_audit")) >= n1
 
 with subtest("two real Hosts: at most two model requests in flight on the machine, one per workspace while both wait (S01, S02)"):
     machine.succeed(f"echo 25 > {FM}/hold")

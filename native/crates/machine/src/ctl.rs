@@ -125,9 +125,10 @@ fn main() {
             call(&mut c, "install.closeFirstBoot", json!({}));
             out(&json!({ "machineInstallId": inst["machineInstallId"], "admin": u["loginName"], "workspaceId": w["workspaceId"], "firstBoot": "closed" }));
         }
+        (Some("support-bundle"), _) => support_bundle(&mut c, &a),
         (Some("backup"), _) => backup(&mut c, &a),
         (Some("restore"), _) => restore(&mut c, &a),
-        _ => die("usage: agentosctl status | doctor | workspace list | workspace status <id> | update status | firstboot --admin <login>"),
+        _ => die("usage: agentosctl status | doctor | workspace list | workspace status <id> | update status | firstboot --admin <login> | support-bundle --out <file>"),
     }
 }
 
@@ -331,4 +332,74 @@ fn recover(a: &[String]) {
     agentos_machine::dir::write_private(std::path::Path::new("/var/lib/agentos-machine/recovery-accepted"), b"new-identity").unwrap_or_else(|e| die(&e.to_string()));
     let ok = std::process::Command::new("systemctl").args(["restart", "agentos-machine.service"]).status().map(|s| s.success()).unwrap_or(false);
     out(&json!({ "ok": ok, "accepted": "new-identity" }));
+}
+
+/// Words whose line may carry a secret value; such a line is kept only as a marker (spec §27.3).
+const SECRET_WORDS: &[&str] = &["password", "passphrase", "passwd", "psk", "secret", "token", "cookie", "authorization", "api_key", "apikey", "private"];
+
+pub fn redact_line(l: &str) -> String {
+    let low = l.to_ascii_lowercase();
+    match SECRET_WORDS.iter().find(|w| low.contains(*w)) {
+        Some(w) => format!("[redacted line: mentions {w}]"),
+        None => l.chars().take(400).collect(),
+    }
+}
+
+/// Support bundle (spec §27.3, V1-O08): machine-level facts that locate a problem (release, boot, schema/protocol,
+/// identity digest, registry sequence, executors, permits, barriers/restore, boot default) plus redacted service
+/// logs. No workspace content (records, prompts), no secret value, no full machine identity. Root only, 0600.
+fn support_bundle(c: &mut Client, a: &[String]) {
+    root_only("support-bundle");
+    let out_path = arg(a, "--out").unwrap_or_else(|| die("usage: agentosctl support-bundle --out <file>"));
+    let st = c.call("status", json!({})).unwrap_or_else(|e| json!({ "error": e.to_string() }));
+    let wss = c.call("workspaces.all", json!({})).unwrap_or(Value::Null);
+    let upd = c.call("updates.current", json!({})).unwrap_or(Value::Null);
+    let boot = std::fs::read_to_string("/proc/sys/kernel/random/boot_id").unwrap_or_default().trim().to_string();
+    let mid = st["meta"]["machineInstallId"].as_str().unwrap_or_default().to_string();
+    let mut st2 = st.clone();
+    if let Some(m) = st2.get_mut("meta").and_then(|m| m.as_object_mut()) {
+        m.remove("machineInstallId");
+        m.remove("firstBootId");
+    }
+    let workspaces: Vec<Value> = wss["workspaces"].as_array().cloned().unwrap_or_default().into_iter().map(|w| {
+        json!({ "workspaceId": w["workspaceId"], "state": w["state"], "executionUid": w["executionUid"], "instanceEpoch": w["instanceEpoch"],
+                "workspaceIncarnation": w["workspaceIncarnation"], "runWhenLoggedOut": w["runWhenLoggedOut"] })
+    }).collect();
+    let journal = std::process::Command::new("journalctl")
+        .args(["-u", "agentos-machine", "-u", "agentos-session-gateway", "-u", "agentos-broker", "-u", "agentos-desktop-session", "-n", "800", "-o", "short-iso", "--no-pager"])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).lines().map(redact_line).collect::<Vec<_>>())
+        .unwrap_or_default();
+    let release = std::fs::read_to_string("/etc/agentos/release.json").ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()).unwrap_or(Value::Null);
+    let bundle = json!({
+        "kind": "agentos.support-bundle.v1",
+        "createdAt": agentos_machine::util::now_ms(),
+        "release": release,
+        "bootId": boot,
+        "machineIdentityDigest": format!("sha256:{}", &sha256_hex(mid.as_bytes())[..16]),
+        "machine": st2,
+        "workspaces": workspaces,
+        "update": upd,
+        "bootDefault": std::fs::read_to_string("/boot/loader/loader.conf").ok().and_then(|t| t.lines().find(|l| l.starts_with("default")).map(|l| l.to_string())),
+        "restoreInProgress": std::path::Path::new("/var/lib/agentos-machine/restore-in-progress").exists(),
+        "logs": journal,
+        "redaction": "lines naming password/passphrase/psk/secret/token/cookie/authorization/api key/private are replaced by a marker; no workspace content is collected",
+    });
+    let bytes = serde_json::to_vec_pretty(&bundle).unwrap();
+    agentos_machine::dir::write_private(std::path::Path::new(&out_path), &bytes).unwrap_or_else(|e| die(&format!("write {out_path}: {e}")));
+    out(&json!({ "ok": true, "path": out_path, "bytes": bytes.len(), "logLines": bundle["logs"].as_array().map(|x| x.len()) }));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::redact_line;
+
+    #[test]
+    fn o08_support_bundle_lines_naming_secrets_are_replaced() {
+        assert_eq!(redact_line("wifi psk=hunter2"), "[redacted line: mentions psk]");
+        assert_eq!(redact_line("Authorization: Bearer abc"), "[redacted line: mentions authorization]");
+        assert_eq!(redact_line("set Password for alice"), "[redacted line: mentions password]");
+        assert_eq!(redact_line("machined ready"), "machined ready");
+        assert_eq!(redact_line(&"x".repeat(1000)).len(), 400);
+    }
 }
