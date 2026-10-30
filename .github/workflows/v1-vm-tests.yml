@@ -1,0 +1,97 @@
+# AgentOS v1.0 NixOS VM checks on GitHub-hosted runners (KVM available on ubuntu-latest for public repos).
+# One matrix job per VM check; any single check can be re-run with "Run workflow" and test=<name>.
+# These runs are "KVM VM" evidence only: not real hardware, display, input method or serial devices.
+name: v1-vm-tests
+
+on:
+  push:
+    branches: [v1.0]
+    paths: ["os/**", "native/**", "packages/**", "desktop/**", "runtime/**", "fixtures/**", "pnpm-lock.yaml", ".github/workflows/v1-vm-tests.yml"]
+  workflow_dispatch:
+    inputs:
+      test:
+        description: "VM check to run (all, or one name from the list in the 'plan' job)"
+        required: true
+        default: all
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v1-vm-${{ github.ref }}-${{ github.event.inputs.test || 'all' }}
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      tests: ${{ steps.pick.outputs.tests }}
+    steps:
+      - id: pick
+        env:
+          WANT: ${{ github.event.inputs.test || 'all' }}
+        run: |
+          ALL='["m2-identity"]'
+          if [ "$WANT" = all ]; then echo "tests=$ALL" >> "$GITHUB_OUTPUT";
+          else echo "$ALL" | jq -e --arg t "$WANT" 'index($t) != null' >/dev/null || { echo "unknown test $WANT"; exit 1; }
+               echo "tests=[\"$WANT\"]" >> "$GITHUB_OUTPUT"; fi
+
+  vm:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    strategy:
+      fail-fast: false
+      matrix:
+        test: ${{ fromJSON(needs.plan.outputs.tests) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          df -h /
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            system-features = nixos-test benchmark big-parallel kvm
+            require-sigs = true
+
+      - name: Restore Nix store cache
+        uses: nix-community/cache-nix-action@v6
+        with:
+          primary-key: nix-${{ runner.os }}-${{ matrix.test }}-${{ hashFiles('os/flake.lock', 'native/Cargo.lock', 'pnpm-lock.yaml') }}-${{ github.sha }}
+          restore-prefixes-first-match: |
+            nix-${{ runner.os }}-${{ matrix.test }}-${{ hashFiles('os/flake.lock', 'native/Cargo.lock', 'pnpm-lock.yaml') }}-
+            nix-${{ runner.os }}-${{ matrix.test }}-
+            nix-${{ runner.os }}-
+          gc-max-store-size-linux: 9G
+          purge: false
+
+      - name: Build test driver
+        working-directory: os
+        run: nix build ".#checks.x86_64-linux.${{ matrix.test }}.driver" -L --print-out-paths 2>&1 | tee "$RUNNER_TEMP/build-${{ matrix.test }}.log"
+
+      - name: Run VM check (KVM)
+        working-directory: os
+        run: |
+          set -o pipefail
+          ls -l /dev/kvm
+          nix build ".#checks.x86_64-linux.${{ matrix.test }}" -L --print-out-paths 2>&1 | tee "$RUNNER_TEMP/vm-${{ matrix.test }}.log"
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vm-${{ matrix.test }}-logs
+          path: ${{ runner.temp }}/*.log
+          retention-days: 14

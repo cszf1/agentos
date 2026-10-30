@@ -13,3 +13,4 @@ native/target/
 desktop/build/
 desktop/build/
 desktop/tests/out/
+os/result*

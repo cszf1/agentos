@@ -29,7 +29,9 @@
       };
       nixosConfigurations.m0-proto = mk [ ./modules/base.nix ./modules/graphics.nix ./hardware/qemu.nix ];
       checks.${system} = {
+        # KVM runs (CI) may use several vCPUs; "-tcg" variants are single-vCPU for hosts without KVM (RCU stalls).
         m2-identity = import ./tests/m2-identity.nix { inherit pkgs; modules = [ ./modules/base.nix ./modules/agentos.nix ]; };
+        m2-identity-tcg = import ./tests/m2-identity.nix { inherit pkgs; modules = [ ./modules/base.nix ./modules/agentos.nix ]; cores = 1; };
       };
     };
 }
