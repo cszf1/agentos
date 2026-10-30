@@ -44,7 +44,12 @@ struct Real {
   bool up() {
     if (!view->load(QStringLiteral("ShellRoot.qml"))) return false;
     shell->start();
-    return QTest::qWaitFor([&] { return shell->sessionBound() && !shell->workspaceId().isEmpty() && shell->hostAvailable(); }, 60000);
+    const bool ok = QTest::qWaitFor([&] { return shell->sessionBound() && !shell->workspaceId().isEmpty() && shell->hostAvailable(); }, 60000);
+    if (!ok)
+      std::printf("E2E-DIAG connected=%d bound=%d user=%s workspace=%s workspaces=%d host=%d banner=%s\n", int(shell->connected()), int(shell->sessionBound()),
+                  shell->userName().toUtf8().constData(), shell->workspaceId().toUtf8().constData(), static_cast<JsonListModel*>(shell->workspaces())->count(),
+                  int(shell->hostAvailable()), shell->banner().toUtf8().constData());
+    return ok;
   }
   JsonListModel* model(QObject* o) const { return static_cast<JsonListModel*>(o); }
   // every visible, enabled item with this objectName (rows repeat their buttons)

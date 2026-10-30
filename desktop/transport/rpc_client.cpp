@@ -164,6 +164,39 @@ void RpcWorker::handleFrame(const QByteArray& payload) {
   else abortConnection(QStringLiteral("frame is neither a response nor an event"));
 }
 
+// The real session gateway (V1-D08/M06, m13-native) answers in the shapes of its two sources: a forwarded Host route
+// comes back as {status, body:{data:…}} or {status ≥ 400, body:{error:{code,message}}}, and machined's lists are named
+// arrays ({workspaces:[…]}, {members:[…]}). The Shell's reply model is one shape: errors in errorCode, lists in
+// body.items. Normalise here, once, for every caller.
+static void normalizeReply(RpcReply& r) {
+  if (r.errorCode.isEmpty() && r.status.isNumber() && r.status.toNumber() >= 400) {
+    const JValue& e = r.body.get(QStringLiteral("error"));
+    r.errorCode = e.isObject() ? e.get(QStringLiteral("code")).stringOr(QStringLiteral("INTERNAL")) : QStringLiteral("HTTP_") + QString::number(int(r.status.toNumber()));
+    r.errorMessage = e.isObject() ? e.get(QStringLiteral("message")).stringOr(r.errorCode) : r.errorCode;
+    return;
+  }
+  if (r.body.isObject() && r.body.has(QStringLiteral("data")) && !r.body.has(QStringLiteral("items"))) {
+    const JValue data = r.body.get(QStringLiteral("data"));
+    JValue out = data.isArray() ? JValue::object({{QStringLiteral("items"), data}}) : data;
+    if (out.isObject())
+      for (const QString& k : r.body.keys())
+        if (k != QLatin1String("data") && !out.has(k)) out.set(k, r.body.get(k));
+    r.body = out.isObject() ? out : r.body;
+  } else if (r.body.isArray()) {
+    r.body = JValue::object({{QStringLiteral("items"), r.body}});
+  }
+  if (!r.body.isObject() || r.body.has(QStringLiteral("items"))) return;
+  for (const char* k : {"workspaces", "members", "sets", "backups", "runs", "apps"}) {
+    const JValue& l = r.body.get(QString::fromLatin1(k));
+    if (l.isArray()) {
+      r.body.set(QStringLiteral("items"), l);
+      break;
+    }
+  }
+  if (!r.body.has(QStringLiteral("userName")) && r.body.get(QStringLiteral("loginName")).isString()) r.body.set(QStringLiteral("userName"), r.body.get(QStringLiteral("loginName")));
+  if (!r.body.has(QStringLiteral("cursor")) && r.body.get(QStringLiteral("eventCursor")).isNumber()) r.body.set(QStringLiteral("cursor"), r.body.get(QStringLiteral("eventCursor")));
+}
+
 void RpcWorker::handleReply(const JValue& v) {
   const QString id = v.get(QStringLiteral("requestId")).stringOr(QString());
   auto it = inflight_.find(id);
@@ -182,6 +215,7 @@ void RpcWorker::handleReply(const JValue& v) {
     r.errorCode = e.get(QStringLiteral("code")).stringOr(QStringLiteral("INTERNAL"));
     r.errorMessage = e.get(QStringLiteral("message")).stringOr(r.errorCode);
   }
+  normalizeReply(r);
   if (r.workspaceId != it->call.workspaceId || r.clientEpoch != it->call.clientEpoch) {
     // A reply must echo the request's scope; anything else is not ours to apply.
     stats_.droppedReplies++;
