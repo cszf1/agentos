@@ -379,3 +379,31 @@ with subtest("commit window: a crash after the intent or after the default resol
     machine.succeed("journalctl -b -o cat --no-pager -u agentos-update-reconcile.service | grep -q finish_commit")
     assert mok("updates.get", {"updateId": u2})["state"] == "committed"
     committed_once(u2, C2)
+
+with subtest("rollback boots the older registered entry: records stay readable; an incompatible generation is refused before it boots (U11 boot part)"):
+    C0 = "abababab-abab-4bab-8bab-abababababab"
+    comp0 = json.dumps({"machineSchema": [1, 1], "workspaceSchema": [5, 5], "brokerSchema": [4, 4], "brokerProtocol": [3, 3], "nativeRpc": [1, 1]}).replace('"', '\\"')
+    seqm = int(msql("SELECT MAX(release_sequence) FROM releases"))
+    msql(f"INSERT INTO releases (release_id, manifest_hash, release_sequence, closure_path, compatibility_json, migration_class, verification_state, support_until, created_at) VALUES ('{C0}', 'sha256:{C0}', {seqm + 1}, '/nix/store/{C0}', '{comp0}', 'none', 'verified', 4102444800000, 1)")
+    facts0 = msql("SELECT (SELECT COUNT(*) FROM users) || '|' || (SELECT COUNT(*) FROM update_jobs) || '|' || (SELECT COUNT(*) FROM root_audit) || '|' || accepted_release_sequence FROM machine_meta")
+    hw0 = facts0.split("|")[3]
+    # a generation that only knows machine schema 1 is refused before anything boots it: default unchanged
+    r = mcall("releases.setCurrent", {"releaseId": C0, "knownGood": True})
+    assert not r["ok"] and r["error"]["code"] == "ROLLBACK_INCOMPATIBLE", r
+    assert default_entry() == f"agentos-{C2}.conf", default_entry()
+    # the older registered entry C1 declares schema 1..2: machined accepts it, the worker makes it the default
+    mok("releases.setCurrent", {"releaseId": C1, "knownGood": True})
+    uw(f"commit --release-id {C1}")
+    assert default_entry() == f"agentos-{C1}.conf", default_entry()
+    reboot()
+    assert booted_release() == C1, booted_release()
+    machine.wait_for_unit("agentos-update-reconcile.service")
+    st = json.loads(machine.succeed("agentosctl status"))
+    print("after rollback boot", st.get("meta"))
+    assert msql("SELECT current_release_id || '|' || known_good_release_id FROM machine_meta") == f"{C1}|{C1}"
+    assert msql("SELECT accepted_release_sequence FROM machine_meta") == hw0              # high water not lowered
+    assert msql("SELECT schema_version FROM machine_meta") == "2"                          # no down-migration
+    f1 = msql("SELECT (SELECT COUNT(*) FROM users) || '|' || (SELECT COUNT(*) FROM update_jobs) || '|' || (SELECT COUNT(*) FROM root_audit) || '|' || accepted_release_sequence FROM machine_meta")
+    assert f1.split("|")[:2] == facts0.split("|")[:2] and int(f1.split("|")[2]) >= int(facts0.split("|")[2]), (facts0, f1)
+    mok("workspaces.rootStart", {"workspaceId": ws})                                      # the workspace opens on it
+    mok("workspaces.rootStop", {"workspaceId": ws})
