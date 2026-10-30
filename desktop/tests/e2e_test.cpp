@@ -131,6 +131,16 @@ struct Real {
       st = run(runId).get(QStringLiteral("status")).stringOr(QString());
       return st == QLatin1String("succeeded") || st == QLatin1String("failed") || st == QLatin1String("cancelled") || st == QLatin1String("rejected");
     }, ms);
+    if (st != QLatin1String("succeeded") && st != QLatin1String("failed") && st != QLatin1String("cancelled") && st != QLatin1String("rejected")) {
+      // diagnostics for a run the Task Center never saw finish: transport, session and list freshness
+      auto* m = model(shell->runs());
+      QStringList ts;
+      const QVariantMap t = shell->transportStats();
+      for (auto it = t.begin(); it != t.end(); ++it) ts << it.key() + QLatin1Char('=') + it.value().toString();
+      fprintf(stderr, "E2E waitRun timeout run=%s status=%s connected=%d bound=%d host=%d banner=%s listCount=%d listUpdated=%s transport={%s} row=%s\n",
+              qPrintable(runId), qPrintable(st), int(shell->connected()), int(shell->sessionBound()), int(shell->hostAvailable()), qPrintable(shell->banner()),
+              m->count(), qPrintable(m->updatedAt()), qPrintable(ts.join(QLatin1Char(' '))), qPrintable(run(runId).stringify().left(600)));
+    }
     return st;
   }
   QString newestRunId() const {
