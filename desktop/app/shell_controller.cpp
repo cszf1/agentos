@@ -468,6 +468,17 @@ void ShellController::loadMachine() {
 
 void ShellController::applyApps(const JValue& state) {
   apps_->setItems(state.get(QStringLiteral("apps")));
+  // An open app view older than the list (a new version activated, the event missed or not carrying the appId) is
+  // re-read: its appEpoch guards every write from it, so a stale one turns the next action into APP_EPOCH_STALE
+  // (m13 run 41131676224: the version switch after a modify answered 409).
+  for (const auto& a : state.get(QStringLiteral("apps")).items()) {
+    const QString id = a.get(QStringLiteral("appId")).str();
+    const JValue& ep = a.get(QStringLiteral("appEpoch"));
+    if (views_.contains(id) && !ep.isNullish() && ep.toNumber() != views_[id]->appEpoch())
+      request(QStringLiteral("apps.get"), JValue::object({{QStringLiteral("appId"), id}}), [this, id](const RpcReply& r) {
+        if (r.ok() && views_.contains(id)) views_[id]->setDetail(r.body);
+      });
+  }
   QList<QPair<QString, QString>> list;
   for (const auto& a : state.get(QStringLiteral("apps")).items()) list << qMakePair(a.get(QStringLiteral("appId")).str(), a.get(QStringLiteral("title")).stringOr(a.get(QStringLiteral("appId")).str()));
   const JValue saved = canvas_->toJson();

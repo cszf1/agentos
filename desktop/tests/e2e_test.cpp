@@ -243,7 +243,9 @@ class E2E : public QObject {
     QQuickItem* sw = r.byLabel(QStringLiteral("切换到此版本"));
     QVERIFY2(sw, "no enabled version switch button");
     r.press(sw);
-    QTRY_COMPARE_WITH_TIMEOUT(r.actionState(QStringLiteral("app.deploy")), QStringLiteral("reconciled"), 120000);
+    QTest::qWaitFor([&] { const QString st = r.actionState(QStringLiteral("app.deploy")); return st == QLatin1String("reconciled") || st == QLatin1String("failed") || st == QLatin1String("unknown"); }, 120000);
+    report(QStringLiteral("deploy"), {{QStringLiteral("state"), r.actionState(QStringLiteral("app.deploy"))}, {QStringLiteral("action"), r.action(QStringLiteral("app.deploy")).toVariant()}});
+    QCOMPARE(r.actionState(QStringLiteral("app.deploy")), QStringLiteral("reconciled"));
     v = openView(r, todo);
     QTRY_VERIFY_WITH_TIMEOUT(rows(v) >= 2, 20000);
     report(QStringLiteral("switched"), {{QStringLiteral("rows"), rows(v)}});
