@@ -161,11 +161,20 @@ with subtest("the last owner cannot be removed; a disabled account gets nothing 
     assert code(r) == "CONFLICT", r
     r = call(1, [{"methodId": "members.setRole", "workspaceId": ws_a, "idempotencyKey": str(uuid.uuid4()), "body": {"userId": alice, "role": "viewer"}}], "o2")[0]
     assert r["status"] != 200, r
+    # bob owns workspace "Bob": disabling him would leave it without an owner → refused with no effect
     p = call(1, [{"methodId": "machine.users.disable", "idempotencyKey": str(uuid.uuid4()), "body": {"userId": bob}}], "o3")[0]
     assert p["status"] == 201, p
     ok = call(1, [{"methodId": "machine.actions.confirm", "idempotencyKey": str(uuid.uuid4()), "body": {"operationId": p["body"]["operationId"], "planHash": p["body"]["planHash"], "password": "alice-pw-1"}}], "o4")[0]
+    assert ok["body"]["state"] == "failed_no_effect" and ok["body"]["result"]["code"] == "CONFLICT", ok
+    # an account that owns nothing is disabled; it can no longer bind a session
+    erin = make_user("erin", "erin-pw-1", "ue")
+    tty_login(4, "erin", "erin-pw-1")
+    p = call(1, [{"methodId": "machine.users.disable", "idempotencyKey": str(uuid.uuid4()), "body": {"userId": erin}}], "o6")[0]
+    assert p["status"] == 201, p
+    ok = call(1, [{"methodId": "machine.actions.confirm", "idempotencyKey": str(uuid.uuid4()), "body": {"operationId": p["body"]["operationId"], "planHash": p["body"]["planHash"], "password": "alice-pw-1"}}], "o7")[0]
     assert '"succeeded"' in json.dumps(ok), ok
-    out = tty_run(2, f"{RPC} '[{{\"methodId\":\"session.bind\"}},{{\"methodId\":\"workspaces.list\"}}]'", "/tmp/o5")
+    assert sql(f"SELECT state FROM users WHERE user_id='{erin}'") == "disabled"
+    out = tty_run(4, f"{RPC} '[{{\"methodId\":\"session.bind\"}},{{\"methodId\":\"workspaces.list\"}}]'", "/tmp/o5")
     lines = [json.loads(l) for l in out.splitlines() if l.startswith("{")]
     assert lines[0]["status"] != 200, lines
 
