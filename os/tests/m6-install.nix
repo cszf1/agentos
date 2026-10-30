@@ -18,7 +18,7 @@ pkgs.testers.runNixOSTest {
   nodes.machine = { lib, ... }: {
     virtualisation = { memorySize = 3072; cores = 2; diskSize = 8192; emptyDiskImages = [ 65536 1024 ]; writableStore = true; };
     virtualisation.additionalPaths = [ top ];
-    environment.systemPackages = [ installer pkgs.jq pkgs.gptfdisk ];
+    environment.systemPackages = [ installer pkgs.jq pkgs.gptfdisk pkgs.cryptsetup pkgs.btrfs-progs ];
     networking.useDHCP = false;
     networking.interfaces = lib.mkForce { };
     nix.settings.substituters = lib.mkForce [ ];
