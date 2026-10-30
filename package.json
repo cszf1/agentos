@@ -31,6 +31,7 @@
     "test:telemetry": "pnpm build && vitest run --project telemetry",
     "smoke:v0.3-real": "pnpm build && node scripts/smoke-v03-real.mjs",
     "smoke:v0.4-real": "pnpm build && node scripts/smoke-v04-real.mjs",
+    "smoke:v1-real": "pnpm build && node scripts/smoke-v1-real.mjs",
     "contracts:check": "node scripts/export-contracts.mjs --check && node scripts/protocol-vectors.mjs --check && node scripts/v1-vectors.mjs --check",
     "agents:doctor": "node scripts/agents-doctor.mjs",
     "maintenance:doctor": "node scripts/maintenance-doctor.mjs",

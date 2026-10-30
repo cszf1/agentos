@@ -32,7 +32,8 @@ def fwd(ws, route, body=None, params=None, idem=None):
         b["params"] = params
     r = {"methodId": "workspace.forward", "workspaceId": ws, "body": b}
     if idem:
-        r["idempotencyKey"] = idem
+        # the Host takes only lowercase UUID keys: a readable test tag maps to a stable UUID (same tag = same key)
+        r["idempotencyKey"] = str(uuid.uuid5(uuid.NAMESPACE_URL, "agentos-test:" + idem))
     return r
 
 def sql(q):
