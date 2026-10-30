@@ -20,6 +20,8 @@ stdenv.mkDerivation (finalAttrs: {
     runHook preInstall
     mkdir -p $out/lib/agentos $out/bin
     cp -r package.json pnpm-workspace.yaml .node-version node_modules packages runtime fixtures docs bin $out/lib/agentos/
+    # pnpm install bookkeeping with build-time timestamps; not read at run time (O09: two builds must be identical)
+    find $out/lib/agentos \( -name .modules.yaml -o -name '.pnpm-workspace-state*.json' \) -type f -delete
     patchShebangs $out/lib/agentos/bin
     for b in agentos-host agentos-admin agentos-runtime; do
       makeWrapper $out/lib/agentos/bin/$b $out/bin/$b \

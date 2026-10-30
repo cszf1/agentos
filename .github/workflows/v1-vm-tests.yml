@@ -103,7 +103,7 @@ jobs:
             else
               echo "REPRO $A DIFFERS" | tee -a "$RUNNER_TEMP/build-repro.log"; rc=1
               out=$(nix eval --raw ".#$A.outPath")
-              [ -e "$out.check" ] && diff -r "$out" "$out.check" 2>&1 | head -40 | tee -a "$RUNNER_TEMP/build-repro.log"
+              { [ -e "$out.check" ] && diff -r "$out" "$out.check" 2>&1 | head -60 | tee -a "$RUNNER_TEMP/build-repro.log"; } || true
             fi
           done
           exit $rc
