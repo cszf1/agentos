@@ -45,6 +45,11 @@ export * from "./maintenance/templates.js";
 export * from "./maintenance/app-recovery.js";
 export * from "./maintenance/service-maintenance.js";
 export * from "./builds/online-gc.js";
+export * from "./identity/access.js";
+export * from "./identity/session.js";
+export * from "./identity/legacy.js";
+export * from "./machine/directory.js";
+export * from "./machine/fairness.js";
 
 export interface Core {
   store: Store;

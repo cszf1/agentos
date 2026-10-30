@@ -18,6 +18,9 @@ export default defineConfig({
   test: {
     projects: [
       { resolve: { alias }, test: { name: "unit", include: ["tests/integration/**/*.test.ts"], testTimeout: 30_000, hookTimeout: 60_000, pool: "forks" } },
+      { resolve: { alias }, test: { name: "identity", include: ["tests/identity/**/*.test.ts"], testTimeout: 30_000, hookTimeout: 60_000, pool: "forks" } },
+      { resolve: { alias }, test: { name: "machine", include: ["tests/machine/**/*.test.ts"], testTimeout: 30_000, hookTimeout: 60_000, pool: "forks" } },
+      { resolve: { alias }, test: { name: "migration-v1", include: ["tests/migration/**/*.test.ts"], testTimeout: 30_000, hookTimeout: 60_000, pool: "forks" } },
       // v0.4: multi-conversation agents, maintenance, online GC and compaction (faux Pi, real files).
       { resolve: { alias }, test: { name: "agents", include: ["tests/agents/**/*.test.ts", "packages/agent-pi/test/**/*.test.ts"], testTimeout: 120_000, hookTimeout: 120_000, pool: "forks" } },
       { resolve: { alias }, test: { name: "maintenance", include: ["tests/maintenance/**/*.test.ts"], testTimeout: 180_000, hookTimeout: 120_000, pool: "forks" } },

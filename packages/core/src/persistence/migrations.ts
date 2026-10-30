@@ -1043,4 +1043,43 @@ CREATE TRIGGER runs_mode_frozen BEFORE UPDATE OF mode, system_resource_scope ON 
 BEGIN SELECT RAISE(ABORT, 'a run mode and its resource scope are frozen'); END;
 `,
   V04_MIGRATION,
+  `
+ALTER TABLE meta ADD COLUMN workspace_id TEXT;
+ALTER TABLE meta ADD COLUMN identity_protocol_version INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE meta ADD COLUMN instance_epoch INTEGER NOT NULL DEFAULT 1 CHECK (instance_epoch >= 1);
+ALTER TABLE runs ADD COLUMN initiator_user_id TEXT;
+ALTER TABLE runs ADD COLUMN member_version INTEGER;
+ALTER TABLE runs ADD COLUMN scope_hash TEXT;
+ALTER TABLE maintenance_policies ADD COLUMN approved_user_id TEXT;
+ALTER TABLE maintenance_policies ADD COLUMN approved_member_version INTEGER;
+ALTER TABLE proposals ADD COLUMN decided_by_user_id TEXT;
+ALTER TABLE proposals ADD COLUMN decided_member_version INTEGER;
+ALTER TABLE provider_grants ADD COLUMN approved_user_id TEXT;
+ALTER TABLE provider_grants ADD COLUMN approved_member_version INTEGER;
+CREATE TABLE legacy_principals (
+  legacy_key TEXT PRIMARY KEY,
+  owner_user_id TEXT NOT NULL,
+  workspace_id TEXT NOT NULL,
+  note TEXT NOT NULL
+);
+CREATE TABLE membership_mirror (
+  user_id TEXT PRIMARY KEY,
+  member_version INTEGER NOT NULL,
+  role TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('active','revoking','revoked')),
+  registry_seq INTEGER NOT NULL
+);
+CREATE TABLE revocation_receipts (
+  revocation_id TEXT PRIMARY KEY,
+  member_version INTEGER NOT NULL,
+  recorded_at TEXT NOT NULL
+);
+CREATE TABLE machine_permit_map (
+  permit_id TEXT PRIMARY KEY,
+  stable_key TEXT NOT NULL UNIQUE,
+  resource_class TEXT NOT NULL,
+  state TEXT NOT NULL,
+  usage_status TEXT NOT NULL
+);
+`,
 ];
