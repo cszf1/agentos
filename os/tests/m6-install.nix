@@ -134,5 +134,9 @@ pkgs.testers.runNixOSTest {
         feed(target, "correct horse battery", "Password query on /dev/ttyS0 finished")
         target.wait_for_unit("agentos-machine.service", timeout=900)
         assert json.loads(target.succeed("agentosctl status"))["meta"]["machineInstallId"] == mid
+        # The driver's cleanup does not stop a create_machine() VM: left running, nix build waited for it until the
+        # CI cap even though every subtest had passed (run 41112940578: script finished at 1314 s, job cancelled at
+        # 75 min). Shut it down explicitly.
+        target.shutdown()
   '';
 }
