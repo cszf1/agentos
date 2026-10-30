@@ -378,6 +378,9 @@ pub fn handle_client(gw: Arc<Gw>, stream: UnixStream) {
     for list in gw.subs.lock().unwrap().values_mut() {
         list.retain(|s| s.conn_id != conn);
     }
+    // Every sender must be gone before the writer can finish and shut the socket: `send` holds a clone of `tx`
+    // (keeping it alive left a refused connection open until the client gave up, O07).
+    drop(send);
     drop(tx);
     let _ = writer.join();
 }

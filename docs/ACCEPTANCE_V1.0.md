@@ -33,14 +33,14 @@
 | V1-I01 | 真实登录绑定 | 通过 | KVM VM（Actions） | os/tests/m2-identity.py：tty1 真实 PAM 登录后由内核对端 PID/UID + logind session/seat 绑定；伪造字段（principal、URL）被拒。 |
 | V1-I02 | 非登录进程 | 通过 | KVM VM（Actions） | m2-identity：无 logind 会话的 root 进程 session.bind → 401 SESSION_REQUIRED。 |
 | V1-I03 | 用户不可见数据 | 通过 | KVM VM（Actions） | m2-identity：B 列不到 A 的工作区，get/forward A 的 ID 统一 404 NOT_FOUND_OR_FORBIDDEN；m3-members 中机器管理员对非成员工作区同样 404。 |
-| V1-I04 | 角色矩阵 | 通过 | KVM VM（Actions）＋单元/集成 | tests/identity/access.test.ts 角色×动作全矩阵；m3-members：viewer 读 200、写/成员管理 404，editor 写入但 owner 动作（maintenance.control）被 Host 矩阵拒绝，owner 可执行，机器管理员无数据入口。 CI：f6d9d93 轮（run 41086404523）I04/I03/W04 子测试通过；I06 失败的根因是测试等待语句的 sqlite 查询三重转义、从未被解析（诊断显示撤销 196ms 内已 revoked，三方 outbox 均 acked），并非缺 ack；已修（4a0f725），重跑 run 41088865318，CI 待结果。 |
+| V1-I04 | 角色矩阵 | 通过 | KVM VM（Actions）＋单元/集成 | tests/identity/access.test.ts 角色×动作全矩阵；m3-members：viewer 读 200、写/成员管理 404，editor 写入但 owner 动作（maintenance.control）被 Host 矩阵拒绝，owner 可执行，机器管理员无数据入口。 CI：run 41088865318 中 I04/I03/W04/I06/I08 通过，I09 子测试失败——禁用 bob 被 machined 以 CONFLICT 拒绝（bob 是工作区 “Bob” 的唯一 owner，须先转移所有权），属正确行为、断言有误；已改为断言该拒绝并禁用一个不拥有工作区的新用户，重跑 run 41090308175，I09/I10/W07/I11 CI 待结果。 |
 | V1-I05 | 自身任务和共享任务 | 部分 | 单元/集成（VM 已写，CI 待结果） | access.test.ts 覆盖自身/他人任务的读取与取消判定。m11-ops I05：editor 读不到/取消不了 owner 的 run transcript，能读并取消自己的；owner 能取消 editor 的 run。 m11-ops（os/tests/m11-ops.py，两个真实 Host + 本地保持端点）已写，run 41089329164，CI 待结果。 |
-| V1-I06 | 撤销与写提交竞争 | 部分 | KVM VM（Actions） | m3-members：Host 运行中撤销 → 被撤销者的读写立即被拒；revocations 只有在 gateway/host/broker 三方 ack 后才变 revoked。写提交与撤销的精确竞争窗口与 UI 结果一致性未做。 CI：f6d9d93 轮（run 41086404523）I04/I03/W04 子测试通过；I06 失败的根因是测试等待语句的 sqlite 查询三重转义、从未被解析（诊断显示撤销 196ms 内已 revoked，三方 outbox 均 acked），并非缺 ack；已修（4a0f725），重跑 run 41088865318，CI 待结果。 |
+| V1-I06 | 撤销与写提交竞争 | 通过 | KVM VM（Actions） | m3-members：Host 运行中撤销 → 被撤销者的读写立即被拒；revocations 只有在 gateway/host/broker 三方 ack 后才变 revoked。写提交与撤销的精确竞争窗口与 UI 结果一致性未做。 KVM 通过（run 41088865318）：根因是此前测试等待语句的 sqlite 查询三重转义、从未被解析，并非缺 ack。 |
 | V1-I07 | 撤销与模型派发 | 部分 | 单元/集成 | directory.test.ts / admitPermit：等待中的 permit 在 memberVersion 变化后被撤；Rust 单元（本轮在 agentos-v1 cargo test 通过）：native/crates/machine/src/tests.rs s04_final_check_after_waiting_member_version_revocation_and_stop。 m10-sched：run 41088879793 中 S01/S02 子测试失败——测试先连发 A 的两个 run，A 在 B 尚无等待时取得第二个 permit，这是 §13.2 允许的（“无其它等待者可临时使用第二个”），断言有误；已改为交错提交，重跑中，CI 待结果。 |
-| V1-I08 | 撤销时 | 部分 | KVM VM（Actions） | m3-members：Host 停止时撤销，gateway 立即拒绝，root 侧保持 revoking ≥8 秒，Host 重新启动并 ack 后才 revoked。broker 失联与执行者 fence 未单独做。 CI：f6d9d93 轮（run 41086404523）I04/I03/W04 子测试通过；I06 失败的根因是测试等待语句的 sqlite 查询三重转义、从未被解析（诊断显示撤销 196ms 内已 revoked，三方 outbox 均 acked），并非缺 ack；已修（4a0f725），重跑 run 41088865318，CI 待结果。 |
-| V1-I09 | owner | 部分 | KVM VM（Actions） | m3-members：最后 owner 不能被移除/降级；禁用账户后该账户无法再绑定会话。旧批准策略暂停与 transferOwner 双边确认未在 VM 中断言。 CI：f6d9d93 轮（run 41086404523）I04/I03/W04 子测试通过；I06 失败的根因是测试等待语句的 sqlite 查询三重转义、从未被解析（诊断显示撤销 196ms 内已 revoked，三方 outbox 均 acked），并非缺 ack；已修（4a0f725），重跑 run 41088865318，CI 待结果。 |
-| V1-I10 | 锁屏/注销后的请求 | 部分 | KVM VM（Actions） | m3-members：过期 sessionEpoch 被拒；session.end 后同连接不能继续；logind LockedHint=yes 时不能绑定，解锁后可以。已授权持久 run 在原 scope 内继续未在 VM 中做。 CI：f6d9d93 轮（run 41086404523）I04/I03/W04 子测试通过；I06 失败的根因是测试等待语句的 sqlite 查询三重转义、从未被解析（诊断显示撤销 196ms 内已 revoked，三方 outbox 均 acked），并非缺 ack；已修（4a0f725），重跑 run 41088865318，CI 待结果。 |
-| V1-I11 | 秘密不外泄 | 部分 | KVM VM（Actions） | m3-members：创建账户期间每 50ms 采样全部进程 argv，四个 PAM 口令均不出现在 argv、journal、/var/lib/agentos*、/var/log、/run/agentos。provider/Wi-Fi 秘密、诊断包、会话备份与 Nix store 未扫描。 CI：f6d9d93 轮（run 41086404523）I04/I03/W04 子测试通过；I06 失败的根因是测试等待语句的 sqlite 查询三重转义、从未被解析（诊断显示撤销 196ms 内已 revoked，三方 outbox 均 acked），并非缺 ack；已修（4a0f725），重跑 run 41088865318，CI 待结果。 |
+| V1-I08 | 撤销时 | 通过 | KVM VM（Actions） | m3-members：Host 停止时撤销，gateway 立即拒绝，root 侧保持 revoking ≥8 秒，Host 重新启动并 ack 后才 revoked。broker 失联与执行者 fence 未单独做。 KVM 通过（run 41088865318）：根因是此前测试等待语句的 sqlite 查询三重转义、从未被解析，并非缺 ack。 |
+| V1-I09 | owner | 部分 | KVM VM（Actions） | m3-members：最后 owner 不能被移除/降级；禁用账户后该账户无法再绑定会话。旧批准策略暂停与 transferOwner 双边确认未在 VM 中断言。 CI：run 41088865318 中 I04/I03/W04/I06/I08 通过，I09 子测试失败——禁用 bob 被 machined 以 CONFLICT 拒绝（bob 是工作区 “Bob” 的唯一 owner，须先转移所有权），属正确行为、断言有误；已改为断言该拒绝并禁用一个不拥有工作区的新用户，重跑 run 41090308175，I09/I10/W07/I11 CI 待结果。 |
+| V1-I10 | 锁屏/注销后的请求 | 部分 | KVM VM（Actions） | m3-members：过期 sessionEpoch 被拒；session.end 后同连接不能继续；logind LockedHint=yes 时不能绑定，解锁后可以。已授权持久 run 在原 scope 内继续未在 VM 中做。 CI：run 41088865318 中 I04/I03/W04/I06/I08 通过，I09 子测试失败——禁用 bob 被 machined 以 CONFLICT 拒绝（bob 是工作区 “Bob” 的唯一 owner，须先转移所有权），属正确行为、断言有误；已改为断言该拒绝并禁用一个不拥有工作区的新用户，重跑 run 41090308175，I09/I10/W07/I11 CI 待结果。 |
+| V1-I11 | 秘密不外泄 | 部分 | KVM VM（Actions） | m3-members：创建账户期间每 50ms 采样全部进程 argv，四个 PAM 口令均不出现在 argv、journal、/var/lib/agentos*、/var/log、/run/agentos。provider/Wi-Fi 秘密、诊断包、会话备份与 Nix store 未扫描。 CI：run 41088865318 中 I04/I03/W04/I06/I08 通过，I09 子测试失败——禁用 bob 被 machined 以 CONFLICT 拒绝（bob 是工作区 “Bob” 的唯一 owner，须先转移所有权），属正确行为、断言有误；已改为断言该拒绝并禁用一个不拥有工作区的新用户，重跑 run 41090308175，I09/I10/W07/I11 CI 待结果。 |
 | V1-I12 | 多版本/旧主体绕过 | 部分 | KVM VM（Actions）＋单元/集成 | m2-identity：forward 携带 principal/URL 被拒；access.test.ts 与 Rust：protocol 1 在 minWriteProtocol=3 后被拒。旧 memberVersion/旧 plan 在 VM 中未单独做。 |
 
 ## 工作区隔离
@@ -50,10 +50,10 @@
 | V1-W01 | 真实 | 通过 | KVM VM（Actions） | m2-identity：两工作区不同执行 UID、各自 subuid 段与 0700 数据目录；双方 UID 与登录用户都不能读对方 os.sqlite。 |
 | V1-W02 | 容器逃逸入口 | 未通过 | 未验收 | VM 中未启动应用容器，Wayland/session bus/machine/gateway/Nix socket 不可见性未测。 |
 | V1-W03 | 创建断点 | 部分 | 单元/集成 | directory.test.ts：半创建工作区不可见；VM 中各断点强杀未做。 |
-| V1-W04 | 两工作区并行 | 通过 | KVM VM（Actions） | m3-members：两个 Host 在不同 UID 下并行；SIGKILL A 的 Host 后 B 仍正常应答，A 由 systemd 重启后恢复。 CI：f6d9d93 轮（run 41086404523）I04/I03/W04 子测试通过；I06 失败的根因是测试等待语句的 sqlite 查询三重转义、从未被解析（诊断显示撤销 196ms 内已 revoked，三方 outbox 均 acked），并非缺 ack；已修（4a0f725），重跑 run 41088865318，CI 待结果。 |
+| V1-W04 | 两工作区并行 | 通过 | KVM VM（Actions） | m3-members：两个 Host 在不同 UID 下并行；SIGKILL A 的 Host 后 B 仍正常应答，A 由 systemd 重启后恢复。 CI：run 41088865318 中 I04/I03/W04/I06/I08 通过，I09 子测试失败——禁用 bob 被 machined 以 CONFLICT 拒绝（bob 是工作区 “Bob” 的唯一 owner，须先转移所有权），属正确行为、断言有误；已改为断言该拒绝并禁用一个不拥有工作区的新用户，重跑 run 41090308175，I09/I10/W07/I11 CI 待结果。 |
 | V1-W05 | 切换与迟到响应 | 未通过 | 未验收 | Shell 快速切换与迟到响应过滤只有 offscreen ctest 的部分断言，未在 VM 会话中做。 |
 | V1-W06 | 接受后切换 | 未通过 | 未验收 | m11-ops W06：已接受 run 后切到 B，同幂等键重试回到 A 得到同一 runId，B 的 runs.list/runs.get 不含该 run，A 中只有一份。 m11-ops（os/tests/m11-ops.py，两个真实 Host + 本地保持端点）已写，run 41089329164，CI 待结果。 |
-| V1-W07 | 停止/归档 | 部分 | KVM VM（Actions） | m3-members：stop 后无 Host/Podman 进程且 os.sqlite/agent.sqlite 保留；archive 后数据保留、attach 被拒。归档恢复未做。 CI：f6d9d93 轮（run 41086404523）I04/I03/W04 子测试通过；I06 失败的根因是测试等待语句的 sqlite 查询三重转义、从未被解析（诊断显示撤销 196ms 内已 revoked，三方 outbox 均 acked），并非缺 ack；已修（4a0f725），重跑 run 41088865318，CI 待结果。 |
+| V1-W07 | 停止/归档 | 部分 | KVM VM（Actions） | m3-members：stop 后无 Host/Podman 进程且 os.sqlite/agent.sqlite 保留；archive 后数据保留、attach 被拒。归档恢复未做。 CI：run 41088865318 中 I04/I03/W04/I06/I08 通过，I09 子测试失败——禁用 bob 被 machined 以 CONFLICT 拒绝（bob 是工作区 “Bob” 的唯一 owner，须先转移所有权），属正确行为、断言有误；已改为断言该拒绝并禁用一个不拥有工作区的新用户，重跑 run 41090308175，I09/I10/W07/I11 CI 待结果。 |
 | V1-W08 | 后台与注销 | 通过 | KVM VM（Actions）＋单元/集成 | Rust 单元（本轮在 agentos-v1 通过）：native/crates/machine/src/tests.rs w08_run_when_logged_out_default_off_owner_only_and_machine_quota：默认关闭、仅 owner、机器限额 ≤ 运行工作区上限。§16.1 没有设置类 route（原测试调用的 workspaces.setRunWhenLoggedOut 被 gateway 以 unknown method 拒绝），改为固定机器动作 workspaces.runWhenLoggedOut（plan→confirm，plan 与 dispatch 两次核对 owner）；m10-sched W08 子测试改为走该动作，KVM 通过（run 41088879793）：默认 0、editor 计划被拒且值不变、owner 开/关均 succeeded 并读回。锁屏/注销不扩大维护范围未单独断言。 |
 | V1-W09 | 资源共享冲突 | 未通过 | 未验收 | 两工作区共享物理资源的 broker 全局 fence 未在 v1.0 VM 中测（发行镜像不登记资源）。 |
 | V1-W10 | 重复导入与删除 | 部分 | 单元/集成 | directory.test.ts 拒绝重复 storeUUID；删除核对与身份 tombstone 未测。 |
@@ -165,7 +165,7 @@
 
 ## 统计
 
-未通过 28 项，通过 24 项，部分 48 项（共 100 项）。
+未通过 28 项，通过 26 项，部分 46 项（共 100 项）。
 
 ## 回归与偶发失败记录
 

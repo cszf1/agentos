@@ -218,7 +218,14 @@ impl System for HostSystem {
             std::fs::create_dir_all(&p).map_err(|e| MErr::new("SYSTEM_FAILED", format!("mkdir {}: {e}", p.display())))?;
             chown_mode(&p, o, o, m)?;
         }
-        mkdir(&paths.ws_root(ws), uid, uid, 0o700)?;
+        // The home is traverse-only (0711, no listing) down to the rootless Podman graphroot: with
+        // --userns=keep-id the OCI runtime resolves the container rootfs as the mapped container root, which cannot
+        // pass a 0700 home ("crun: readlink ``", m5). Everything with content below stays 0700 (W01).
+        mkdir(&paths.ws_root(ws), uid, uid, 0o711)?;
+        let local = paths.ws_root(ws).join(".local");
+        mkdir(&local, uid, uid, 0o711)?;
+        mkdir(&local.join("share"), uid, uid, 0o711)?;
+        mkdir(&local.join("share").join("containers"), uid, uid, 0o711)?;
         mkdir(&paths.ws_data(ws), uid, uid, 0o700)?;
         mkdir(&paths.ws_secrets(ws), uid, uid, 0o700)?;
         mkdir(&paths.ws_runtime(ws), uid, uid, 0o700)?;
