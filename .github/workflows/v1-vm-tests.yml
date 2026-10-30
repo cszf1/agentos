@@ -112,9 +112,15 @@ jobs:
             if nix build ".#$A" --rebuild --keep-failed -L 2>&1 | tail -20 | tee -a "$RUNNER_TEMP/build-repro.log"; then
               echo "REPRO $A identical" | tee -a "$RUNNER_TEMP/build-repro.log"
             else
-              echo "REPRO $A DIFFERS" | tee -a "$RUNNER_TEMP/build-repro.log"; rc=1
               out=$(nix eval --raw ".#$A.outPath")
               { [ -e "$out.check" ] && diff -r "$out" "$out.check" 2>&1 | head -60 | tee -a "$RUNNER_TEMP/build-repro.log"; } || true
+              if [ "$A" = agentos-qcow2 ] && [ -e "$out.check" ] && nix shell --inputs-from . nixpkgs#qemu-utils nixpkgs#cryptsetup nixpkgs#util-linux nixpkgs#python3 -c \
+                   python3 repro-explain-qcow2.py "$out/agentos.qcow2" "$out.check/agentos.qcow2" 2>&1 | tee -a "$RUNNER_TEMP/build-repro.log"; then
+                # the only difference is the LUKS2 partition (fresh volume key/salts/UUID per luksFormat, decision 11)
+                echo "REPRO $A DIFFERS-EXPLAINED" | tee -a "$RUNNER_TEMP/build-repro.log"
+              else
+                echo "REPRO $A DIFFERS" | tee -a "$RUNNER_TEMP/build-repro.log"; rc=1
+              fi
             fi
           done
           exit $rc
