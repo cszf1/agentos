@@ -48,6 +48,10 @@ in {
   options.agentos = {
     enable = lib.mkEnableOption "AgentOS";
     graphical = lib.mkOption { type = lib.types.bool; default = true; description = "greetd + Sway + Qt Shell session (off only for headless VM checks)"; };
+    releaseImages = lib.mkOption {
+      type = lib.types.nullOr lib.types.package; default = null;
+      description = "approved OCI images (pkgs.agentos-oci) imported into each workspace's rootless storage instead of being built online; the release sets it";
+    };
     softwareRendering = lib.mkOption { type = lib.types.bool; default = false; description = "pixman/software rendering for virtual GPUs (QEMU profile)"; };
   };
 
@@ -206,7 +210,7 @@ in {
         AGENTOS_PODMAN_SOCKET = "%t/podman/podman.sock";
         AGENTOS_MODEL_MODE = "real";
         NODE_ENV = "production";
-      };
+      } // lib.optionalAttrs (cfg.releaseImages != null) { AGENTOS_RELEASE_IMAGES = "${cfg.releaseImages}"; };
       path = [ pkgs.podman pkgs.util-linux pkgs.coreutils ];
       serviceConfig = {
         ExecStart = "${node}/bin/agentos-host";

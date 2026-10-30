@@ -8,6 +8,19 @@ export interface PodmanDriverOptions {
   recipe?: (image: { name: string; recipeHash: string; role: "builder" | "runtime"; profileId: string }) => { entries: TarEntry[]; recipeHash: string; baseDigestRef: string } | null;
   /** Container log retention per container (k8s-file, bounded). */
   logSizeBytes?: number;
+  /**
+   * Release image assets (spec §19.1, V1-U01/B04): a read-only directory from the signed release closure holding
+   * `index.json` ({ archive, images: [{ name, recipeHash }] }) and one multi-image archive built offline from the same
+   * recipes. A missing approved image is imported from here into this UID's own rootless storage instead of being
+   * built (which would download the base image and npm packages).
+   */
+  releaseImages?: string;
+}
+
+export interface ReleaseImageIndex {
+  formatVersion: 1;
+  archive: string;
+  images: { name: string; recipeHash: string; role: string; profileId: string }[];
 }
 
 /**
@@ -58,6 +71,7 @@ function mapState(s: string | undefined): ObservedContainerState {
  */
 export class PodmanDriver implements RuntimeDriver {
   readonly api: PodmanApi;
+  private releaseImport: Promise<void> | null = null;
   constructor(private readonly opts: PodmanDriverOptions) {
     this.api = new PodmanApi(opts.socketPath);
   }
@@ -131,7 +145,10 @@ export class PodmanDriver implements RuntimeDriver {
       this.assertSafeEnv(cur);
       return cur;
     }
-    if (!opts.allowBuild || !this.opts.recipe) return cur;
+    if (!opts.allowBuild) return cur;
+    const shipped = await this.fromRelease(image);
+    if (shipped) return shipped;
+    if (!this.opts.recipe) return cur;
     const ctx = this.opts.recipe(image);
     if (!ctx) throw new PodmanError(404, `no recipe for ${image.name}`);
     if (ctx.recipeHash !== image.recipeHash) {
@@ -147,6 +164,31 @@ export class PodmanDriver implements RuntimeDriver {
     if (!done.present || done.labels?.["agentos.recipe"] !== image.recipeHash) throw new PodmanError(500, `image ${image.name} missing after build`);
     this.assertSafeEnv(done);
     return done;
+  }
+
+  /** Imports the release archive once when it carries this exact image (same name and recipe hash). */
+  private async fromRelease(image: { name: string; recipeHash: string }): Promise<ImageStatus | null> {
+    const dir = this.opts.releaseImages;
+    if (!dir) return null;
+    const { readFileSync, existsSync } = await import("node:fs");
+    const path = await import("node:path");
+    const idxFile = path.join(dir, "index.json");
+    if (!existsSync(idxFile)) return null;
+    const idx = JSON.parse(readFileSync(idxFile, "utf8")) as ReleaseImageIndex;
+    if (idx.formatVersion !== 1 || !idx.images.some((i) => i.name === image.name && i.recipeHash === image.recipeHash)) return null;
+    if (!this.releaseImport) {
+      this.releaseImport = this.importImage(path.join(dir, path.basename(idx.archive))).then(() => undefined);
+      this.releaseImport.catch(() => { this.releaseImport = null; });
+    }
+    await this.releaseImport;
+    const got = await this.inspectImage(image.name);
+    if (!got.present) throw new PodmanError(500, `release image ${image.name} missing after import`);
+    if (got.labels?.["agentos.recipe"] !== image.recipeHash) {
+      await this.api.json<unknown>("DELETE", `/libpod/images/${encodeURIComponent(image.name)}?force=true`).catch(() => undefined);
+      throw new PodmanError(409, `release image ${image.name} carries recipe ${got.labels?.["agentos.recipe"] ?? "none"}, expected ${image.recipeHash}`);
+    }
+    this.assertSafeEnv(got);
+    return got;
   }
 
   async create(spec: ContainerSpec): Promise<{ id: string }> {

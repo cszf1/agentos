@@ -28,6 +28,7 @@ export function createDriver(config: HostConfig, catalog: RuntimeCatalogService)
   if (!config.podmanSocket) return null;
   return new PodmanDriver({
     socketPath: config.podmanSocket,
+    releaseImages: process.env.AGENTOS_RELEASE_IMAGES || undefined,
     recipe: (img) => {
       const lock = catalog.locks().find((l) => l.builderImage.name === img.name || l.runtimeImage.name === img.name);
       if (!lock) return null;

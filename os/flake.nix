@@ -23,7 +23,7 @@
         modules = [ { nixpkgs.pkgs = pkgs; } ] ++ modules;
       };
       releaseModules = [ ./modules/base.nix ./modules/graphics.nix ./modules/agentos.nix ./hardware/qemu.nix ./modules/disk-layout.nix
-        { agentos.enable = true; agentos.softwareRendering = true; } ];
+        { agentos.enable = true; agentos.softwareRendering = true; agentos.releaseImages = pkgs.agentos-oci; } ];
       agentosSystem = mk releaseModules;
       toplevel = agentosSystem.config.system.build.toplevel;
       rev = self.rev or "dirty";
@@ -32,6 +32,7 @@
         lastModified = self.lastModified or 0;
         nixpkgsRev = nixpkgs.rev;
         flakeLockHash = "sha256:" + builtins.hashFile "sha256" ./flake.lock;
+        oci = pkgs.agentos-oci;
       };
       installerPkg = pkgs.callPackage ./packages/installer.nix { system = toplevel; release = "${release}/manifest.json"; };
       installerSystem = mk [
@@ -53,7 +54,7 @@
       test = name: file: extra: import file ({ inherit pkgs; modules = [ ./modules/base.nix ./modules/agentos.nix ]; } // extra);
     in {
       packages.${system} = {
-        inherit (pkgs) agentos-native agentos-node agentos-shell;
+        inherit (pkgs) agentos-native agentos-node agentos-shell agentos-oci;
         agentos-toplevel = toplevel;
         agentos-release = release;
         agentos-installer = installerPkg;

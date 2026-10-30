@@ -4,6 +4,7 @@ version kernel initrd kernelVersion outdir"""
 import hashlib, json, re, sys, uuid
 
 reg, top, rev, lm, nixrev, lockh, ver, kernel, initrd, kver, out = sys.argv[1:12]
+oci_index = sys.argv[12] if len(sys.argv) > 12 else None
 ALPHA = "0123456789abcdfghijklmnpqrsvwxyz"
 
 def nix32_to_hex(s):
@@ -28,6 +29,8 @@ while i < len(lines) and lines[i].startswith("/nix/store/"):
     hx = val if len(val) == 64 else nix32_to_hex(val)
     paths.append({"path": p, "narHash": "sha256:" + hx, "narSize": int(size)})
 hashes = sorted({p["narHash"] for p in paths})
+# Approved OCI images shipped in the closure (spec §19.1): image IDs (config digests) of the offline archive.
+oci_digests = sorted({i["imageId"] for i in json.load(open(oci_index))["images"]}) if oci_index else []
 sha = lambda f: "sha256:" + hashlib.sha256(open(f, "rb").read()).hexdigest()
 canon = lambda v: json.dumps(v, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 sbom = {"formatVersion": 1, "kind": "agentos-closure-sbom", "root": top, "components": [
@@ -43,7 +46,7 @@ manifest = {
     "publishedAt": lm, "expiresAt": lm + 365 * 86400 * 1000, "supportUntil": lm + 365 * 86400 * 1000,
     "sourceCommit": rev if clean else "0" * 40, "flakeLockHash": lockh, "nixpkgsRevision": nixrev, "platform": "x86_64-linux",
     "hardwareProfiles": ["qemu-virtio"], "baseClosurePath": top, "baseClosureHash": "sha256:" + hashlib.sha256("\n".join(hashes).encode()).hexdigest(),
-    "closureContentHashes": hashes, "kernelVersion": kver[:64], "initrdHash": sha(initrd), "ociDigests": [],
+    "closureContentHashes": hashes, "kernelVersion": kver[:64], "initrdHash": sha(initrd), "ociDigests": oci_digests,
     "sbomHash": "sha256:" + hashlib.sha256(sbom_s.encode()).hexdigest(),
     "compatibility": {"workspaceSchema": [5, 5], "machineSchema": [1, 1], "brokerSchema": [4, 4], "brokerProtocol": [3, 3], "nativeRpc": [1, 1]},
     "migrationClass": "none", "healthProfile": "v1-default", "minRecoveryVersion": "1.0.0", "keyId": "unsigned",

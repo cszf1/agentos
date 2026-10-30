@@ -22,4 +22,6 @@ in {
   agentos-native = final.callPackage ./native.nix { inherit rustPlatform; src = final.lib.fileset.toSource { root = ../..; fileset = final.lib.fileset.unions [ ../../native/Cargo.toml ../../native/Cargo.lock ../../native/crates ../../native/bpf ../../native/rust-toolchain.toml ../../docs/contracts ../../fixtures/v1.0 ../../fixtures/v0.3 ]; }; };
   agentos-node = final.callPackage ./node.nix { src = final.lib.fileset.toSource { root = ../..; fileset = final.lib.fileset.unions [ ../../package.json ../../pnpm-lock.yaml ../../pnpm-workspace.yaml ../../.node-version ../../tsconfig.base.json ../../packages ../../runtime ../../fixtures ../../docs/contracts ../../bin ]; }; };
   agentos-shell = final.callPackage ../../desktop/package.nix { };
+  # Approved OCI images of the catalog, built offline from fixed inputs (spec §19.1); shipped in the release closure.
+  agentos-oci = final.callPackage ./oci.nix { src = final.lib.fileset.toSource { root = ../..; fileset = final.lib.fileset.unions [ ../../runtime/overlays ../../scripts/release-image-contexts.mjs ]; }; };
 }
