@@ -427,7 +427,7 @@ impl Machine {
         if u["state"] == "disabled" {
             return self.revocation_for_user(user_id);
         }
-        let owned = opt_i64(&self.c, "SELECT COUNT(*) FROM workspace_members m JOIN workspaces w USING (workspace_id) WHERE m.user_id = ?1 AND m.role = 'owner' AND m.state = 'active' AND w.state != 'archived'", [user_id])?.unwrap_or(0);
+        let owned = opt_i64(&self.c, "SELECT COUNT(*) FROM workspace_members m JOIN workspaces w USING (workspace_id) WHERE m.user_id = ?1 AND m.role = 'owner' AND m.state = 'active' AND w.state NOT IN ('archived','deleting','deleted')", [user_id])?.unwrap_or(0);
         if owned > 0 {
             return Err(MErr::new("CONFLICT", "transfer ownership of this user's workspaces before disabling the account"));
         }
@@ -940,7 +940,7 @@ impl Machine {
             // Machine quota (spec §9.3, §27.1): at most as many logged-out workspaces as may run at once.
             if enabled {
                 let others: i64 = c.query_row(
-                    "SELECT COUNT(*) FROM workspaces WHERE run_when_logged_out = 1 AND workspace_id != ?1 AND state NOT IN ('archived','creating')",
+                    "SELECT COUNT(*) FROM workspaces WHERE run_when_logged_out = 1 AND workspace_id != ?1 AND state NOT IN ('archived','creating','deleting','deleted')",
                     [ws],
                     |r| r.get(0),
                 )?;
@@ -1196,7 +1196,7 @@ impl Machine {
 
     pub fn status(&self) -> R<Value> {
         let meta = self.meta()?;
-        let ws = opt_i64(&self.c, "SELECT COUNT(*) FROM workspaces WHERE state != 'archived'", [])?.unwrap_or(0);
+        let ws = opt_i64(&self.c, "SELECT COUNT(*) FROM workspaces WHERE state NOT IN ('archived','deleting','deleted')", [])?.unwrap_or(0);
         let running = opt_i64(&self.c, "SELECT COUNT(*) FROM workspaces WHERE state IN ('starting','running','quiescing')", [])?.unwrap_or(0);
         let users = opt_i64(&self.c, "SELECT COUNT(*) FROM users WHERE state = 'active'", [])?.unwrap_or(0);
         let barrier: Option<String> = self.c.query_row("SELECT owner_kind FROM barriers WHERE state = 'held'", [], |r| r.get(0)).optional()?;

@@ -189,7 +189,7 @@ fn backup(c: &mut Client, a: &[String]) {
     let barrier = call(c, "barrier.hold", json!({ "ownerKind": "checkpoint", "ownerId": set_id, "scope": { "kind": "machine" } })).unwrap_or_else(|e| die(&e.to_string()));
     let barrier = barrier["barrierId"].as_str().unwrap_or_default().to_string();
     let wss: Vec<Value> = call(c, "workspaces.all", json!({})).map(|v| v["workspaces"].as_array().cloned().unwrap_or_default()).unwrap_or_default();
-    let wss: Vec<Value> = wss.into_iter().filter(|w| w["state"] != "archived").collect();
+    let wss: Vec<Value> = wss.into_iter().filter(|w| !matches!(w["state"].as_str(), Some("archived" | "deleting" | "deleted"))).collect();
     let was_running: Vec<String> = wss.iter().filter(|w| matches!(w["state"].as_str(), Some("running" | "starting"))).map(|w| w["workspaceId"].as_str().unwrap_or_default().to_string()).collect();
     let fail = |c: &mut Client, msg: String, begun: bool| bail(c, &set_id, &barrier, msg, begun);
     for w in &wss {

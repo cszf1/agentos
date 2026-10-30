@@ -38,7 +38,7 @@ impl Machine {
             let wss: Vec<String> = match scope.get("workspaces").and_then(|v| v.as_array()) {
                 Some(a) => a.iter().filter_map(|v| v.as_str().map(String::from)).collect(),
                 None => {
-                    let mut st = c.prepare("SELECT workspace_id FROM workspaces WHERE state != 'archived'")?;
+                    let mut st = c.prepare("SELECT workspace_id FROM workspaces WHERE state NOT IN ('archived','deleting','deleted')")?;
                     let v = st.query_map([], |r| r.get(0))?.collect::<Result<Vec<String>, _>>()?;
                     v
                 }
@@ -57,7 +57,7 @@ impl Machine {
         self.tx(|c| {
             let n = c.execute("UPDATE barriers SET state = 'released', released_at = ?2 WHERE barrier_id = ?1 AND state = 'held'", params![barrier_id, now_ms()])?;
             if n > 0 {
-                let mut st = c.prepare("SELECT workspace_id FROM workspaces WHERE state != 'archived'")?;
+                let mut st = c.prepare("SELECT workspace_id FROM workspaces WHERE state NOT IN ('archived','deleting','deleted')")?;
                 let wss: Vec<String> = st.query_map([], |r| r.get(0))?.collect::<Result<_, _>>()?;
                 let mut targets: Vec<(String, String)> = vec![("gateway".into(), "*".into()), ("broker".into(), "*".into())];
                 for w in wss {

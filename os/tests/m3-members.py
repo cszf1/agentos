@@ -241,3 +241,59 @@ with subtest("PAM passwords given to the gateway are not in argv, logs or machin
         machine.fail(f"journalctl -o cat --no-pager | grep -F -- {pw}")
         machine.fail(f"grep -rF -- {pw} /var/lib/agentos-machine /var/lib/agentos-broker /var/lib/agentos /var/log /run/agentos 2>/dev/null")
     machine.succeed("test $(wc -l < /root/argv.log) -gt 100")
+
+with subtest("delete: owner+admin, broker effect verdict, executors; UID and storeUUID stay as a tombstone (W10)"):
+    r = call(1, [{"methodId": "workspaces.create", "idempotencyKey": str(uuid.uuid4()), "body": {"displayName": "Doomed"}}], "d0")[0]
+    assert r["status"] == 201, r
+    ws_d = r["body"]["workspaceId"]
+    ud = int(sql(f"SELECT execution_uid FROM workspaces WHERE workspace_id='{ws_d}'"))
+    login_d = sql(f"SELECT exec_login FROM workspaces WHERE workspace_id='{ws_d}'")
+    store_d = sql(f"SELECT store_uuid FROM workspaces WHERE workspace_id='{ws_d}'")
+    machine.succeed(f"test -d /var/lib/agentos/workspaces/{ws_d}/data")
+    def plan_delete(tag):
+        return call(1, [{"methodId": "machine.actions.plan", "idempotencyKey": str(uuid.uuid4()), "body": {"kind": "workspaces.delete", "params": {"workspaceId": ws_d, "dataDisposition": "discard"}}}], tag)[0]
+    def confirm(p, tag):
+        return call(1, [{"methodId": "machine.actions.confirm", "idempotencyKey": str(uuid.uuid4()), "body": {"operationId": p["body"]["operationId"], "planHash": p["body"]["planHash"], "password": "alice-pw-1"}}], tag)[0]
+    # not archived yet: the plan is refused with the reason
+    r = plan_delete("d1")
+    assert r["status"] != 201 and code(r) == "CONFLICT", r
+    r = call(1, [{"methodId": "workspaces.archive", "workspaceId": ws_d, "idempotencyKey": str(uuid.uuid4()), "body": {}}], "d2")[0]
+    assert r["status"] == 200 and r["body"]["state"] == "archived", r
+    # an unreconciled broker effect of this store blocks the deletion (back to archived, data kept)
+    machine.succeed("systemctl stop agentos-broker.service")
+    machine.succeed(f"sqlite3 /var/lib/agentos-broker/broker.sqlite \"INSERT INTO effect_operations(machine_install_id,store_uuid,incarnation,operation_id,action_id,plan_hash,request_hash,envelope_json,capability_id,resource_id,resource_generation,replay_class,state,deadline_ms,accepted_seq,updated_seq,created_at,updated_at) VALUES ('t','{store_d}',1,'w10-op','a','p','r','{{}}','cap','res',1,'effect','indeterminate',1,1,1,1,1)\"")
+    machine.succeed("systemctl start agentos-broker.service")
+    machine.wait_for_unit("agentos-broker.service")
+    machine.wait_until_succeeds("test $(sqlite3 /var/lib/agentos-machine/machine.sqlite \"SELECT COUNT(*) FROM registry_outbox WHERE target_kind='broker' AND state='pending'\") = 0", timeout=60)
+    p = plan_delete("d4")
+    assert p["status"] == 201, p
+    ok = confirm(p, "d5")
+    assert '"succeeded"' in json.dumps(ok), ok
+    machine.wait_until_succeeds(f"sqlite3 /var/lib/agentos-machine/machine.sqlite \"SELECT delete_json FROM workspaces WHERE workspace_id='{ws_d}'\" | grep -q unresolvedEffects", timeout=60)
+    assert sql(f"SELECT state FROM workspaces WHERE workspace_id='{ws_d}'") == "archived"
+    machine.succeed(f"test -d /var/lib/agentos/workspaces/{ws_d}/data")
+    # reconciled: the second deletion goes through
+    machine.succeed("systemctl stop agentos-broker.service")
+    machine.succeed("sqlite3 /var/lib/agentos-broker/broker.sqlite \"UPDATE effect_operations SET resolution_json='{}' WHERE operation_id='w10-op'\"")
+    machine.succeed("systemctl start agentos-broker.service")
+    machine.wait_for_unit("agentos-broker.service")
+    machine.wait_until_succeeds("test $(sqlite3 /var/lib/agentos-machine/machine.sqlite \"SELECT COUNT(*) FROM registry_outbox WHERE target_kind='broker' AND state='pending'\") = 0", timeout=60)
+    p = plan_delete("d6")
+    assert p["status"] == 201, p
+    ok = confirm(p, "d7")
+    assert '"succeeded"' in json.dumps(ok), ok
+    machine.wait_until_succeeds(f"test $(sqlite3 /var/lib/agentos-machine/machine.sqlite \"SELECT state FROM workspaces WHERE workspace_id='{ws_d}'\") = deleted", timeout=60)
+    machine.fail(f"test -e /var/lib/agentos/workspaces/{ws_d}")
+    machine.fail(f"test -e /var/lib/agentos-runtime/{ws_d}")
+    machine.succeed(f"passwd -S {login_d} | awk '{{print $2}}' | grep -q '^L'")        # account kept, locked: the UID is not reused
+    machine.succeed(f"getent passwd {ud}")
+    assert sql(f"SELECT store_uuid || ' ' || execution_uid FROM workspaces WHERE workspace_id='{ws_d}'") == f"{store_d} {ud}"
+    r = call(1, [{"methodId": "workspaces.list"}], "d8")[0]
+    assert ws_d not in json.dumps(r), r
+    r = call(1, [{"methodId": "workspaces.attach", "workspaceId": ws_d, "idempotencyKey": str(uuid.uuid4()), "body": {}}], "d9")[0]
+    assert r["status"] == 404, r
+    # a new workspace never reuses the tombstoned execution UID
+    r = call(1, [{"methodId": "workspaces.create", "idempotencyKey": str(uuid.uuid4()), "body": {"displayName": "After"}}], "d10")[0]
+    assert r["status"] == 201, r
+    assert int(sql(f"SELECT execution_uid FROM workspaces WHERE workspace_id='{r['body']['workspaceId']}'")) != ud
+    assert sql("SELECT schema_version FROM machine_meta") == "2"
