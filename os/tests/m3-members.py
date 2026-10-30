@@ -174,9 +174,9 @@ with subtest("the last owner cannot be removed; a disabled account gets nothing 
     ok = call(1, [{"methodId": "machine.actions.confirm", "idempotencyKey": str(uuid.uuid4()), "body": {"operationId": p["body"]["operationId"], "planHash": p["body"]["planHash"], "password": "alice-pw-1"}}], "o7")[0]
     assert '"succeeded"' in json.dumps(ok), ok
     assert sql(f"SELECT state FROM users WHERE user_id='{erin}'") == "disabled"
-    out = tty_run(4, f"{RPC} '[{{\"methodId\":\"session.bind\"}},{{\"methodId\":\"workspaces.list\"}}]'", "/tmp/o5")
-    lines = [json.loads(l) for l in out.splitlines() if l.startswith("{")]
-    assert lines[0]["status"] != 200, lines
+    # disabling ends the account's sessions and the account can open no new one (expired + locked)
+    machine.wait_until_fails("loginctl list-sessions --no-legend | grep -w erin", timeout=60)
+    machine.fail("su - erin -s /bin/sh -c true")
 
 with subtest("lock and logout end old session epochs (I10)"):
     # a stale sessionEpoch in an otherwise valid connection is refused
