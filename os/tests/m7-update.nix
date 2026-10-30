@@ -11,7 +11,7 @@ pkgs.testers.runNixOSTest {
     virtualisation = { memorySize = 2048; inherit cores; diskSize = 4096; useBootLoader = true; useEFIBoot = true; };
     boot.loader.systemd-boot.enable = true;
     boot.loader.efi.canTouchEfiVariables = lib.mkForce true;
-    environment.systemPackages = [ pkgs.jq ];
+    environment.systemPackages = [ pkgs.jq pkgs.openssl ];
   };
   testScript = builtins.readFile ./m7-update.py;
 }

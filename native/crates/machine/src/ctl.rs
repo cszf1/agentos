@@ -6,6 +6,11 @@
 //!   agentosctl backup export --set <dir> --recipient <age1…> --out <dir>  (root: age copy off the machine, read back)
 //!   agentosctl restore --set <dir> [--restore-id <id>]         (root: same-machine restore journal, resumable)
 //!   agentosctl recover --new-identity                          (root: accept a new install identity after loss)
+//!   agentosctl update digest --manifest <file>                 (the digest a release key signs)
+//!   agentosctl update trust-key --key-id <id> --public-key <hex> (root: add a release verification key, audited)
+//!   agentosctl update verify --manifest <file> --signature <file> [--trusted-time] [--images <index.json>]
+//!                                                              (root: signature, key, fields, sequence, expiry, closure
+//!                                                               content in the store, OCI image IDs; nothing registered)
 use agentos_machine::server::Client;
 use agentos_machine::util::uuid;
 use serde_json::{json, Value};
@@ -90,6 +95,21 @@ fn main() {
             };
             out(&json!({ "currentReleaseId": st["meta"]["currentReleaseId"], "knownGoodReleaseId": st["meta"]["knownGoodReleaseId"], "acceptedReleaseSequence": st["meta"]["acceptedReleaseSequence"], "update": upd }));
         }
+        (Some("update"), Some("digest")) => {
+            let m = read_json(&arg(&a, "--manifest").unwrap_or_else(|| die("usage: agentosctl update digest --manifest <file>")));
+            out(&json!({ "manifestHash": agentos_machine::release::manifest_hash(&m) }));
+        }
+        (Some("update"), Some("trust-key")) => {
+            root_only("update trust-key");
+            let id = arg(&a, "--key-id").unwrap_or_else(|| die("usage: agentosctl update trust-key --key-id <id> --public-key <hex>"));
+            let pk = arg(&a, "--public-key").unwrap_or_else(|| die("usage: agentosctl update trust-key --key-id <id> --public-key <hex>"));
+            call(&mut c, "releases.addKey", json!({ "keyId": id, "publicKey": pk }));
+            out(&json!({ "ok": true, "keyId": id }));
+        }
+        (Some("update"), Some("verify")) => {
+            root_only("update verify");
+            update_verify(&mut c, &a);
+        }
         (Some("firstboot"), _) => {
             if unsafe { libc::geteuid() } != 0 {
                 die("firstboot must run as root on the local console");
@@ -131,6 +151,64 @@ fn main() {
         (Some("restore"), _) => restore(&mut c, &a),
         _ => die("usage: agentosctl status | doctor | workspace list | workspace status <id> | update status | firstboot --admin <login> | support-bundle --out <file>"),
     }
+}
+
+fn read_json(path: &str) -> Value {
+    let t = std::fs::read_to_string(path).unwrap_or_else(|e| die(&format!("UPDATE_SIGNATURE_INVALID: release file {path} missing or unreadable: {e}")));
+    serde_json::from_str(&t).unwrap_or_else(|_| die(&format!("UPDATE_SIGNATURE_INVALID: {path} is not JSON")))
+}
+
+fn update_worker() -> String {
+    std::env::var("AGENTOS_UPDATE_WORKER").unwrap_or_else(|_| "/run/current-system/sw/bin/agentos-update-worker".into())
+}
+
+/// Release verification (spec §20, V1-U04): every part must hold or nothing is accepted. The machined verifier
+/// checks the strict manifest schema, the trusted key, the signature over the manifest digest, the sequence
+/// high-water mark and expiry; the store must hold exactly the closure the manifest lists (NAR hashes, nothing
+/// more or less); the OCI index shipped with the release must carry exactly the signed image IDs. Missing files are
+/// a refusal, never a skip. Nothing is registered here.
+fn update_verify(c: &mut Client, a: &[String]) {
+    let usage = "usage: agentosctl update verify --manifest <file> --signature <file> [--trusted-time] [--images <index.json>]";
+    let mpath = arg(a, "--manifest").unwrap_or_else(|| die(usage));
+    let spath = arg(a, "--signature").unwrap_or_else(|| die(usage));
+    let m = read_json(&mpath);
+    let sig = std::fs::read_to_string(&spath).unwrap_or_else(|e| die(&format!("UPDATE_SIGNATURE_INVALID: signature file {spath} missing: {e}")));
+    let trusted = a.iter().any(|x| x == "--trusted-time");
+    let v = c.call("releases.verify", json!({ "manifest": m, "signature": sig.trim(), "trustedTime": trusted })).unwrap_or_else(|e| die(&e.to_string()));
+    let closure = m["baseClosurePath"].as_str().unwrap_or_default();
+    if !closure.starts_with("/nix/store/") || !std::path::Path::new(closure).exists() {
+        die(&format!("UPDATE_CONTENT_MISMATCH: base closure {closure} is not in the store"));
+    }
+    let pi = std::process::Command::new("nix").args(["--extra-experimental-features", "nix-command", "path-info", "--json", "--recursive", closure]).output().unwrap_or_else(|e| die(&format!("nix path-info: {e}")));
+    if !pi.status.success() {
+        die(&format!("UPDATE_CONTENT_MISMATCH: nix path-info failed: {}", String::from_utf8_lossy(&pi.stderr).trim()));
+    }
+    let tmp = std::env::temp_dir().join(format!("agentosctl-pathinfo-{}", uuid()));
+    agentos_machine::dir::write_private(&tmp, &pi.stdout).unwrap_or_else(|e| die(&e.to_string()));
+    let o = std::process::Command::new(update_worker()).args(["verify-content", "--manifest", &mpath, "--path-info"]).arg(&tmp).output();
+    let _ = std::fs::remove_file(&tmp);
+    let o = o.unwrap_or_else(|e| die(&format!("update worker: {e}")));
+    let r: Value = String::from_utf8_lossy(&o.stdout).lines().rev().find_map(|l| serde_json::from_str(l).ok()).unwrap_or(Value::Null);
+    if r["ok"] != true {
+        die(&format!("UPDATE_CONTENT_MISMATCH: {}", r["error"]["message"].as_str().unwrap_or("closure check failed")));
+    }
+    let mut images = Value::Null;
+    if let Some(ix) = arg(a, "--images") {
+        let idx = read_json(&ix);
+        let mut got: Vec<String> = idx["images"].as_array().cloned().unwrap_or_default().iter().filter_map(|i| i["imageId"].as_str().map(String::from)).collect();
+        let mut want: Vec<String> = m["ociDigests"].as_array().cloned().unwrap_or_default().iter().filter_map(|i| i.as_str().map(String::from)).collect();
+        got.sort();
+        want.sort();
+        if got != want {
+            die("UPDATE_CONTENT_MISMATCH: the shipped OCI images are not exactly the signed ociDigests");
+        }
+        let archive = std::path::Path::new(&ix).with_file_name(idx["archive"].as_str().unwrap_or("images.tar"));
+        if !archive.is_file() {
+            die(&format!("UPDATE_CONTENT_MISMATCH: OCI archive {} missing", archive.display()));
+        }
+        images = json!(got.len());
+    }
+    out(&json!({ "ok": true, "releaseId": v["releaseId"], "manifestHash": v["manifestHash"], "closurePaths": r["result"]["paths"], "ociImages": images }));
 }
 
 fn root_only(what: &str) {

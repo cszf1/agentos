@@ -104,3 +104,98 @@ with subtest("GC removes only unpinned registered entries; NixOS entries stay (U
     after = machine.succeed("ls /boot/loader/entries | grep -v '^agentos-' | sort")
     assert before == after, (before, after)
     machine.succeed(f"test -e /boot/loader/entries/agentos-{GOOD}.conf && test -e /boot/loader/entries/agentos-{CAND}.conf")
+
+with subtest("release verification: tampered manifest/closure/OCI/signature, unknown key, missing file all refused (U04)"):
+    import base64, uuid as _uuid
+    machine.wait_for_unit("agentos-machine.service")
+    machine.succeed("mkdir -p /root/rel && cd /root/rel && openssl genpkey -algorithm ed25519 -out rel.pem && openssl genpkey -algorithm ed25519 -out other.pem")
+    pk = machine.succeed("openssl pkey -in /root/rel/rel.pem -pubout -outform DER | tail -c 32 | od -An -tx1 | tr -d ' \\n'").strip()
+    assert len(pk) == 64, pk
+    sysp = machine.succeed("readlink -f /run/current-system").strip()
+    pi = json.loads(machine.succeed(f"nix --extra-experimental-features nix-command path-info --json --recursive {sysp}"))
+    items = pi.values() if isinstance(pi, dict) else pi
+    def nar(h):
+        if h.startswith("sha256-"):
+            return "sha256:" + base64.b64decode(h[7:]).hex()
+        assert h.startswith("sha256:") and len(h) == 71, h
+        return h
+    hashes = sorted({nar(v["narHash"]) for v in items})
+    now = int(machine.succeed("date +%s%3N").strip())
+    h = lambda c: "sha256:" + c * 64
+    oci = sorted([h("5"), h("6")])
+    def manifest(**over):
+        m = {"formatVersion": 1, "releaseId": str(_uuid.uuid4()), "releaseSequence": 7, "version": "1.0.0", "channel": "stable",
+             "publishedAt": now - 1000, "expiresAt": now + 86400000, "supportUntil": now + 86400000 * 30,
+             "sourceCommit": "a" * 40, "flakeLockHash": h("1"), "nixpkgsRevision": "b" * 40, "platform": "x86_64-linux",
+             "hardwareProfiles": ["qemu-virtio"], "baseClosurePath": sysp, "baseClosureHash": h("2"), "closureContentHashes": hashes,
+             "kernelVersion": "6.18.59", "initrdHash": h("4"), "ociDigests": oci, "sbomHash": h("7"),
+             "compatibility": {"workspaceSchema": [5, 5], "machineSchema": [1, 2], "brokerSchema": [4, 4], "brokerProtocol": [3, 3], "nativeRpc": [1, 1]},
+             "migrationClass": "none", "healthProfile": "default", "minRecoveryVersion": "1.0.0", "keyId": "rel1"}
+        m.update(over)
+        return m
+    def put(path, obj):
+        machine.succeed(f"echo {base64.b64encode(json.dumps(obj).encode()).decode()} | base64 -d > {path}")
+    def sign(mpath, key, spath):
+        d = json.loads(machine.succeed(f"agentosctl update digest --manifest {mpath}"))["manifestHash"]
+        esc = "".join("\\x" + d[7 + i:9 + i] for i in range(0, 64, 2))
+        machine.succeed(f"printf '{esc}' > /root/rel/d.bin && test $(stat -c %s /root/rel/d.bin) = 32")
+        machine.succeed(f"openssl pkeyutl -sign -inkey /root/rel/{key} -rawin -in /root/rel/d.bin -out /root/rel/s.bin && od -An -tx1 /root/rel/s.bin | tr -d ' \\n' > {spath}")
+    def verify(mpath, spath, extra="--trusted-time --images /root/rel/index.json"):
+        return machine.execute(f"agentosctl update verify --manifest {mpath} --signature {spath} {extra} 2>&1")
+    machine.succeed(f"agentosctl update trust-key --key-id rel1 --public-key {pk}")
+    put("/root/rel/index.json", {"formatVersion": 1, "archive": "images.tar", "images": [{"name": f"i{n}", "imageId": d} for n, d in enumerate(oci)]})
+    machine.succeed("echo archive > /root/rel/images.tar")
+    good = manifest()
+    put("/root/rel/good.json", good)
+    sign("/root/rel/good.json", "rel.pem", "/root/rel/good.sig")
+    rc, o = verify("/root/rel/good.json", "/root/rel/good.sig")
+    assert rc == 0 and '"ok": true' in o, o
+    # tampered manifest after signing
+    put("/root/rel/t1.json", dict(good, baseClosureHash=h("9")))
+    rc, o = verify("/root/rel/t1.json", "/root/rel/good.sig")
+    assert rc != 0 and "UPDATE_SIGNATURE_INVALID" in o, o
+    # tampered signature
+    sig = machine.succeed("cat /root/rel/good.sig").strip()
+    machine.succeed(f"printf %s {('0' if sig[0] != '0' else '1') + sig[1:]} > /root/rel/bad.sig")
+    rc, o = verify("/root/rel/good.json", "/root/rel/bad.sig")
+    assert rc != 0 and "UPDATE_SIGNATURE_INVALID" in o, o
+    # signed by an untrusted key under a trusted key id, and an unknown key id
+    sign("/root/rel/good.json", "other.pem", "/root/rel/other.sig")
+    rc, o = verify("/root/rel/good.json", "/root/rel/other.sig")
+    assert rc != 0 and "UPDATE_SIGNATURE_INVALID" in o, o
+    put("/root/rel/unk.json", manifest(keyId="nobody"))
+    sign("/root/rel/unk.json", "other.pem", "/root/rel/unk.sig")
+    rc, o = verify("/root/rel/unk.json", "/root/rel/unk.sig")
+    assert rc != 0 and "UPDATE_SIGNATURE_INVALID" in o, o
+    # correctly signed, but the store holds a closure the manifest does not list exactly (changed / missing path)
+    changed = sorted(hashes[1:] + [h("8")])
+    for n, cl in enumerate([changed, hashes[1:]]):
+        put(f"/root/rel/c{n}.json", manifest(closureContentHashes=cl))
+        sign(f"/root/rel/c{n}.json", "rel.pem", f"/root/rel/c{n}.sig")
+        rc, o = verify(f"/root/rel/c{n}.json", f"/root/rel/c{n}.sig")
+        assert rc != 0 and "UPDATE_CONTENT_MISMATCH" in o, o
+    # a closure path that is not in the store at all
+    put("/root/rel/c2.json", manifest(baseClosurePath="/nix/store/00000000000000000000000000000000-agentos-system"))
+    sign("/root/rel/c2.json", "rel.pem", "/root/rel/c2.sig")
+    rc, o = verify("/root/rel/c2.json", "/root/rel/c2.sig")
+    assert rc != 0 and "UPDATE_CONTENT_MISMATCH" in o, o
+    # shipped OCI images differ from the signed ociDigests; OCI archive missing
+    put("/root/rel/index-bad.json", {"formatVersion": 1, "archive": "images.tar", "images": [{"name": "i0", "imageId": oci[0]}, {"name": "i1", "imageId": h("e")}]})
+    rc, o = verify("/root/rel/good.json", "/root/rel/good.sig", "--trusted-time --images /root/rel/index-bad.json")
+    assert rc != 0 and "UPDATE_CONTENT_MISMATCH" in o, o
+    machine.succeed("mkdir -p /root/rel2 && cp /root/rel/index.json /root/rel2/")
+    rc, o = verify("/root/rel/good.json", "/root/rel/good.sig", "--trusted-time --images /root/rel2/index.json")
+    assert rc != 0 and "UPDATE_CONTENT_MISMATCH" in o, o
+    # missing files are refusals, never skips
+    rc, o = verify("/root/rel/good.json", "/root/rel/none.sig")
+    assert rc != 0 and "UPDATE_SIGNATURE_INVALID" in o, o
+    rc, o = verify("/root/rel/none.json", "/root/rel/good.sig")
+    assert rc != 0 and "UPDATE_SIGNATURE_INVALID" in o, o
+    rc, o = verify("/root/rel/good.json", "/root/rel/good.sig", "--trusted-time --images /root/rel/none-index.json")
+    assert rc != 0 and "UPDATE_SIGNATURE_INVALID" in o, o
+    # without trusted time nothing is accepted automatically
+    rc, o = verify("/root/rel/good.json", "/root/rel/good.sig", "--images /root/rel/index.json")
+    assert rc != 0 and "UPDATE_SIGNATURE_INVALID" in o, o
+    # nothing above registered a release, and the store keeps require-sigs
+    assert machine.succeed("sqlite3 /var/lib/agentos-machine/machine.sqlite 'SELECT COUNT(*) FROM releases' 2>/dev/null || echo 0").strip() == "0"
+    machine.succeed("nix --extra-experimental-features nix-command config show require-sigs 2>/dev/null | grep -qx true || nix show-config 2>/dev/null | grep -q '^require-sigs = true'")
