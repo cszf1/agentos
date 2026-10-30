@@ -104,3 +104,25 @@ with subtest("clone: new workspace, new execution account under the local owner;
     assert q(f"SELECT COUNT(*) FROM membership_mirror WHERE user_id='{alice}'") == "0"
     # the clone's broker on this machine knows only this machine's registration
     machine.wait_until_succeeds(f"sqlite3 /var/lib/agentos-broker/broker.sqlite \"SELECT COUNT(*) FROM machine_hosts WHERE store_uuid='{store}'\" | grep -qx 1", timeout=60)
+
+with subtest("containers on the new UID come from the fixed release images; the source graphroot never travels (M04)"):
+    login_n = sql(f"SELECT exec_login FROM workspaces WHERE workspace_id='{ws_n}'")
+    assert int(machine.succeed(f"id -u {login_n}").strip()) == uid_n
+    # nothing of a Podman store came with the set: the part holds only the workspace data tree
+    machine.fail(f"find /root/cset -path '*containers*' -o -name 'overlay*' | grep -q .")
+    machine.succeed(f"test \"$(find /var/lib/agentos-runtime/{ws_n} ! -uid {uid_n} 2>/dev/null | wc -l)\" = 0")
+    machine.wait_until_succeeds(f"test -S /run/user/{uid_n}/podman/podman.sock", timeout=120)
+    machine.succeed("ip route del default 2>/dev/null; ip -6 route del default 2>/dev/null; true")
+    rel = machine.succeed(f"systemctl --user -M {login_n}@ show -p Environment agentos-host@{ws_n}.service | grep -o 'AGENTOS_RELEASE_IMAGES=[^ ]*' | cut -d= -f2").strip()
+    assert rel.startswith("/nix/store/") and "agentos-oci" in rel, rel
+    env = (f"XDG_RUNTIME_DIR=/run/user/{uid_n} AGENTOS_RUNTIME=podman AGENTOS_PODMAN_SOCKET=/run/user/{uid_n}/podman/podman.sock "
+           f"AGENTOS_DATA_DIR=/var/lib/agentos/workspaces/{ws_n}/data AGENTOS_RELEASE_IMAGES={rel}")
+    pf = json.loads(machine.succeed(f"cd /tmp && runuser -u {login_n} -- env {env} agentos-runtime prefetch"))
+    assert pf["ok"] and len(pf["locks"]) == 4, pf
+    imgs = machine.succeed(f"runuser -u {login_n} -- env XDG_RUNTIME_DIR=/run/user/{uid_n} podman images --format '{{{{.Repository}}}}:{{{{.Tag}}}}'")
+    assert "docker.io/library/node" not in imgs, imgs
+    rc, dr = machine.execute(f"cd /tmp && runuser -u {login_n} -- env {env} agentos-runtime doctor")
+    print(dr)
+    lines = {l.split(":", 1)[0][6:]: l for l in dr.splitlines() if l.startswith(("ok  ", "FAIL"))}
+    for n in ["probe container", "no network", "read-only rootfs"]:
+        assert n in lines and lines[n].startswith("ok"), (n, lines.get(n))

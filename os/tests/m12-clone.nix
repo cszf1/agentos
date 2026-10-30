@@ -12,6 +12,10 @@ pkgs.testers.runNixOSTest {
       environment.systemPackages = [ pkgs.python3 pkgs.sqlite pkgs.age ];
       environment.etc."agentos-test/rpc.py".source = ./rpc.py;
     };
-  in { machine = node; target = node; };
+  in {
+    machine = node;
+    # the target rebuilds its containers from the release's fixed images only (offline; no graphroot travels)
+    target = { ... }: { imports = [ node ]; agentos.releaseImages = pkgs.agentos-oci; virtualisation.diskSize = 8192; };
+  };
   testScript = builtins.readFile ./lib.py + builtins.readFile ./members_lib.py + builtins.readFile ./m12-clone.py;
 }
