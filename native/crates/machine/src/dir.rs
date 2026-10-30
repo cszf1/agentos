@@ -774,6 +774,9 @@ impl Machine {
     /// Local preconditions of a full deletion. Returns the reason it must not proceed, or None.
     pub fn delete_blocker(&self, ws: &str) -> R<Option<Value>> {
         let row = self.ws_row(ws)?;
+        if db::live_schema(&self.c) < 2 {
+            return Ok(Some(json!({ "code": "CONFLICT", "reason": "the machine schema upgrade that records deletions completes when the open update is committed" })));
+        }
         let state = row["state"].as_str().unwrap_or_default();
         if state != "archived" {
             return Ok(Some(json!({ "code": "CONFLICT", "reason": format!("workspace is {state}; archive it first") })));

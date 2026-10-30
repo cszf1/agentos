@@ -277,6 +277,11 @@ pub fn open(path: &str) -> rusqlite::Result<Connection> {
     Ok(c)
 }
 
+/// Schema version recorded in the database (1 until a deferred migration ran).
+pub fn live_schema(c: &Connection) -> i64 {
+    c.query_row("SELECT schema_version FROM machine_meta WHERE id = 1", [], |r| r.get(0)).unwrap_or(SCHEMA_VERSION)
+}
+
 /// The CREATE TABLE text of one table in SCHEMA, renamed (used to rebuild a table whose CHECK changed).
 fn table_ddl(name: &str, new_name: &str) -> String {
     let head = format!("CREATE TABLE IF NOT EXISTS {name} (");
@@ -302,6 +307,14 @@ pub fn migrate(c: &Connection) -> rusqlite::Result<()> {
     }
     if ver > SCHEMA_VERSION || ver < 1 {
         return Err(rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_MISMATCH), Some(format!("machine.sqlite schema {ver} is not supported by this program (schema {SCHEMA_VERSION})"))));
+    }
+    // U10/U11: never migrate during a trial boot. While an update is open the old generation must still be able to
+    // take over (known-good fallback), so the database stays schema 1 until the update commits (advance_update).
+    let open_update: i64 = c
+        .query_row("SELECT COUNT(*) FROM update_jobs WHERE state NOT IN ('committed','cancelled','failed_no_switch','rolled_back')", [], |r| r.get(0))
+        .unwrap_or(0);
+    if open_update > 0 {
+        return Ok(());
     }
     c.execute_batch("PRAGMA foreign_keys = OFF; BEGIN IMMEDIATE;")?;
     let r = (|| -> rusqlite::Result<()> {

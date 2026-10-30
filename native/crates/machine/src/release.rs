@@ -313,12 +313,37 @@ impl Machine {
             }
             Self::audit(c, "root", "update.state", Some(update_id), to, None)
         })?;
+        if to == "committed" {
+            // the deferred schema migration runs only now that the new generation is the default (U10/U11)
+            crate::db::migrate(&self.c)?;
+        }
         self.update(update_id)
+    }
+
+    /// Live data versions this machine holds now (spec §20.3 compatibility ranges).
+    pub fn live_versions(&self) -> Value {
+        json!({ "machineSchema": crate::db::live_schema(&self.c), "workspaceSchema": 5, "brokerSchema": 4, "brokerProtocol": 3, "nativeRpc": 1 })
+    }
+
+    /// V1-U11: a switch to another release (known-good rollback included) is allowed only when that release declares
+    /// every live data version inside its compatibility ranges; otherwise it is refused before anything boots it.
+    pub fn check_compatible(&self, rid: &str) -> R<()> {
+        let rel = self.release(rid)?;
+        let live = self.live_versions();
+        for (k, v) in live.as_object().unwrap() {
+            let r = &rel["compatibility"][k];
+            let (lo, hi) = (r[0].as_i64().unwrap_or(i64::MAX), r[1].as_i64().unwrap_or(i64::MIN));
+            let v = v.as_i64().unwrap_or(0);
+            if v < lo || v > hi {
+                return Err(MErr::new("ROLLBACK_INCOMPATIBLE", format!("release {rid} supports {k} {lo}..{hi}; this machine holds {v}")));
+            }
+        }
+        Ok(())
     }
 
     /// Known-good rollback is a separate authorised recovery action; it never lowers the high-water mark (V1-U05).
     pub fn set_current_release(&self, rid: &str, as_known_good: bool) -> R<()> {
-        self.release(rid)?;
+        self.check_compatible(rid)?;
         self.tx(|c| {
             if as_known_good {
                 c.execute("UPDATE machine_meta SET current_release_id = ?1, known_good_release_id = ?1 WHERE id = 1", [rid])?;

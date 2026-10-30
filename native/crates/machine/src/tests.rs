@@ -556,3 +556,52 @@ fn w10_schema_1_database_migrates_to_2_keeping_every_row() {
     assert!(crate::db::open(p.to_str().unwrap()).is_err());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn u11_migration_waits_for_commit_and_rollback_needs_a_compatible_generation() {
+    let dir = std::env::temp_dir().join(format!("agentos-u11-{}", uuid()));
+    let paths = Paths { machine_dir: dir.join("machine"), workspaces_dir: dir.join("ws"), runtime_dir: dir.join("rt"), run_dir: dir.join("run"), snapshots_dir: dir.join("snap") };
+    std::fs::create_dir_all(&paths.machine_dir).unwrap();
+    let file = paths.machine_dir.join("machine.sqlite");
+    let rel = |c: &rusqlite::Connection, id: &str, seq: i64, hi: i64| {
+        let comp = serde_json::json!({ "workspaceSchema": [5, 5], "machineSchema": [1, hi], "brokerSchema": [4, 4], "brokerProtocol": [3, 3], "nativeRpc": [1, 1] }).to_string();
+        c.execute("INSERT INTO releases (release_id, manifest_hash, release_sequence, closure_path, compatibility_json, migration_class, verification_state, support_until, created_at) VALUES (?1, 'sha256:x', ?2, '/nix/store/x', ?3, 'offline_breaking', 'verified', 9999999999999, 1)", rusqlite::params![id, seq, comp]).unwrap();
+    };
+    {
+        // a schema-1 machine (old generation r1) in the middle of a trial boot of r2
+        let c = rusqlite::Connection::open(&file).unwrap();
+        c.execute_batch(&crate::db::schema_v1()).unwrap();
+        c.execute("INSERT INTO machine_meta (id, machine_install_id, first_boot_id, machine_control_epoch, registry_seq, schema_version, current_release_id, known_good_release_id, accepted_release_sequence, restore_state, first_boot_state, machine_secret_ref, created_at) VALUES (1, 'mid', 'fb', 1, 0, 1, 'r1', 'r1', 2, 'idle', 'closed', 'file:machine.secret#1', 1)", []).unwrap();
+        rel(&c, "r0", 1, 1); // an older generation that only knows schema 1
+        rel(&c, "r1", 2, 2); // the old generation, explicitly compatible with schema 2
+        rel(&c, "r2", 3, 2); // the new generation
+        c.execute("INSERT INTO revocations (revocation_id, scope_kind, scope_id, old_version, new_version, registry_seq, reason, state, created_at) VALUES ('rv1', 'user', 'u1', 1, 2, 1, 'disabled', 'revoked', 1)", []).unwrap();
+        c.execute("INSERT INTO update_jobs (update_id, from_release_id, to_release_id, plan_hash, state, created_at, updated_at) VALUES ('11111111-1111-4111-8111-111111111111', 'r1', 'r2', 'h', 'trial_boot', 1, 1)", []).unwrap();
+    }
+    // trial boot of the new program: no migration yet, so the known-good fallback can still open the database
+    let m = Machine::open(paths.clone(), Box::new(Fake::default())).unwrap();
+    assert_eq!(crate::db::live_schema(&m.c), 1);
+    m.set_current_release("r0", false).unwrap(); // even r0 is still compatible while the data is schema 1
+    m.set_current_release("r1", false).unwrap();
+    drop(m);
+    let m = Machine::open(paths.clone(), Box::new(Fake::default())).unwrap();
+    assert_eq!(crate::db::live_schema(&m.c), 1, "reopening during the trial does not migrate either");
+    m.advance_update("11111111-1111-4111-8111-111111111111", "validating", &serde_json::json!({})).unwrap();
+    m.advance_update("11111111-1111-4111-8111-111111111111", "committed", &serde_json::json!({})).unwrap();
+    // commit: now the new generation writes schema 2
+    assert_eq!(crate::db::live_schema(&m.c), 2);
+    let (cur, hw): (String, i64) = m.c.query_row("SELECT current_release_id, accepted_release_sequence FROM machine_meta", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+    assert_eq!((cur.as_str(), hw), ("r2", 3));
+    // a rollback to a generation that does not know schema 2 is refused before anything boots it
+    assert_eq!(m.set_current_release("r0", true).unwrap_err().code, "ROLLBACK_INCOMPATIBLE");
+    assert_eq!(m.c.query_row("SELECT current_release_id FROM machine_meta", [], |r| r.get::<_, String>(0)).unwrap(), "r2");
+    // the explicitly compatible old generation is accepted; records and the latest revocation are kept, high water stays
+    m.set_current_release("r1", true).unwrap();
+    let (cur, hw): (String, i64) = m.c.query_row("SELECT current_release_id, accepted_release_sequence FROM machine_meta", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+    assert_eq!((cur.as_str(), hw), ("r1", 3));
+    let rv: String = m.c.query_row("SELECT state FROM revocations WHERE revocation_id = 'rv1'", [], |r| r.get(0)).unwrap();
+    assert_eq!(rv, "revoked");
+    assert_eq!(crate::db::live_schema(&m.c), 2, "a rollback never runs a down-migration");
+    drop(m);
+    let _ = std::fs::remove_dir_all(&dir);
+}

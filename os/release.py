@@ -48,7 +48,7 @@ manifest = {
     "hardwareProfiles": ["qemu-virtio"], "baseClosurePath": top, "baseClosureHash": "sha256:" + hashlib.sha256("\n".join(hashes).encode()).hexdigest(),
     "closureContentHashes": hashes, "kernelVersion": kver[:64], "initrdHash": sha(initrd), "ociDigests": oci_digests,
     "sbomHash": "sha256:" + hashlib.sha256(sbom_s.encode()).hexdigest(),
-    "compatibility": {"workspaceSchema": [5, 5], "machineSchema": [1, 1], "brokerSchema": [4, 4], "brokerProtocol": [3, 3], "nativeRpc": [1, 1]},
+    "compatibility": {"workspaceSchema": [5, 5], "machineSchema": [1, 2], "brokerSchema": [4, 4], "brokerProtocol": [3, 3], "nativeRpc": [1, 1]},
     "migrationClass": "none", "healthProfile": "v1-default", "minRecoveryVersion": "1.0.0", "keyId": "unsigned",
 }
 open(f"{out}/manifest.json", "w").write(canon(manifest))
