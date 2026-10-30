@@ -53,10 +53,10 @@
 | V1-W04 | 两工作区并行 | 通过 | KVM VM（Actions） | m3-members：两个 Host 在不同 UID 下并行；SIGKILL A 的 Host 后 B 仍正常应答，A 由 systemd 重启后恢复。 CI：run 41088865318 中 I04/I03/W04/I06/I08 通过，I09 子测试失败——禁用 bob 被 machined 以 CONFLICT 拒绝（bob 是工作区 “Bob” 的唯一 owner，须先转移所有权），属正确行为、断言有误；已改为断言该拒绝并禁用一个不拥有工作区的新用户，重跑 run 41090308175，I09/I10/W07/I11 CI 待结果。 |
 | V1-W05 | 切换与迟到响应 | 部分 | 单元/集成 | desktop/tests/flows_test.cpp（Qt offscreen，agentos-shell 构建 checkPhase 中 9 个 ctest 套件全过，Actions build-shell run 41096046435）：workspaceSwitchDropsLateResponses——A 的查询应答在切到 B 后到达被丢弃（lateDropped+1），A 的视图（表单/选择/缓存）被销毁，事件订阅移到 B，A 的 membership.revoked 事件不再作用；本轮新增 rapidRoundTripDropsAnswersFromTheEarlierVisit——A→B→A 快速往返，第一次访问 A 时挂起的应答在回到 A 后到达仍被丢弃（同 workspaceId、旧 scope），新 A 视图不含该正文，订阅最终在 A。ShellController 按 workspaceId+clientEpoch+storeUUID+scopeGen 过滤应答。**未满足**：未在真实会话（VM 中 Qt Shell 对真实 gateway）快速切换。 |
 | V1-W06 | 接受后切换 | 通过 | KVM VM（Actions） | m11-ops（run 41089329164）KVM 通过：已接受 run 后 attach B，同幂等键重试回到 A 得到同一 runId，B 的 runs.list 不含、runs.get 不可见，A 中只有一份。断网重试由同幂等键覆盖。 |
-| V1-W07 | 停止/归档 | 部分 | KVM VM（Actions） | m3-members：stop 后无 Host/Podman 进程且 os.sqlite/agent.sqlite 保留；archive 后数据保留、attach 被拒。归档恢复未做。 CI：run 41088865318 中 I04/I03/W04/I06/I08 通过，I09 子测试失败——禁用 bob 被 machined 以 CONFLICT 拒绝（bob 是工作区 “Bob” 的唯一 owner，须先转移所有权），属正确行为、断言有误；已改为断言该拒绝并禁用一个不拥有工作区的新用户，重跑 run 41090308175，I09/I10/W07/I11 CI 待结果。 |
+| V1-W07 | 停止/归档 | 通过 | KVM VM（Actions）＋单元/集成 | m3-members（run 41097315064，c8e9895，KVM）W07 子测试通过：stop 后无 Host/Podman 进程且 os.sqlite/agent.sqlite 保留；archive 后数据保留、attach 被拒；owner 对归档工作区 workspaces.start → machined 先 unarchive 再做带 fence 检查的启动，真实 Host 进程重新出现、attach 200、数据文件仍属同一执行 UID、root_audit 记一次 workspace.unarchive。应用级归档/恢复：tests/maintenance/v4-maintenance.test.ts V4-E06/E07（archive 等 broker 真实撤权后才 archived，restore 保留数据且不复活 grants）在 v1.0 树通过（maintenance 35）。 |
 | V1-W08 | 后台与注销 | 通过 | KVM VM（Actions）＋单元/集成 | Rust 单元（本轮在 agentos-v1 通过）：native/crates/machine/src/tests.rs w08_run_when_logged_out_default_off_owner_only_and_machine_quota：默认关闭、仅 owner、机器限额 ≤ 运行工作区上限。§16.1 没有设置类 route（原测试调用的 workspaces.setRunWhenLoggedOut 被 gateway 以 unknown method 拒绝），改为固定机器动作 workspaces.runWhenLoggedOut（plan→confirm，plan 与 dispatch 两次核对 owner）；m10-sched W08 子测试改为走该动作，KVM 通过（run 41088879793）：默认 0、editor 计划被拒且值不变、owner 开/关均 succeeded 并读回。锁屏/注销不扩大维护范围未单独断言。 |
 | V1-W09 | 资源共享冲突 | 未通过 | 未验收 | 两工作区共享物理资源的 broker 全局 fence 未在 v1.0 VM 中测（发行镜像不登记资源）。 |
-| V1-W10 | 重复导入与删除 | 部分 | 单元/集成 | directory.test.ts 拒绝重复 storeUUID；删除核对与身份 tombstone 未测。 |
+| V1-W10 | 重复导入与删除 | 部分 | 单元/集成 | 重复 storeUUID：directory.test.ts 与 Rust create_workspace 均拒绝（STORE_ALREADY_REGISTERED，含 tombstone）。删除（决定 24）：machine schema 1→2（workspaces 增 deleting/deleted、deleted_at、delete_json；单事务 create-copy-drop-rename，FK 检查，新版本库被旧程序拒绝），machine action workspaces.delete（管理员 + 新鲜 PAM）且必须 owner 同意（管理员即 owner，或 owner 的 workspaces.deleteConsent 操作，处置方式一致）；只删 archived、无活实例/执行进程、无覆盖它的 pinned 本地集合、broker 已同步；进入 deleting 后由 broker 按该 store 的未核对 effect/indeterminate/quarantine/lock 给出裁决，有则回 archived 并记录原因，无则删除登记根、锁定（保留）执行账户、行保留为 tombstone（UID/storeUUID 仍 UNIQUE，不复用）。Rust 单元（agentos-v1 cargo test 通过）：native/crates/machine/src/tests.rs w10_delete_checks_effects_pins_executors_and_keeps_tombstone、w10_owner_consent_operation_lets_a_non_owner_admin_delete、w10_schema_1_database_migrates_to_2_keeping_every_row；native/crates/broker/src/registry.rs w10_delete_verdict_counts_only_this_stores_unresolved_effects。m3-members W10 VM 子测试已写，CI 待结果。 |
 
 ## 原生桌面
 
@@ -165,7 +165,7 @@
 
 ## 统计
 
-未通过 19 项，通过 34 项，部分 47 项（共 100 项）。
+未通过 19 项，通过 35 项，部分 46 项（共 100 项）。
 
 ## 回归与偶发失败记录
 
