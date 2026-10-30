@@ -176,6 +176,9 @@ fn restore_swaps_atomically_keeps_previous_and_resumes() {
     let r = cold::restore(&t.join("set"), &ws, "aaaa-1", uid, gid).unwrap();
     let n: i64 = Connection::open(ws.join("data/os.sqlite")).unwrap().query_row("SELECT COUNT(*) FROM records", [], |r| r.get(0)).unwrap();
     assert_eq!(n, 1);
+    // the next Host start reconciles the restored database against the disk (V1-R09)
+    let mk: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(ws.join("data/restore-reconcile-pending")).unwrap()).unwrap();
+    assert_eq!(mk["restoreId"], "aaaa-1");
     let prev = std::path::PathBuf::from(r["previous"].as_str().unwrap());
     let n: i64 = Connection::open(prev.join("os.sqlite")).unwrap().query_row("SELECT COUNT(*) FROM records", [], |r| r.get(0)).unwrap();
     assert_eq!(n, 2, "previous tree kept as failure candidate");

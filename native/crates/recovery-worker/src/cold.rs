@@ -325,6 +325,9 @@ pub fn restore(set: &Path, ws_root: &Path, restore_id: &str, uid: u32, gid: u32)
         std::fs::copy(set.join("data").join(db), staged.join(db)).map_err(io("WRITE_FAILED"))?;
         File::open(staged.join(db)).and_then(|f| f.sync_all()).map_err(io("WRITE_FAILED"))?;
     }
+    // the Host consumes this once at its next start, before it opens anything (V1-R09: old delete intents and cache
+    // rows of the restored database are reconciled against what is really on disk)
+    std::fs::write(staged.join("restore-reconcile-pending"), json!({ "restoreId": restore_id, "manifestHash": v["manifestHash"] }).to_string()).map_err(io("WRITE_FAILED"))?;
     chown_tree(&staged, uid, gid)?;
     fsync_dir(&staged);
     journal(ws_root, restore_id, "staged")?;

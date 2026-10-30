@@ -60,6 +60,11 @@ with subtest("a backup that dies under its barrier freezes every workspace; aban
     assert "abandoned" in sql("SELECT state FROM checkpoint_sets ORDER BY created_at DESC LIMIT 1")
 
 with subtest("one machine set over both workspaces, taken under one barrier, both restarted afterwards (R02, R01)"):
+    # R09 seed, while A's Host is down after the abandoned backup: an old delete intent left in 'unknown' and a cache
+    # row that claims a built artifact whose files are not on disk
+    assert not host_running(ua)
+    osa = f"/var/lib/agentos/workspaces/{ws_a}/data/os.sqlite"
+    machine.succeed(f"setpriv --reuid {ua} --regid {ua} --clear-groups sqlite3 {osa} \"INSERT INTO gc_delete_intents (id, object_kind, object_id, gc_generation, source_path, phase, created_at, updated_at) VALUES ('r09-intent','staging','.staging-r09',1,'.staging-r09','unknown','2026-10-31T00:00:00Z','2026-10-31T00:00:00Z'); INSERT INTO artifacts (id, build_key, runtime_lock_id, platform, manifest_json, relative_path, size_bytes, created_at) VALUES ('{'0' * 64}','bk-r09','lock-r09','linux/amd64','{{}}','{'0' * 64}',1,'2026-10-31T00:00:00Z')\"")
     for ws, tag in ((ws_a, "g1"), (ws_b, "g2")):
         r = call(1, [{"methodId": "workspaces.attach", "workspaceId": ws, "idempotencyKey": str(uuid.uuid4()), "body": {}}], tag)[0]
         assert r["status"] == 200, r
@@ -146,6 +151,17 @@ with subtest("restore raises the control epoch and both incarnations; the old pl
     machine.fail("id dave")
     r = call(1, [{"methodId": "workspaces.attach", "workspaceId": ws_a, "idempotencyKey": str(uuid.uuid4()), "body": {}}], "ra")[0]
     assert r["status"] == 200, r                                  # a fresh bind after the restore works
+
+with subtest("after a machine restore the Host reconciles before opening: old delete intents never act, missing cache is not 'live' (R09)"):
+    osa = f"/var/lib/agentos/workspaces/{ws_a}/data/os.sqlite"
+    rq = lambda q: machine.succeed(f"setpriv --reuid {ua} --regid {ua} --clear-groups sqlite3 {osa} \"{q}\"").strip()
+    r = call(1, [{"methodId": "workspaces.attach", "workspaceId": ws_a, "idempotencyKey": str(uuid.uuid4()), "body": {}}], "r9a")[0]
+    assert r["status"] == 200, r
+    machine.wait_until_succeeds(f"test ! -e /var/lib/agentos/workspaces/{ws_a}/data/restore-reconcile-pending", timeout=120)
+    assert rq("SELECT phase FROM gc_delete_intents WHERE id='r09-intent'") == "aborted"
+    assert rq(f"SELECT gc_state || ' ' || gc_generation FROM artifacts WHERE id='{'0' * 64}'") == "unavailable 2"
+    assert int(rq("SELECT COUNT(*) FROM events WHERE kind='workspace.v04_restored'")) >= 1
+    assert int(rq("SELECT COUNT(*) FROM maintenance_policies WHERE state IN ('enabled','syncing')")) == 0
 
 with subtest("root-side facts newer than the set still hold: bob revoked, carol disabled (R06)"):
     rep = {w["workspaceId"]: w for w in v["workspaces"]}

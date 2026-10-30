@@ -11,8 +11,11 @@ import { SessionAuth, ensureSecrets } from "./auth.js";
 import { buildServer, type HostRuntime } from "./http.js";
 import { MaintenanceHost } from "./maintenance-host.js";
 import { MachineCallError, MachineLink, MachineMode, machineModeFromEnv } from "./machine-mode.js";
+import { applyV04Restore } from "./backup-v4.js";
 
 export const RESTORE_MARKER = "restore-in-progress";
+/** Written into a workspace tree by the machine restore (recovery worker) and consumed once by the next Host start. */
+export const RESTORE_RECONCILE = "restore-reconcile-pending";
 
 function fail(log: Logger | null, msg: string, fields?: Record<string, unknown>): never {
   if (log) log.error(msg, fields);
@@ -53,6 +56,29 @@ export async function main(): Promise<void> {
       process.exit(75);
     } finally {
       link.close();
+    }
+  }
+  // v1.0 machine restore (spec §24.1 step 6, V1-R09): the tree was swapped by the recovery worker while no Host ran.
+  // Before any other database use: old delete intents never act on new physical objects, cache rows whose files are
+  // gone become `unavailable` (rebuilt from their fixed lock, never reported present), old jobs/outboxes/routes are
+  // fenced and policies need review. The marker goes only after that transaction committed.
+  const reconcile = path.join(config.dataDir, RESTORE_RECONCILE);
+  if (fs.existsSync(reconcile)) {
+    let id = "unknown";
+    try {
+      id = String((JSON.parse(fs.readFileSync(reconcile, "utf8")) as { restoreId?: string }).restoreId ?? "unknown");
+    } catch {
+      /* an unreadable marker still means "reconcile" */
+    }
+    try {
+      const r = applyV04Restore(config.dataDir, `machine restore ${id}`);
+      fs.rmSync(reconcile);
+      const d = fs.openSync(config.dataDir, "r");
+      fs.fsyncSync(d);
+      fs.closeSync(d);
+      log.info("machine restore reconciled before opening the workspace", { restoreId: id, ...r });
+    } catch (e) {
+      fail(log, "the restored workspace could not be reconciled; not opening it and not deleting anything", { error: (e as Error).message });
     }
   }
   let core: Core;
