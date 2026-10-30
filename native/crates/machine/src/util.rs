@@ -58,3 +58,19 @@ pub fn canon(v: &Value) -> String {
 pub fn boot_id() -> String {
     std::fs::read_to_string("/proc/sys/kernel/random/boot_id").map(|s| s.trim().to_string()).unwrap_or_default()
 }
+
+/// Test-only crash point (V1-W03 VM check): honoured only when the service runs with AGENTOS_TEST_FAULTS=1, which only
+/// test VM configurations set. When /run/agentos-test/machine-fault names this point, the file is consumed and the
+/// process SIGKILLs itself — the effect of the step is done, its receipt is not written.
+pub fn test_fault(point: &str) {
+    if std::env::var("AGENTOS_TEST_FAULTS").ok().as_deref() != Some("1") {
+        return;
+    }
+    let f = "/run/agentos-test/machine-fault";
+    if std::fs::read_to_string(f).map(|s| s.trim() == point).unwrap_or(false) {
+        let _ = std::fs::remove_file(f);
+        unsafe {
+            libc::kill(libc::getpid(), libc::SIGKILL);
+        }
+    }
+}

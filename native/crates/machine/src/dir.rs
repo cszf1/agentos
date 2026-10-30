@@ -586,6 +586,7 @@ impl Machine {
                 }
                 _ => unreachable!(),
             };
+            crate::util::test_fault(&format!("create.{step}"));
             self.tx(|c| Self::step_finish(c, create_id, step, &receipt))?;
         }
         self.ws_row(ws)

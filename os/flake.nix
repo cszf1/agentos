@@ -84,6 +84,7 @@
         m11-ops = test "m11" ./tests/m11-ops.nix { };
         m12-clone = test "m12" ./tests/m12-clone.nix { };
         m13-native = test "m13" ./tests/m13-native.nix { };
+        m14-create = test "m14" ./tests/m14-create.nix { };
         m5-desktop = import ./tests/m5-desktop.nix { inherit pkgs; modules = [ ./modules/base.nix ./modules/graphics.nix ./modules/agentos.nix ]; };
       };
     };

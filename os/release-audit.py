@@ -52,6 +52,8 @@ for d in unit_dirs:
                 bad("tcp-listen", n, v)          # a TCP port/address instead of a UNIX socket
         if re.search(r"AGENTOS_MODEL_MODE=faux", t):
             bad("faux-default", n)
+        if re.search(r"AGENTOS_TEST_FAULTS", t):
+            bad("test-faults", n)                # test-only crash points (m14) never in a release unit
         if re.search(r"--autologin|autologin-user", t):
             bad("autologin", n)
         if n.startswith("agentos-host@") and "AGENTOS_MODEL_MODE=real" not in t:
