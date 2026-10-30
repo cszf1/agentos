@@ -25,7 +25,7 @@ pkgs.testers.runNixOSTest {
     boot.supportedFilesystems = [ "btrfs" "vfat" ];
   };
   testScript = ''
-    import json, os, shutil, subprocess
+    import json, os, shutil
     TOP = "${top}"
     def inst(args, ok=True, stdin=None):
         cmd = f"AGENTOS_INSTALL_ALLOW_PATH=1 agentos-install {args}"

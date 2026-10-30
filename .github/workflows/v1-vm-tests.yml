@@ -31,7 +31,7 @@ jobs:
         env:
           WANT: ${{ github.event.inputs.test || 'all' }}
         run: |
-          ALL='["m2-identity","m6-install","m7-update"]'
+          ALL='["m2-identity","m5-desktop","m6-install","m7-update","m8-backup"]'
           if [ "$WANT" = all ]; then echo "tests=$ALL" >> "$GITHUB_OUTPUT";
           else echo "$ALL" | jq -e --arg t "$WANT" 'index($t) != null' >/dev/null || { echo "unknown test $WANT"; exit 1; }
                echo "tests=[\"$WANT\"]" >> "$GITHUB_OUTPUT"; fi

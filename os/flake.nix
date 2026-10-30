@@ -79,6 +79,8 @@
         m2-identity-tcg = test "m2" ./tests/m2-identity.nix { cores = 1; };
         m6-install = import ./tests/m6-install.nix { inherit pkgs releaseModules nixpkgs; mkSystem = mk; };
         m7-update = test "m7" ./tests/m7-update.nix { };
+        m8-backup = test "m8" ./tests/m8-backup.nix { };
+        m5-desktop = import ./tests/m5-desktop.nix { inherit pkgs; modules = [ ./modules/base.nix ./modules/graphics.nix ./modules/agentos.nix ]; };
       };
     };
 }

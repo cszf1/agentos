@@ -354,11 +354,11 @@ export class MachineMode {
     const headers: Record<string, string> = { "x-agentos-bridge": this.bridgeSecret, host: "agentos.bridge", "x-agentos-epoch": String(v.clientEpoch ?? clientEpoch) };
     if (typeof v.idempotencyKey === "string") headers["idempotency-key"] = v.idempotencyKey;
     let url = String(v.path);
-    if (!url.startsWith("/") || url.includes("..") || url.includes("?")) {
+    // Registered route paths (docs/contracts/forward-routes.json) are full Host paths under /api/.
+    if (!url.startsWith("/api/") || url.includes("..") || url.includes("?") || url.includes("//")) {
       c.send({ t: "res", id, status: 400, body: { error: { code: "INVALID_REQUEST", message: "bad path" } }, clientEpoch });
       return;
     }
-    url = `/api${url}`;
     if (v.query && typeof v.query === "object") {
       const q = new URLSearchParams();
       for (const [k, val] of Object.entries(v.query as Record<string, unknown>)) if (val !== undefined && val !== null) q.set(k, typeof val === "string" ? val : JSON.stringify(val));
