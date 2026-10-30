@@ -13,7 +13,12 @@ uid = machine.succeed(f"id -u {login}").strip()
 OS = f"/var/lib/agentos/workspaces/{ws}/data/os.sqlite"
 machine.wait_until_succeeds(f"test -s {OS}", timeout=120)
 # background model budget for maintenance candidates (spec v0.4 §19); everything else goes through the Shell
-r = call(1, [fwd(ws, "maintenance.settings.post", {"backgroundModel": True, "backgroundModelRequestsPer24h": 200, "backgroundOutputTokensPer24h": 5000000}, idem="settings")], "set")[0]
+# the Host answers 503 STORE_UNAVAILABLE (retryable) until it has finished starting; same idempotency key each try
+for i in range(60):
+    r = call(1, [fwd(ws, "maintenance.settings.post", {"backgroundModel": True, "backgroundModelRequestsPer24h": 200, "backgroundOutputTokensPer24h": 5000000}, idem="settings")], f"set-{i}")[0]
+    if not (r["status"] == 503 and r.get("body", {}).get("error", {}).get("retryable")):
+        break
+    time.sleep(2)
 assert r["status"] == 200, r
 
 def hsql(q):
