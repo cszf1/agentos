@@ -1,0 +1,94 @@
+{
+  "model": {
+    "provider": "openai-compatible",
+    "id": "qwen3.8-flash",
+    "reasoning": "low",
+    "baseUrl": "https://tokenrhythm.studio/v1"
+  },
+  "level": "host (development mode, two Host processes, no native UI, no machined)",
+  "startedAt": "2026-10-30T15:51:42.575Z",
+  "steps": {
+    "parallelCreate": {
+      "a": {
+        "runId": "b1ac4837-806f-4061-8db9-be792d79d6df",
+        "status": "succeeded",
+        "appId": "a68406a4-a29e-48d5-ab56-7e10061e65f3",
+        "error": null,
+        "modelRequests": 5,
+        "usage": null,
+        "conversationId": "9"
+      },
+      "b": {
+        "runId": "53239a27-3f47-4578-b733-93bd4cc1f1e1",
+        "status": "succeeded",
+        "appId": "39fd59c8-6e85-491a-a16d-833b7fb283a7",
+        "error": null,
+        "modelRequests": 5,
+        "usage": null,
+        "conversationId": "9"
+      },
+      "seconds": 35
+    },
+    "overlap": {
+      "attemptsA": 5,
+      "attemptsB": 5,
+      "overlappingPairs": 7,
+      "maxOverlapMs": 5088
+    },
+    "isolation": {
+      "recordA": "a105c891-91e9-4133-8c38-95d49512e79c",
+      "recordB": "9635f5b2-545a-4d39-90e9-dbf31c2ddff4",
+      "aSeesB": 0,
+      "bSeesA": 0,
+      "textLeakAtoB": false,
+      "textLeakBtoA": false
+    },
+    "upgrade": {
+      "runId": "d270dc77-afbe-4ea8-b29e-1c10a7ab702d",
+      "status": "succeeded",
+      "appId": "a68406a4-a29e-48d5-ab56-7e10061e65f3",
+      "error": null,
+      "modelRequests": 5,
+      "usage": null,
+      "conversationId": "41"
+    },
+    "versions": {
+      "rev1": "sha256:72f79a86a2c64dfd9f962fc2fb17fadcc38492956b43a970e6a5a633d0611eab",
+      "rev2": "sha256:72f79a86a2c64dfd9f962fc2fb17fadcc38492956b43a970e6a5a633d0611eab",
+      "priorityField": "priority",
+      "switchBack": 200,
+      "activeAfter": "sha256:72f79a86a2c64dfd9f962fc2fb17fadcc38492956b43a970e6a5a633d0611eab",
+      "records": 1
+    },
+    "compaction": {
+      "submit": 202,
+      "state": "placed",
+      "attempts": [
+        {
+          "purpose": "compaction",
+          "background": 1,
+          "state": "completed",
+          "output_tokens": 475
+        }
+      ]
+    },
+    "usageA": {
+      "attempts": 11,
+      "states": {
+        "completed": 11
+      },
+      "outputTokens": 2194,
+      "unknown": 0
+    },
+    "usageB": {
+      "attempts": 5,
+      "states": {
+        "completed": 5
+      },
+      "outputTokens": 777,
+      "unknown": 0
+    }
+  },
+  "finishedAt": "2026-10-30T15:52:54.415Z",
+  "ok": true
+}

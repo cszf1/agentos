@@ -106,6 +106,11 @@ export class MachineLink {
     return c;
   }
 
+  close(): void {
+    this.#conn?.close();
+    this.#conn = null;
+  }
+
   call<T = unknown>(op: string, args: unknown = {}): Promise<T> {
     return new Promise<T>((res, rej) => {
       this.#queue.push({ op, args, res: res as (v: unknown) => void, rej });

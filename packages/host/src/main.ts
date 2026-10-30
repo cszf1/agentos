@@ -10,7 +10,7 @@ import { assertLocalFs, assertLockHeld } from "./lock.js";
 import { SessionAuth, ensureSecrets } from "./auth.js";
 import { buildServer, type HostRuntime } from "./http.js";
 import { MaintenanceHost } from "./maintenance-host.js";
-import { MachineMode, machineModeFromEnv } from "./machine-mode.js";
+import { MachineCallError, MachineLink, MachineMode, machineModeFromEnv } from "./machine-mode.js";
 
 export const RESTORE_MARKER = "restore-in-progress";
 
@@ -38,6 +38,22 @@ export async function main(): Promise<void> {
   // 3. refuse a half-finished restore before any database opens
   if (fs.existsSync(path.join(config.dataDir, RESTORE_MARKER))) {
     fail(log, "a restore is in progress or was interrupted; finish it with `pnpm restore` before starting the host");
+  }
+  // v1.0 machine mode: ask machined before any database opens. Under a backup/restore barrier the Host must not
+  // become a writer of the data being checkpointed (spec §23.2, V1-R02); exit 75 (temporary) without touching it.
+  const preCfg = machineModeFromEnv(process.env);
+  if (preCfg) {
+    const link = new MachineLink(preCfg.machineSocket);
+    try {
+      const t = new Promise<never>((_, rej) => setTimeout(() => rej(Object.assign(new Error("machine service did not answer"), { timeout: true })), 30_000).unref());
+      await Promise.race([link.call("host.precheck", {}), t]);
+    } catch (e) {
+      if ((e as { timeout?: boolean }).timeout) fail(log, "machine service did not answer the start check; not opening the workspace");
+      log.error("machine refused this start before any database opened", { error: (e as Error).message, code: (e as MachineCallError).code });
+      process.exit(75);
+    } finally {
+      link.close();
+    }
   }
   let core: Core;
   try {

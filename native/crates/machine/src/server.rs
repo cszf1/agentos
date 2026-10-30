@@ -52,6 +52,9 @@ pub fn dispatch(m: &mut Machine, ex: &mut dyn Executor, secrets: &std::sync::Mut
         Peer::Host { workspace_id, pid } => {
             let ws = workspace_id.as_str();
             match op {
+                // Asked before the Host opens any database (spec §23.2): under a barrier or restore it must not
+                // become a writer of the workspace it would snapshot.
+                "host.precheck" => m.require_no_barrier().map(|_| json!({ "workspaceId": ws })),
                 "host.hello" => m.host_hello(ws, s(&a, "instanceId")?, *pid, s(&a, "bootId")?),
                 "host.bye" => m.host_gone(ws, s(&a, "instanceId")?).map(|_| json!({})),
                 "registry.pull" => Ok(json!({ "messages": m.pending_outbox("host", ws, 64)? })),

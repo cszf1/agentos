@@ -26,6 +26,8 @@ with subtest("app container from the release images, offline, with no escape sur
     login = machine.succeed(f"sqlite3 /var/lib/agentos-machine/machine.sqlite \"SELECT exec_login FROM workspaces WHERE workspace_id='{ws}'\"").strip()
     uid = machine.succeed(f"id -u {login}").strip()
     machine.wait_until_succeeds(f"test -S /run/user/{uid}/podman/podman.sock", timeout=120)
+    # The test VM has a QEMU user-net default route; take it away so nothing can reach a registry or substituter.
+    machine.succeed("ip route del default 2>/dev/null; ip -6 route del default 2>/dev/null; true")
     machine.fail("ip route | grep -q default")                                     # no network at all
     env = (f"XDG_RUNTIME_DIR=/run/user/{uid} AGENTOS_RUNTIME=podman AGENTOS_PODMAN_SOCKET=/run/user/{uid}/podman/podman.sock "
            f"AGENTOS_DATA_DIR=/var/lib/agentos/workspaces/{ws}/data AGENTOS_RELEASE_IMAGES=$(systemctl --user -M {login}@ show -p Environment agentos-host@{ws}.service | grep -o 'AGENTOS_RELEASE_IMAGES=[^ ]*' | cut -d= -f2)")

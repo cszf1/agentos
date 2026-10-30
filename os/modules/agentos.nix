@@ -216,6 +216,8 @@ in {
         ExecStart = "${node}/bin/agentos-host";
         Restart = "on-failure";
         RestartSec = 2;
+        # 75: machined refused the start before any database opened (barrier/restore); machined starts it again.
+        RestartPreventExitStatus = 75;
         TimeoutStopSec = 35;
         KillMode = "mixed";
         MemoryHigh = "2G";
