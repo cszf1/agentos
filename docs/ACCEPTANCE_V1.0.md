@@ -161,7 +161,7 @@
 | V1-O07 | 原生入口攻击 | 部分 | KVM VM（Actions）＋单元/集成 | m11-ops（run 41093836725，KVM）O07 子测试全部通过（os/tests/ops-fuzz.py 对真实 gateway socket）：超长长度/非 JSON/重复键/深嵌套被关闭连接，未知字段 INVALID_REQUEST，URL 形 forward 未绑定会话即 SESSION_REQUIRED，截断帧在 30 秒帧期限后被关闭（不应答），20 个慢连接时正常请求 0.01 s 得到应答，20 个停滞帧 35 s 内全部被关，每 UID 连接上限 32（多余 8 个被拒），释放后恢复服务，gateway 保持 active、RSS<200 MB。access.test.ts 与 Rust 单元 o07_connection_slots_are_bounded_per_uid_and_released、o07_a_started_frame_must_complete_in_time_but_idle_is_unbounded。**未满足**：旧票据/旧 sessionEpoch 重放与 Qt binding fuzz 只在其它条目（I10/D05）中部分覆盖，未在本项内对 gateway 做系统性重放。 |
 | V1-O08 | 日志与支持包 | 通过 | KVM VM（Actions）＋单元/集成 | agentosctl support-bundle --out <file>（native/crates/machine/src/ctl.rs）：仅 root、0600；只收机器级事实（release、boot、schema/协议、身份摘要 sha256 前 16 位、registry、工作区状态、permit/barrier/restore、boot default）与脱敏服务日志（含 password/psk/secret/token/cookie/authorization/api key/private 的行替换为标记），不收工作区正文。Rust 单元 o08_support_bundle_lines_naming_secrets_are_replaced 本轮通过；m10-sched O08 子测试（非 root 被拒、0600、无 PAM 口令、无完整 machineInstallId、root_audit 不被轮转）KVM 通过（run 41088879793）。 |
 | V1-O09 | 干净构建与安装 | 部分 | Actions 构建（nix --rebuild） | build-repro（run 41091049224）通过：agentos-native、agentos-node、agentos-shell、agentos-release 各构建一次后以 nix build --rebuild 从相同输入再构建，逐位相同（REPRO identical ×4）。ISO/qcow2 未纳入重建比较；同一候选的 ISO 安装/导入/升级/离机恢复文档演练未做。 |
-| V1-O10 | 发布完成条件 | 未通过 | 未验收 | 100 项证据未齐，不能宣称发布完成。 |
+| V1-O10 | 发布完成条件 | 未通过 | 未验收 | 100 项证据未齐（见本报告“部分/未通过”各行与需实体机项目），不能宣称发布完成。随发行发布的材料已写成 docs/RELEASE_V1.0.md：发行物与校验方式、支持硬件（仅 qemu-virtio 经 KVM VM 验证，实体硬件未测、不声称支持）、支持期限（签名清单 supportUntil；本树未正式签名发布，无期限承诺）、已知限制、恢复材料（backup/export/restore/clone/recover/support-bundle/带健康门槛的 commit）。材料齐不等于证据齐，本项保持未通过。 |
 
 ## 统计
 
