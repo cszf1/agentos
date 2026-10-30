@@ -270,6 +270,15 @@ export async function main(): Promise<void> {
   } catch (e) {
     log.error("maintenance services failed to start; apps keep working", { error: (e as Error).message });
   }
+  // Compaction does not depend on the cache/GC/proposal services: when their wiring failed, an accepted compaction job
+  // must still run (otherwise POST /compactions answers 202 and the job waits forever).
+  let compactionsAlone = false;
+  if (!rt.maint && engine) {
+    core.compactions.log = (l, m, f) => log[l](m, f);
+    core.compactions.engine = engine;
+    core.compactions.attachRoute = (routeId) => engine.attachCompactionRoute(routeId);
+    compactionsAlone = true;
+  }
 
   // 5b. agent tool set upgrade (spec §3.2): only from an idle root and with no unfinished run; recorded in both stores.
   {
@@ -328,6 +337,7 @@ export async function main(): Promise<void> {
   if (rt.maint) {
     await rt.maint.observeAgain().catch((e) => log.warn("maintenance re-observation failed", { error: (e as Error).message }));
   }
+  if (compactionsAlone) await core.compactions.recover().catch((e) => log.warn("compaction recovery failed", { error: (e as Error).message }));
   core.scheduler.paused = false;
   engine.resume();
   coord.start();
@@ -341,6 +351,7 @@ export async function main(): Promise<void> {
   if (!fs.existsSync(path.join(config.webDir, "index.html"))) log.warn("web shell build not found", { webDir: config.webDir });
   rt.status.phase = "ready";
   if (rt.maint && process.env.AGENTOS_MAINTENANCE_DISABLED !== "1") rt.maint.start();
+  else if (compactionsAlone) core.compactions.start(1000);
   log.info("ready", { modelAvailable: rt.model.available, model: rt.model.ref });
 }
 

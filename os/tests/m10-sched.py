@@ -314,9 +314,19 @@ with subtest("background model work: at most one background request on the machi
     n_log = len(fm_log())
     # (1) S01: two workspaces each ask for a compaction while nothing else runs: one background request at a time
     machine.succeed(f"echo 20 > {FM}/hold")
+    def bg_diag():
+        for w in (ws_a, ws_b):
+            print("diag", w, machine.execute(f"sqlite3 {OSDB(w)} \"SELECT 'run', id, status, scheduling_state, background FROM runs WHERE status NOT IN ('succeeded','failed','cancelled'); SELECT 'cmp', id, state, IFNULL(result_json,'') FROM compaction_jobs; SELECT 'meta', maintenance_state FROM meta\" 2>&1")[1])
+        print("diag permits", sql("SELECT permit_id, workspace_id, priority, state FROM machine_permits WHERE resource_class='model' AND state IN ('queued','reserved','in_use','reconciling')"))
+        print("diag fm", fm_state())
+        print(machine.execute("journalctl -b -o cat --no-pager | grep -iE 'compaction|background|maintenance services' | grep -v '\"msg\":\"request\"' | tail -30")[1])
     compact(ws_a, "bg-a1")
     compact(ws_b, "bg-b1")
-    machine.wait_until_succeeds(f"test \"$(python3 -c \"import json;print(json.load(open('{FM}/state.json'))['kinds']['compaction'])\")\" = 1", timeout=180)
+    try:
+        machine.wait_until_succeeds(f"test \"$(python3 -c \"import json;print(json.load(open('{FM}/state.json'))['kinds']['compaction'])\")\" = 1", timeout=180)
+    except Exception:
+        bg_diag()
+        raise
     def one_bg():
         st = fm_state()
         assert st["kinds"]["compaction"] <= 1, st
