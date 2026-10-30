@@ -1,0 +1,57 @@
+{
+  "kernel": "6.12.113+deb13-cloud-amd64",
+  "btf": true,
+  "objectSha256": "edf86f1cd8130fe3316546cf7812058b936a4e76df9bdd267c7c6380c664a59c",
+  "status": {
+    "available": true,
+    "bootId": "623d1eb4-2771-4899-a190-13adb582c21c",
+    "kernelDrops": 0,
+    "lastSeq": 1,
+    "objectSha256": "edf86f1cd8130fe3316546cf7812058b936a4e76df9bdd267c7c6380c664a59c",
+    "reason": "",
+    "ringBytes": 16384,
+    "sourceEpoch": "t_623d1eb4_1",
+    "testMode": true,
+    "unattributed": 0,
+    "userDrops": 0,
+    "workloads": []
+  },
+  "T01_loaded": true,
+  "register": {
+    "ok": true,
+    "result": {
+      "available": true,
+      "cgroupId": 2945,
+      "workloadGeneration": 1,
+      "workloadKey": "app:test/w1"
+    }
+  },
+  "T01_events": 4,
+  "T01": true,
+  "T02_unregistered_events": 0,
+  "T02_fields_ok": true,
+  "T02": true,
+  "T03_kernelDrops": 1514,
+  "T03_gaps": [
+    "kernel_ring_drop"
+  ],
+  "T03": true,
+  "T03_resume_gap": true,
+  "T04_newCgroupId": true,
+  "T04_preEvents": 0,
+  "T04": true,
+  "T05_down": {
+    "available": false,
+    "reason": "probe detached"
+  },
+  "T05_gap": [
+    "probe_lost",
+    "probe_loaded"
+  ],
+  "T05_recovered": {
+    "available": true,
+    "sourceEpoch": "t_623d1eb4_2"
+  },
+  "T05": true,
+  "scopeRefused": true
+}
