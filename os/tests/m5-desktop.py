@@ -1,4 +1,4 @@
-import json, time
+import time
 machine.start()
 machine.wait_for_unit("agentos-session-gateway.service")
 machine.wait_for_unit("greetd.service")

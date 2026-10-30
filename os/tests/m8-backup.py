@@ -1,4 +1,4 @@
-import json, uuid
+import uuid
 RW = "agentos-recovery-worker"
 
 def rw(args, ok=True):
@@ -67,7 +67,7 @@ with subtest("archive escapes cannot write outside staging (R05)"):
         "b=json.dumps(h,sort_keys=True,separators=(',',':')).encode()\n"
         "open('/root/evil.ar','wb').write(b'AGENTOS-AR1\\n'+struct.pack('>I',len(b))+b+body)\n"
         "PY")
-    rec_out = machine.succeed(f"age -r {rec} -o /root/evil.age /root/evil.ar && echo ok")
+    machine.succeed(f"age -r {rec} -o /root/evil.age /root/evil.ar && echo ok")
     rw("import --in /root/evil.age --identity /root/id.key --staging /mnt/empty/e", ok=False)
     machine.fail("test -e /etc/agentos-escape")
 
