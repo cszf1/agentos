@@ -141,9 +141,9 @@ with subtest("machine directory lost: recovery mode, then an explicit new identi
     machine.succeed("test -f /var/lib/agentos-machine/recovery-required")
     machine.fail("test -e /var/lib/agentos-machine/machine.sqlite")            # no empty directory was created
     machine.fail("test -S /run/agentos/machine/machine.sock")
-    rc, o = machine.execute("agentosctl status")
+    rc, o = machine.execute("agentosctl status 2>&1")
     assert rc != 0 and "recovery mode" in o, o
-    rc, o = machine.execute("printf 'x' | agentosctl firstboot --admin eve")
+    rc, o = machine.execute("printf 'x' | agentosctl firstboot --admin eve 2>&1")
     assert rc != 0, o                                                          # first boot cannot silently reopen
     v = ctl("recover --new-identity")
     assert v["ok"], v

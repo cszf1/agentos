@@ -196,7 +196,7 @@ with subtest("lock and logout end old session epochs (I10)"):
     lines = [json.loads(l) for l in out.splitlines() if l.startswith("{")]
     assert lines[0]["status"] == 200 and lines[1]["status"] != 200, lines
     # session.end: the same connection cannot continue
-    out = tty_run(1, f"{RPC} '[{{\"methodId\":\"session.bind\"}},{{\"methodId\":\"session.end\"}},{{\"methodId\":\"workspaces.list\"}}]'", "/tmp/l2")
+    out = tty_run(1, f"{RPC} '[{{\"methodId\":\"session.bind\"}},{{\"methodId\":\"session.end\",\"idempotencyKey\":\"6f1c1b7e-1c55-4a1e-9a39-0d3f6b8e2a10\"}},{{\"methodId\":\"workspaces.list\"}}]'", "/tmp/l2")
     lines = [json.loads(l) for l in out.splitlines() if l.startswith("{")]
     assert lines[2]["status"] != 200, lines
     # a locked logind session (LockedHint) cannot bind
