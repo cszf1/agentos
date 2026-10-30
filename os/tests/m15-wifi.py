@@ -47,11 +47,17 @@ machine.succeed(f"echo 1 > {FM}/hold")
 # the access point: hostapd on wlan1, WPA2-Personal, config written now (the key is not in any store path)
 cfg = f"interface=wlan1\ndriver=nl80211\nssid=agentos-lab\nhw_mode=g\nchannel=6\nwpa=2\nwpa_key_mgmt=WPA-PSK\nrsn_pairwise=CCMP\nwpa_passphrase={PSK}\n"
 machine.succeed(f"echo {b64(cfg)} | base64 -d > /root/lab-ap.conf && chmod 0600 /root/lab-ap.conf")
-machine.succeed("systemd-run --unit=lab-ap hostapd /root/lab-ap.conf")
-machine.wait_until_succeeds("iw dev wlan1 info | grep -q 'type AP'", timeout=60)
+# The access point lives in its own network namespace (its radio moved there with `iw phy … set netns`): with both
+# radios in one namespace the DHCP exchange never left the host stack (dnsmasq on wlan1 logged no DISCOVER and
+# NetworkManager stayed in state 70, ip-config). Separate namespaces = two machines on one simulated medium.
+machine.succeed("ip netns add lab")
+machine.succeed("phy=$(iw dev wlan1 info | awk '/wiphy/{print \"phy\"$2}'); iw phy $phy set netns name lab")
+machine.succeed("ip netns exec lab ip link set lo up")
+machine.succeed("systemd-run --unit=lab-ap ip netns exec lab hostapd /root/lab-ap.conf")
+machine.wait_until_succeeds("ip netns exec lab iw dev wlan1 info | grep -q 'type AP'", timeout=60)
 # the lab network also hands out addresses, so NetworkManager can finish IP configuration (state 100, not 70)
-machine.succeed("ip addr add 192.168.77.1/24 dev wlan1")
-machine.succeed("systemd-run --unit=lab-dhcp dnsmasq --no-daemon --conf-file=/dev/null --interface=wlan1 --bind-interfaces --dhcp-range=192.168.77.10,192.168.77.50,12h --port=0 --dhcp-leasefile=/tmp/lab.leases")
+machine.succeed("ip netns exec lab ip addr add 192.168.77.1/24 dev wlan1")
+machine.succeed("systemd-run --unit=lab-dhcp ip netns exec lab dnsmasq --no-daemon --log-dhcp --conf-file=/dev/null --interface=wlan1 --bind-interfaces --dhcp-range=192.168.77.10,192.168.77.50,12h --port=0 --dhcp-leasefile=/tmp/lab.leases")
 machine.succeed("shred -u /root/lab-ap.conf")   # hostapd has read it; nothing on disk names the key any more
 
 out = json.loads(must("printf 'alice-pw-1' | agentosctl firstboot --admin alice --workspace A"))

@@ -1,5 +1,4 @@
 # U06: download that survives a link loss. Prepended with lib.py.
-import time
 
 machine.start()
 machine.wait_for_unit("agentos-session-gateway.service")

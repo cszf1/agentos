@@ -161,14 +161,16 @@ ShellRequest shellAction(const QString& name, const JValue& args) {
 }
 
 QString displayState(const JValue& r, const QStringList& extraFinal) {
-  const JValue& err = r.get(QStringLiteral("error"));
-  if (err.isObject()) return err.get(QStringLiteral("code")).str() == QLatin1String("EFFECT_UNKNOWN") ? QStringLiteral("unknown") : QStringLiteral("failed");
   JValue stv = r.get(QStringLiteral("state"));
   if (stv.isNullish()) stv = r.get(QStringLiteral("phase"));
   const QString st = stv.isNullish() ? QString() : asText(stv);
   QStringList finals;
   for (const auto& f : errorPolicyTable().get(QStringLiteral("finalStates")).items()) finals << f.str();
+  // An authoritative final state wins over its explanatory error: a run cancelled by the user reports
+  // status "cancelled" with error {code: CANCELLED}, and that is the reconciled outcome of runs.cancel.
   if (finals.contains(st) || extraFinal.contains(st)) return QStringLiteral("reconciled");
+  const JValue& err = r.get(QStringLiteral("error"));
+  if (err.isObject()) return err.get(QStringLiteral("code")).str() == QLatin1String("EFFECT_UNKNOWN") ? QStringLiteral("unknown") : QStringLiteral("failed");
   if (QStringList{"planned", "awaiting_confirmation", "needs_confirmation", "ready"}.contains(st)) return QStringLiteral("needs_confirmation");
   if (QStringList{"indeterminate", "unknown"}.contains(st)) return QStringLiteral("unknown");
   if (st == QLatin1String("failed")) return QStringLiteral("failed");

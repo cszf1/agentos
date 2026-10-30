@@ -142,9 +142,10 @@ export const ACTION_STATES = ["idle", "accepted", "in_progress", "needs_confirma
 /** Map a response/operation state to the displayed state. */
 export const FINAL_STATES = ["succeeded", "committed", "reconciled", "applied", "cancelled", "cancelled_no_effect", "failed_no_effect", "expired_no_effect", "no_change", "rejected", "completed", "superseded"];
 export function displayState(r: { status?: number; state?: string; phase?: string; error?: { code: string } | null }, extraFinal: string[] = []): (typeof ACTION_STATES)[number] {
-  if (r.error) return r.error.code === "EFFECT_UNKNOWN" ? "unknown" : "failed";
   const st = String(r.state ?? r.phase ?? "");
+  // an authoritative final state wins over its explanatory error (a cancelled run carries error CANCELLED)
   if (FINAL_STATES.includes(st) || extraFinal.includes(st)) return "reconciled";
+  if (r.error) return r.error.code === "EFFECT_UNKNOWN" ? "unknown" : "failed";
   if (["planned", "awaiting_confirmation", "needs_confirmation", "ready"].includes(st)) return "needs_confirmation";
   if (["indeterminate", "unknown"].includes(st)) return "unknown";
   if (["failed"].includes(st)) return "failed";

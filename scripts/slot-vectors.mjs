@@ -491,7 +491,7 @@ try {
 } catch (e) {
   bad = String(e.message);
 }
-const states = [{ status: 202 }, { state: "queued" }, { state: "running" }, { state: "awaiting_confirmation" }, { phase: "awaiting_confirmation" }, { state: "succeeded" }, { state: "indeterminate" }, { state: "failed" }, { error: { code: "EFFECT_UNKNOWN" } }, { error: { code: "PLAN_STALE" } }, { state: "cancelled_no_effect" }, { state: "dispatching" }, { state: "reconciling" }].map((r) => ({ input: r, state: sh.displayState(r) }));
+const states = [{ status: 202 }, { state: "queued" }, { state: "running" }, { state: "awaiting_confirmation" }, { phase: "awaiting_confirmation" }, { state: "succeeded" }, { state: "indeterminate" }, { state: "failed" }, { error: { code: "EFFECT_UNKNOWN" } }, { error: { code: "PLAN_STALE" } }, { state: "cancelled", error: { code: "CANCELLED" } }, { state: "failed", error: { code: "INTERNAL" } }, { state: "cancelled_no_effect" }, { state: "dispatching" }, { state: "reconciling" }].map((r) => ({ input: r, state: sh.displayState(r) }));
 const errors = ["NOT_FOUND_OR_FORBIDDEN", "SESSION_LOCKED", "SESSION_STALE", "MEMBERSHIP_REVOKED", "CLIENT_EPOCH_STALE", "PLAN_STALE", "EFFECT_UNKNOWN", "BROKER_UNAVAILABLE", "MODEL_UNAVAILABLE", "HOST_UNAVAILABLE", "SOME_NEW_CODE"].map((code) => ({ code, text: sv.describeError(code, "原始消息"), policy: sv.errorPolicy(code) }));
 emit("fixtures/v1.0/slot-vectors/shell-actions.json", { actions, rejected: { name: "machine.plan", args: { actionKind: "dbus.call" }, error: bad }, states, errors });
 

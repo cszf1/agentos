@@ -283,8 +283,8 @@ class E2E : public QObject {
     QQuickItem* cancel = nullptr;
     QTest::qWaitFor([&] {
       r.go(QStringLiteral("tasks"));
-      for (QQuickItem* b : r.all(QStringLiteral("cancelRun")))
-        if (b->isEnabled()) cancel = b;
+      for (QQuickItem* b : r.all(QStringLiteral("cancelRun")))   // this run's own row: other runs (background) may be running too
+        if (b->isEnabled() && b->property("runId").toString() == slow) cancel = b;
       return cancel != nullptr;
     }, 30000);
     QVERIFY2(cancel, "no enabled cancel button for the running task");

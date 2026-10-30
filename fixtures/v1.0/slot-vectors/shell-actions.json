@@ -4935,6 +4935,24 @@
   },
   {
    "input": {
+    "state": "cancelled",
+    "error": {
+     "code": "CANCELLED"
+    }
+   },
+   "state": "reconciled"
+  },
+  {
+   "input": {
+    "state": "failed",
+    "error": {
+     "code": "INTERNAL"
+    }
+   },
+   "state": "failed"
+  },
+  {
+   "input": {
     "state": "cancelled_no_effect"
    },
    "state": "reconciled"
