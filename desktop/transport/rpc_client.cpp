@@ -258,6 +258,8 @@ void RpcWorker::handleEvent(const JValue& v) {
   ev.workspaceId = v.get(QStringLiteral("workspaceId")).stringOr(QString());
   ev.eventSeq = qint64(v.get(QStringLiteral("eventSeq")).toNumber());
   ev.type = v.get(QStringLiteral("type")).stringOr(QString());
+  // The real gateway frames every event as {type:"event", kind:<event kind>, …}; the Shell's model keys on the kind.
+  if (ev.type == QLatin1String("event") && v.get(QStringLiteral("kind")).isString()) ev.type = v.get(QStringLiteral("kind")).stringOr(QString());
   ev.data = v.get(QStringLiteral("data"));
   auto s = subs_.find(ev.workspaceId);
   if (s == subs_.end() || !s->active) {

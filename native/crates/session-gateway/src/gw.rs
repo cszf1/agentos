@@ -169,7 +169,39 @@ pub struct HostLink {
 pub struct Subscriber {
     pub conn_id: u64,
     pub user_id: String,
+    pub tx: ConnTx,
+}
+
+/// The one way bytes reach a client connection: replies and fanned-out events both count against the same pending
+/// budget the writer drains. (Events used to go straight into the channel; the writer still subtracted their size,
+/// the u64 budget wrapped, and from the first delivered event on every reply on that connection was silently
+/// dropped as "over budget" — the Shell's requests then sat in flight forever, m13 D08/M06.)
+#[derive(Clone)]
+pub struct ConnTx {
     pub tx: mpsc::SyncSender<Vec<u8>>,
+    pub pending: Arc<AtomicU64>,
+}
+
+impl ConnTx {
+    pub fn send_buf(&self, buf: Vec<u8>) -> bool {
+        let n = buf.len() as u64;
+        let mut cur = self.pending.load(Ordering::SeqCst);
+        loop {
+            if cur + n > MAX_PENDING_SEND as u64 {
+                return false;
+            }
+            match self.pending.compare_exchange(cur, cur + n, Ordering::SeqCst, Ordering::SeqCst) {
+                Ok(_) => break,
+                Err(v) => cur = v,
+            }
+        }
+        if self.tx.try_send(buf).is_ok() {
+            true
+        } else {
+            self.pending.fetch_sub(n, Ordering::SeqCst);
+            false
+        }
+    }
 }
 
 pub struct Gw {
@@ -315,17 +347,10 @@ pub fn handle_client(gw: Arc<Gw>, stream: UnixStream) {
         }
         let _ = w.shutdown(std::net::Shutdown::Both);
     });
+    let ctx = ConnTx { tx: tx.clone(), pending: pending.clone() };
     let send = {
-        let tx = tx.clone();
-        let pending = pending.clone();
-        move |v: &Value| -> bool {
-            let buf = frame(&serde_json::to_vec(v).unwrap_or_default());
-            if pending.load(Ordering::SeqCst) + buf.len() as u64 > MAX_PENDING_SEND as u64 {
-                return false;
-            }
-            pending.fetch_add(buf.len() as u64, Ordering::SeqCst);
-            tx.try_send(buf).is_ok()
-        }
+        let ctx = ctx.clone();
+        move |v: &Value| -> bool { ctx.send_buf(frame(&serde_json::to_vec(v).unwrap_or_default())) }
     };
     let inflight = Arc::new(AtomicU64::new(0));
     let mut r = stream;
@@ -355,7 +380,7 @@ pub fn handle_client(gw: Arc<Gw>, stream: UnixStream) {
         let gw2 = gw.clone();
         let inflight2 = inflight.clone();
         let send2 = send.clone();
-        let tx2 = tx.clone();
+        let tx2 = ctx.clone();
         let dbus2 = dbus.clone();
         std::thread::spawn(move || {
             let out = route(&gw2, conn, cred.uid, cred.pid as u32, &dbus2, &env, tx2);
@@ -381,6 +406,7 @@ pub fn handle_client(gw: Arc<Gw>, stream: UnixStream) {
     // Every sender must be gone before the writer can finish and shut the socket: `send` holds a clone of `tx`
     // (keeping it alive left a refused connection open until the client gave up, O07).
     drop(send);
+    drop(ctx);
     drop(tx);
     let _ = writer.join();
 }
@@ -455,7 +481,7 @@ fn s<'a>(v: &'a Value, k: &str) -> Result<&'a str, Value> {
     v.get(k).and_then(|x| x.as_str()).ok_or_else(|| err("INVALID_REQUEST", &format!("{k} is required")))
 }
 
-pub fn route(gw: &Gw, conn: u64, uid: u32, pid: u32, dbus: &zbus::blocking::Connection, e: &Envelope, tx: mpsc::SyncSender<Vec<u8>>) -> Result<(u16, Value), Value> {
+pub fn route(gw: &Gw, conn: u64, uid: u32, pid: u32, dbus: &zbus::blocking::Connection, e: &Envelope, tx: ConnTx) -> Result<(u16, Value), Value> {
     if e.method == "session.bind" {
         return bind(gw, conn, uid, pid, dbus);
     }
@@ -687,7 +713,7 @@ fn forward(gw: &Gw, user: &str, sess_id: &str, epoch: i64, e: &Envelope) -> Resu
     Ok((status, resp["body"].clone()))
 }
 
-fn attach(gw: &Gw, conn: u64, user: &str, e: &Envelope, tx: mpsc::SyncSender<Vec<u8>>, p: &Value) -> Result<(u16, Value), Value> {
+fn attach(gw: &Gw, conn: u64, user: &str, e: &Envelope, tx: ConnTx, p: &Value) -> Result<(u16, Value), Value> {
     let ws = &e.workspace_id;
     let row = gw.machine("workspaces.get", json!({ "principal": p, "workspaceId": ws }))?;
     if row["state"] != "running" {
@@ -705,7 +731,7 @@ fn attach(gw: &Gw, conn: u64, user: &str, e: &Envelope, tx: mpsc::SyncSender<Vec
         "capabilities": { "rendererCapabilities": ["slot-tree-v1", "slot-tree-v2", "records-v1"], "formatVersions": [1, 2, 3], "abi": [1, 2] } })))
 }
 
-fn subscribe(gw: &Gw, conn: u64, user: &str, e: &Envelope, tx: mpsc::SyncSender<Vec<u8>>) -> Result<(u16, Value), Value> {
+fn subscribe(gw: &Gw, conn: u64, user: &str, e: &Envelope, tx: ConnTx) -> Result<(u16, Value), Value> {
     gw.machine("members.check", json!({ "userId": user, "workspaceId": e.workspace_id }))?;
     let h = host_for(gw, &e.workspace_id, Duration::from_secs(2)).ok_or_else(|| err("STORE_UNAVAILABLE", "workspace is not running"))?;
     let from = e.body.get("cursor").and_then(|x| x.as_i64());
@@ -720,7 +746,7 @@ fn subscribe(gw: &Gw, conn: u64, user: &str, e: &Envelope, tx: mpsc::SyncSender<
     Ok((200, json!({ "cursor": cursor })))
 }
 
-fn subscribe_inner(gw: &Gw, conn: u64, user: &str, ws: &str, tx: mpsc::SyncSender<Vec<u8>>) -> i64 {
+fn subscribe_inner(gw: &Gw, conn: u64, user: &str, ws: &str, tx: ConnTx) -> i64 {
     let mut subs = gw.subs.lock().unwrap();
     let list = subs.entry(ws.to_string()).or_default();
     list.retain(|s| s.conn_id != conn);
@@ -849,11 +875,11 @@ fn fanout(gw: &Gw, ws: &str, store: &str, v: &Value) {
         let mut keep = vec![];
         for s in list.drain(..) {
             let ok = gw.machine("members.check", json!({ "userId": s.user_id, "workspaceId": ws })).is_ok();
-            if ok && s.tx.try_send(buf.clone()).is_ok() {
+            if ok && s.tx.send_buf(buf.clone()) {
                 keep.push(s);
             } else if ok {
                 // Slow reader: tell it to resync from a snapshot rather than silently dropping events.
-                let _ = s.tx.try_send(frame(&serde_json::to_vec(&json!({ "type": "event", "workspaceId": ws, "kind": "event.gap" })).unwrap_or_default()));
+                let _ = s.tx.send_buf(frame(&serde_json::to_vec(&json!({ "type": "event", "workspaceId": ws, "kind": "event.gap", "eventSeq": 0 })).unwrap_or_default()));
             }
         }
         *list = keep;
@@ -882,6 +908,22 @@ pub fn serve(gw: Arc<Gw>, client: UnixListener, host: UnixListener) -> ! {
 #[cfg(test)]
 mod o07_tests {
     use super::*;
+
+    #[test]
+    fn events_and_replies_share_one_pending_budget_that_never_wraps() {
+        let (tx, rx) = mpsc::sync_channel::<Vec<u8>>(8);
+        let ctx = ConnTx { tx, pending: Arc::new(AtomicU64::new(0)) };
+        let ev = ctx.clone(); // a subscriber's copy, as fanout holds it
+        assert!(ev.send_buf(vec![0u8; 100]), "event accepted");
+        assert_eq!(ctx.pending.load(Ordering::SeqCst), 100, "events are counted");
+        // writer drains it
+        let b = rx.recv().unwrap();
+        ctx.pending.fetch_sub(b.len() as u64, Ordering::SeqCst);
+        assert_eq!(ctx.pending.load(Ordering::SeqCst), 0, "no wrap-around after an event is written");
+        assert!(ctx.send_buf(vec![0u8; 10]), "a reply after an event still goes out");
+        assert!(!ctx.send_buf(vec![0u8; MAX_PENDING_SEND]), "over budget is refused");
+        assert_eq!(ctx.pending.load(Ordering::SeqCst), 10, "a refused buffer is not counted");
+    }
 
     #[test]
     fn o07_connection_slots_are_bounded_per_uid_and_released() {
