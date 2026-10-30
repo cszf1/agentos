@@ -11,7 +11,7 @@ import net from "node:net";
 import fs from "node:fs";
 import { randomUUID, randomBytes } from "node:crypto";
 import type { FastifyInstance } from "fastify";
-import { identityContext, type Core, type MachineGate, type WorkspaceIdentity } from "@agentos/core";
+import { identityContext, type BuildGate, type Core, type MachineGate, type WorkspaceIdentity } from "@agentos/core";
 import type { HostRuntime } from "./http.js";
 import type { Logger } from "./log.js";
 
@@ -277,6 +277,11 @@ export class MachineMode {
     this.incarnation = hello.membership.workspaceIncarnation ?? 1;
     applyRegistry(core, this.rt, { registrySeq: 0, kind: "members.snapshot", body: { members: hello.membership.members } }, log);
     core.budgets.machineGate = this.gate();
+    const attachBuildGate = (): void => {
+      if (this.rt.sys) this.rt.sys.builds.buildGate = this.buildGate();
+      else if (!this.#stopped) setTimeout(attachBuildGate, 500).unref();
+    };
+    attachBuildGate();
     this.#ringStoreSeq = core.store.eventSeq();
     void this.#registryLoop();
     this.#dialGateway();
@@ -450,6 +455,89 @@ export class MachineMode {
     return who ? { ...base, principalKind: "maintenance", userId: null, memberVersion: null, approvedByUserId: who.userId, approvedMemberVersion: who.memberVersion } : null;
   }
 
+  /** Whether the last machined call failed because the service is unreachable (spec §13.2, V1-S08). */
+  machineUnreachableSince: number | null = null;
+
+  #machineState(reachable: boolean, waiting: string, runId: string | null): void {
+    const s = this.rt.core.store;
+    if (!reachable && this.machineUnreachableSince === null) {
+      this.machineUnreachableSince = Date.now();
+      // Visible reason, once per outage: nothing new goes to the model or the builder until machined answers again.
+      s.tx(() => s.event("machine.unreachable", { reason: "machine service unreachable: new model and build requests are paused", waiting, runId }));
+    } else if (reachable && this.machineUnreachableSince !== null) {
+      const ms = Date.now() - this.machineUnreachableSince;
+      this.machineUnreachableSince = null;
+      s.tx(() => s.event("machine.reachable", { pausedMs: ms }));
+    }
+  }
+
+  /**
+   * permits.request that treats "machined unreachable" as a wait, never as a capacity denial or a reason to stop the
+   * run: no request is sent, the reason is recorded as an event, and the request is repeated with the SAME stable key
+   * until machined answers or the deadline passes (spec §13.2: new model/build work stops while the machine service is
+   * unreachable; it is not silently reattempted under a new identity).
+   */
+  async #request(
+    args: Record<string, unknown>, deadlineMs: number, signal: AbortSignal | undefined, runId: string | null,
+  ): Promise<{ ok: true; permit: { permitId: string; state: string } } | { ok: false; reason: string; code: "MACHINE_CAPACITY" | "MEMBERSHIP_REVOKED" | "DEADLINE" }> {
+    for (;;) {
+      try {
+        const p = await this.link.call<{ permitId: string; state: string }>("permits.request", { ...args, deadlineMs: Math.max(1000, deadlineMs - Date.now()) });
+        this.#machineState(true, String(args.resourceClass), runId);
+        return { ok: true, permit: p };
+      } catch (e) {
+        const code = (e as MachineCallError).code;
+        if (code !== "STORE_UNAVAILABLE") {
+          return { ok: false, reason: (e as Error).message, code: code === "MEMBERSHIP_REVOKED" ? "MEMBERSHIP_REVOKED" : "MACHINE_CAPACITY" };
+        }
+        this.#machineState(false, String(args.resourceClass), runId);
+        if (signal?.aborted || Date.now() + 1000 > deadlineMs) return { ok: false, reason: "machine service unreachable until the deadline; no request was sent", code: "DEADLINE" };
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+    }
+  }
+
+  /** Machine build slot for one build job (spec §13.1: one compile/Prepare slot per machine). */
+  buildGate(): BuildGate {
+    const link = this.link;
+    const ws = this.cfg.workspaceId;
+    return {
+      acquire: async (jobId, deadlineMs) => {
+        const owner = this.rt.core.store.get<{ v: number }>("SELECT member_version AS v FROM membership_mirror WHERE role = 'owner' AND state = 'active' ORDER BY member_version DESC LIMIT 1");
+        const r = await this.#request(
+          { workspaceId: ws, executionEpoch: this.incarnation, ownerKind: "deployment", ownerId: jobId, attemptId: jobId, resourceClass: "build", background: false,
+            bodyHash: `build:${jobId}`, memberVersion: owner?.v ?? 0, userId: null, instanceId: this.instanceId },
+          deadlineMs, undefined, null,
+        );
+        if (!r.ok) return r;
+        let p = r.permit;
+        while (p.state === "queued") {
+          if (Date.now() > deadlineMs) {
+            link.call("permits.release", { permitId: p.permitId, usage: "unused" }).catch(() => {});
+            return { ok: false, reason: "no machine build slot before the deadline", code: "DEADLINE" };
+          }
+          await new Promise((res) => setTimeout(res, 200));
+          try {
+            p = await link.call("permits.get", { permitId: p.permitId });
+          } catch {
+            /* machined restarting: keep waiting until the deadline */
+          }
+        }
+        if (p.state !== "reserved") return { ok: false, reason: `machine build slot ${p.state}`, code: "MACHINE_CAPACITY" };
+        try {
+          await link.call("permits.use", { permitId: p.permitId, memberVersion: owner?.v ?? 0 });
+        } catch (e) {
+          link.call("permits.release", { permitId: p.permitId, usage: "unused" }).catch(() => {});
+          return { ok: false, reason: (e as Error).message, code: "MACHINE_CAPACITY" };
+        }
+        return { ok: true, permitId: p.permitId };
+      },
+      release: (permitId) => {
+        link.call("permits.release", { permitId, usage: "used" }).catch(() => {});
+      },
+    };
+  }
+
   gate(): MachineGate {
     const link = this.link;
     const ws = this.cfg.workspaceId;
@@ -457,15 +545,13 @@ export class MachineMode {
     return {
       acquire: async (req, signal) => {
         let p: { permitId: string; state: string };
-        try {
-          p = await link.call("permits.request", {
-            workspaceId: ws, executionEpoch: req.executionEpoch, ownerKind: req.ownerKind, ownerId: req.ownerId, attemptId: req.attemptId, resourceClass: "model",
-            background: req.background, bodyHash: req.bodyHash, memberVersion: req.memberVersion, userId: req.userId, instanceId, deadlineMs: Math.max(1000, req.deadlineMs - Date.now()),
-          });
-        } catch (e) {
-          const code = (e as MachineCallError).code === "MEMBERSHIP_REVOKED" ? "MEMBERSHIP_REVOKED" : "MACHINE_CAPACITY";
-          return { ok: false, reason: (e as Error).message, code };
-        }
+        const r = await this.#request(
+          { workspaceId: ws, executionEpoch: req.executionEpoch, ownerKind: req.ownerKind, ownerId: req.ownerId, attemptId: req.attemptId, resourceClass: "model",
+            background: req.background, bodyHash: req.bodyHash, memberVersion: req.memberVersion, userId: req.userId, instanceId },
+          req.deadlineMs, signal, req.ownerKind === "run" ? req.ownerId : null,
+        );
+        if (!r.ok) return r;
+        p = r.permit;
         // Wait without holding anything else (spec §13.2): queued → reserved, or revoked / deadline.
         while (p.state === "queued") {
           if (signal?.aborted || Date.now() > req.deadlineMs) {

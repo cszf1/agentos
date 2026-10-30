@@ -41,7 +41,7 @@ export interface BuildDiagnostic {
 }
 
 export class BuildError extends Error {
-  constructor(readonly code: "BUILD_FAILED" | "BUILD_TIMEOUT" | "BUILD_NONDETERMINISTIC" | "IMAGE_UNAVAILABLE" | "ARTIFACT_UNAVAILABLE" | "SANDBOX_UNAVAILABLE" | "DEPENDENCY_NOT_ALLOWED", message: string, readonly diagnostics: BuildDiagnostic[] = []) {
+  constructor(readonly code: "BUILD_FAILED" | "BUILD_TIMEOUT" | "BUILD_NONDETERMINISTIC" | "IMAGE_UNAVAILABLE" | "ARTIFACT_UNAVAILABLE" | "SANDBOX_UNAVAILABLE" | "DEPENDENCY_NOT_ALLOWED" | "MACHINE_CAPACITY", message: string, readonly diagnostics: BuildDiagnostic[] = []) {
     super(message);
   }
 }
@@ -75,8 +75,15 @@ export function buildKey(revisionId: string, lock: RuntimeLock): string {
  * Builds a code revision into an immutable artifact inside a no-network builder container (spec §12.2), with
  * single-flight per buildKey, cache verification, nondeterminism detection, and persistent job identity.
  */
+/** Machine-level build slot (v1.0 machine mode, spec §13.1). Absent in single-user/dev mode. */
+export interface BuildGate {
+  acquire(jobId: string, deadlineMs: number): Promise<{ ok: true; permitId: string } | { ok: false; reason: string; code: "MACHINE_CAPACITY" | "MEMBERSHIP_REVOKED" | "DEADLINE" }>;
+  release(permitId: string): void;
+}
+
 export class BuildService {
   #inflight = new Map<string, Promise<string>>();
+  buildGate: BuildGate | null = null;
   constructor(private readonly ctx: BuildContext) {}
 
   private now(): string {
@@ -209,6 +216,24 @@ export class BuildService {
       throw e;
     };
     if (!driver) fail(new BuildError("SANDBOX_UNAVAILABLE", "the container runtime is not available"));
+    // Machine build slot first, holding nothing else (spec §13.1/§13.2); while machined is unreachable the gate waits
+    // and records why, and no builder container starts.
+    let buildPermit: string | null = null;
+    if (this.buildGate) {
+      const g = await this.buildGate.acquire(job.id, deadlineMs);
+      if (!g.ok) fail(new BuildError(g.code === "DEADLINE" ? "BUILD_TIMEOUT" : "MACHINE_CAPACITY", g.reason));
+      else buildPermit = g.permitId;
+    }
+    try {
+      return await this.#runJobHeld(job, bundle, lock, deadlineMs, expectId, fail);
+    } finally {
+      if (buildPermit) this.buildGate?.release(buildPermit);
+    }
+  }
+
+  async #runJobHeld(job: BuildJobRow, bundle: CodeBundle, lock: RuntimeLock, deadlineMs: number, expectId: string | null, fail: (e: BuildError) => never): Promise<string> {
+    const s = this.ctx.store;
+    const driver = this.ctx.driver;
     const workDir = path.join(this.ctx.workDir, `b-${job.id.slice(0, 12)}`);
     const srcDir = path.join(workDir, "src");
     const bridgeDir = path.join(workDir, "bridge");

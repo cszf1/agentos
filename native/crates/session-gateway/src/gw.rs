@@ -219,6 +219,23 @@ pub struct Gw {
     /// session shares it, so a Shell reconnect keeps open plans; a lock, VT switch-away, close or expiry observed
     /// by the watcher (or by any request) retires it, so every plan, ticket and request of the old epoch is stale.
     pub lsess: Mutex<HashMap<String, LEpoch>>,
+    /// Last membership machined confirmed per (userId, workspaceId): (members.check, workspaces.row). Used only while
+    /// machined is unreachable, within MACHINE_READ_GRACE / MACHINE_WRITE_GRACE of the last successful contact
+    /// (spec §13.2, V1-S08). Cleared by every revocation/disable/control-epoch message.
+    pub mcache: Mutex<HashMap<(String, String), (Value, Value)>>,
+    /// Last successful machined call and the start of the current outage (None while reachable).
+    pub machine_ok: Mutex<Option<Instant>>,
+    pub machine_down: Mutex<Option<Instant>>,
+}
+
+/// While machined is unreachable: business writes on a cached membership for at most 30 s after the last successful
+/// contact (the gateway pulls revocations every 250 ms, so a revocation machined committed is normally applied long
+/// before), reads for at most 10 minutes. After that the entry closes: membership cannot be confirmed.
+pub const MACHINE_WRITE_GRACE: Duration = Duration::from_secs(30);
+pub const MACHINE_READ_GRACE: Duration = Duration::from_secs(600);
+
+pub fn machine_unreachable(e: &Value) -> bool {
+    e["code"] == "STORE_UNAVAILABLE" && e["message"].as_str().map(|m| m.starts_with("machine service unreachable")).unwrap_or(false)
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -241,12 +258,72 @@ impl Gw {
             pam_service: "agentos-admin-auth".into(),
             epoch_seed: AtomicU64::new(1),
             lsess: Mutex::new(HashMap::new()),
+            mcache: Mutex::new(HashMap::new()),
+            machine_ok: Mutex::new(None),
+            machine_down: Mutex::new(None),
         })
     }
 
     pub fn machine(&self, op: &str, args: Value) -> Result<Value, Value> {
-        let mut c = MClient::connect(&self.machine_sock).map_err(|e| err("STORE_UNAVAILABLE", &format!("machine service unreachable: {e}")))?;
-        c.call(op, args).map_err(|e| err(e.code, &e.message))
+        let mut c = match MClient::connect(&self.machine_sock) {
+            Ok(c) => c,
+            Err(e) => {
+                self.machine_down.lock().unwrap().get_or_insert_with(Instant::now);
+                return Err(err("STORE_UNAVAILABLE", &format!("machine service unreachable: {e}")));
+            }
+        };
+        match c.call(op, args) {
+            Err(e) if e.message.starts_with("machined unreachable") => {
+                self.machine_down.lock().unwrap().get_or_insert_with(Instant::now);
+                Err(err("STORE_UNAVAILABLE", &format!("machine service unreachable: {}", e.message)))
+            }
+            r => {
+                *self.machine_ok.lock().unwrap() = Some(Instant::now());
+                *self.machine_down.lock().unwrap() = None;
+                r.map_err(|e| err(e.code, &e.message))
+            }
+        }
+    }
+
+    /// Time since the last successful machined call (None = never reached it in this process).
+    pub fn since_machine_ok(&self) -> Option<Duration> {
+        self.machine_ok.lock().unwrap().map(|t| t.elapsed())
+    }
+
+    /// Membership for one forward: machined when it answers; while it is unreachable, the last confirmation within
+    /// the grace for this kind of request, otherwise a visible STORE_UNAVAILABLE (spec §13.2).
+    pub fn membership(&self, user: &str, ws: &str, write: bool) -> Result<(Value, Value, bool), Value> {
+        let key = (user.to_string(), ws.to_string());
+        let live = self.machine("members.check", json!({ "userId": user, "workspaceId": ws })).and_then(|m| self.machine("workspaces.row", json!({ "workspaceId": ws })).map(|r| (m, r)));
+        match live {
+            Ok((m, r)) => {
+                self.mcache.lock().unwrap().insert(key, (m.clone(), r.clone()));
+                Ok((m, r, false))
+            }
+            Err(e) if machine_unreachable(&e) => {
+                let cached = self.mcache.lock().unwrap().get(&key).cloned();
+                let age = self.since_machine_ok();
+                let grace = if write { MACHINE_WRITE_GRACE } else { MACHINE_READ_GRACE };
+                match (cached, age) {
+                    (Some((m, r)), Some(a)) if a <= grace => Ok((m, r, true)),
+                    (Some(_), Some(a)) if write => Err(err(
+                        "STORE_UNAVAILABLE",
+                        &format!("machine service unreachable for {} s: membership cannot be confirmed, so writes are closed (reads continue for up to {} s)", a.as_secs(), MACHINE_READ_GRACE.as_secs()),
+                    )),
+                    _ => Err(err("STORE_UNAVAILABLE", "machine service unreachable: membership cannot be confirmed")),
+                }
+            }
+            Err(e) => {
+                if e["code"] == "NOT_FOUND_OR_FORBIDDEN" {
+                    self.mcache.lock().unwrap().remove(&key);
+                }
+                Err(e)
+            }
+        }
+    }
+
+    pub fn forget_user(&self, user: Option<&str>, ws: Option<&str>) {
+        self.mcache.lock().unwrap().retain(|(u, w), _| !(user.map(|x| x == u).unwrap_or(true) && ws.map(|x| x == w).unwrap_or(true)));
     }
 
     /// Retire the epoch of a logind session (lock / inactive / closing); the next bind gets a fresh epoch.
@@ -489,7 +566,14 @@ pub fn route(gw: &Gw, conn: u64, uid: u32, pid: u32, dbus: &zbus::blocking::Conn
         let st = live(gw, conn, dbus);
         let sessions = gw.sessions.lock().unwrap();
         let s = sessions.get(&conn).ok_or_else(|| err("SESSION_REQUIRED", "not bound"))?;
-        return Ok((200, json!({ "userId": s.user_id, "sessionEpoch": s.epoch, "admin": s.admin, "locked": matches!(&st, Err(x) if x["code"] == "SESSION_LOCKED"), "protocols": ["native-rpc/1"] })));
+        let down = gw.machine_down.lock().unwrap().map(|t| t.elapsed().as_secs());
+        let since_ok = gw.since_machine_ok().map(|d| d.as_secs());
+        let machine = match down {
+            None => json!({ "reachable": true }),
+            Some(d) => json!({ "reachable": false, "unreachableForS": d, "reason": "machine service unreachable: new model and build requests are paused; new sessions cannot be bound",
+                "writesOpen": since_ok.map(|a| a <= MACHINE_WRITE_GRACE.as_secs()).unwrap_or(false), "readsOpen": since_ok.map(|a| a <= MACHINE_READ_GRACE.as_secs()).unwrap_or(false) }),
+        };
+        return Ok((200, json!({ "userId": s.user_id, "sessionEpoch": s.epoch, "admin": s.admin, "locked": matches!(&st, Err(x) if x["code"] == "SESSION_LOCKED"), "protocols": ["native-rpc/1"], "machine": machine })));
     }
     if e.method == "session.end" {
         gw.sessions.lock().unwrap().remove(&conn);
@@ -677,9 +761,8 @@ fn host_call(h: &HostLink, req: Value) -> Result<Value, Value> {
     }
 }
 
-fn principal_envelope(gw: &Gw, user: &str, sess_id: &str, epoch: i64, ws: &str) -> Result<(Value, Value), Value> {
-    let m = gw.machine("members.check", json!({ "userId": user, "workspaceId": ws }))?;
-    let row = gw.machine("workspaces.row", json!({ "workspaceId": ws }))?;
+fn principal_envelope(gw: &Gw, user: &str, sess_id: &str, epoch: i64, ws: &str, write: bool) -> Result<(Value, Value), Value> {
+    let (m, row, _degraded) = gw.membership(user, ws, write)?;
     let sid_digest = agentos_machine::util::sha256(sess_id.as_bytes());
     Ok((
         json!({ "kind": "user", "userId": user, "workspaceId": ws, "storeUUID": row["storeUUID"], "memberVersion": m["memberVersion"], "role": m["role"],
@@ -699,7 +782,7 @@ fn forward(gw: &Gw, user: &str, sess_id: &str, epoch: i64, e: &Envelope) -> Resu
     let route = gw.routes.get(rid).ok_or_else(|| err("INVALID_REQUEST", "routeId is not registered"))?;
     let params = b.get("params").and_then(|x| x.as_object()).cloned().unwrap_or_default();
     let path = fill_path(route, &params).map_err(|m| err("INVALID_REQUEST", &m))?;
-    let (pe, m) = principal_envelope(gw, user, sess_id, epoch, &e.workspace_id)?;
+    let (pe, m) = principal_envelope(gw, user, sess_id, epoch, &e.workspace_id, route.write)?;
     if route.write && m["role"] == "viewer" {
         return Err(err("NOT_FOUND_OR_FORBIDDEN", "not found"));
     }
@@ -764,13 +847,18 @@ pub fn registry_loop(gw: Arc<Gw>) {
                     let kind = m["kind"].as_str().unwrap_or_default();
                     let body = &m["body"];
                     match kind {
-                        "member.revoking" => drop_subs(&gw, body["workspaceId"].as_str(), body["revokedUserId"].as_str()),
+                        "member.revoking" => {
+                            gw.forget_user(body["revokedUserId"].as_str(), body["workspaceId"].as_str());
+                            drop_subs(&gw, body["workspaceId"].as_str(), body["revokedUserId"].as_str());
+                        }
                         "user.disabled" => {
                             let u = body["userId"].as_str();
+                            gw.forget_user(u, None);
                             drop_subs(&gw, None, u);
                             gw.sessions.lock().unwrap().retain(|_, s| Some(s.user_id.as_str()) != u);
                         }
                         "machine.control_epoch" | "restore.started" => {
+                            gw.mcache.lock().unwrap().clear();
                             gw.sessions.lock().unwrap().clear();
                             gw.subs.lock().unwrap().clear();
                         }
@@ -908,6 +996,36 @@ pub fn serve(gw: Arc<Gw>, client: UnixListener, host: UnixListener) -> ! {
 #[cfg(test)]
 mod o07_tests {
     use super::*;
+
+    #[test]
+    fn s08_cached_membership_serves_reads_and_briefly_writes_while_machined_is_unreachable() {
+        let gw = Gw::new("/nonexistent/agentos-test-machine.sock");
+        let k = ("u1".to_string(), "w1".to_string());
+        // never confirmed: nothing to fall back on
+        let e = gw.membership("u1", "w1", false).unwrap_err();
+        assert!(machine_unreachable(&e), "{e}");
+        gw.mcache.lock().unwrap().insert(k.clone(), (json!({ "role": "editor", "memberVersion": 3 }), json!({ "storeUUID": "s" })));
+        *gw.machine_ok.lock().unwrap() = Some(Instant::now());
+        let (m, _, degraded) = gw.membership("u1", "w1", true).expect("write within the grace");
+        assert!(degraded && m["role"] == "editor");
+        assert!(gw.machine_down.lock().unwrap().is_some(), "the outage is recorded");
+        // 31 s after the last contact: writes close with a visible reason, reads continue
+        *gw.machine_ok.lock().unwrap() = Some(Instant::now() - Duration::from_secs(31));
+        let e = gw.membership("u1", "w1", true).unwrap_err();
+        assert_eq!(e["code"], "STORE_UNAVAILABLE");
+        assert!(e["message"].as_str().unwrap().contains("writes are closed"), "{e}");
+        assert!(gw.membership("u1", "w1", false).is_ok(), "reads continue");
+        // past the read grace everything closes
+        *gw.machine_ok.lock().unwrap() = Some(Instant::now() - Duration::from_secs(601));
+        assert!(gw.membership("u1", "w1", false).is_err());
+        // a revocation clears the cache at once
+        *gw.machine_ok.lock().unwrap() = Some(Instant::now());
+        gw.forget_user(Some("u1"), Some("w1"));
+        assert!(gw.membership("u1", "w1", false).is_err(), "revoked membership is never served from cache");
+        // another user's entry is not served for u2
+        gw.mcache.lock().unwrap().insert(k, (json!({ "role": "owner" }), json!({})));
+        assert!(gw.membership("u2", "w1", false).is_err());
+    }
 
     #[test]
     fn events_and_replies_share_one_pending_budget_that_never_wraps() {
