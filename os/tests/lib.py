@@ -49,6 +49,19 @@ def user_session(user, tty=None):
     assert best, machine.succeed(script)
     return best
 
+def revocation_diag(rid):
+    M = "sqlite3 /var/lib/agentos-machine/machine.sqlite"
+    print(machine.execute(f"{M} \"SELECT * FROM revocations WHERE revocation_id='{rid}'\"; {M} \"SELECT target_kind, target_id, registry_seq, kind, state, attempt_count FROM registry_outbox ORDER BY registry_seq DESC LIMIT 20\"")[1])
+    print(machine.execute("journalctl -u agentos-broker -u agentos-machine -u agentos-session-gateway --no-pager | grep -iE 'registry|revok|error|warn' | tail -40")[1])
+    print(machine.execute("for f in /var/lib/agentos/workspaces/*/data/logs/*.log*; do echo == $f; grep -E 'registry|revok|error' $f | tail -15; done")[1])
+
+def wait_revoked(rid, timeout=90):
+    try:
+        machine.wait_until_succeeds(f"test \"$(sqlite3 /var/lib/agentos-machine/machine.sqlite \\\"SELECT state FROM revocations WHERE revocation_id='{rid}'\\\")\" = revoked", timeout=timeout)
+    except BaseException:
+        revocation_diag(rid)
+        raise
+
 def must(cmd):
     rc, out = machine.execute(cmd + " 2>&1")
     if rc != 0:

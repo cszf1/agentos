@@ -131,7 +131,7 @@ with subtest("revocation while the Host runs: writes stop at once, completes onl
     assert r["status"] == 202, r
     r = call(2, [fwd(ws_a, "state.list"), fwd(ws_a, "runs.list")], "r2")
     assert all(x["status"] != 200 for x in r), r
-    machine.wait_until_succeeds(f"test \"$(sqlite3 /var/lib/agentos-machine/machine.sqlite \\\"SELECT state FROM revocations WHERE revocation_id='{rid}'\\\")\" = revoked", timeout=90)
+    wait_revoked(rid)
     assert sql(f"SELECT state FROM workspace_members WHERE workspace_id='{ws_a}' AND user_id='{bob}'") == "revoked"
     lst = call(2, [{"methodId": "workspaces.list"}], "r3")[0]
     assert ws_a not in json.dumps(lst), lst
@@ -154,7 +154,7 @@ with subtest("revocation while the Host is stopped stays 'revoking' until that H
     assert sql(f"SELECT state FROM workspace_members WHERE workspace_id='{ws_a}' AND user_id='{carol}'") == "revoking"
     r = call(1, [{"methodId": "workspaces.attach", "workspaceId": ws_a, "idempotencyKey": "att-a2", "body": {}}], "f6")[0]
     assert r["status"] == 200, r
-    machine.wait_until_succeeds(f"test \"$(sqlite3 /var/lib/agentos-machine/machine.sqlite \\\"SELECT state FROM revocations WHERE revocation_id='{rid2}'\\\")\" = revoked", timeout=90)
+    wait_revoked(rid2)
 
 with subtest("the last owner cannot be removed; a disabled account gets nothing new (I09)"):
     r = call(1, [{"methodId": "members.revoke", "workspaceId": ws_a, "idempotencyKey": str(uuid.uuid4()), "body": {"userId": alice}}], "o1")[0]

@@ -98,13 +98,27 @@ class Ws {
   async addRecord(appId, text) {
     const app = await this.req("GET", `/api/apps/${appId}`);
     const title = app.data.bundle.view?.titleField ?? Object.keys(app.data.bundle.data?.fields ?? {})[0];
-    const data = {};
-    for (const [k, f] of Object.entries(app.data.bundle.data?.fields ?? {})) {
-      const t = f.type;
-      data[k] = k === title ? text : t === "enum" ? f.values?.[0] : t === "number" || t === "integer" ? 1 : t === "boolean" ? false : t === "date" ? "2026-10-30" : t === "datetime" ? new Date().toISOString() : t === "string" || t === "text" ? `${text}-${k}` : undefined;
-      if (data[k] === undefined) delete data[k];
+    // start with the title only; fill exactly the fields the app says are missing (generated schemas differ)
+    const fields = app.data.bundle.data?.fields ?? {};
+    const val = (k, f) => {
+      const t = f?.type;
+      if (t === "enum") return f.values?.[0];
+      if (t === "number" || t === "integer") return 1;
+      if (t === "boolean") return false;
+      if (t === "date" || /date|日期/.test(k)) return "2026-10-30";
+      if (t === "datetime") return new Date().toISOString();
+      return text.slice(0, f?.maxLength ?? 200);
+    };
+    const data = { [title]: val(title, fields[title]) };
+    let r;
+    for (let i = 0; i < 4; i++) {
+      r = await this.req("POST", `/api/apps/${appId}/records`, { expectedAppEpoch: app.data.appEpoch, data });
+      if (r.status !== 422) break;
+      for (const is of r.error?.details?.issues ?? []) {
+        const k = String(is.path ?? "").split("/").pop();
+        if (k) data[k] = val(k, fields[k]);
+      }
     }
-    const r = await this.req("POST", `/api/apps/${appId}/records`, { expectedAppEpoch: app.data.appEpoch, data });
     if (r.status !== 201) throw new Error(`${this.name}: record ${JSON.stringify(r).slice(0, 400)}`);
     return r.data.recordId ?? r.data.id ?? r.data.record?.id ?? null;
   }
