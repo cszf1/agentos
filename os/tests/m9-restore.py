@@ -56,6 +56,8 @@ with subtest("a backup that dies under its barrier freezes every workspace; aban
         print("execution uid", u, "processes under the barrier", procs)
         left = [l for l in procs if not (l.endswith(f"/user@{u}.service/init.scope") or f"/user@{u}.service/session.slice/dbus-broker.service" in l)]
         assert left == [], (u, left)
+    # resources: the broker applied the barrier and refuses every new resource write (CHECKPOINT_INCOMPLETE) until release
+    machine.wait_until_succeeds("sqlite3 /var/lib/agentos-broker/broker.sqlite \"SELECT COUNT(*) FROM broker_meta WHERE key='machine_barrier'\" | grep -qx 1", timeout=60)
     for ws, tag in ((ws_a, "f1"), (ws_b, "f2")):
         r = call(1, [{"methodId": "workspaces.attach", "workspaceId": ws, "idempotencyKey": str(uuid.uuid4()), "body": {}}], tag)[0]
         assert r["status"] != 200, r                           # no participant can start under the barrier
@@ -65,6 +67,7 @@ with subtest("a backup that dies under its barrier freezes every workspace; aban
     v = ctl("backup abandon")
     assert v["abandoned"], v
     assert sql("SELECT COUNT(*) FROM barriers WHERE state='held'") == "0"
+    machine.wait_until_succeeds("sqlite3 /var/lib/agentos-broker/broker.sqlite \"SELECT COUNT(*) FROM broker_meta WHERE key='machine_barrier'\" | grep -qx 0", timeout=60)
     assert "abandoned" in sql("SELECT state FROM checkpoint_sets ORDER BY created_at DESC LIMIT 1")
 
 with subtest("one machine set over both workspaces, taken under one barrier, both restarted afterwards (R02, R01)"):
