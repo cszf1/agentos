@@ -33,14 +33,14 @@
 | V1-I01 | 真实登录绑定 | 通过 | KVM VM（Actions） | os/tests/m2-identity.py：tty1 真实 PAM 登录后由内核对端 PID/UID + logind session/seat 绑定；伪造字段（principal、URL）被拒。 |
 | V1-I02 | 非登录进程 | 通过 | KVM VM（Actions） | m2-identity：无 logind 会话的 root 进程 session.bind → 401 SESSION_REQUIRED。 |
 | V1-I03 | 用户不可见数据 | 通过 | KVM VM（Actions） | m2-identity：B 列不到 A 的工作区，get/forward A 的 ID 统一 404 NOT_FOUND_OR_FORBIDDEN；m3-members 中机器管理员对非成员工作区同样 404。 |
-| V1-I04 | 角色矩阵 | 部分 | KVM VM（Actions）＋单元/集成 | tests/identity/access.test.ts 角色×动作全矩阵；m3-members：viewer 读 200、写/成员管理 404，editor 写入但 owner 动作（maintenance.control）被 Host 矩阵拒绝，owner 可执行，机器管理员无数据入口。 CI：5fd7da2 轮 m3-members 在 I06 撤销等待最后一个 ack 超时失败；f6d9d93 轮（run 41086404523，带撤销/outbox/registry 诊断）已写，CI 待结果。 |
+| V1-I04 | 角色矩阵 | 通过 | KVM VM（Actions）＋单元/集成 | tests/identity/access.test.ts 角色×动作全矩阵；m3-members：viewer 读 200、写/成员管理 404，editor 写入但 owner 动作（maintenance.control）被 Host 矩阵拒绝，owner 可执行，机器管理员无数据入口。 CI：f6d9d93 轮（run 41086404523）I04/I03/W04 子测试通过；I06 失败的根因是测试等待语句的 sqlite 查询三重转义、从未被解析（诊断显示撤销 196ms 内已 revoked，三方 outbox 均 acked），并非缺 ack；已修（4a0f725），重跑 run 41088865318，CI 待结果。 |
 | V1-I05 | 自身任务和共享任务 | 部分 | 单元/集成 | access.test.ts 覆盖自身/他人任务的读取与取消判定；真实 transcript 与 owner 跨任务管理未在 VM 中做。 |
-| V1-I06 | 撤销与写提交竞争 | 部分 | KVM VM（Actions） | m3-members：Host 运行中撤销 → 被撤销者的读写立即被拒；revocations 只有在 gateway/host/broker 三方 ack 后才变 revoked。写提交与撤销的精确竞争窗口与 UI 结果一致性未做。 CI：5fd7da2 轮 m3-members 在 I06 撤销等待最后一个 ack 超时失败；f6d9d93 轮（run 41086404523，带撤销/outbox/registry 诊断）已写，CI 待结果。 |
-| V1-I07 | 撤销与模型派发 | 部分 | 单元/集成 | directory.test.ts / admitPermit：等待中的 permit 在 memberVersion 变化后被撤；Rust 单元：native/crates/machine/src/tests.rs s04_final_check_after_waiting_member_version_revocation_and_stop。 m10-sched（两个真实 Host + 本地保持端点）已写；f6d9d93 轮（run 41086409743）第一个子测试 W08 失败（gateway 返回 INVALID_REQUEST unknown method），本项子测试未执行到。 |
-| V1-I08 | 撤销时 | 部分 | KVM VM（Actions） | m3-members：Host 停止时撤销，gateway 立即拒绝，root 侧保持 revoking ≥8 秒，Host 重新启动并 ack 后才 revoked。broker 失联与执行者 fence 未单独做。 CI：5fd7da2 轮 m3-members 在 I06 撤销等待最后一个 ack 超时失败；f6d9d93 轮（run 41086404523，带撤销/outbox/registry 诊断）已写，CI 待结果。 |
-| V1-I09 | owner | 部分 | KVM VM（Actions） | m3-members：最后 owner 不能被移除/降级；禁用账户后该账户无法再绑定会话。旧批准策略暂停与 transferOwner 双边确认未在 VM 中断言。 CI：5fd7da2 轮 m3-members 在 I06 撤销等待最后一个 ack 超时失败；f6d9d93 轮（run 41086404523，带撤销/outbox/registry 诊断）已写，CI 待结果。 |
-| V1-I10 | 锁屏/注销后的请求 | 部分 | KVM VM（Actions） | m3-members：过期 sessionEpoch 被拒；session.end 后同连接不能继续；logind LockedHint=yes 时不能绑定，解锁后可以。已授权持久 run 在原 scope 内继续未在 VM 中做。 CI：5fd7da2 轮 m3-members 在 I06 撤销等待最后一个 ack 超时失败；f6d9d93 轮（run 41086404523，带撤销/outbox/registry 诊断）已写，CI 待结果。 |
-| V1-I11 | 秘密不外泄 | 部分 | KVM VM（Actions） | m3-members：创建账户期间每 50ms 采样全部进程 argv，四个 PAM 口令均不出现在 argv、journal、/var/lib/agentos*、/var/log、/run/agentos。provider/Wi-Fi 秘密、诊断包、会话备份与 Nix store 未扫描。 CI：5fd7da2 轮 m3-members 在 I06 撤销等待最后一个 ack 超时失败；f6d9d93 轮（run 41086404523，带撤销/outbox/registry 诊断）已写，CI 待结果。 |
+| V1-I06 | 撤销与写提交竞争 | 部分 | KVM VM（Actions） | m3-members：Host 运行中撤销 → 被撤销者的读写立即被拒；revocations 只有在 gateway/host/broker 三方 ack 后才变 revoked。写提交与撤销的精确竞争窗口与 UI 结果一致性未做。 CI：f6d9d93 轮（run 41086404523）I04/I03/W04 子测试通过；I06 失败的根因是测试等待语句的 sqlite 查询三重转义、从未被解析（诊断显示撤销 196ms 内已 revoked，三方 outbox 均 acked），并非缺 ack；已修（4a0f725），重跑 run 41088865318，CI 待结果。 |
+| V1-I07 | 撤销与模型派发 | 部分 | 单元/集成 | directory.test.ts / admitPermit：等待中的 permit 在 memberVersion 变化后被撤；Rust 单元（本轮在 agentos-v1 cargo test 通过）：native/crates/machine/src/tests.rs s04_final_check_after_waiting_member_version_revocation_and_stop。 m10-sched（两个真实 Host + 本地保持端点）已写；f6d9d93 轮（run 41086409743）第一个子测试 W08 失败（gateway 返回 INVALID_REQUEST unknown method），本项子测试未执行到。 |
+| V1-I08 | 撤销时 | 部分 | KVM VM（Actions） | m3-members：Host 停止时撤销，gateway 立即拒绝，root 侧保持 revoking ≥8 秒，Host 重新启动并 ack 后才 revoked。broker 失联与执行者 fence 未单独做。 CI：f6d9d93 轮（run 41086404523）I04/I03/W04 子测试通过；I06 失败的根因是测试等待语句的 sqlite 查询三重转义、从未被解析（诊断显示撤销 196ms 内已 revoked，三方 outbox 均 acked），并非缺 ack；已修（4a0f725），重跑 run 41088865318，CI 待结果。 |
+| V1-I09 | owner | 部分 | KVM VM（Actions） | m3-members：最后 owner 不能被移除/降级；禁用账户后该账户无法再绑定会话。旧批准策略暂停与 transferOwner 双边确认未在 VM 中断言。 CI：f6d9d93 轮（run 41086404523）I04/I03/W04 子测试通过；I06 失败的根因是测试等待语句的 sqlite 查询三重转义、从未被解析（诊断显示撤销 196ms 内已 revoked，三方 outbox 均 acked），并非缺 ack；已修（4a0f725），重跑 run 41088865318，CI 待结果。 |
+| V1-I10 | 锁屏/注销后的请求 | 部分 | KVM VM（Actions） | m3-members：过期 sessionEpoch 被拒；session.end 后同连接不能继续；logind LockedHint=yes 时不能绑定，解锁后可以。已授权持久 run 在原 scope 内继续未在 VM 中做。 CI：f6d9d93 轮（run 41086404523）I04/I03/W04 子测试通过；I06 失败的根因是测试等待语句的 sqlite 查询三重转义、从未被解析（诊断显示撤销 196ms 内已 revoked，三方 outbox 均 acked），并非缺 ack；已修（4a0f725），重跑 run 41088865318，CI 待结果。 |
+| V1-I11 | 秘密不外泄 | 部分 | KVM VM（Actions） | m3-members：创建账户期间每 50ms 采样全部进程 argv，四个 PAM 口令均不出现在 argv、journal、/var/lib/agentos*、/var/log、/run/agentos。provider/Wi-Fi 秘密、诊断包、会话备份与 Nix store 未扫描。 CI：f6d9d93 轮（run 41086404523）I04/I03/W04 子测试通过；I06 失败的根因是测试等待语句的 sqlite 查询三重转义、从未被解析（诊断显示撤销 196ms 内已 revoked，三方 outbox 均 acked），并非缺 ack；已修（4a0f725），重跑 run 41088865318，CI 待结果。 |
 | V1-I12 | 多版本/旧主体绕过 | 部分 | KVM VM（Actions）＋单元/集成 | m2-identity：forward 携带 principal/URL 被拒；access.test.ts 与 Rust：protocol 1 在 minWriteProtocol=3 后被拒。旧 memberVersion/旧 plan 在 VM 中未单独做。 |
 
 ## 工作区隔离
@@ -50,11 +50,11 @@
 | V1-W01 | 真实 | 通过 | KVM VM（Actions） | m2-identity：两工作区不同执行 UID、各自 subuid 段与 0700 数据目录；双方 UID 与登录用户都不能读对方 os.sqlite。 |
 | V1-W02 | 容器逃逸入口 | 未通过 | 未验收 | VM 中未启动应用容器，Wayland/session bus/machine/gateway/Nix socket 不可见性未测。 |
 | V1-W03 | 创建断点 | 部分 | 单元/集成 | directory.test.ts：半创建工作区不可见；VM 中各断点强杀未做。 |
-| V1-W04 | 两工作区并行 | 部分 | KVM VM（Actions） | m3-members：两个 Host 在不同 UID 下并行；SIGKILL A 的 Host 后 B 仍正常应答，A 由 systemd 重启后恢复。 CI：5fd7da2 轮 m3-members 在 I06 撤销等待最后一个 ack 超时失败；f6d9d93 轮（run 41086404523，带撤销/outbox/registry 诊断）已写，CI 待结果。 |
+| V1-W04 | 两工作区并行 | 通过 | KVM VM（Actions） | m3-members：两个 Host 在不同 UID 下并行；SIGKILL A 的 Host 后 B 仍正常应答，A 由 systemd 重启后恢复。 CI：f6d9d93 轮（run 41086404523）I04/I03/W04 子测试通过；I06 失败的根因是测试等待语句的 sqlite 查询三重转义、从未被解析（诊断显示撤销 196ms 内已 revoked，三方 outbox 均 acked），并非缺 ack；已修（4a0f725），重跑 run 41088865318，CI 待结果。 |
 | V1-W05 | 切换与迟到响应 | 未通过 | 未验收 | Shell 快速切换与迟到响应过滤只有 offscreen ctest 的部分断言，未在 VM 会话中做。 |
 | V1-W06 | 接受后切换 | 未通过 | 未验收 | 未做。 |
-| V1-W07 | 停止/归档 | 部分 | KVM VM（Actions） | m3-members：stop 后无 Host/Podman 进程且 os.sqlite/agent.sqlite 保留；archive 后数据保留、attach 被拒。归档恢复未做。 CI：5fd7da2 轮 m3-members 在 I06 撤销等待最后一个 ack 超时失败；f6d9d93 轮（run 41086404523，带撤销/outbox/registry 诊断）已写，CI 待结果。 |
-| V1-W08 | 后台与注销 | 部分 | 单元/集成 | Rust 单元：native/crates/machine/src/tests.rs w08_run_when_logged_out_default_off_owner_only_and_machine_quota：默认关闭、仅 owner、机器限额 ≤ 运行工作区上限。VM：m10-sched W08 子测试失败（INVALID_REQUEST unknown method，gateway/machined 未映射该方法），未通过。 |
+| V1-W07 | 停止/归档 | 部分 | KVM VM（Actions） | m3-members：stop 后无 Host/Podman 进程且 os.sqlite/agent.sqlite 保留；archive 后数据保留、attach 被拒。归档恢复未做。 CI：f6d9d93 轮（run 41086404523）I04/I03/W04 子测试通过；I06 失败的根因是测试等待语句的 sqlite 查询三重转义、从未被解析（诊断显示撤销 196ms 内已 revoked，三方 outbox 均 acked），并非缺 ack；已修（4a0f725），重跑 run 41088865318，CI 待结果。 |
+| V1-W08 | 后台与注销 | 部分 | 单元/集成（VM 已写，CI 待结果） | Rust 单元（本轮在 agentos-v1 通过）：native/crates/machine/src/tests.rs w08_run_when_logged_out_default_off_owner_only_and_machine_quota：默认关闭、仅 owner、机器限额 ≤ 运行工作区上限。§16.1 没有设置类 route（原测试调用的 workspaces.setRunWhenLoggedOut 被 gateway 以 unknown method 拒绝），改为固定机器动作 workspaces.runWhenLoggedOut（plan→confirm，plan 与 dispatch 两次核对 owner）；m10-sched W08 子测试改为走该动作，重跑 run 41088879793，CI 待结果。锁屏/注销不扩大维护范围未单独断言。 |
 | V1-W09 | 资源共享冲突 | 未通过 | 未验收 | 两工作区共享物理资源的 broker 全局 fence 未在 v1.0 VM 中测（发行镜像不登记资源）。 |
 | V1-W10 | 重复导入与删除 | 部分 | 单元/集成 | directory.test.ts 拒绝重复 storeUUID；删除核对与身份 tombstone 未测。 |
 
@@ -92,13 +92,13 @@
 
 | 编号 | 名称 | 结论 | 证据等级 | 证据 / 原因 |
 |---|---|---|---|---|
-| V1-S01 | 两级额度 | 部分 | 单元/集成 | Rust 单元：native/crates/machine/src/tests.rs s01_two_level_quota_total_two_background_one_and_day_budgets；directory.test.ts：两工作区总并发 ≤2 且一方不能占满。 m10-sched（两个真实 Host + 本地保持端点）已写；f6d9d93 轮（run 41086409743）第一个子测试 W08 失败（gateway 返回 INVALID_REQUEST unknown method），本项子测试未执行到。 |
-| V1-S02 | 前台公平性 | 部分 | 单元/集成 | Rust 单元：native/crates/machine/src/tests.rs s02_foreground_round_robin_one_workspace_cannot_monopolise；directory.test.ts gives the waiting workspace the next slot。 m10-sched（两个真实 Host + 本地保持端点）已写；f6d9d93 轮（run 41086409743）第一个子测试 W08 失败（gateway 返回 INVALID_REQUEST unknown method），本项子测试未执行到。 |
+| V1-S01 | 两级额度 | 部分 | 单元/集成 | Rust 单元（本轮在 agentos-v1 cargo test 通过）：native/crates/machine/src/tests.rs s01_two_level_quota_total_two_background_one_and_day_budgets；directory.test.ts：两工作区总并发 ≤2 且一方不能占满。 m10-sched（两个真实 Host + 本地保持端点）已写；f6d9d93 轮（run 41086409743）第一个子测试 W08 失败（gateway 返回 INVALID_REQUEST unknown method），本项子测试未执行到。 |
+| V1-S02 | 前台公平性 | 部分 | 单元/集成 | Rust 单元（本轮在 agentos-v1 cargo test 通过）：native/crates/machine/src/tests.rs s02_foreground_round_robin_one_workspace_cannot_monopolise；directory.test.ts gives the waiting workspace the next slot。 m10-sched（两个真实 Host + 本地保持端点）已写；f6d9d93 轮（run 41086409743）第一个子测试 W08 失败（gateway 返回 INVALID_REQUEST unknown method），本项子测试未执行到。 |
 | V1-S03 | 无锁循环 | 未通过 | 未验收 | 未做。 |
-| V1-S04 | 准入最终检查 | 部分 | 单元/集成 | Rust 单元：native/crates/machine/src/tests.rs s04_final_check_after_waiting_member_version_revocation_and_stop。VM 未做。 |
-| V1-S05 | permit | 部分 | 单元/集成 | Rust 单元：native/crates/machine/src/tests.rs s05_s06_restart_never_frees_held_slots_until_the_holder_is_gone_unknown_is_charged；directory.test.ts：重启不释放已占槽。VM 中 reserved/in_use 各位置强杀未做。 |
-| V1-S06 | 进程与未知用量 | 部分 | 单元/集成 | Rust 单元：native/crates/machine/src/tests.rs s05_s06_restart_never_frees_held_slots_until_the_holder_is_gone_unknown_is_charged（unknown 按已用计费）。VM 未做。 |
-| V1-S07 | 背景让行 | 部分 | 单元/集成 | Rust 单元：native/crates/machine/src/tests.rs s07_background_yields_to_foreground。VM 未做。 |
+| V1-S04 | 准入最终检查 | 部分 | 单元/集成 | Rust 单元（本轮在 agentos-v1 cargo test 通过）：native/crates/machine/src/tests.rs s04_final_check_after_waiting_member_version_revocation_and_stop。VM 未做。 |
+| V1-S05 | permit | 部分 | 单元/集成 | Rust 单元（本轮在 agentos-v1 cargo test 通过）：native/crates/machine/src/tests.rs s05_s06_restart_never_frees_held_slots_until_the_holder_is_gone_unknown_is_charged；directory.test.ts：重启不释放已占槽。VM 中 reserved/in_use 各位置强杀未做。 |
+| V1-S06 | 进程与未知用量 | 部分 | 单元/集成 | Rust 单元（本轮在 agentos-v1 cargo test 通过）：native/crates/machine/src/tests.rs s05_s06_restart_never_frees_held_slots_until_the_holder_is_gone_unknown_is_charged（unknown 按已用计费）。VM 未做。 |
+| V1-S07 | 背景让行 | 部分 | 单元/集成 | Rust 单元（本轮在 agentos-v1 cargo test 通过）：native/crates/machine/src/tests.rs s07_background_yields_to_foreground。VM 未做。 |
 | V1-S08 | 机器不可达 | 未通过 | 未验收 | m10-sched（两个真实 Host + 本地保持端点）已写；f6d9d93 轮（run 41086409743）第一个子测试 W08 失败（gateway 返回 INVALID_REQUEST unknown method），本项子测试未执行到。 |
 
 ## 安装与更新
@@ -159,13 +159,13 @@
 | V1-O05 | 持续后台性能 | 未通过 | 需实体机，未验收 | 需要固定参考机计时。 |
 | V1-O06 | 真实故障恢复 | 部分 | KVM VM（Actions） | VM 中已有：machined 重启保身份（m2）、Host SIGKILL 后另一工作区不受影响（m3）、坏候选复位（m7）、检查点强杀（m8）。Shell/broker SIGKILL 与 VM power-cut 窗口未做。 |
 | V1-O07 | 原生入口攻击 | 部分 | 单元/集成 | access.test.ts：重复键/未知字段/URL 形 forward/超长帧被拒；fuzz 与慢连接未做。 |
-| V1-O08 | 日志与支持包 | 未通过 | 未验收 | 诊断包脱敏与审计不轮转未验收。 |
+| V1-O08 | 日志与支持包 | 部分 | 单元/集成（VM 已写，CI 待结果） | agentosctl support-bundle --out <file>（native/crates/machine/src/ctl.rs）：仅 root、0600；只收机器级事实（release、boot、schema/协议、身份摘要 sha256 前 16 位、registry、工作区状态、permit/barrier/restore、boot default）与脱敏服务日志（含 password/psk/secret/token/cookie/authorization/api key/private 的行替换为标记），不收工作区正文。Rust 单元 o08_support_bundle_lines_naming_secrets_are_replaced 本轮通过；m10-sched O08 子测试（非 root 被拒、0600、无 PAM 口令、无完整 machineInstallId、root_audit 不被轮转）已写，CI 待结果。 |
 | V1-O09 | 干净构建与安装 | 未通过 | 未验收 | 两次干净构建比对与同一候选的完整交付演练未做。 |
 | V1-O10 | 发布完成条件 | 未通过 | 未验收 | 100 项证据未齐，不能宣称发布完成。 |
 
 ## 统计
 
-未通过 30 项，通过 20 项，部分 50 项（共 100 项）。
+未通过 29 项，通过 22 项，部分 49 项（共 100 项）。
 
 ## 回归与偶发失败记录
 
@@ -187,7 +187,7 @@
 | V1-H07 | 实体机电源 | 普通关机、排空超时、强制继续三种路径；之后核对模型/外部效果事实与收据。 |
 | V1-H08 | 一台含不支持设备的机器 | 确认只局部降级、没有用普通子进程替代 sandbox，报告不宣称未测硬件。 |
 | V1-D10 | 实体显示 + Fcitx5 | 在 Shell 输入框做拼音/注音组合输入、简繁显示、Tab 焦点与快捷键、缩放；锁屏时确认未提交输入被清理。 |
-| V1-U01（实盘） | 一块 ≥64 GiB 实体盘 | 用 ISO 离线安装（拔网线），首次登录；需先解决 OCI 基础镜像离线（见 B04）。 |
+| V1-U01（实盘） | 一块 ≥64 GiB 实体盘 | 用 ISO 离线安装（拔网线），首次登录；离线 OCI 已进发行闭包，发行镜像中应用容器启动仍待修（见 B04）。 |
 | V1-U02（实盘） | 带 WWN/serial 的实体盘 | `agentos-install inspect/plan` 后换盘或改分区，确认被拒；复制中断电后在同一盘续作。 |
 | V3-E04（继承） | 实体串口设备 | 按 v0.4 验收文档的串口步骤在实体设备上重跑。 |
 | V1-O04 / V1-O05 | 固定参考机 | 在参考机上按规格第 27 节的起止定义取样（冷启动到 greeter、登录到画布、CRUD p95；ABBA 暖机），报告样本数与分位数。 |
@@ -195,3 +195,5 @@
 ## 发行签名
 
 `nix build .#agentos-release` 产出**未签名**的 ReleaseManifest（manifest.json）、SBOM（sbom.json）与 SHA256SUMS（本轮 Actions 构建通过）。按规格 §20.1 与 M10，签名私钥只在发布环境使用、绝不进入镜像、仓库或 CI；本轮不执行正式签名与发布。更新器侧的签名/sequence/过期校验由 U04/U05 的单元测试覆盖，正式签名链与密钥轮换的端到端验收在发布环节完成。
+
+- CI 的 Nix 缓存：cache-nix-action 把整库 tar 恢复到 daemon 拥有的 /nix/store，每个路径 “Cannot mkdir: Permission denied”，每轮从零构建；0ce9fb6 起换为 DeterminateSystems/magic-nix-cache-action@v15（路径级、跨 job 去重）。
