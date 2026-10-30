@@ -74,8 +74,12 @@ with subtest("a bad candidate (no init) falls back to the default, no endless re
     uw(f"arm --esp /boot --release-id {BAD} --known-good {CAND}")
     machine.succeed("sync")
     machine.shutdown()
+    # stage 1 fails, the kernel panics and resets (panic=1). The test QEMU runs with -no-reboot, so the reset ends the
+    # QEMU process; starting it again with the same disk and EFI variables is the hardware reset. The firmware then
+    # boots the persistent default: the one-shot was consumed by the failed attempt.
     machine.start()
-    # stage 1 panics, the kernel resets, the firmware boots the persistent default (one-shot consumed)
+    machine.wait_for_shutdown()
+    machine.start()
     machine.wait_for_unit("multi-user.target", timeout=900)
     assert booted_release() == CAND, booted_release()
     facts = json.dumps({"state": "armed", "candidate": BAD, "knownGood": CAND})
