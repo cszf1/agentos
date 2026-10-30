@@ -19,6 +19,14 @@ def tty_run(n, cmd, out):
     machine.wait_until_succeeds(f"grep -q '^done$' {out}", timeout=180)
     return machine.succeed(f"cat {out}")
 
+def must(cmd):
+    rc, out = machine.execute(cmd + " 2>&1")
+    if rc != 0:
+        print(out)
+        print(machine.execute("journalctl -u agentos-machine -u agentos-session-gateway --no-pager | tail -60")[1])
+        raise Exception(f"failed: {cmd}")
+    return out
+
 machine.start()
 machine.wait_for_unit("agentos-machine.service")
 machine.wait_for_unit("agentos-session-gateway.service")
@@ -28,7 +36,7 @@ machine.succeed("stat -c '%U %a' /run/agentos/gateway | grep -q 'root 755'")
 machine.fail("ss -ltnp | grep -E 'agentos|node'")
 
 with subtest("first boot: one identity, admin, default workspace; repeat is rejected"):
-    out = json.loads(machine.succeed("printf 'alice-pw-1' | agentosctl firstboot --admin alice --workspace 'Alice 工作区'"))
+    out = json.loads(must("printf 'alice-pw-1' | agentosctl firstboot --admin alice --workspace 'Alice 工作区'"))
     ws_a = out["workspaceId"]
     mid = out["machineInstallId"]
     machine.fail("printf 'x' | agentosctl firstboot --admin mallory")

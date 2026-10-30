@@ -18,7 +18,8 @@ in {
     src = final.fetchurl { url = "https://registry.npmjs.org/pnpm/-/pnpm-${version}.tgz"; hash = "sha512-9JtajqD97bRLs8DB1ldQkqU8KVDZW3rRXfEfF5dId6LeOgHAfpNOmyjOcW5RwJqUlixzBtCb4uHksYqMh2L9Mg=="; };
   });
   agentos-src = src;
-  agentos-native = final.callPackage ./native.nix { inherit src rustPlatform; };
-  agentos-node = final.callPackage ./node.nix { inherit src; };
+  # Narrow sources so a change in one part does not rebuild the others.
+  agentos-native = final.callPackage ./native.nix { inherit rustPlatform; src = final.lib.fileset.toSource { root = ../..; fileset = final.lib.fileset.unions [ ../../native/Cargo.toml ../../native/Cargo.lock ../../native/crates ../../native/bpf ../../native/rust-toolchain.toml ../../docs/contracts ../../fixtures/v1.0 ../../fixtures/v0.3 ]; }; };
+  agentos-node = final.callPackage ./node.nix { src = final.lib.fileset.toSource { root = ../..; fileset = final.lib.fileset.unions [ ../../package.json ../../pnpm-lock.yaml ../../pnpm-workspace.yaml ../../.node-version ../../tsconfig.base.json ../../packages ../../runtime ../../fixtures ../../docs/contracts ../../bin ]; }; };
   agentos-shell = final.callPackage ../../desktop/package.nix { };
 }
