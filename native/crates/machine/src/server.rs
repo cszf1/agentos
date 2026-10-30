@@ -145,6 +145,10 @@ pub fn dispatch(m: &mut Machine, ex: &mut dyn Executor, secrets: &std::sync::Mut
             "workspaces.unarchive" => m.unarchive_workspace(&principal(&a)?.user_id, s(&a, "workspaceId")?),
             "workspaces.setRunWhenLoggedOut" => m.set_run_when_logged_out(&principal(&a)?.user_id, s(&a, "workspaceId")?, a.get("enabled").and_then(|x| x.as_bool()).unwrap_or(false)).map(|_| json!({})),
             "workspaces.row" => m.ws_row(s(&a, "workspaceId")?),
+            "workspaces.all" => Ok(json!({ "workspaces": m.all_workspaces()? })),
+            "workspaces.rootStop" => m.stop_workspace(s(&a, "workspaceId")?),
+            "workspaces.rootStart" => m.start_workspace(s(&a, "workspaceId")?),
+            "workspaces.memberSnapshot" => crate::dir::Machine::member_snapshot(&m.c, s(&a, "workspaceId")?),
             "workspaces.byExecUid" => Ok(json!({ "workspaceId": m.ws_by_exec_uid(i(&a, "uid")? as u32)? })),
             "workspaces.resume" => Ok(json!({ "resumed": m.resume_creations()? })),
             "members.check" => {

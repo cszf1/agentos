@@ -149,7 +149,10 @@ impl Machine {
                 }))
             },
         ).optional()?;
-        m.ok_or_else(|| MErr::new("MIGRATION_REQUIRED", "machine is not installed"))
+        let mut m = m.ok_or_else(|| MErr::new("MIGRATION_REQUIRED", "machine is not installed"))?;
+        // Highest registry message the broker ever acknowledged: proof that a broker log existed (V1-R11).
+        m["brokerAckedSeq"] = json!(opt_i64(&self.c, "SELECT COALESCE(MAX(ack_seq), 0) FROM registry_outbox WHERE target_kind = 'broker' AND state = 'acked'", [])?.unwrap_or(0));
+        Ok(m)
     }
 
     pub fn control_epoch(&self) -> R<i64> {
@@ -597,6 +600,16 @@ impl Machine {
         Ok(done)
     }
 
+    /// Root view of every workspace (backup/restore orchestration only; never reaches a session).
+    pub fn all_workspaces(&self) -> R<Vec<Value>> {
+        let ids: Vec<String> = {
+            let mut st = self.c.prepare("SELECT workspace_id FROM workspaces ORDER BY workspace_id")?;
+            let v = st.query_map([], |r| r.get::<_, String>(0))?.collect::<Result<Vec<_>, _>>()?;
+            v
+        };
+        ids.iter().map(|w| self.ws_row(w)).collect()
+    }
+
     pub fn ws_row(&self, ws: &str) -> R<Value> {
         self.c
             .query_row(
@@ -658,7 +671,8 @@ impl Machine {
     }
 
     pub fn start_workspace(&mut self, ws: &str) -> R<Value> {
-        self.require_restore_idle()?;
+        // A held machine barrier freezes every participant (spec §24, V1-R02): no workspace may start under it.
+        self.require_no_barrier()?;
         let row = self.ws_row(ws)?;
         let state = row["state"].as_str().unwrap_or_default();
         if state == "running" || state == "starting" {
@@ -960,6 +974,8 @@ impl Machine {
         if !is_uuid(instance_id) {
             return Err(MErr::new("INVALID_REQUEST", "instanceId must be a uuid"));
         }
+        // Nor may a Host that its user manager started on its own join while a barrier or restore holds the machine.
+        self.require_no_barrier()?;
         self.tx(|c| {
             let (state, epoch): (String, i64) = c.query_row("SELECT state, instance_epoch FROM workspaces WHERE workspace_id = ?1", [ws], |r| Ok((r.get(0)?, r.get(1)?)))?;
             if c.query_row("SELECT 1 FROM workspace_instances WHERE instance_id = ?1", [instance_id], |_| Ok(())).optional()?.is_none() {

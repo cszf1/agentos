@@ -48,16 +48,22 @@ pub fn serve() -> i32 {
     // v1.0: the machine identity comes from agentos-machined (spec §19.4); the log is created for it on first start.
     let machine_mode = pol.machine_install_id == crate::registry::MACHINE_REGISTRY_ID;
     let mut pol = pol;
+    let mut lost_log = None;
     if machine_mode {
-        pol.machine_install_id = crate::registry::machine_install_id();
-        if !std::path::Path::new(db::DB_PATH).exists() {
+        let (mid, seq) = crate::registry::machine_meta();
+        pol.machine_install_id = mid;
+        // V1-R11: the broker already acknowledged registry messages (so it had a log) but the log is gone: it lost its
+        // root-side history. Never start over with an empty log (old effects/quarantine would be forgotten): diagnostics only.
+        if !std::path::Path::new(db::DB_PATH).exists() && seq > 0 {
+            lost_log = Some(format!("BROKER_HISTORY_MISSING: the execution log is gone but the broker had acknowledged registry seq {seq}; restore the broker log or accept a new installation identity"));
+        } else if !std::path::Path::new(db::DB_PATH).exists() {
             if let Err(e) = db::create(db::DB_PATH, &pol.machine_install_id, &pver) {
                 eprintln!("agentos-broker: cannot create the log: {e}");
                 return 1;
             }
         }
     }
-    let (conn, diag) = match db::open_existing(db::DB_PATH) {
+    let (conn, diag) = if let Some(d) = lost_log { (None, Some(d)) } else { match db::open_existing(db::DB_PATH) {
         Ok(c) => {
             let id = db::meta(&c, "machine_install_id").unwrap_or_default();
             if id != pol.machine_install_id {
@@ -69,7 +75,7 @@ pub fn serve() -> i32 {
             }
         }
         Err(e) => (None, Some(e)),
-    };
+    } };
     if let Some(d) = &diag {
         eprintln!("agentos-broker: diagnostics-only mode: {d}");
     }

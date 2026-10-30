@@ -76,7 +76,12 @@ vm.runInLinuxVM (pkgs.runCommand "agentos-oci" {
   passthru = { inherit baseDir caches contexts base; };
 } ''
   set -euo pipefail
-  mkdir -p /etc/containers /tmp/oci /run /var/tmp
+  mkdir -p /etc/containers /tmp/oci /run /var/tmp /sys/fs/cgroup /dev/shm /dev/pts
+  # the build VM has no init: give the OCI runtime what systemd would have mounted
+  mountpoint -q /sys/fs/cgroup || mount -t cgroup2 cgroup2 /sys/fs/cgroup
+  mountpoint -q /dev/shm || mount -t tmpfs -o mode=1777 tmpfs /dev/shm
+  mountpoint -q /dev/pts || mount -t devpts -o mode=620,ptmxmode=666 devpts /dev/pts
+  echo "+cpu +memory +pids" > /sys/fs/cgroup/cgroup.subtree_control || true
   cp ${podmanConf} /etc/containers/containers.conf
   cp ${policy} /etc/containers/policy.json
   cp ${storageConf} /etc/containers/storage.conf

@@ -64,12 +64,13 @@ pub fn connect() -> Result<UnixStream, String> {
 }
 
 /// Wait until machined has a machine identity (first boot may still be running) and return it.
-pub fn machine_install_id() -> String {
+/// (machineInstallId, highest registry seq the broker ever acknowledged) from machined; waits until the machine has an identity.
+pub fn machine_meta() -> (String, i64) {
     loop {
         if let Ok(mut s) = connect() {
             if let Ok(v) = call(&mut s, "status", json!({})) {
                 if let Some(id) = v["meta"]["machineInstallId"].as_str() {
-                    return id.to_string();
+                    return (id.to_string(), v["meta"]["brokerAckedSeq"].as_i64().unwrap_or(0));
                 }
             }
         }
