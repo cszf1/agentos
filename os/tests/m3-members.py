@@ -339,6 +339,12 @@ with subtest("delete with exported data only after an age copy of a set holding 
     r = call(1, [{"methodId": "workspaces.create", "idempotencyKey": str(uuid.uuid4()), "body": {"displayName": "Exported"}}], "x0")[0]
     assert r["status"] == 201, r
     ws_x = r["body"]["workspaceId"]
+    # the workspace holds data before it is exported: its Host ran once (both stores exist), then it was stopped
+    r = call(1, [{"methodId": "workspaces.attach", "workspaceId": ws_x, "idempotencyKey": str(uuid.uuid4()), "body": {}}], "xa")[0]
+    assert r["status"] == 200, r
+    machine.wait_until_succeeds(f"test -s /var/lib/agentos/workspaces/{ws_x}/data/agent.sqlite && test -s /var/lib/agentos/workspaces/{ws_x}/data/os.sqlite", timeout=120)
+    r = call(1, [{"methodId": "workspaces.stop", "workspaceId": ws_x, "idempotencyKey": str(uuid.uuid4()), "body": {}}], "xs")[0]
+    assert r["status"] == 200, r
     r = call(1, [{"methodId": "workspaces.archive", "workspaceId": ws_x, "idempotencyKey": str(uuid.uuid4()), "body": {}}], "x1")[0]
     assert r["status"] == 200 and r["body"]["state"] == "archived", r
     rc, o = machine.execute("agentosctl backup --out /var/lib/agentos-snapshots/x1 --include-archived 2>&1")

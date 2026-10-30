@@ -109,7 +109,7 @@ with subtest("containers on the new UID come from the fixed release images; the 
     login_n = sql(f"SELECT exec_login FROM workspaces WHERE workspace_id='{ws_n}'")
     assert int(machine.succeed(f"id -u {login_n}").strip()) == uid_n
     # nothing of a Podman store came with the set: the part holds only the workspace data tree
-    machine.fail(f"find /root/cset -path '*containers*' -o -name 'overlay*' | grep -q .")
+    machine.fail("find /root/cset -path '*containers*' -o -name 'overlay*' | grep -q .")
     machine.succeed(f"test \"$(find /var/lib/agentos-runtime/{ws_n} ! -uid {uid_n} 2>/dev/null | wc -l)\" = 0")
     machine.wait_until_succeeds(f"test -S /run/user/{uid_n}/podman/podman.sock", timeout=120)
     machine.succeed("ip route del default 2>/dev/null; ip -6 route del default 2>/dev/null; true")
