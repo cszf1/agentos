@@ -344,18 +344,31 @@ run("v0.3 host system path (real broker, real sandbox)", () => {
     const svc = res("service");
     await connect("svc", "service");
     const other = await plan("setCpu", { percent: 55 });
-    // each faux model turn waits 1.5 s, so the run is still active right after its plan was prepared
-    const body = { intent: "将演示服务 CPU 上限设为 25% [faux:slow:1500]", targetAppId: null, mode: "system_plan" as const, resourceIds: [svc.id], capabilityScopes: ["service.set_limit"] };
+    // system_plan ends the Pi turn as soon as the plan is accepted, so "still active after the plan" exists only
+    // between the plan and the host's finalize. Hold that gap open deterministically: stop the coordinator once the
+    // run is submitted, let Pi finish, and replay while the run is still unfinalized (the same state a Pi restart
+    // replays into). No timer race.
+    const body = { intent: "将演示服务 CPU 上限设为 25% [faux:slow:300]", targetAppId: null, mode: "system_plan" as const, resourceIds: [svc.id], capabilityScopes: ["service.set_limit"] };
     const r = rig.core.user.submitRun(key(), body as never);
     void rig.coord.kick();
-    const prepared = await waitUntil(() => rig.core.runs.getRow(r.body.runId)!.prepared_action_id as string | null, (x) => !!x, 30_000, 50);
-    const a = caps().actions.require(prepared!);
-    const plan0 = JSON.parse(a.plan_json) as { params: Record<string, unknown> };
-    // a replayed identical call (e.g. after a Pi restart) finds the original plan; a different one is refused
-    const replay = await caps().runPlan(r.body.runId, a.tool_task_id!, { resourceId: svc.id, capabilityId: "service.set_limit", params: plan0.params, observationIds: JSON.parse(a.observation_refs) });
-    expect(replay.id).toBe(a.id);
-    await expect(caps().runPlan(r.body.runId, a.tool_task_id!, { resourceId: svc.id, capabilityId: "service.set_limit", params: { ...plan0.params, value: 300000 }, observationIds: [] })).rejects.toMatchObject({ code: "INVALID_SYSTEM_PLAN" });
+    await waitUntil(() => rig.core.runs.getRow(r.body.runId)!.dispatch_state as string, (x) => x === "submitted", 30_000, 20);
+    rig.coord.stop();
+    let prepared: string | null = null;
+    try {
+      await rig.coord.drain();
+      prepared = await waitUntil(() => rig.core.runs.getRow(r.body.runId)!.prepared_action_id as string | null, (x) => !!x, 30_000, 50);
+      expect(rig.core.runs.getRow(r.body.runId)!.status).toBe("running");
+      const a = caps().actions.require(prepared!);
+      const plan0 = JSON.parse(a.plan_json) as { params: Record<string, unknown> };
+      // a replayed identical call (e.g. after a Pi restart) finds the original plan; a different one is refused
+      const replay = await caps().runPlan(r.body.runId, a.tool_task_id!, { resourceId: svc.id, capabilityId: "service.set_limit", params: plan0.params, observationIds: JSON.parse(a.observation_refs) });
+      expect(replay.id).toBe(a.id);
+      await expect(caps().runPlan(r.body.runId, a.tool_task_id!, { resourceId: svc.id, capabilityId: "service.set_limit", params: { ...plan0.params, value: 300000 }, observationIds: [] })).rejects.toMatchObject({ code: "INVALID_SYSTEM_PLAN" });
+    } finally {
+      rig.coord.start();
+    }
     await waitRun(rig, r.body.runId, 60_000);
+    expect(rig.core.runs.getRow(r.body.runId)!.status).toBe("succeeded");
     // cancel another, still running run: the app's pending action and the prepared plan are untouched
     const r2 = rig.core.user.submitRun(key(), { ...body, intent: "将演示服务 CPU 上限设为 26% [faux:slow:3000]" } as never);
     void rig.coord.kick();
