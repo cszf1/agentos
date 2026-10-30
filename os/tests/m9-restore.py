@@ -118,6 +118,12 @@ with subtest("after the backup: revoke bob, disable carol, leave a machine plan 
     assert '"succeeded"' in json.dumps(ok), ok
     stale = call(1, [{"methodId": "machine.users.create", "idempotencyKey": str(uuid.uuid4()), "body": {"loginName": "dave", "role": "user", "password": "dave-pw-1"}}], "sp")[0]
     assert stale["status"] == 201, stale
+    # broker facts newer than the set: an indeterminate effect and a quarantined resource of workspace A's store
+    store_a6 = sql(f"SELECT store_uuid FROM workspaces WHERE workspace_id='{ws_a}'")
+    machine.succeed("systemctl stop agentos-broker.path agentos-broker.service")  # the path unit would restart it at once
+    machine.succeed(f"sqlite3 /var/lib/agentos-broker/broker.sqlite \"INSERT INTO effect_operations(machine_install_id,store_uuid,incarnation,operation_id,action_id,plan_hash,request_hash,envelope_json,capability_id,resource_id,resource_generation,replay_class,state,deadline_ms,accepted_seq,updated_seq,created_at,updated_at) VALUES ('t','{store_a6}',1,'r06-op','a','p','r','{{}}','cap','r06-res',1,'effect','indeterminate',1,1,1,1,1); INSERT INTO resource_state(resource_id,store_uuid,kind,catalog_key,generation,status,quarantine_operation_id,updated_at) VALUES ('r06-res','{store_a6}','managed-root','r06',1,'quarantined','r06-op',1)\"")
+    machine.succeed("systemctl start agentos-broker.service agentos-broker.path")
+    machine.wait_for_unit("agentos-broker.service")
     epoch0 = int(sql("SELECT machine_control_epoch FROM machine_meta"))
     inc0 = {w: int(sql(f"SELECT workspace_incarnation FROM workspaces WHERE workspace_id='{w}'")) for w in (ws_a, ws_b)}
 
@@ -170,6 +176,10 @@ with subtest("root-side facts newer than the set still hold: bob revoked, carol 
     assert sql(f"SELECT state FROM users WHERE user_id='{carol}'") == "disabled"
     lst = call(2, [{"methodId": "workspaces.list"}], "bl")[0]
     assert ws_a not in json.dumps(lst), lst
+    # the broker's own facts are not rolled back by a workspace restore: the effect stays unresolved, the quarantine holds
+    B = "sqlite3 /var/lib/agentos-broker/broker.sqlite"
+    assert machine.succeed(f"{B} \"SELECT state || ' ' || IFNULL(resolution_json,'-') FROM effect_operations WHERE operation_id='r06-op'\"").strip() == "indeterminate -"
+    assert machine.succeed(f"{B} \"SELECT status || ' ' || quarantine_operation_id FROM resource_state WHERE resource_id='r06-res'\"").strip() == "quarantined r06-op"
 
 with subtest("broker log lost: diagnostics only, never an empty log (R11)"):
     # agentos-broker.path would start the broker again the moment it stops (before the log is removed): hold it
