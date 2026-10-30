@@ -339,7 +339,13 @@ with subtest("delete with exported data only after an age copy of a set holding 
     r = call(1, [{"methodId": "workspaces.create", "idempotencyKey": str(uuid.uuid4()), "body": {"displayName": "Exported"}}], "x0")[0]
     assert r["status"] == 201, r
     ws_x = r["body"]["workspaceId"]
-    # the workspace holds data before it is exported: its Host ran once (both stores exist), then it was stopped
+    # the workspace holds data before it is exported: its Host ran once (both stores exist), then it was stopped.
+    # The machine runs at most two workspaces; earlier subtests leave two running, so alice stops hers first.
+    for w in sql("SELECT workspace_id FROM workspaces WHERE state IN ('starting','running')").split():
+        if int(sql("SELECT COUNT(*) FROM workspaces WHERE state IN ('starting','running','quiescing')")) < 2:
+            break
+        call(1, [{"methodId": "workspaces.stop", "workspaceId": w, "idempotencyKey": str(uuid.uuid4()), "body": {}}], "xpre")
+    machine.wait_until_succeeds("test $(sqlite3 /var/lib/agentos-machine/machine.sqlite \"SELECT COUNT(*) FROM workspaces WHERE state IN ('starting','running','quiescing')\") -lt 2", timeout=60)
     r = call(1, [{"methodId": "workspaces.attach", "workspaceId": ws_x, "idempotencyKey": str(uuid.uuid4()), "body": {}}], "xa")[0]
     assert r["status"] == 200, r
     machine.wait_until_succeeds(f"test -s /var/lib/agentos/workspaces/{ws_x}/data/agent.sqlite && test -s /var/lib/agentos/workspaces/{ws_x}/data/os.sqlite", timeout=120)

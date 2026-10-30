@@ -7,10 +7,10 @@
 let
   vm = vmTools.override {
     rootModules = [ "virtio_pci" "virtio_mmio" "virtio_blk" "virtio_balloon" "virtio_rng" "ext4" "virtiofs" "crc32c"
-      "dm_mod" "dm_crypt" "btrfs" "vfat" "nls_cp437" "nls_iso8859_1" ];
+      "dm_mod" "cbc" "xts" "aesni_intel" "aes_ti" "af_alg" "algif_skcipher" "dm_crypt" "btrfs" "vfat" "nls_cp437" "nls_iso8859_1" ];
   };
   closure = pkgs.closureInfo { rootPaths = [ system ]; };
-  tools = lib.makeBinPath (with pkgs; [ installer util-linux coreutils gptfdisk cryptsetup btrfs-progs dosfstools nix nixos-install-tools systemd jq e2fsprogs ]);
+  tools = lib.makeBinPath (with pkgs; [ installer util-linux coreutils gptfdisk cryptsetup lvm2 procps btrfs-progs dosfstools nix nixos-install-tools systemd jq e2fsprogs ]);
 in
 vm.runInLinuxVM (pkgs.runCommand name {
   memSize = 3072;
@@ -32,6 +32,9 @@ vm.runInLinuxVM (pkgs.runCommand name {
   ${pkgs.systemd}/lib/systemd/systemd-udevd --daemon || true
   udevadm trigger --action=add || true
   udevadm settle || true
+  # no udev dm rules in the build VM: libdevmapper must not wait for udev cookies (it would wait forever)
+  export DM_DISABLE_UDEV=1
+  echo "build VM: $(nproc) cpus, $(free -m | awk '/Mem:/{print $2}') MiB; crypt: $(grep -c . /proc/crypto) lines; dm targets: $(dmsetup targets 2>&1 | tr '\n' ' ')"
   export AGENTOS_SYSTEM=${system} AGENTOS_INSTALL_ALLOW_PATH=1 AGENTOS_INSTALL_TEMPLATE_BUILD=1
   plan=$(agentos-install plan --disk /dev/vda --template --timezone UTC)
   echo "$plan"

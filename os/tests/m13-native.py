@@ -1,6 +1,5 @@
 # Native Shell end to end (see m13-native.nix). Results are "KVM VM" evidence; the Shell renders offscreen (no real
 # display), driven through its own pages' buttons, Home intent field and app view (records form/search).
-import base64, time, uuid
 machine.start()
 machine.wait_for_unit("agentos-session-gateway.service")
 fb = json.loads(must("printf 'alice-pw-1' | agentosctl firstboot --admin alice --workspace A"))

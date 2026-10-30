@@ -32,10 +32,30 @@ class Refuse(Exception):
     pass
 
 
-def sh(*a, input=None, check=True):
-    r = subprocess.run(list(a), input=input, capture_output=True)
+def progress(msg):
+    """Progress lines go to stderr (stdout carries only the final JSON result)."""
+    sys.stderr.write(f"agentos-install: {msg}\n")
+    sys.stderr.flush()
+
+
+# Every external command has a deadline, so a stuck tool fails the install naming itself instead of hanging it.
+SH_TIMEOUT = int(os.environ.get("AGENTOS_INSTALL_CMD_TIMEOUT", "600"))
+COPY_TIMEOUT = int(os.environ.get("AGENTOS_INSTALL_COPY_TIMEOUT", "5400"))
+
+
+def sh(*a, input=None, check=True, timeout=None, stream=False):
+    t0 = time.time()
+    lim = timeout or SH_TIMEOUT
+    progress(f"run {' '.join(a[:3])}{' …' if len(a) > 3 else ''}")
+    try:
+        r = subprocess.run(list(a), input=input, stdout=subprocess.PIPE, stderr=None if stream else subprocess.PIPE, timeout=lim)
+    except subprocess.TimeoutExpired:
+        progress(f"TIMEOUT {a[0]} after {lim}s")
+        raise Refuse(f"{a[0]} did not finish within {lim}s")
+    progress(f"done {a[0]} rc={r.returncode} in {time.time() - t0:.1f}s")
     if check and r.returncode != 0:
-        raise Refuse(f"{a[0]} failed: {r.stderr.decode(errors='replace').strip()[:400]}")
+        err = (r.stderr or b"").decode(errors='replace').strip()[:400]
+        raise Refuse(f"{a[0]} failed: {err or 'exit ' + str(r.returncode)}")
     return r.stdout.decode(errors="replace")
 
 
@@ -212,6 +232,7 @@ def wait_for(p, t=30):
 
 
 def step(st, name):
+    progress(f"state {name}")
     st["state"] = name
     st["step"] = name
     st["updatedAt"] = time.time()
@@ -269,7 +290,12 @@ def cmd_run(args):
             f.flush()
             os.fsync(f.fileno())
         sh("umount", "/run/agentos-install/esp")
-        sh("cryptsetup", "luksFormat", "--type", "luks2", "--batch-mode", "--pbkdf", "argon2id", "--key-file=-", part(dev, 2), input=pw)
+        kdf = ["--pbkdf", "argon2id"]
+        if st["plan"].get("template"):
+            # the template key is public and first boot replaces this slot: no benchmark (fixed small cost) so the
+            # build VM never spends its time or memory on it
+            kdf += ["--pbkdf-force-iterations", "4", "--pbkdf-memory", "65536", "--pbkdf-parallel", "1"]
+        sh("cryptsetup", "luksFormat", "--type", "luks2", "--batch-mode", *kdf, "--key-file=-", part(dev, 2), input=pw)
     else:
         if not resume_check(st):
             raise Refuse("resume refused: the disk does not carry this install's id (different disk or wiped); start a new plan")
@@ -297,7 +323,8 @@ def cmd_run(args):
         sh("mount", "-o", "umask=0077", part(dev, 1), f"{MNT}/boot")
     if st["state"] == "copying":
         # Offline: the closure comes from the ISO's store; no substituters, no channel.
-        sh("nixos-install", "--system", SYSTEM, "--root", MNT, "--no-root-passwd", "--no-channel-copy", "--option", "substituters", "")
+        sh("nixos-install", "--system", SYSTEM, "--root", MNT, "--no-root-passwd", "--no-channel-copy", "--option", "substituters", "",
+           timeout=COPY_TIMEOUT, stream=True)
         step(st, "configuring")
     if st["state"] == "configuring":
         os.makedirs(f"{MNT}/etc/agentos", exist_ok=True)
