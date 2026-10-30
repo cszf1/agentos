@@ -45,8 +45,7 @@ with subtest("app container from the release images, offline, with no escape sur
     machine.succeed("chvt 2")
 
 with subtest("lock: swaylock confirms, logind LockedHint=yes, gateway refuses (I10/H03)"):
-    sid = machine.succeed("loginctl list-sessions --no-legend | awk '$3==\"alice\" && $5==\"tty2\" {print $1}'").strip() or \
-          machine.succeed("loginctl list-sessions --no-legend | awk '$3==\"alice\" {print $1}' | tail -1").strip()
+    sid = user_session("alice", "tty2")
     machine.succeed(f"loginctl lock-session {sid}")
     machine.wait_until_succeeds("pgrep -u alice -x swaylock", timeout=60)
     machine.wait_until_succeeds(f"loginctl show-session {sid} -p LockedHint | grep -q yes", timeout=60)

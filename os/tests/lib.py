@@ -35,6 +35,20 @@ def tty_run(n, cmd, out):
         raise
     return machine.succeed(f"cat {out}")
 
+def user_session(user, tty=None):
+    # logind 260 list-sessions columns are SESSION UID USER SEAT LEADER CLASS TTY ...; the user manager also owns a
+    # session (class "manager", cannot be locked). Pick the user's class=user session, on the given TTY if named.
+    script = ("for s in $(loginctl list-sessions --no-legend | awk '{print $1}'); do "
+              "echo \"$s $(loginctl show-session $s -p Name --value) $(loginctl show-session $s -p Class --value) "
+              "$(loginctl show-session $s -p TTY --value)\"; done")
+    best = ""
+    for line in machine.succeed(script).splitlines():
+        f = line.split() + ["", "", ""]
+        if f[1] == user and f[2] == "user" and (tty is None or f[3] == tty):
+            best = f[0]
+    assert best, machine.succeed(script)
+    return best
+
 def must(cmd):
     rc, out = machine.execute(cmd + " 2>&1")
     if rc != 0:

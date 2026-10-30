@@ -179,7 +179,7 @@ with subtest("lock and logout end old session epochs (I10)"):
     assert lines[2]["status"] != 200, lines
     # a locked logind session (LockedHint) cannot bind
     tty_run(3, "busctl call org.freedesktop.login1 /org/freedesktop/login1/session/auto org.freedesktop.login1.Session SetLockedHint b true", "/tmp/l3")
-    machine.wait_until_succeeds("loginctl show-session $(loginctl list-sessions --no-legend | awk '$3==\"carol\"{print $1}') -p LockedHint | grep -q yes")
+    machine.wait_until_succeeds(f"loginctl show-session {user_session('carol', 'tty3')} -p LockedHint | grep -q yes")
     out = tty_run(3, f"{RPC} '[{{\"methodId\":\"session.bind\"}}]'", "/tmp/l4")
     lines = [json.loads(l) for l in out.splitlines() if l.startswith("{")]
     assert lines[0]["status"] != 200, lines
