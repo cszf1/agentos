@@ -231,8 +231,14 @@ with subtest("power cut at every ESP publish point leaves only the complete old 
         lk = machine.succeed(f"sha256sum {d}/linux 2>/dev/null | cut -d' ' -f1 || true").strip()
         ik = machine.succeed(f"sha256sum {d}/initrd 2>/dev/null | cut -d' ' -f1 || true").strip()
         return conf, lk == kh and ik == ih, bool(lk or ik)
+    # The test image's ESP is the fixed 256 MiB of make-disk-image (the installed layout has 2 GiB, os/modules/
+    # disk-layout.nix); with NixOS's own entry, two old AgentOS entries and the candidate it is full after one leaked
+    # FAT chain. Keep the persistent default (known-good, CAND) and the NixOS entries; the older GOOD entry goes first.
+    r = uw(f"gc --esp /boot --keep {CAND}")
+    assert GOOD in r["removed"], r
+    print(machine.succeed("df -k /boot; du -sk /boot/EFI/* /boot/EFI/agentos/* 2>/dev/null || true"))
     def old_entries_complete():
-        for rid in (GOOD, CAND):
+        for rid in (CAND,):
             machine.succeed(f"test -s /boot/loader/entries/agentos-{rid}.conf && test -s /boot/EFI/agentos/{rid}/linux && test -s /boot/EFI/agentos/{rid}/initrd")
             machine.succeed(f"cmp /boot/EFI/agentos/{rid}/linux {kernel} && cmp /boot/EFI/agentos/{rid}/initrd {initrd}")
     for pt in ("boot.after_copy_linux", "boot.after_copy_initrd", "boot.before_dir_publish", "boot.before_entry", "boot.after_entry"):
@@ -256,6 +262,7 @@ with subtest("power cut at every ESP publish point leaves only the complete old 
         uw(cmd[len(UW) + 1:])
         conf, complete, _ = esp_state()
         assert conf and complete, pt
-        r = uw(f"gc --esp /boot --keep {CAND},{GOOD}")
+        r = uw(f"gc --esp /boot --keep {CAND}")
         assert NEW in r["removed"], r
+        print(pt, machine.succeed("df -k /boot | tail -1"))
         old_entries_complete()

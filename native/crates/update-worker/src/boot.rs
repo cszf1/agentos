@@ -132,7 +132,14 @@ impl Esp {
             }
         } else {
             let tmp = self.assets().join(format!(".tmp-{}", c.release_id));
-            let _ = std::fs::remove_dir_all(&tmp);
+            // Leftovers of interrupted writes are removed first; then the ESP must hold both assets plus a margin, or
+            // nothing is written (a full ESP must not end in a half-copied candidate, spec §21.1, V1-U06/U07).
+            self.clean_partials()?;
+            let need = std::fs::metadata(c.kernel).map_err(io("READ_FAILED"))?.len() + std::fs::metadata(c.initrd).map_err(io("READ_FAILED"))?.len() + crate::preflight::MIN_ESP_FREE;
+            let free = crate::preflight::free_bytes(&self.assets())?;
+            if free < need {
+                return uerr("UPDATE_PRECONDITION", format!("ESP has {free} bytes free, the candidate needs {need}; nothing written"));
+            }
             std::fs::create_dir(&tmp).map_err(io("WRITE_FAILED"))?;
             for (src, name) in [(c.kernel, "linux"), (c.initrd, "initrd")] {
                 std::fs::copy(src, tmp.join(name)).map_err(io("WRITE_FAILED"))?;
