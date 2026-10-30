@@ -293,3 +293,95 @@ fn r02_host_precheck_refused_under_a_barrier() {
     t.m.require_no_barrier().unwrap();
     let _ = w;
 }
+
+/// V1-W03: a stateful fake whose accounts persist across a "restart" and that fails once at a chosen step.
+#[derive(Clone, Default)]
+struct Accounts {
+    users: Arc<Mutex<Vec<crate::sys::PwEntry>>>,
+    fail_at: Arc<Mutex<Option<&'static str>>>,
+    calls: Arc<Mutex<Vec<String>>>,
+}
+
+impl Accounts {
+    fn trip(&self, step: &'static str) -> R<()> {
+        self.calls.lock().unwrap().push(step.into());
+        let mut f = self.fail_at.lock().unwrap();
+        if *f == Some(step) {
+            *f = None;
+            return Err(crate::err::MErr::new("SYSTEM_FAILED", "injected crash"));
+        }
+        Ok(())
+    }
+}
+
+impl System for Accounts {
+    fn pw_by_name(&self, n: &str) -> Option<PwEntry> { self.users.lock().unwrap().iter().find(|e| e.name == n).cloned() }
+    fn pw_by_uid(&self, u: u32) -> Option<PwEntry> { self.users.lock().unwrap().iter().find(|e| e.uid == u).cloned() }
+    fn subid_overlaps(&self, _: u32, _: u32) -> bool { false }
+    fn create_login_user(&mut self, _: &str, _: u32, _: &str, _: bool) -> R<()> { Ok(()) }
+    fn set_password(&mut self, _: &str, _: &[u8]) -> R<()> { Ok(()) }
+    fn lock_user(&mut self, _: &str) -> R<()> { Ok(()) }
+    fn terminate_user(&mut self, _: u32) -> R<()> { Ok(()) }
+    fn create_exec_user(&mut self, n: &str, uid: u32, marker: &str, home: &Path, _: u32, _: u32) -> R<()> {
+        // the account is really created (useradd ran) and THEN the process dies before the receipt
+        if self.pw_by_name(n).is_none() {
+            self.users.lock().unwrap().push(PwEntry { name: n.into(), uid, gecos: marker.into(), home: home.display().to_string() });
+        }
+        self.trip("account")
+    }
+    fn ensure_workspace_dirs(&mut self, _: &Paths, _: &str, _: u32) -> R<()> { self.trip("directory") }
+    fn enable_linger(&mut self, _: &str) -> R<()> { self.trip("linger") }
+    fn disable_linger(&mut self, _: &str) -> R<()> { Ok(()) }
+    fn init_workspace(&mut self, _: &Paths, _: &str, _: &str, _: u32, _: &str) -> R<()> { self.trip("databases") }
+    fn start_workspace(&mut self, _: &str, _: u32) -> R<()> { Ok(()) }
+    fn stop_workspace(&mut self, _: &str, _: u32) -> R<()> { Ok(()) }
+    fn exec_cgroup_busy(&self, _: u32) -> bool { false }
+    fn kill_exec_cgroup(&mut self, _: u32) -> R<()> { Ok(()) }
+}
+
+#[test]
+fn w03_each_creation_breakpoint_resumes_to_exactly_one_workspace_without_takeover() {
+    for step in ["account", "directory", "databases", "linger"] {
+        let dir = std::env::temp_dir().join(format!("agentos-w03-{}", uuid()));
+        let paths = Paths { machine_dir: dir.join("machine"), workspaces_dir: dir.join("ws"), runtime_dir: dir.join("rt"), run_dir: dir.join("run"), snapshots_dir: dir.join("snap") };
+        let acc = Accounts::default();
+        let mut m = Machine::open(paths.clone(), Box::new(acc.clone())).unwrap();
+        m.ensure_install(&uuid()).unwrap();
+        let owner = m.provision_user(&uuid(), "ada", "user").unwrap()["userId"].as_str().unwrap().to_string();
+        let cid = uuid();
+        *acc.fail_at.lock().unwrap() = Some(step);
+        assert!(m.create_workspace(&cid, &owner, "A", None, "created").is_err(), "{step}");
+        // half-created: not visible to the owner
+        assert!(m.list_visible(&owner).unwrap().is_empty(), "{step}");
+        drop(m);
+        // restart: machined reopens the same directory and resumes from the last receipt
+        let mut m = Machine::open(paths.clone(), Box::new(acc.clone())).unwrap();
+        let resumed = m.resume_creations().unwrap();
+        assert_eq!(resumed.len(), 1, "{step}");
+        // the client retries with the same createId: same workspace, nothing new
+        let again = m.create_workspace(&cid, &owner, "A", None, "created").unwrap();
+        assert_eq!(again["workspaceId"].as_str().unwrap(), resumed[0], "{step}");
+        assert_eq!(again["state"], "stopped", "{step}");
+        let all = m.all_workspaces().unwrap();
+        assert_eq!(all.len(), 1, "{step}: exactly one workspace");
+        assert_eq!(acc.users.lock().unwrap().len(), 1, "{step}: exactly one execution account");
+        // a second workspace gets a different UID / sub-ID range
+        let b = m.create_workspace(&uuid(), &owner, "B", None, "created").unwrap();
+        assert_ne!(b["executionUid"], again["executionUid"], "{step}");
+        assert_ne!(b["subuidStart"], again["subuidStart"], "{step}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+    // an account with the execution name that is not ours is never taken over
+    let dir = std::env::temp_dir().join(format!("agentos-w03-{}", uuid()));
+    let paths = Paths { machine_dir: dir.join("machine"), workspaces_dir: dir.join("ws"), runtime_dir: dir.join("rt"), run_dir: dir.join("run"), snapshots_dir: dir.join("snap") };
+    let acc = Accounts::default();
+    acc.users.lock().unwrap().push(PwEntry { name: "aows0".into(), uid: 55555, gecos: "someone else".into(), home: "/home/x".into() });
+    let mut m = Machine::open(paths, Box::new(acc.clone())).unwrap();
+    m.ensure_install(&uuid()).unwrap();
+    let owner = m.provision_user(&uuid(), "ada", "user").unwrap()["userId"].as_str().unwrap().to_string();
+    let e = m.create_workspace(&uuid(), &owner, "A", None, "created").unwrap_err();
+    assert_eq!(e.code, "CONFLICT");
+    assert_eq!(acc.users.lock().unwrap().iter().filter(|u| u.name == "aows0").count(), 1);
+    assert_eq!(acc.users.lock().unwrap()[0].gecos, "someone else");
+    let _ = std::fs::remove_dir_all(&dir);
+}
