@@ -14,7 +14,7 @@ let
       "dm_mod" "cbc" "xts" "aesni_intel" "aes_ti" "af_alg" "algif_skcipher" "dm_crypt" "btrfs" "vfat" "nls_cp437" "nls_iso8859_1" ];
   };
   closure = pkgs.closureInfo { rootPaths = [ system ]; };
-  tools = lib.makeBinPath (with pkgs; [ installer util-linux coreutils gptfdisk cryptsetup lvm2 procps btrfs-progs dosfstools mtools libfaketime nix nixos-install-tools systemd jq e2fsprogs ]);
+  tools = lib.makeBinPath (with pkgs; [ installer util-linux coreutils gptfdisk cryptsetup lvm2 procps btrfs-progs dosfstools mtools libfaketime nix nixos-install-tools systemd jq e2fsprogs sqlite gawk ]);
 in
 vm.runInLinuxVM (pkgs.runCommand name {
   memSize = 3072;
@@ -48,6 +48,17 @@ vm.runInLinuxVM (pkgs.runCommand name {
   agentos-install run --passphrase-stdin < ${../modules/template-disk.key}
   test -z "$(ls -A /mnt/var/lib/agentos-machine 2>/dev/null)"
   jq -e '.template == true and .installId == null' /mnt/etc/agentos/install.json
+  # Review F09 / run 41202870389: normalise what nixos-install leaves time- or order-dependent in the template only
+  # (an ISO install keeps its own): build-time Nix state that leaked into the target's /tmp, registration times in the
+  # Nix database (and its WAL scratch), and /etc/shadow's line order (Perl hash order) put into /etc/passwd's order.
+  rm -rf /mnt/tmp/state
+  db=/mnt/nix/var/nix/db/db.sqlite
+  sqlite3 "$db" "PRAGMA journal_mode=DELETE; UPDATE ValidPaths SET registrationTime = 1; VACUUM;"
+  rm -f "$db-shm" "$db-wal"
+  awk -F: 'NR==FNR { order[$1] = NR; next } { print (($1 in order) ? order[$1] : 999999) "\t" $0 }' /mnt/etc/passwd /mnt/etc/shadow \
+    | sort -n -s -k1,1 | cut -f2- > /mnt/etc/shadow.sorted
+  test "$(wc -l < /mnt/etc/shadow.sorted)" = "$(wc -l < /mnt/etc/shadow)"
+  cat /mnt/etc/shadow.sorted > /mnt/etc/shadow && rm /mnt/etc/shadow.sorted
   sync
   umount -R /mnt
   cryptsetup close agentos-root

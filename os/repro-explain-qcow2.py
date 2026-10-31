@@ -11,7 +11,9 @@ unexplained and the script exits 1.
 Review F09: with the template key (public at build time, os/modules/template-disk.key) both LUKS2 partitions are
 opened read-only and the Btrfs trees compared: the set of subvolumes and paths, file types, permissions and owners,
 symlink targets, the Nix closure (store path names) and the sha256 of every regular file. Any difference there is
-unexplained. File times are reported, not judged (they are not part of the image's content).
+unexplained, except three narrow cases checked file by file (explain_file: the Nix database compared row by row
+with registration times reported, /etc/shadow in another line order, SQLite -shm scratch). File times are reported,
+not judged (they are not part of the image's content).
 """
 import hashlib, json, os, stat as S, subprocess, sys
 
@@ -100,6 +102,43 @@ def tree(root):
                 v = ("o", st.st_mode, st.st_uid, st.st_gid, None)
             out[rel] = v
     return out
+
+def explain_file(rel, pa, pb):
+    """Why one regular file differs between the two trees, or None when the difference is not explained.
+    Only three narrow cases are accepted (run 41202870389): the Nix database (same paths, hashes, sizes, references;
+    registration times and row ids are reported, not judged), /etc/shadow written in a different line order (Perl hash
+    order in update-users-groups; the same set of lines), and a SQLite shared-memory index (-shm, derived scratch)."""
+    import sqlite3, shutil, tempfile
+    base = rel.split("/", 1)[-1]
+    if rel.endswith(".sqlite-shm"):
+        return "SQLite shared-memory index (derived scratch, not content)"
+    if base == "etc/shadow":
+        la, lb = open(pa, encoding="utf-8").read().splitlines(), open(pb, encoding="utf-8").read().splitlines()
+        if sorted(la) == sorted(lb):
+            return f"same {len(la)} lines, different order"
+        da = sorted(set(la) - set(lb)); db_ = sorted(set(lb) - set(la))
+        mask = lambda L: [l.split(":")[0] + ":<field2 " + str(len(l.split(":")[1])) + " chars>:" + ":".join(l.split(":")[2:]) for l in L]
+        print(f"    /etc/shadow lines only in a {mask(da)}, only in b {mask(db_)}")
+        return None
+    if base == "nix/var/nix/db/db.sqlite" or rel.endswith("/nix/db/db.sqlite"):
+        def dump(path):
+            d = tempfile.mkdtemp(); c = os.path.join(d, "db.sqlite"); shutil.copy(path, c)
+            con = sqlite3.connect(c)
+            vp = {r[0]: r[1:] for r in con.execute("select path, hash, narSize, ifnull(deriver,''), ifnull(ca,''), ultimate from ValidPaths")}
+            refs = sorted(con.execute("select a.path, b.path from Refs r join ValidPaths a on a.id=r.referrer join ValidPaths b on b.id=r.reference"))
+            times = sorted({r[0] for r in con.execute("select registrationTime from ValidPaths")})
+            con.close(); shutil.rmtree(d)
+            return vp, refs, times
+        (va, ra, ta), (vb, rb, tb) = dump(pa), dump(pb)
+        if va == vb and ra == rb:
+            return f"Nix database: same {len(va)} valid paths (hash, narSize, deriver, ca) and {len(ra)} references; registration times a {ta[:3]}{'…' if len(ta) > 3 else ''} b {tb[:3]}{'…' if len(tb) > 3 else ''}"
+        print(f"    nix db: paths only in a {sorted(set(va)-set(vb))[:5]}, only in b {sorted(set(vb)-set(va))[:5]}, changed {[k for k in va if k in vb and va[k]!=vb[k]][:5]}, refs equal {ra == rb}")
+        return None
+    return None
+
+if sys.argv[1] == "--explain":       # helper mode, run under sudo: <mnt a> <mnt b> <rel>... -> {rel: reason|null}
+    print(json.dumps({r: explain_file(r, os.path.join(sys.argv[2], r), os.path.join(sys.argv[3], r)) for r in sys.argv[4:]}))
+    sys.exit(0)
 
 if sys.argv[1] == "--tree":          # helper mode, run under sudo: print the tree of one mounted image as JSON
     print(json.dumps(tree(sys.argv[2])))
@@ -215,6 +254,10 @@ for pa in luks_parts:
         for name, lst in (("only in a", only_a), ("only in b", only_b), ("type/permission/owner", perms), ("content", content)):
             if lst:
                 print(f"  {name}: {lst[:20]}")
+        why = json.loads(sh("sudo", sys.executable, os.path.abspath(__file__), "--explain", opened[0][1], opened[1][1], *content)) if content else {}
+        for k in content:
+            print(f"  content {k}: {'explained: ' + why[k] if why.get(k) else 'UNEXPLAINED'}")
+        content = [k for k in content if not why.get(k)]
         if only_a or only_b or perms or content or sa != sb:
             unexplained.append("btrfs tree")
     except subprocess.CalledProcessError as e:

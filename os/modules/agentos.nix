@@ -141,8 +141,6 @@ in {
       exec ${pkgs.dbus}/bin/dbus-run-session ${lib.getExe pkgs.cage} ${lib.escapeShellArgs config.programs.regreet.cageArgs} -- ${lib.getExe config.programs.regreet.package}
     ''}");
     services.greetd.enable = cfg.graphical;
-    # also as root before greetd itself starts (m5 41205165186: the greeter-side run left no state.toml behind)
-    systemd.services.greetd.serviceConfig.ExecStartPre = lib.mkIf cfg.graphical [ "+${greeterDefaults}" ];
     programs.regreet.enable = cfg.graphical;
     security.pam.services.swaylock = lib.mkIf cfg.graphical { };
     # Gateway re-authentication of a machine administrator (spec §12.2): plain local unix auth, no other module.
@@ -195,6 +193,8 @@ in {
         Restart = "on-failure"; RestartSec = 1;
       } // w.extra;
     }) workerDefs // {
+    # also as root before greetd itself starts (m5 41205165186: the greeter-side run left no state.toml behind)
+    greetd.serviceConfig.ExecStartPre = lib.mkIf cfg.graphical [ "+${greeterDefaults}" ];
     agentos-first-setup = lib.mkIf cfg.graphical {
       description = "AgentOS first-boot setup on the local console";
       wantedBy = [ "multi-user.target" ];
