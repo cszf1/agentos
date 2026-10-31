@@ -15,18 +15,18 @@
 
 ## 总表（按证据级别）
 
-**通过 66 / 部分 23 / 未通过 11（共 100 项）**（外部审查 2026-10-31 降级 D01 I06 I08 W08 R11 U04 U05 U09，修复后按新证据重判，见 docs/V1.0_REVIEW_FIXES.md）。每项只计入它的**最高**证据级别（例如“KVM VM＋单元”计入 KVM VM）；同一项另需实体机的（U01、U02、H03）在 KVM 行计数，并在下面实体机清单里重复列出。“通过”只在该级别证据覆盖规格这一行全部内容时给出。
+**通过 67 / 部分 22 / 未通过 11（共 100 项）**（外部审查 2026-10-31 降级 D01 I06 I08 W08 R11 U04 U05 U09，修复后按新证据重判，见 docs/V1.0_REVIEW_FIXES.md）。每项只计入它的**最高**证据级别（例如“KVM VM＋单元”计入 KVM VM）；同一项另需实体机的（U01、U02、H03）在 KVM 行计数，并在下面实体机清单里重复列出。“通过”只在该级别证据覆盖规格这一行全部内容时给出。
 
 | 证据级别 | 通过 | 部分 | 未通过 | 合计 | 说明 |
 |---|---|---|---|---|---|
-| KVM VM（Actions） | 55 | 10 | 0 | 65 | GitHub Actions 上 /dev/kvm 加速的 NixOS VM 检查（主要证据含 KVM VM） |
+| KVM VM（Actions） | 56 | 9 | 0 | 65 | GitHub Actions 上 /dev/kvm 加速的 NixOS VM 检查（主要证据含 KVM VM） |
 | TCG VM | 0 | 0 | 0 | 0 | 开发沙箱软件模拟 VM（只做冒烟，不作通过依据） |
 | 单元/集成 | 11 | 11 | 0 | 22 | vitest / cargo test / Qt ctest，含真实 v0.4 旧备份导入与 Actions 逐位重建（无 VM 级证据） |
 | Host 级真实模型 | 0 | 2 | 0 | 2 | 开发沙箱里开发模式 Host + 真实模型（TokenRhythm qwen3.8-flash），无原生 UI、无 machined |
 | 需实体机，未验收 | 0 | 0 | 10 | 10 | 只能在实体硬件 / 固定参考机上完成，本轮无此硬件 |
 | 无可用证据 | 0 | 0 | 1 | 1 | 既无 VM 也无单元证据，或属于整体发布结论 |
 
-- **KVM VM（Actions）**（65）：V1-B04、V1-B05、V1-B08、V1-I01、V1-I02、V1-I03、V1-I04、V1-I05、V1-I06◐、V1-I07、V1-I08◐、V1-I09、V1-I10、V1-I11、V1-I12、V1-W01、V1-W02、V1-W03、V1-W04、V1-W05、V1-W06、V1-W07、V1-W08◐、V1-W09、V1-W10、V1-D01◐、V1-D08、V1-H03◐、V1-S01、V1-S02、V1-S03、V1-S04、V1-S05、V1-S06、V1-S07、V1-S08、V1-U01◐、V1-U02◐、V1-U03、V1-U04◐、V1-U06、V1-U07、V1-U08、V1-U09◐、V1-U10、V1-U11、V1-U12、V1-R01、V1-R02、V1-R03、V1-R04、V1-R05、V1-R06、V1-R07、V1-R08、V1-R09、V1-R10、V1-R11◐、V1-R12、V1-M04、V1-M06、V1-O03、V1-O06、V1-O07、V1-O08
+- **KVM VM（Actions）**（65）：V1-B04、V1-B05、V1-B08、V1-I01、V1-I02、V1-I03、V1-I04、V1-I05、V1-I06◐、V1-I07、V1-I08◐、V1-I09、V1-I10、V1-I11、V1-I12、V1-W01、V1-W02、V1-W03、V1-W04、V1-W05、V1-W06、V1-W07、V1-W08◐、V1-W09、V1-W10、V1-D01◐、V1-D08、V1-H03◐、V1-S01、V1-S02、V1-S03、V1-S04、V1-S05、V1-S06、V1-S07、V1-S08、V1-U01◐、V1-U02◐、V1-U03、V1-U04◐、V1-U06、V1-U07、V1-U08、V1-U09◐、V1-U10、V1-U11、V1-U12、V1-R01、V1-R02、V1-R03、V1-R04、V1-R05、V1-R06、V1-R07、V1-R08、V1-R09、V1-R10、V1-R11、V1-R12、V1-M04、V1-M06、V1-O03、V1-O06、V1-O07、V1-O08
 - **TCG VM**：无。
 - **单元/集成**（22）：V1-B01、V1-B02、V1-B03、V1-B06、V1-B07、V1-D02◐、V1-D03◐、V1-D04◐、V1-D05◐、V1-D06◐、V1-D07◐、V1-D09◐、V1-D11◐、V1-D12◐、V1-U05◐、V1-M01、V1-M02、V1-M03、V1-M05、V1-M07、V1-M08、V1-O09◐
 - **Host 级真实模型**（2）：V1-O01◐、V1-O02◐
@@ -212,7 +212,7 @@
 | V1-R08 | 半恢复整机 | 通过 | KVM VM（Actions） | m9-restore（run 41088874992）：恢复在第一个工作区替换后被切断 → 保持 restore-in-progress，任何工作区都不启动；--restore-id 续作完成。 |
 | V1-R09 | 缓存与 | 通过 | KVM VM（Actions）＋单元/集成 | 机器级恢复此前不做 Host 侧对账（只有 v0.4 的 admin restore 调 applyV04Restore）。本轮：recovery-worker restore 在 staged 树写入 restore-reconcile-pending（restoreId、manifestHash）后再整体交换；Host 机器模式在 precheck 之后、打开任何数据库之前消费该标记，单事务执行恢复对账（packages/host/src/backup-v4.ts applyV04Restore）：旧 gc_delete_intents（marked/moved/unknown）全部 aborted、不会删除新物理对象，deleting/marked 的产物与磁盘上校验不过的 live 产物改为 unavailable 并加 gc_generation（按固定 lock 重建，不当作存在），旧作业/outbox/路由围栏、策略 paused_needs_review；事务提交后才删标记，失败则不打开工作区也不删任何东西。运行时镜像缓存不在数据库里登记存在与否，Host driver 每次按 catalog lock/recipeHash 现场核对（见 B04/U04）。Rust 单元 recovery-worker restore_swaps_whole_tree… 断言标记存在；m9-restore 新子测试（R09）：备份前在工作区 A 的 os.sqlite 种一个 unknown 删除意图和一个文件不存在的 live 产物，恢复后 attach → 标记被消费、意图 aborted、产物 unavailable 且 generation=2、记录 workspace.v04_restored、无启用策略。m9-restore（run 41106694590，KVM）R09 子测试通过：恢复后 Host 先对账再打开，旧删除意图 aborted、缺文件的 live 产物 unavailable（generation+1，之后按固定 lock 重建而不当作存在），无启用策略。 |
 | V1-R10 | 异机克隆 | 通过 | KVM VM（Actions） | agentosctl clone --set <dir> --owner <login>（native/crates/machine/src/ctl.rs）：集合必须来自另一台机器（同机集合 CONFLICT，走 restore）；先逐个 recovery-worker verify（任何坏件整体拒绝、不建任何工作区）；每个工作区以 origin=cloned、保留 storeUUID、由本机本地 owner 新建（本机执行账户/UID/subuid，源机用户、口令、会话不存在于本机），写 clone-reconcile-pending；createId/restoreId 由 setId+源工作区派生，重跑得到同一工作区。Host 打开前 packages/host/src/clone-v1.ts applyClone：旧作业/outbox/删除意图围栏、策略待复核、缺失缓存 unavailable、service/provider grant 撤销、provider_grant_outbox 待发项 failed（不派发）、system_resources（旧设备）隔离、membership_mirror 清空由本机目录重发、meta.workspace_id 改新 ID、broker 绑定重置、client_epoch/instance_epoch 前移（旧会话/页面失效，客户端从 attach 读到新 clientEpoch），记 workspace.cloned——原历史原样保留作证据。m12-clone（run 41116258388，27c07e5，两台 KVM VM）全部子测试通过：源机建代码应用与历史、旧删除意图，备份→age 导出→第二台机器（不同 machineInstallId、不同管理员）解密校验→篡改件整体拒绝、不存在的 owner 拒绝→clone 后新工作区 ID、owner 为本机用户、文件归新 UID、源机账户不存在、重复 clone 同一工作区；本机用户登录 attach 后 Host 消费标记：workspace_id 新、历史事件仍在、workspace.cloned 记源机、旧意图 aborted、无待发 grant outbox、无启用策略、membership 只有本机 owner、本机 broker 只登记一次该 store。 |
-| V1-R11 | 根侧日志丢失 | 部分 | KVM VM（Actions） | **外部审查降级（2026-10-31）**：F07：只丢 broker 日志、machine 目录完整时没有完整恢复演练（测试另删 machine.sqlite）。修复与新证据见 docs/V1.0_REVIEW_FIXES.md。原证据：m9-restore（run 41100319437，ef17ee4，KVM）两个 R11 子测试通过：broker 日志丢失只进诊断模式（BROKER_HISTORY_MISSING，从 firstboot 前时间点起查），不建空库；machine.sqlite 丢失时 machined 进入恢复模式（不建空库、不开 socket、写 recovery-required），agentosctl recover --new-identity 后旧状态移入 root-only lost-<ms>/ 作证据，新身份启动。 |
+| V1-R11 | 根侧日志丢失 | 通过 | KVM VM（Actions） | **外部审查修复 F07（2026-10-31）**：只丢 broker 日志、machine 目录完整时，machined 启动发现 broker 曾确认过 registry 消息而日志不在，进入恢复模式（recovery-required reason BROKER_HISTORY_MISSING，无 socket）；`agentosctl recover --new-identity` 不带 `--accept-broker-history-loss` 被拒，带上后旧状态移入 lost-*/ 作证据，firstboot 得到新安装身份，新 broker 无 BROKER_HISTORY_MISSING/IDENTITY_MISMATCH。m9-restore 子测试“only the broker log lost, machine directory intact…”KVM 通过（run 41201716480，提交 e30130e），同 run 中原 R11 两个子测试也通过（决定 68）。 原证据：m9-restore（run 41100319437，ef17ee4，KVM）两个 R11 子测试通过：broker 日志丢失只进诊断模式（BROKER_HISTORY_MISSING，从 firstboot 前时间点起查），不建空库；machine.sqlite 丢失时 machined 进入恢复模式（不建空库、不开 socket、写 recovery-required），agentosctl recover --new-identity 后旧状态移入 root-only lost-<ms>/ 作证据，新身份启动。 |
 | V1-R12 | 空间与快照保留 | 通过 | KVM VM（Actions）＋单元/集成 | Rust 单元 native/crates/machine/src/tests.rs r12_full_or_read_only_disk_stops_new_effects_keeps_receipts_pins_and_local_label（开发机 通过）：statvfs <256 MiB 或只读 → 新 permit/新工作区/新检查点集合 MACHINE_CAPACITY，已持有 permit 仍可用完并写收据，撤权照常；保留最新 3 个完整集合与全部 pinned、唯一完整集合不可删；本地集合标 location=local、offMachineCopy=false，export_state 只能 none→exporting→exported→verified。本轮新增 agentosctl backup export（native/crates/machine/src/ctl.rs）：对 machined 记录的完整集合（manifest hash 必须一致）逐工作区 age 加密写到目标、machine-set.json 也加密，写完置 exported，再从目标读回逐个核对 sha256 后才置 verified；失败回 none。backup 改为先开集合（满盘/只读在停任何工作区之前被拒）并在失败时把原来运行的工作区重新启动。m9-restore 新子测试（R12）：导出前 export_state=none；导出后 verified、offMachineCopy=true，副本可解密为可校验集合；篡改的 machine-set.json 被拒且不写目标；快照目录只读挂载时 agentosctl backup 以 MACHINE_CAPACITY 被拒、无 barrier 残留、两个 Host 仍在运行，workspaces.create 被拒，既有集合 complete/verified 保留。m9-restore（run 41106694590，KVM）R12 子测试通过：本地集合 offMachineCopy=false 直到导出并读回校验；只读快照目录下备份以 MACHINE_CAPACITY 拒绝、无 barrier 残留、Host 仍运行、workspaces.create 被拒、既有集合保留。 |
 
 ## v0.4 迁移
@@ -245,7 +245,7 @@
 
 ## 统计
 
-未通过 11 项，通过 66 项，部分 23 项（共 100 项）。
+未通过 11 项，通过 67 项，部分 22 项（共 100 项）。
 
 ## 回归与偶发失败记录
 
