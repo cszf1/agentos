@@ -252,6 +252,8 @@ class ShellController : public QObject, public RequestSink {
   void onEvent(const RpcEvent& e);
   void onGap(const QString& ws);
   void clearScopeState(const QString& reason);
+  /** Lock/logout through the login session agent ($XDG_RUNTIME_DIR/agentos-session.sock); empty on success. */
+  QString sessionAgent(const QString& op);
   void applyApps(const JValue& state);
   void trackReply(const QString& id, const RpcReply& r);
   void pollAction(const QString& id, const QString& getName, const JValue& args, int attempt);

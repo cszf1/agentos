@@ -206,6 +206,17 @@ fn handle(c: &Connection, path: &OwnedObjectPath, st: &Arc<Mutex<State>>, req: &
             lock(c, path, st);
             Ok(json!({ "locked": true }))
         }
+        // The user's logout from the Shell (review F02): end this logind session. greetd then shows the greeter again
+        // and the gateway sees the session gone (its tickets end with it). Replied to first, ended shortly after.
+        "logout" => {
+            let (c, path) = (c.clone(), path.clone());
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(300));
+                let _ = c.call_method(Some("org.freedesktop.login1"), path.as_str(), Some("org.freedesktop.login1.Session"), "Terminate", &());
+                std::process::exit(0);
+            });
+            Ok(json!({ "loggingOut": true }))
+        }
         "lock.setMinutes" => {
             let m = req["minutes"].as_u64().ok_or("minutes")?;
             if !(1..=30).contains(&m) {

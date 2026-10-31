@@ -4,6 +4,10 @@
 
 #include <QClipboard>
 #include <QGuiApplication>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QLocalSocket>
+#include <QtEndian>
 #include <QStandardPaths>
 #include <QUuid>
 
@@ -801,6 +805,16 @@ void ShellController::loadTranscript(const QString& runId) {
 
 // ------------------------------------------------------------------ hardware (spec §12)
 void ShellController::hardware(const QString& kind, const QVariantMap& params) {
+  // Lock and logout belong to the login session, not to machined (spec §9.1/§9.4): the session agent runs swaylock
+  // (LockedHint only after swaylock confirms) or ends the logind session. machined has no such action kind; before
+  // review F02/F12 these buttons (and Ctrl+Alt+L) sent machine.plan and were refused with INVALID_REQUEST.
+  if (kind == QLatin1String("session.lock") || kind == QLatin1String("session.logout")) {
+    const bool logout = kind == QLatin1String("session.logout");
+    if (logout) clearScopeState(QStringLiteral("logout"));   // nothing of this scope survives into the next login
+    const QString err = sessionAgent(logout ? QStringLiteral("logout") : QStringLiteral("lock"));
+    if (!err.isEmpty()) setNotice((logout ? S("注销失败：") : S("锁定失败：")) + err);
+    return;
+  }
   QVariantMap p = params;
   if (kind == QLatin1String("display.mode.set")) {
     p[QStringLiteral("revertAfterSeconds")] = displayRevertSeconds();
@@ -811,6 +825,29 @@ void ShellController::hardware(const QString& kind, const QVariantMap& params) {
         displayPrevious_ = JValue::object({{QStringLiteral("output"), o.get(QStringLiteral("name"))}, {QStringLiteral("mode"), o.get(QStringLiteral("current"))}, {QStringLiteral("scale"), o.get(QStringLiteral("scale"))}});
   }
   act(QStringLiteral("machine.plan"), {{QStringLiteral("actionKind"), kind}, {QStringLiteral("params"), p}}, kind);
+}
+
+QString ShellController::sessionAgent(const QString& op) {
+  // $XDG_RUNTIME_DIR/agentos-session.sock: 4-byte big-endian length + JSON {"op": ...}; the agent checks SO_PEERCRED.
+  const QString rt = qEnvironmentVariable("XDG_RUNTIME_DIR");
+  if (rt.isEmpty()) return S("没有登录会话运行目录");
+  QLocalSocket sock;
+  sock.connectToServer(rt + QStringLiteral("/agentos-session.sock"));
+  if (!sock.waitForConnected(2000)) return S("会话代理不可用");
+  const QByteArray body = QJsonDocument(QJsonObject{{QStringLiteral("op"), op}}).toJson(QJsonDocument::Compact);
+  QByteArray frame(4, '\0');
+  qToBigEndian<quint32>(quint32(body.size()), frame.data());
+  frame += body;
+  sock.write(frame);
+  if (!sock.waitForBytesWritten(2000)) return S("会话代理没有接收请求");
+  QByteArray in;
+  while (in.size() < 4 && sock.waitForReadyRead(8000)) in += sock.readAll();
+  if (in.size() < 4) return op == QLatin1String("logout") ? QString() : S("会话代理没有应答");   // logout may end us first
+  const quint32 n = qFromBigEndian<quint32>(in.constData());
+  while (quint32(in.size()) < 4 + n && sock.waitForReadyRead(2000)) in += sock.readAll();
+  const QJsonObject r = QJsonDocument::fromJson(in.mid(4, int(n))).object();
+  if (r.value(QStringLiteral("ok")).toBool()) return QString();
+  return r.value(QStringLiteral("error")).toObject().value(QStringLiteral("message")).toString(S("会话代理拒绝了请求"));
 }
 
 void ShellController::hardwareSecret(const QString& kind, const QVariantMap& params, const QString& secret) {

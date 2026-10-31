@@ -18,6 +18,56 @@ let
     exec fcitx5 -d --replace
     exec ${native}/bin/agentos-session-agent
   '';
+  # spec §19.4: first boot creates the local administrator and the default workspace from the local console, then
+  # the unauthenticated first-boot entry closes for good (the unit's condition: machine.secret exists afterwards).
+  # Graphical systems only: it runs on tty1 before greetd; the password is read without echo and handed to
+  # agentosctl on stdin (never argv, never a log). Review F11: before this an installed system had no way to create
+  # its first account (root is locked), so the ISO install could never reach the ReGreet login.
+  firstSetup = pkgs.writeShellScript "agentos-first-setup" ''
+    set -u
+    export PATH=${lib.makeBinPath [ native pkgs.coreutils pkgs.util-linux pkgs.gnugrep ]}
+    log() { logger -t agentos-first-setup "$*"; }
+    installed() { test -e /var/lib/agentos-machine/machine.secret; }
+    o=""
+    for i in $(seq 120); do
+      installed && exit 0
+      o=$(agentosctl status 2>&1) && break
+      case "$o" in *"not installed"*) break ;; esac
+      sleep 1
+    done
+    case "$o" in *"not installed"*) ;; *) log "machined is not waiting for first boot; nothing to set up"; exit 0 ;; esac
+    log "waiting for the administrator on the local console"
+    # read with a timeout so that a first boot completed some other way (agentosctl as root) lets greetd start
+    ask() { # $1 prompt, $2 "-s" for a secret
+      printf '%s' "$1"
+      while :; do
+        if IFS= read -r ''${2:-} -t 5 REPLY; then [ -n "''${2:-}" ] && echo; return 0; fi
+        installed && { echo; log "first boot was completed elsewhere"; exit 0; }
+      done
+    }
+    while :; do
+      clear 2>/dev/null || true
+      echo "AgentOS 首次设置 / first-boot setup"
+      echo "创建本机管理员和默认工作区。Create the machine administrator and the default workspace."
+      echo
+      ask "管理员登录名 / administrator login: "; name=$REPLY
+      if ! printf '%s' "$name" | grep -Eqx '[a-z_][a-z0-9_-]{0,31}'; then echo "登录名只能用小写字母、数字、_ 和 -。"; sleep 3; continue; fi
+      ask "口令 / password: " -s; pw=$REPLY
+      ask "再次输入口令 / password again: " -s; pw2=$REPLY
+      if [ -z "$pw" ] || [ "$pw" != "$pw2" ]; then pw=; pw2=; echo "两次口令不一致或为空。"; sleep 3; continue; fi
+      ask "默认工作区名称 / default workspace name [Home]: "; ws=''${REPLY:-Home}
+      if out=$(printf '%s' "$pw" | agentosctl firstboot --admin "$name" --workspace "$ws" 2>&1); then
+        pw=; pw2=
+        log "first boot completed for administrator $name"
+        echo "完成。正在进入登录界面。Done."
+        sleep 2
+        exit 0
+      fi
+      pw=; pw2=
+      log "first boot refused: $(printf '%s' "$out" | tail -1)"
+      echo "失败 / failed: $(printf '%s' "$out" | tail -1)"; sleep 5
+    done
+  '';
   session = pkgs.writeShellScriptBin "agentos-session" ''
     # Started by greetd after PAM (a real logind session on seat0). Nothing here comes from the network or a model.
     export XDG_CURRENT_DESKTOP=sway XDG_SESSION_TYPE=wayland QT_QPA_PLATFORM=wayland QT_IM_MODULE=fcitx XMODIFIERS=@im=fcitx
@@ -115,6 +165,28 @@ in {
         Restart = "on-failure"; RestartSec = 1;
       } // w.extra;
     }) workerDefs // {
+    agentos-first-setup = lib.mkIf cfg.graphical {
+      description = "AgentOS first-boot setup on the local console";
+      wantedBy = [ "multi-user.target" ];
+      wants = [ "agentos-machine.service" ];
+      after = [ "agentos-machine.service" "agentos-disk-rekey.service" "systemd-user-sessions.service" ];
+      before = [ "display-manager.service" "greetd.service" ];
+      unitConfig.ConditionPathExists = "!/var/lib/agentos-machine/machine.secret";
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        ExecStart = firstSetup;
+        StandardInput = "tty";
+        StandardOutput = "tty";
+        StandardError = "journal";
+        TTYPath = "/dev/tty1";
+        TTYReset = true;
+        TTYVHangup = true;
+        TTYVTDisallocate = true;
+        TimeoutStartSec = "infinity";
+      };
+    };
+
     agentos-machine = {
       description = "AgentOS machine directory (machined)";
       wantedBy = [ "multi-user.target" ];
