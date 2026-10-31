@@ -13,12 +13,13 @@ let
     mkdir -p $out
     xorriso -osirrox on -indev "$img" -extract /isolinux/isolinux.cfg $out/isolinux.cfg 2>/dev/null
     # the ISO's own "Serial console=ttyS0,115200n8" menu entry: its kernel, initrd and APPEND line, unchanged
+    # (nixpkgs 26.05 names it on the submenu: "MENU BEGIN Serial console=ttyS0,115200n8", then "LABEL boot-serial")
     awk -v out=$out '
-      /^LABEL/ { f = 0 }
-      /MENU LABEL/ && /Serial console/ { f = 1 }
+      /^MENU BEGIN/ { s = ($0 ~ /Serial console/) }
+      /^LABEL/ { f = s }
       f && $1 == "LINUX"  { print $2 > (out "/kernel.path") }
       f && $1 == "APPEND" { sub(/^[ \t]*APPEND[ \t]+/, ""); print > (out "/append") }
-      f && $1 == "INITRD" { print $2 > (out "/initrd.path"); f = 0 }' $out/isolinux.cfg
+      f && $1 == "INITRD" { print $2 > (out "/initrd.path"); f = 0; s = 0 }' $out/isolinux.cfg
     test -s $out/kernel.path && test -s $out/initrd.path && grep -q 'console=ttyS0' $out/append
     xorriso -osirrox on -indev "$img" -extract "$(cat $out/kernel.path)" $out/bzImage -extract "$(cat $out/initrd.path)" $out/initrd 2>/dev/null
     ln -s "$img" $out/agentos.iso
