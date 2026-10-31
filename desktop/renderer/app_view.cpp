@@ -37,6 +37,13 @@ void RecordsModel::set(const JValue& bundle, const JValue& items) {
 AppViewModel::AppViewModel(QString appId, RequestSink* sink, QObject* parent)
     : QObject(parent), appId_(std::move(appId)), sink_(sink), records_(new RecordsModel(this)) {
   connect(&refresh_, &QTimer::timeout, this, &AppViewModel::reload);
+  connect(this, &AppViewModel::recordsChanged, this, [this] {
+    const QStringList n = recordFormNames();
+    if (n != shapeNames_) {
+      shapeNames_ = n;
+      emit recordFormShapeChanged();
+    }
+  });
 }
 AppViewModel::~AppViewModel() = default;
 
@@ -343,6 +350,21 @@ QVariantList AppViewModel::recordForm() const {
                        {QStringLiteral("error"), form_.errors.get(k.str()).stringOr(QString())}};
   }
   return out;
+}
+
+QStringList AppViewModel::recordFormNames() const {
+  QStringList out;
+  if (!form_.open) return out;
+  // the mode and the bundle epoch are part of the shape: an edit form after a create form gets fresh delegates
+  for (const auto& k : rbundle_.get(QStringLiteral("view")).get(QStringLiteral("formFields")).items()) out << k.str();
+  out << QStringLiteral("\x1f") + form_.mode + QLatin1Char('@') + QString::number(form_.epoch);
+  return out;
+}
+
+QVariantMap AppViewModel::recordFormField(const QString& name) const {
+  for (const QVariant& f : recordForm())
+    if (f.toMap().value(QStringLiteral("name")).toString() == name) return f.toMap();
+  return {};
 }
 
 QVariantMap AppViewModel::recordState() const {

@@ -56,6 +56,10 @@ class AppViewModel : public QObject {
   // records mode
   Q_PROPERTY(QObject* records READ records CONSTANT)
   Q_PROPERTY(QVariantList recordForm READ recordForm NOTIFY recordsChanged)
+  // The form's field names (empty while the form is closed). Changes only when the form opens/closes or its fields
+  // change, so the QML Repeater keeps its delegates (and the typing focus) while a draft is edited (m20-sway: a
+  // model reset per keystroke recreated the field after the first real key).
+  Q_PROPERTY(QStringList recordFormNames READ recordFormNames NOTIFY recordFormShapeChanged)
   Q_PROPERTY(QVariantMap recordState READ recordState NOTIFY recordsChanged)
   Q_PROPERTY(QVariantList filterFields READ filterFields NOTIFY recordsChanged)
  public:
@@ -76,6 +80,8 @@ class AppViewModel : public QObject {
   bool busy() const { return rt_.busy(); }
   QObject* records() const { return records_; }
   QVariantList recordForm() const;
+  QStringList recordFormNames() const;
+  Q_INVOKABLE QVariantMap recordFormField(const QString& name) const;
   QVariantMap recordState() const;
   QVariantList filterFields() const;
   SlotRuntime& runtime() { return rt_; }
@@ -117,9 +123,11 @@ class AppViewModel : public QObject {
   void treeChanged();
   void stateChanged();
   void recordsChanged();
+  void recordFormShapeChanged();
   void revisionChanged();
 
  private:
+  QStringList shapeNames_;
   QString appId_;
   RequestSink* sink_;
   SlotRuntime rt_;

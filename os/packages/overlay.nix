@@ -29,8 +29,9 @@ in {
     node = final.callPackage ./node.nix { src = olderSrc; };
   };
   agentos-shell = final.callPackage ../../desktop/package.nix { };
-  # Test-only: the Shell's controller + QML driven against a real gateway in the m13-native VM check (never in a release).
-  agentos-shell-e2e = final.agentos-shell.overrideAttrs (o: { pname = "agentos-shell-e2e"; cmakeFlags = (o.cmakeFlags or [ ]) ++ [ "-DAGENTOS_E2E=ON" ]; doCheck = false; });
+  # Test-only: the Shell's controller + QML driven against a real gateway in the m13-native and m20-sway VM checks (never in a
+  # release). The fixtures it renders in m20 come from the source in the store (the build tree is gone at run time).
+  agentos-shell-e2e = final.agentos-shell.overrideAttrs (o: { pname = "agentos-shell-e2e"; cmakeFlags = (o.cmakeFlags or [ ]) ++ [ "-DAGENTOS_E2E=ON" "-DAGENTOS_FIXTURES_DIR=${o.src}/fixtures" ]; doCheck = false; });
   # Approved OCI images of the catalog, built offline from fixed inputs (spec §19.1); shipped in the release closure.
   agentos-oci = final.callPackage ./oci.nix { src = final.lib.fileset.toSource { root = ../..; fileset = final.lib.fileset.unions [ ../../runtime/overlays ../../scripts/release-image-contexts.mjs ]; }; };
 }

@@ -9,13 +9,19 @@
 //                                restore from the pages' own buttons, each to its reconciled state (V1-D08, M06 part 2)
 //   AGENTOS_E2E_PHASE=offline    model unreachable: generation refused with a visible reason, CRUD/query/version
 //                                switch still work (V1-O03)
+//   AGENTOS_E2E_PHASE=sway       a real Wayland client in alice's greetd/ReGreet Sway session; every user step is real
+//                                QMP input asked of the VM driver (e2e_sway.hpp): D02-D07, D09, D11, D12 (VM check m20-sway)
 //   AGENTOS_E2E_PHASE=switch     real workspaces A and B (AGENTOS_E2E_WS_A/_B): a query in flight in A, then rapid
 //                                A→B→A→B switching; B shows nothing of A (apps, record bodies), A still has it (V1-W05)
 // Each step prints one line "E2E <step> <json>" so the VM script can check the Host's database against it.
 #include "gui_support.hpp"
 #include "json_list_model.hpp"
+#include "e2e_sway.hpp"
+#include "slot_models.hpp"
 
 #include <QDateTime>
+#include <QPointer>
+#include <QUuid>
 #include <QJsonDocument>
 #include <QQuickStyle>
 #include <cstdio>
@@ -40,10 +46,10 @@ struct Real {
   QTemporaryDir dir;
   std::unique_ptr<ShellController> shell;
   std::unique_ptr<View> view;
-  Real() {
+  explicit Real(QSize size = QSize(1280, 900), QString layoutDir = QString()) {
     shell = std::make_unique<ShellController>(envOr("AGENTOS_GATEWAY_SOCKET", QStringLiteral("/run/agentos/gateway.sock")));
-    shell->setLayoutDir(dir.path());
-    view = std::make_unique<View>(shell.get(), QSize(1280, 900));
+    shell->setLayoutDir(layoutDir.isEmpty() ? dir.path() : layoutDir);
+    view = std::make_unique<View>(shell.get(), size);
   }
   bool up() {
     if (!view->load(QStringLiteral("ShellRoot.qml"))) return false;
@@ -197,6 +203,8 @@ class E2E : public QObject {
 
  private slots:
   void initTestCase() {
+    // phase sway: a real Wayland client; Sway's for_window rule (app_id agentos-shell…) makes it fullscreen
+    if (phase == QLatin1String("sway")) QGuiApplication::setDesktopFileName(QStringLiteral("agentos-shell-e2e"));
     prepareQmlEnvironment();
     QQuickStyle::setStyle(QStringLiteral("Basic"));
   }
@@ -415,6 +423,8 @@ class E2E : public QObject {
     QTRY_COMPARE_WITH_TIMEOUT(r.actionState(QStringLiteral("app.deploy")), QStringLiteral("reconciled"), 120000);
     report(QStringLiteral("version"), {});
   }
+#include "e2e_sway_phase.inc"
+
   void switching() {
     if (phase != QLatin1String("switch")) QSKIP("phase");
     const QString wsA = envOr("AGENTOS_E2E_WS_A", QString()), wsB = envOr("AGENTOS_E2E_WS_B", QString());

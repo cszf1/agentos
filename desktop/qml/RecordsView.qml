@@ -25,18 +25,21 @@ Column {
             Row { visible: !!r.st.formStale; spacing: 6
                 PText { text: "应用版本已切换，表单已停用。你的输入已保留。"; color: "#7a5a00" }
                 AButton { label: "刷新表单"; onClicked: r.view.rebaseRecord() } }
-            Repeater { model: r.view ? r.view.recordForm : []
+            // model: the field names only (stable while typing); each delegate reads its field's current state
+            Repeater { model: r.view ? r.view.recordFormNames.filter(function(n) { return n.charAt(0) !== "\u001f" }) : []
                 delegate: Column { width: fc.width; spacing: 2
-                    PText { text: modelData.label; variant: "small" }
-                    ACheck { visible: modelData.type === "boolean"; label: modelData.label; checked: modelData.value === true; enabled: !r.st.formStale && !r.st.formBusy; onToggled: r.view.setDraft(modelData.name, checked) }
-                    ASelect { visible: modelData.type === "enum"; label: modelData.label; value: String(modelData.value)
-                              options: modelData.options.map(function(o) { return { value: o, label: o } }); enabled: !r.st.formStale && !r.st.formBusy
-                              onChosen: function(v) { r.view.setDraft(modelData.name, v) } }
-                    AField { visible: modelData.type === "string" || modelData.type === "integer"; width: Math.min(fc.width, 420 * r.s); label: modelData.label
-                             boundValue: String(modelData.value); enabled: !r.st.formStale && !r.st.formBusy
-                             inputMethodHints: modelData.type === "integer" ? Qt.ImhFormattedNumbersOnly : Qt.ImhNone
-                             onTextEdited: r.view.setDraft(modelData.name, text) }
-                    PText { visible: modelData.error !== ""; text: modelData.error; color: "#a01515"; variant: "small" } } }
+                    readonly property string nameKey: modelData
+                    readonly property var fd: { r.st; return r.view ? r.view.recordFormField(nameKey) : ({}) }
+                    PText { text: fd.label || ""; variant: "small" }
+                    ACheck { visible: fd.type === "boolean"; label: fd.label || ""; checked: fd.value === true; enabled: !r.st.formStale && !r.st.formBusy; onToggled: r.view.setDraft(fd.name, checked) }
+                    ASelect { visible: fd.type === "enum"; label: fd.label || ""; value: String(fd.value)
+                              options: (fd.options || []).map(function(o) { return { value: o, label: o } }); enabled: !r.st.formStale && !r.st.formBusy
+                              onChosen: function(v) { r.view.setDraft(fd.name, v) } }
+                    AField { visible: fd.type === "string" || fd.type === "integer"; width: Math.min(fc.width, 420 * r.s); label: fd.label || ""
+                             boundValue: String(fd.value); enabled: !r.st.formStale && !r.st.formBusy
+                             inputMethodHints: fd.type === "integer" ? Qt.ImhFormattedNumbersOnly : Qt.ImhNone
+                             onTextEdited: r.view.setDraft(fd.name, text) }
+                    PText { visible: !!fd.error; text: fd.error || ""; color: "#a01515"; variant: "small" } } }
             PText { visible: !!r.st.formMessage; width: fc.width; text: r.st.formMessage || ""; color: "#a01515" }
             Row { spacing: 8
                 AButton { label: r.st.formMessage && !r.st.formStale ? "重试" : "保存"; variant: "primary"; enabled: !r.st.formStale && !r.st.formBusy; onClicked: r.view.submitRecord() }

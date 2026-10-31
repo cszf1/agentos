@@ -53,7 +53,7 @@ add_test(NAME no_webengine COMMAND ${CMAKE_COMMAND} -DBIN=$<TARGET_FILE:agentos-
 # Never built for a release (off by default; os/packages builds it as a separate test-only derivation).
 option(AGENTOS_E2E "build agentos-shell-e2e (VM checks only)" OFF)
 if(AGENTOS_E2E)
-  add_executable(agentos-shell-e2e tests/e2e_test.cpp tests/gui_support.hpp)
+  add_executable(agentos-shell-e2e tests/e2e_test.cpp tests/gui_support.hpp tests/e2e_sway.hpp tests/e2e_sway_phase.inc)
   target_include_directories(agentos-shell-e2e PRIVATE tests)
   target_link_libraries(agentos-shell-e2e PRIVATE agentos_ui Qt6::Test)
   target_compile_definitions(agentos-shell-e2e PRIVATE AGENTOS_FIXTURES="${AGENTOS_FIXTURES_ABS}" AGENTOS_TEST_OUT="/tmp/agentos-e2e")
