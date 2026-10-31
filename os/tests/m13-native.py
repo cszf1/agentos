@@ -1,5 +1,6 @@
 # Native Shell end to end (see m13-native.nix). Results are "KVM VM" evidence; the Shell renders offscreen (no real
 # display), driven through its own pages' buttons, Home intent field and app view (records form/search).
+import contextlib
 machine.start()
 machine.wait_for_unit("agentos-session-gateway.service")
 fb = json.loads(must("printf 'alice-pw-1' | agentosctl firstboot --admin alice --workspace A"))
@@ -20,6 +21,19 @@ for i in range(60):
         break
     time.sleep(2)
 assert r["status"] == 200, r
+
+# One failing item must not hide the evidence of the next (run 41164440050: daily failed, W05/O03/S08 never ran).
+# The mainline stays hard: later items use its apps. The check still fails at the end if any item failed.
+failed: list[str] = []
+
+@contextlib.contextmanager
+def item(name):
+    try:
+        with subtest(name):
+            yield
+    except Exception as e:
+        failed.append(f"{name}: {e}")
+        print(f"ITEM FAILED: {name}: {e}")
 
 def hsql(q):
     return machine.succeed(f"sqlite3 {OS} \"{q}\"").strip()
@@ -59,7 +73,7 @@ with subtest("native mainline: declarative app, CRUD/query, modify, version swit
     assert int(hsql(f"SELECT COUNT(*) FROM revisions WHERE app_id='{todo}'")) >= 2
     machine.copy_from_vm("/tmp/agentos-e2e", "")
 
-with subtest("native daily actions to reconciled state: cancel, compact, proposal, maintenance pause, archive/restore (D08, M06)"):
+with item("native daily actions to reconciled state: cancel, compact, proposal, maintenance pause, archive/restore (D08, M06)"):
     r = call(1, [fwd(ws, "maintenance.checks.post", {"templateId": "app-optimize", "target": {"kind": "app", "id": kanban}}, idem="chk")], "chk")[0]
     assert r["status"] == 202, r
     s = e2e("daily", 1500)
@@ -71,7 +85,7 @@ with subtest("native daily actions to reconciled state: cancel, compact, proposa
     assert int(hsql("SELECT COUNT(*) FROM deployments WHERE origin='proposal_accept'")) >= 1
     print(machine.succeed(f"sqlite3 {OS} 'SELECT COUNT(*) FROM agent_compactions' 2>&1 || true"))
 
-with subtest("real session: a query in flight in A, then rapid A→B→A→B switching shows nothing of A in B; A keeps it (W05)"):
+with item("real session: a query in flight in A, then rapid A→B→A→B switching shows nothing of A in B; A keeps it (W05)"):
     r = call(1, [{"methodId": "workspaces.create", "idempotencyKey": str(uuid.uuid4()), "body": {"displayName": "B"}}], "cb")[0]
     assert r["status"] == 201, r
     ws_b = r["body"]["workspaceId"]
@@ -84,7 +98,7 @@ with subtest("real session: a query in flight in A, then rapid A→B→A→B swi
     machine.succeed(f"cat {OS} {OS}-wal 2>/dev/null | grep -qa '{marker}'")          # the record is in A's store
     machine.fail(f"cat {OSB} {OSB}-wal 2>/dev/null | grep -qa '{marker}'")           # and nowhere in B's
 
-with subtest("no model: generation visibly unavailable; CRUD, query and version switch still work offline (O03)"):
+with item("no model: generation visibly unavailable; CRUD, query and version switch still work offline (O03)"):
     machine.succeed("echo AGENTOS_MODEL_MODE=real > /run/agentos-test/model.env")   # real mode, no provider configured
     machine.succeed("ip route del default 2>/dev/null; ip -6 route del default 2>/dev/null; true")
     machine.fail("ip route | grep -q default")
@@ -101,7 +115,7 @@ with subtest("no model: generation visibly unavailable; CRUD, query and version 
     assert hsql("SELECT COUNT(*) FROM runs") == runs_before
 
 
-with subtest("machined unreachable: a new build stops before any builder starts and the reason is visible; it runs once machined is back (S08 build)"):
+with item("machined unreachable: a new build stops before any builder starts and the reason is visible; it runs once machined is back (S08 build)"):
     # Force a real rebuild: stop the code app, damage its linked artifact (the Host then rebuilds it from the fixed
     # recipe, spec §14.4), stop machined, and start the app inside the gateway's write grace. The build job must wait
     # for its machine build slot (no builder container) and the Host must record why.
@@ -153,3 +167,5 @@ with subtest("machined unreachable: a new build stops before any builder starts 
     machine.wait_until_succeeds(f"sqlite3 {OS} \"SELECT status FROM build_jobs WHERE id='{job[0]}'\" | grep -qv '^queued$'", timeout=300)
     machine.wait_until_succeeds(f"sqlite3 {OS} \"SELECT COUNT(*) FROM events WHERE kind='machine.reachable'\" | grep -qv '^0$'", timeout=60)
     print("S08 build after recovery:", hsql(f"SELECT status || ' ' || COALESCE(error_json,'') FROM build_jobs WHERE id='{job[0]}'"))
+
+assert not failed, failed

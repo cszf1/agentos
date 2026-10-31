@@ -113,7 +113,8 @@ struct Real {
     shell->setIntentDraft(text);
     QQuickItem* f = findByObjectName(view->root(), QStringLiteral("intentInput"));
     QQuickItem* b = findByObjectName(view->root(), QStringLiteral("intentSubmit"));
-    if (target.isEmpty() && f && b && b->isEnabled()) {
+    const bool viaButton = target.isEmpty() && f && b && b->isEnabled();
+    if (viaButton) {
       f->setProperty("text", text);
       press(b);
     } else {
@@ -125,6 +126,10 @@ struct Real {
         if (!before.contains(id)) runId = id;
       return !runId.isEmpty();
     }, 60000);
+    if (runId.isEmpty())
+      std::printf("E2E-DIAG submit: no new run; viaButton=%d model=%d readOnly=%d host=%d notice=%s draft=%s action=%s\n", int(viaButton), int(shell->modelAvailable()),
+                  int(shell->readOnly()), int(shell->hostAvailable()), qPrintable(shell->notice()), qPrintable(shell->intentDraft()),
+                  qPrintable(action(QStringLiteral("runs.submit")).stringify().left(800)));
     return runId;
   }
   // Wait until the Task Center shows the run in a final state; returns the final status.
