@@ -324,6 +324,14 @@ impl Machine {
             .ok_or_else(MErr::hidden)
             .and_then(|mut v| {
                 v["commitIntent"] = json!(self.commit_intent_recorded(update_id)?);
+                let rid = v["toReleaseId"].as_str().unwrap_or_default().to_string();
+                v["target"] = self
+                    .c
+                    .query_row("SELECT release_id, manifest_hash, closure_path, verification_state FROM releases WHERE release_id = ?1", [&rid], |r| {
+                        Ok(json!({ "releaseId": r.get::<_, String>(0)?, "manifestHash": r.get::<_, String>(1)?, "closurePath": r.get::<_, String>(2)?, "verificationState": r.get::<_, String>(3)? }))
+                    })
+                    .optional()?
+                    .unwrap_or(Value::Null);
                 Ok(v)
             })
     }
@@ -364,6 +372,19 @@ impl Machine {
             }
             if !update_edge_ok(&cur, to) {
                 return Err(MErr::new("CONFLICT", format!("update cannot move {cur} → {to}")));
+            }
+            if to == "staged" {
+                // review R2-4: what was downloaded must be the target release's own closure; the caller names the
+                // release id, manifest hash and closure path it fetched, and each must equal the registered release
+                let (rid, mh, cp, vs): (String, String, String, String) = c.query_row(
+                    "SELECT r.release_id, r.manifest_hash, r.closure_path, r.verification_state FROM update_jobs u JOIN releases r ON r.release_id = u.to_release_id WHERE u.update_id = ?1",
+                    [update_id],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+                )?;
+                let f = |k: &str| fields.get(k).and_then(|v| v.as_str()).unwrap_or("");
+                if vs != "verified" || f("releaseId") != rid || f("manifestHash") != mh || f("closurePath") != cp {
+                    return Err(MErr::new("UPDATE_CONTENT_MISMATCH", format!("staged content is not release {rid}'s closure {cp} (manifest {mh})")));
+                }
             }
             c.execute("UPDATE update_jobs SET state = ?2, updated_at = ?3 WHERE update_id = ?1", params![update_id, to, now_ms()])?;
             for (k, col) in [("trialBootId", "trial_boot_id"), ("previousEntryId", "previous_entry_id"), ("candidateEntryId", "candidate_entry_id"), ("checkpointSetId", "checkpoint_set_id"), ("barrierId", "barrier_id")] {

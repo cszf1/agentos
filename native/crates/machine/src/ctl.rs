@@ -998,6 +998,11 @@ fn update_fetch(c: &mut Client, a: &[String]) {
     if st != "verified" && st != "downloading" {
         die(&format!("CONFLICT: update {id} is {st}; download needs a verified or downloading update"));
     }
+    // review R2-4: only the target release's own closure may be fetched for this update
+    let target = u["target"].clone();
+    if target["closurePath"].as_str() != Some(closure.as_str()) || target["verificationState"] != "verified" {
+        die(&format!("UPDATE_CONTENT_MISMATCH: --closure {closure} is not the closure of update {id}'s target release ({}); nothing was downloaded", target["closurePath"]));
+    }
     let adv = |c: &mut Client, to: &str, fields: Value| c.call("updates.advance", json!({ "updateId": id, "to": to, "fields": fields })).unwrap_or_else(|e| die(&e.to_string()));
     adv(c, "downloading", json!({}));
     let all = remote_closure(&from, &closure);
@@ -1018,6 +1023,11 @@ fn update_fetch(c: &mut Client, a: &[String]) {
         adv(c, "downloading", json!({ "error": why }));
         die(&format!("UPDATE_DOWNLOAD_INTERRUPTED: {} of {} paths present; run the same command again to resume", now.len(), names.len()));
     }
-    let done = adv(c, "staged", json!({}));
+    // re-read the target just before staging: the release must not have changed while downloading
+    let u2 = c.call("updates.get", json!({ "updateId": id })).unwrap_or_else(|e| die(&e.to_string()));
+    if u2["target"] != target {
+        die("UPDATE_CONTENT_MISMATCH: the target release changed during the download; not staged");
+    }
+    let done = adv(c, "staged", json!({ "releaseId": target["releaseId"], "manifestHash": target["manifestHash"], "closurePath": closure }));
     out(&json!({ "updateId": id, "state": done["state"], "paths": names.len(), "alreadyPresent": have.len(), "fetched": names.len() - have.len() }));
 }

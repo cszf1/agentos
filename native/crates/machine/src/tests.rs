@@ -905,3 +905,25 @@ fn r2_3_duplicate_key_ids_conflict_and_an_interrupted_rotation_changes_nothing()
     assert!(t.m.rotate_key(&stmt, "k1", &sig_rot(&k1, &stmt)).is_err());
     assert_eq!(audits(&t, "release.key_rotated"), 1);
 }
+
+#[test]
+fn r2_4_staging_needs_the_target_releases_own_closure() {
+    let (t, _) = setup();
+    let comp = serde_json::json!({ "workspaceSchema": [5, 5], "machineSchema": [1, 2], "brokerSchema": [4, 4], "brokerProtocol": [3, 3], "nativeRpc": [1, 1] }).to_string();
+    for (id, seq, cp) in [("rA", 50, "/nix/store/aaaa-agentos-system"), ("rB", 51, "/nix/store/bbbb-agentos-system")] {
+        t.m.c.execute("INSERT INTO releases (release_id, manifest_hash, release_sequence, closure_path, compatibility_json, migration_class, verification_state, support_until, created_at) VALUES (?1, ?2, ?3, ?4, ?5, 'none', 'verified', 9999999999999, 1)", rusqlite::params![id, format!("sha256:{}", id), seq, cp, comp]).unwrap();
+    }
+    let uid = "22222222-2222-4222-8222-222222222222";
+    t.m.c.execute("INSERT INTO update_jobs (update_id, from_release_id, to_release_id, plan_hash, state, created_at, updated_at) VALUES (?1, NULL, 'rA', 'h', 'verified', 1, 1)", [uid]).unwrap();
+    let u = t.m.update(uid).unwrap();
+    assert_eq!(u["target"]["closurePath"], "/nix/store/aaaa-agentos-system");
+    t.m.advance_update(uid, "downloading", &serde_json::json!({})).unwrap();
+    let f = |rid: &str, mh: &str, cp: &str| serde_json::json!({ "releaseId": rid, "manifestHash": mh, "closurePath": cp });
+    // another valid release's closure, a wrong manifest hash, nothing named: all refused, state unchanged
+    for bad in [f("rB", "sha256:rB", "/nix/store/bbbb-agentos-system"), f("rA", "sha256:rA", "/nix/store/bbbb-agentos-system"), f("rA", "sha256:rB", "/nix/store/aaaa-agentos-system"), serde_json::json!({})] {
+        assert_eq!(t.m.advance_update(uid, "staged", &bad).unwrap_err().code, "UPDATE_CONTENT_MISMATCH");
+        assert_eq!(t.m.update(uid).unwrap()["state"], "downloading");
+    }
+    t.m.advance_update(uid, "staged", &f("rA", "sha256:rA", "/nix/store/aaaa-agentos-system")).unwrap();
+    assert_eq!(t.m.update(uid).unwrap()["state"], "staged");
+}
