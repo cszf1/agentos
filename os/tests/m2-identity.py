@@ -124,3 +124,30 @@ with subtest("machined restart keeps identity, sessions must rebind"):
     machine.wait_for_unit("agentos-machine.service")
     st = json.loads(machine.succeed("agentosctl status"))
     assert st["meta"]["machineInstallId"] == mid
+
+with subtest("root services run sandboxed: machined and broker hardening is in effect and recorded (review F10)"):
+    for unit, nnp, caps_forbidden in (("agentos-machine.service", "yes", ["cap_sys_admin", "cap_sys_module", "cap_net_admin", "cap_sys_ptrace", "cap_sys_rawio", "cap_bpf"]),
+                                      ("agentos-broker.service", "yes", ["cap_sys_admin", "cap_setuid", "cap_setgid", "cap_kill", "cap_net_admin", "cap_sys_ptrace"])):
+        machine.wait_for_unit(unit)
+        props = dict(l.split("=", 1) for l in machine.succeed(f"systemctl show {unit} -p NoNewPrivileges -p ProtectSystem -p CapabilityBoundingSet -p RestrictAddressFamilies -p LimitNOFILE -p MemoryMax -p TasksMax -p ProtectKernelModules").strip().splitlines())
+        print(unit, props)
+        assert props["NoNewPrivileges"] == nnp and props["ProtectSystem"] == "strict" and props["ProtectKernelModules"] == "yes", props
+        assert props["MemoryMax"] != "infinity" and props["LimitNOFILE"] != "524288" and props["TasksMax"] != "infinity", props
+        assert "AF_INET" not in props["RestrictAddressFamilies"] and "AF_UNIX" in props["RestrictAddressFamilies"], props
+        caps = props["CapabilityBoundingSet"].lower()
+        assert not any(c in caps.split() for c in caps_forbidden), (unit, caps)
+        # the running process has the reduced bounding set too
+        pid = machine.succeed(f"systemctl show -P MainPID {unit}").strip()
+        bnd = int(machine.succeed(f"grep CapBnd /proc/{pid}/status | cut -f2").strip(), 16)
+        assert not bnd & (1 << 21), (unit, hex(bnd))                                   # CAP_SYS_ADMIN gone
+        rep = machine.succeed(f"systemd-analyze security {unit} --no-pager 2>&1 | tail -1")
+        print("systemd-analyze security", unit, rep.strip())
+        score = float(rep.split("exposure level for")[1].split(":")[1].split()[0])
+        assert score < 9.0, rep
+    # a write outside the allowed paths fails inside machined's mount namespace (nothing outside /etc /home /root /var /run /media /mnt)
+    pid = machine.succeed("systemctl show -P MainPID agentos-machine.service").strip()
+    machine.fail(f"nsenter -t {pid} -m touch /boot/agentos-f10-probe")
+    machine.fail(f"nsenter -t {pid} -m touch /usr/agentos-f10-probe")
+    machine.succeed(f"nsenter -t {pid} -m test -w /var/lib/agentos-machine")
+    # still fully working: a restart keeps the identity and accounts can still be created (checked above under the sandbox)
+    machine.succeed("systemctl restart agentos-broker.service && systemctl is-active agentos-broker.service")

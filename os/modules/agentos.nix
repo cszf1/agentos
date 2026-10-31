@@ -132,6 +132,29 @@ in {
         Restart = "on-failure";
         RestartSec = 1;
         LimitCORE = 0;
+        # review F10: least privilege for root machined. It creates and locks accounts (useradd/usermod/passwd/chpasswd
+        # write /etc and /home), drops to execution UIDs (setpriv), owns /var/lib/agentos*, moves broker remnants in
+        # recovery (/var/lib/agentos-broker), writes machine sets where root asks (/var, /root, /media, /mnt), and talks
+        # to logind/systemd/NetworkManager over D-Bus. Nothing else is writable; no network, no kernel or clock access.
+        NoNewPrivileges = true;
+        ProtectSystem = "strict";
+        ReadWritePaths = [ "/etc" "/home" "/root" "/var" "/run" "/media" "/mnt" ];
+        PrivateDevices = true;
+        ProtectKernelTunables = true;
+        ProtectKernelModules = true;
+        ProtectKernelLogs = true;
+        ProtectControlGroups = true;
+        ProtectClock = true;
+        ProtectHostname = true;
+        RestrictRealtime = true;
+        RestrictSUIDSGID = true;
+        LockPersonality = true;
+        SystemCallArchitectures = "native";
+        RestrictAddressFamilies = [ "AF_UNIX" "AF_NETLINK" ];
+        CapabilityBoundingSet = [ "CAP_CHOWN" "CAP_FOWNER" "CAP_DAC_OVERRIDE" "CAP_DAC_READ_SEARCH" "CAP_SETUID" "CAP_SETGID" "CAP_KILL" "CAP_AUDIT_WRITE" ];
+        LimitNOFILE = 8192;
+        TasksMax = 512;
+        MemoryMax = "2G";
       };
     };
 
@@ -200,6 +223,32 @@ in {
         Restart = "on-failure";
         RestartSec = 1;
         LimitCORE = 0;
+        # review F10: the broker only writes its own log and socket (State/RuntimeDirectory), reads /etc/agentos and
+        # the root policy, and reaches machined, the workers and D-Bus over UNIX sockets. It chowns its socket and
+        # connects to worker sockets owned by their own users.
+        NoNewPrivileges = true;
+        ProtectSystem = "strict";
+        ProtectHome = true;
+        PrivateTmp = true;
+        PrivateDevices = true;
+        ProtectKernelTunables = true;
+        ProtectKernelModules = true;
+        ProtectKernelLogs = true;
+        ProtectControlGroups = true;
+        ProtectClock = true;
+        ProtectHostname = true;
+        RestrictNamespaces = true;
+        RestrictRealtime = true;
+        RestrictSUIDSGID = true;
+        LockPersonality = true;
+        MemoryDenyWriteExecute = true;
+        SystemCallArchitectures = "native";
+        SystemCallFilter = [ "@system-service" ];
+        RestrictAddressFamilies = [ "AF_UNIX" ];
+        CapabilityBoundingSet = [ "CAP_CHOWN" "CAP_FOWNER" "CAP_DAC_OVERRIDE" "CAP_DAC_READ_SEARCH" ];
+        LimitNOFILE = 1024;
+        TasksMax = 128;
+        MemoryMax = "512M";
       };
     };
 
