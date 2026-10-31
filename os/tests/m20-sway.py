@@ -66,7 +66,7 @@ def greeter_diag():
 
 def greeter_ready():
     try:
-        machine.wait_until_succeeds("pgrep -x regreet || pgrep -f bin/regreet", timeout=120)
+        machine.wait_until_succeeds("pgrep -u greeter -f '[r]egreet'", timeout=120)
     except BaseException:
         greeter_diag()
         raise

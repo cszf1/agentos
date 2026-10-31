@@ -96,7 +96,7 @@ def greeter_diag():
 
 def greeter_ready():
     try:
-        machine.wait_until_succeeds("pgrep -x regreet || pgrep -f bin/regreet", timeout=120)
+        machine.wait_until_succeeds("pgrep -u greeter -f '[r]egreet'", timeout=120)
     except BaseException:
         greeter_diag()
         raise
@@ -159,9 +159,12 @@ with subtest("first boot from the local console (spec 19.4, review F11): adminis
     assert st["workspaceList"][0].get("displayName", "A") == "A", st["workspaceList"]
     machine.succeed("getent passwd alice && id -nG alice")
     machine.fail("journalctl -b --no-pager | grep -F alice-pw-1")   # the password is in no log
-    # closed for good: the unit's condition now fails, nothing waits on tty1
+    # The setup unit owns tty1 with TTYVHangup=yes. Stop the greeter before testing the closed entry: stopping
+    # the old oneshot while a new greeter owns that tty would hang up its PAM session (run 41218400569).
+    machine.succeed("systemctl stop greetd.service")
     machine.succeed("systemctl restart agentos-first-setup.service")
     assert machine.succeed("systemctl show -p ConditionResult --value agentos-first-setup.service").strip() == "no"
+    machine.succeed("systemctl start greetd.service")
 
 with subtest("ReGreet: a wrong password is refused and the greeter recovers; the right one starts Sway + the Qt Shell through greetd/PAM; no browser engine (D01, review F02)"):
     # Fresh machine: nothing remembered by ReGreet. The greeter wrapper (agentos-greeter-defaults) maps every local
@@ -184,7 +187,7 @@ with subtest("ReGreet: a wrong password is refused and the greeter recovers; the
     machine.fail("pgrep -u alice -x sway")
     time.sleep(6)
     machine.screenshot("greeter-after-failure")
-    machine.succeed("pgrep -x regreet")                     # the greeter is still there, ready for the next try
+    machine.succeed("pgrep -u greeter -f '[r]egreet'")                     # the greeter is still there, ready for the next try
     regreet_login("alice-pw-1")
     machine.wait_until_succeeds("pgrep -u alice -f bin/agentos-shell", timeout=120)
     sid = greetd_session()
