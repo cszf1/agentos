@@ -364,11 +364,13 @@ class E2E : public QObject {
     r.go(QStringLiteral("home"));
     QCOMPARE(r.model(r.shell->runs())->count(), runsBefore);
     report(QStringLiteral("generation"), {{QStringLiteral("modelAvailable"), r.shell->modelAvailable()}, {QStringLiteral("notice"), r.shell->notice()}, {QStringLiteral("banner"), r.shell->banner()}});
-    // CRUD + query on an app generated earlier
+    // CRUD + query on the declarative to-do app generated earlier ("待办清单"). The code app "待办看板" also has 待办 in
+    // its title but takes writes only through its own commands (records POST answers FORBIDDEN 403), and the app list
+    // order changes after the daily archive/restore, so a plain "contains 待办" match picked it in runs 41145058422/41146819604.
     QTRY_VERIFY_WITH_TIMEOUT(r.appCount() >= 1, 20000);
     QString todo;
     for (int i = 0; i < r.appCount(); ++i)
-      if (r.app(i).get(QStringLiteral("title")).str().contains(QStringLiteral("待办"))) todo = r.app(i).get(QStringLiteral("appId")).str();
+      if (r.app(i).get(QStringLiteral("title")).str().startsWith(QStringLiteral("待办清单"))) todo = r.app(i).get(QStringLiteral("appId")).str();
     QVERIFY(!todo.isEmpty());
     AppViewModel* v = openView(r, todo);
     QVERIFY(v);
@@ -405,7 +407,7 @@ class E2E : public QObject {
     QString todo;
     for (int i = 0; i < r.appCount(); ++i) {
       appsA.insert(r.app(i).get(QStringLiteral("appId")).str());
-      if (r.app(i).get(QStringLiteral("title")).str().contains(QStringLiteral("待办"))) todo = r.app(i).get(QStringLiteral("appId")).str();
+      if (r.app(i).get(QStringLiteral("title")).str().startsWith(QStringLiteral("待办清单"))) todo = r.app(i).get(QStringLiteral("appId")).str();
     }
     QVERIFY(!todo.isEmpty());
     const QString marker = QStringLiteral("A-ONLY-") + QString::number(QDateTime::currentMSecsSinceEpoch());
