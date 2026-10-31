@@ -108,7 +108,11 @@ with subtest("a local set is not an off-machine copy until exported and read bac
     machine.fail("test -e /media/offsite/bad")
     # read-only snapshot store: no new set (refused before any workspace is stopped), no new workspace; existing set kept
     audit0 = int(sql("SELECT COUNT(*) FROM root_audit"))
-    machine.succeed(f"mount --bind {SNAP} {SNAP} && mount -o remount,bind,ro {SNAP}")
+    # A filesystem that turned read-only (superblock flag), as a real disk error does. A read-only *bind* remount is
+    # a per-mount flag that does not propagate into machined's sandbox namespace (review F10: ProtectSystem=strict),
+    # so machined saw the store writable (run 41203693428); a filesystem-level remount is seen everywhere.
+    machine.succeed(f"mount -t tmpfs -o size=64m agentos-ro-test {SNAP} && mount -o remount,ro {SNAP}")
+    machine.wait_until_succeeds(f"nsenter -t $(systemctl show -P MainPID agentos-machine.service) -m findmnt -no OPTIONS -T {SNAP} | grep -qw ro", timeout=10)
     rc, o = ctl(f"backup --out {SNAP}/full", ok=False)
     assert rc != 0 and "MACHINE_CAPACITY" in o, o
     assert sql("SELECT COUNT(*) FROM barriers WHERE state='held'") == "0"

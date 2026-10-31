@@ -231,6 +231,7 @@ export async function main(): Promise<void> {
   let caps: SystemCapabilities | null = null;
   try {
     caps = new SystemCapabilities(core, null, { dataDir: config.dataDir, log: (lvl, m, f) => log[lvl](m, f) });
+    if (machineModeFromEnv(process.env)) caps.broker.client.v3Required = true;   // protocol-3 writes only (spec §14.3)
     core.runs.systemScope = (runId, resourceIds, capabilityScopes, deadlineMs) => caps!.freezeRunScopeInTx(runId, resourceIds, capabilityScopes, deadlineMs);
     core.agentOps.system = caps;
     await caps.boot();

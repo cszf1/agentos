@@ -114,6 +114,13 @@ export class BrokerClient {
    * returns; returning null refuses to send the write at all (never a silent downgrade to protocol 1/2).
    */
   v3: ((method: string, params: unknown) => WorkspaceEnvelopeV3 | null) | null = null;
+  /**
+   * Machine mode: a registered workspace accepts only protocol-3 writes. Until `v3` is installed (after the first
+   * registry pull) a write is held back as BROKER_UNAVAILABLE (callers retry the same frozen request) instead of going
+   * out as protocol 2 and being refused for good. m3 run 41203693428: a control replayed right after a Host restart
+   * went out before the member authority was loaded and failed with "legacy protocol cannot write".
+   */
+  v3Required = false;
 
   constructor(readonly opts: BrokerClientOptions) {
     this.socketPath = opts.socketPath ?? process.env.AGENTOS_BROKER_SOCKET ?? BROKER_SOCKET;
@@ -198,6 +205,9 @@ export class BrokerClient {
     const id = String(++this.#seq);
     // Protocol-2 methods always travel as v=2; protocol-1 methods as v=1 (never downgraded, spec §13.3).
     let v: number = (BROKER_METHODS_V2 as readonly string[]).includes(method) ? BROKER_PROTOCOL_V2 : BROKER_PROTOCOL_VERSION;
+    if (!this.v3 && this.v3Required && (BROKER_METHODS_V3 as readonly string[]).includes(method)) {
+      return Promise.reject(new BrokerError("BROKER_UNAVAILABLE", `${method}: the workspace's member authority is not loaded yet; not sent (retried as protocol 3, never downgraded)`));
+    }
     if (this.v3 && (BROKER_METHODS_V3 as readonly string[]).includes(method)) {
       const w = this.v3(method, params);
       if (!w) return Promise.reject(new BrokerError("MEMBERSHIP_REVOKED", `no current member authority for ${method}; the write is not sent`));
