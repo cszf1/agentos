@@ -499,6 +499,18 @@ class FlowsTest : public QObject {
     }()));
   }
 
+  // m13 W05 run 41173405389: an app opened right after a switch, before the attach answers, stayed "loading" because
+  // its detail request carried the pre-attach scope and its answer was dropped.
+  void appOpenedBeforeAttachAnswersStillLoads() {
+    Harness h;
+    QVERIFY(h.up());
+    const QString kan = h.be.kanban.get(QStringLiteral("app")).get(QStringLiteral("appId")).str();
+    h.shell->switchWorkspace(WS_B);
+    auto* vm = qobject_cast<AppViewModel*>(h.shell->appView(kan));
+    QVERIFY(vm);
+    QTRY_COMPARE_WITH_TIMEOUT(vm->mode(), QStringLiteral("slot"), 5000);
+  }
+
   void degradedModes() {
     Harness h;
     QVERIFY(h.up());

@@ -438,6 +438,8 @@ void ShellController::attach(const QString& ws, bool resync) {
     rpc_->subscribe(ws, qint64(rep.body.get(QStringLiteral("cursor")).toNumber()), clientEpoch_, sessionEpoch_);
     loadLayout();
     loadAll();
+    for (auto* v : views_)
+      if (v->mode() == QLatin1String("loading")) fetchDetail(v);
   }, false);
 }
 
@@ -566,11 +568,17 @@ QObject* ShellController::appView(const QString& appId) {
   auto* v = new AppViewModel(appId, this, this);
   v->setDisabled(readOnly() || writesStopped_);
   views_.insert(appId, v);
-  request(QStringLiteral("apps.get"), JValue::object({{QStringLiteral("appId"), appId}}), [this, v](const RpcReply& r) {
+  // Before the attach answers, a request carries a scope without the store and its reply is dropped: the view
+  // would stay "loading" for good (m13 W05 run 41173405389). attach() fetches the detail of such views instead.
+  if (!storeUUID_.isEmpty()) fetchDetail(v);
+  return v;
+}
+
+void ShellController::fetchDetail(AppViewModel* v) {
+  request(QStringLiteral("apps.get"), JValue::object({{QStringLiteral("appId"), v->appId()}}), [this, v](const RpcReply& r) {
     if (!views_.values().contains(v)) return;
     if (r.ok()) v->setDetail(r.body);
   });
-  return v;
 }
 
 void ShellController::openApp(const QString& appId) {

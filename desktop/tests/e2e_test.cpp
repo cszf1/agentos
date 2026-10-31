@@ -482,7 +482,7 @@ class E2E : public QObject {
     AppViewModel* v2 = openView(r, todo);
     QVERIFY(v2);
     v2->setSearch(marker);
-    QTRY_VERIFY_WITH_TIMEOUT(rows(v2) == 1, 20000);
+    QTRY_VERIFY2_WITH_TIMEOUT(rows(v2) == 1, qPrintable(writeDiag(r, v2, n, {})), 20000);
     report(QStringLiteral("switch"), {{QStringLiteral("workspaceA"), wsA}, {QStringLiteral("workspaceB"), wsB}, {QStringLiteral("appsInB"), bApps},
                                       {QStringLiteral("lateDropped"), dropped}, {QStringLiteral("marker"), marker}});
   }

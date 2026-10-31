@@ -247,6 +247,7 @@ class ShellController : public QObject, public RequestSink {
   void loadWorkspaces();
   void attach(const QString& ws, bool resync);
   void loadAll();
+  void fetchDetail(AppViewModel* v);
   void loadMachine();
   void onEvent(const RpcEvent& e);
   void onGap(const QString& ws);

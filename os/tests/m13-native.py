@@ -98,7 +98,7 @@ with item("real session: a query in flight in A, then rapid A→B→A→B switch
     machine.succeed(f"cat {OS} {OS}-wal 2>/dev/null | grep -qa '{marker}'")          # the record is in A's store
     machine.fail(f"cat {OSB} {OSB}-wal 2>/dev/null | grep -qa '{marker}'")           # and nowhere in B's
 
-with item("no model: generation visibly unavailable; CRUD, query and version switch still work offline (O03)"):
+with item("no model: generation visibly unavailable; CRUD, query, version switch and deterministic maintenance still work offline (O03)"):
     machine.succeed("echo AGENTOS_MODEL_MODE=real > /run/agentos-test/model.env")   # real mode, no provider configured
     machine.succeed("ip route del default 2>/dev/null; ip -6 route del default 2>/dev/null; true")
     machine.fail("ip route | grep -q default")
@@ -112,6 +112,14 @@ with item("no model: generation visibly unavailable; CRUD, query and version swi
     for k in ["generation", "crud", "version"]:
         assert k in s, (k, s)
     assert s["generation"]["modelAvailable"] is False, s
+    # spec O03 also names deterministic maintenance: a model-free check (log-cleanup, usesModel false) still runs offline
+    r = call(1, [fwd(ws, "maintenance.control.post", {"action": "resume"}, idem="o3-resume")], "o3r")[0]
+    assert r["status"] == 200, r
+    r = call(1, [fwd(ws, "maintenance.checks.post", {"templateId": "log-cleanup", "target": {"kind": "workspace", "id": "workspace"}}, idem="o3-chk")], "o3c")[0]
+    assert r["status"] == 202, r
+    job = r["body"]["jobId"]
+    machine.wait_until_succeeds(f"sqlite3 {OS} \"SELECT state FROM maintenance_jobs WHERE id='{job}'\" | grep -Eqx 'succeeded|no_change|awaiting_approval'", timeout=120)
+    print("O03 maintenance:", hsql(f"SELECT state || ' ' || COALESCE(outcome_reason,'') || ' run=' || COALESCE(run_id,'') FROM maintenance_jobs WHERE id='{job}'"))
     assert hsql("SELECT COUNT(*) FROM runs") == runs_before
 
 
