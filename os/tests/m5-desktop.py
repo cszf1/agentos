@@ -1,15 +1,183 @@
-import time
+import time, os, subprocess
 machine.start()
 machine.wait_for_unit("agentos-session-gateway.service")
-machine.wait_for_unit("greetd.service")
-fb = json.loads(must("printf 'alice-pw-1' | agentosctl firstboot --admin alice --workspace A"))
-ws = fb["workspaceId"]
 
-with subtest("login on a VT starts Sway with the Qt Shell; no browser engine (D01)"):
-    tty_login(2, "alice", "alice-pw-1")
-    machine.send_chars("exec agentos-session\n")
-    machine.wait_until_succeeds("pgrep -u alice -x sway", timeout=120)
+# ---- helpers: the real Sway output (QEMU's display of the virtio-gpu scanout) and real input devices ----
+def shot(name):
+    """Screenshot of the VM display as (w, h, rgb bytes): what Sway actually scanned out."""
+    machine.screenshot(name)
+    raw = subprocess.run([PNGTOPNM, os.path.join(machine.out_dir, name + ".png")], check=True, capture_output=True).stdout
+    parts, i = [], 0
+    while len(parts) < 4:                                   # P6 <w> <h> <max>\n<data>
+        while raw[i:i + 1].isspace(): i += 1
+        j = i
+        while not raw[j:j + 1].isspace(): j += 1
+        parts.append(raw[i:j]); i = j
+    assert parts[0] == b"P6", parts
+    return int(parts[1]), int(parts[2]), raw[i + 1:]
+
+def px(img, x, y):
+    w, _, d = img
+    k = (y * w + x) * 3
+    return tuple(d[k:k + 3])
+
+def near(c, ref, tol=8):
+    return all(abs(a - b) <= tol for a, b in zip(c, ref))
+
+def hexc(c):
+    return "#%02x%02x%02x" % c
+
+TOPBAR, NAVBG, PRIMARY, BUTTON = (0x1f, 0x29, 0x37), (0xf3, 0xf4, 0xf6), (0xdc, 0xe7, 0xfb), (0xf4, 0xf4, 0xf4)
+
+def click(x, y, w, h):
+    """A left click at a screen pixel through the USB tablet (absolute pointer, as a real mouse/touchpad reaches Sway)."""
+    ax, ay = round(x * 32767 / (w - 1)), round(y * 32767 / (h - 1))
+    qsend = getattr(machine.qmp_client, "send")               # QMP input-send-event (HMP has no absolute pointer)
+    qsend("input-send-event", {"events": [{"type": "abs", "data": {"axis": "x", "value": ax}}, {"type": "abs", "data": {"axis": "y", "value": ay}}]})
+    time.sleep(0.3)
+    qsend("input-send-event", {"events": [{"type": "btn", "data": {"down": True, "button": "left"}}]})
+    time.sleep(0.15)
+    qsend("input-send-event", {"events": [{"type": "btn", "data": {"down": False, "button": "left"}}]})
+
+def nav_buttons(img):
+    """The Shell's navigation buttons, found in the pixels: 1-px grey borders in a column left of the labels."""
+    w, h, _ = img
+    x, rows, y = 12, [], 0
+    while y < h:
+        c = px(img, x, y)
+        if max(c) < 0xc0 and max(c) - min(c) < 24:            # border grey #9a9a9a (not the dark top bar: it is blue-grey)
+            rows.append(y)
+        y += 1
+    # merge adjacent rows into lines, pair lines into buttons (top border, bottom border)
+    lines = []
+    for r in rows:
+        if lines and r - lines[-1][1] <= 1: lines[-1][1] = r
+        else: lines.append([r, r])
+    btns = []
+    k = 0
+    while k + 1 < len(lines):
+        top, bot = lines[k][1], lines[k + 1][0]
+        if 18 <= bot - top <= 80:
+            btns.append((top, bot)); k += 2
+        else:
+            k += 1
+    return btns
+
+def nav_width(img):
+    w, h, _ = img
+    y = h - 6
+    x = 0
+    while x < w and near(px(img, x, y), NAVBG, 3): x += 1
+    return x
+
+def shell_frame(name, timeout=90):
+    """Wait until the Shell's frame is on the real output: dark top bar, light navigation column, 12 nav buttons."""
+    end = time.time() + timeout
+    while True:
+        img = shot(name)
+        w, h, _ = img
+        ok = near(px(img, w - 4, 3), TOPBAR) and near(px(img, 3, h - 6), NAVBG) and len(nav_buttons(img)) == 12
+        if ok or time.time() > end:
+            print(name, "top", hexc(px(img, w - 4, 3)), "nav", hexc(px(img, 3, h - 6)), "buttons", nav_buttons(img), "navWidth", nav_width(img))
+            assert ok, "the Shell frame is not on the output"
+            return img
+        time.sleep(3)
+
+def auth_failures():
+    return int(machine.succeed("journalctl -b --no-pager -o cat | grep -c 'pam_unix(greetd:auth): authentication failure' || true").strip() or "0")
+
+def greetd_session(user="alice"):
+    script = ("for s in $(loginctl list-sessions --no-legend | awk '{print $1}'); do "
+              "echo \"$s $(loginctl show-session $s -p Name --value) $(loginctl show-session $s -p Class --value) "
+              "$(loginctl show-session $s -p Service --value) $(loginctl show-session $s -p State --value)\"; done")
+    for line in machine.succeed(script).splitlines():
+        f = line.split() + ["", "", "", ""]
+        if f[1] == user and f[2] == "user" and f[3] == "greetd" and f[4] in ("active", "online"):
+            return f[0]
+    return None
+
+def greeter_ready():
+    machine.wait_until_succeeds("pgrep -x regreet", timeout=120)
+    machine.wait_until_succeeds("grep -qx tty1 /sys/class/tty/tty0/active", timeout=60)
+    time.sleep(8)                                             # GTK has mapped the window in cage
+
+def type_secret(pw, keywise=False):
+    if keywise:                                               # QEMU's fast injection can drop a key (see m5 lock notes)
+        for ch in pw:
+            machine.send_key("minus" if ch == "-" else ch, delay=0.08)
+        machine.send_key("ret")
+    else:
+        machine.send_chars(pw + "\n", delay=0.08)
+
+def regreet_login(pw):
+    """ReGreet: the Login button has the focus (last user/session preselected); Enter, then the password prompt."""
+    for attempt in range(3):
+        f0 = auth_failures()
+        machine.send_key("ret")
+        time.sleep(3)
+        type_secret(pw, keywise=attempt > 0)
+        try:
+            machine.wait_until_succeeds("pgrep -u alice -x sway", timeout=120)
+            return
+        except BaseException:
+            machine.screenshot(f"regreet-attempt-{attempt}")
+            print(machine.execute("tail -30 /var/log/regreet/log; journalctl -b --no-pager -u greetd | tail -20")[1])
+            if auth_failures() > f0 and attempt < 2:
+                time.sleep(6)                                 # a dropped key: ReGreet cancelled and shows the user again
+                continue
+            raise
+
+ws = None
+with subtest("first boot from the local console (spec 19.4, review F11): administrator and workspace typed on tty1, then the entry closes"):
+    machine.wait_until_succeeds("systemctl show -p ActiveState --value agentos-first-setup.service | grep -qx activating", timeout=180)
+    machine.fail("systemctl is-active greetd.service")       # no login screen before the machine has an administrator
+    machine.wait_until_tty_matches("1", "administrator login", timeout=180)
+    machine.send_chars("alice\n", delay=0.08)
+    machine.wait_until_tty_matches("1", "password: ", timeout=60)
+    type_secret("alice-pw-1")
+    machine.wait_until_tty_matches("1", "password again", timeout=60)
+    type_secret("alice-pw-1")
+    machine.wait_until_tty_matches("1", "default workspace name", timeout=60)
+    machine.send_chars("A\n", delay=0.08)
+    machine.wait_until_succeeds("test -e /var/lib/agentos-machine/machine.secret", timeout=180)
+    machine.wait_for_unit("greetd.service")
+    st = json.loads(machine.succeed("agentosctl status"))
+    print("after console first boot", st.get("workspaceList"))
+    ws = st["workspaceList"][0]["workspaceId"]
+    assert st["workspaceList"][0].get("displayName", "A") == "A", st["workspaceList"]
+    machine.succeed("getent passwd alice && id -nG alice")
+    machine.fail("journalctl -b --no-pager | grep -F alice-pw-1")   # the password is in no log
+    # closed for good: the unit's condition now fails, nothing waits on tty1
+    machine.succeed("systemctl restart agentos-first-setup.service")
+    assert machine.succeed("systemctl show -p ConditionResult --value agentos-first-setup.service").strip() == "no"
+
+with subtest("ReGreet: a wrong password is refused and the greeter recovers; the right one starts Sway + the Qt Shell through greetd/PAM; no browser engine (D01, review F02)"):
+    # ReGreet 0.3 keeps the last user and their last session in /var/lib/regreet/state.toml: the state a previous
+    # login leaves. Restart greetd so ReGreet reads it (and AccountsService's user list) at start.
+    machine.succeed("install -d -o greeter -g greeter /var/lib/regreet && printf 'last_user = \"alice\"\\n\\n[user_to_last_sess]\\nalice = \"AgentOS\"\\n' > /var/lib/regreet/state.toml && chown greeter:greeter /var/lib/regreet/state.toml")
+    machine.succeed("systemctl restart greetd.service")
+    greeter_ready()
+    g = shot("greeter")
+    assert len({px(g, x, y) for x in range(0, g[0], 37) for y in range(0, g[1], 23)}) > 3, "greeter output is blank"
+    f0 = auth_failures()
+    machine.send_key("ret")
+    time.sleep(3)
+    machine.send_chars("wrong-pw-9\n", delay=0.08)
+    machine.wait_until_succeeds(f"test $(journalctl -b --no-pager -o cat | grep -c 'pam_unix(greetd:auth): authentication failure') -gt {f0}", timeout=60)
+    assert greetd_session() is None
+    machine.fail("pgrep -u alice -x sway")
+    time.sleep(6)
+    machine.screenshot("greeter-after-failure")
+    machine.succeed("pgrep -x regreet")                     # the greeter is still there, ready for the next try
+    regreet_login("alice-pw-1")
     machine.wait_until_succeeds("pgrep -u alice -f bin/agentos-shell", timeout=120)
+    sid = greetd_session()
+    assert sid, machine.succeed("loginctl list-sessions")
+    assert machine.succeed(f"loginctl show-session {sid} -p Type --value").strip() == "wayland"
+    swaypid = machine.succeed("pgrep -u alice -x sway | head -1").strip()
+    machine.succeed(f"grep -q 'session-{sid}.scope' /proc/{swaypid}/cgroup")             # Sway lives in the greetd session
+    machine.succeed(f"tr '\\0' ' ' < /proc/{swaypid}/cmdline | grep -q agentos-sway.conf")  # the AgentOS session entry, not typed
+    machine.succeed("grep -q 'last_user = \"alice\"' /var/lib/regreet/state.toml && grep -q 'alice = \"AgentOS\"' /var/lib/regreet/state.toml")
     pid = machine.succeed("pgrep -u alice -f bin/agentos-shell | head -1").strip()
     time.sleep(5)
     maps = machine.succeed(f"cat /proc/{pid}/maps")
@@ -17,7 +185,34 @@ with subtest("login on a VT starts Sway with the Qt Shell; no browser engine (D0
         assert bad not in maps, bad
     machine.fail("pgrep -f -i 'chromium|firefox|webkit'")
     machine.succeed(f"grep -q libQt6Quick /proc/{pid}/maps")
-    machine.screenshot("shell")
+
+with subtest("real output and input (review F12): the Shell frame in Sway's pixels; a tablet click changes the page; Ctrl+= / Ctrl+0 rescale"):
+    img = shell_frame("shell")
+    w, h, _ = img
+    btns = nav_buttons(img)
+    inner = lambda im, b: px(im, 12 + 6, (b[0] + b[1]) // 2)
+    assert near(inner(img, btns[0]), PRIMARY), [hexc(inner(img, b)) for b in btns]    # 首页 is the current page
+    assert near(inner(img, btns[4]), BUTTON, 6), hexc(inner(img, btns[4]))
+    click(75, (btns[4][0] + btns[4][1]) // 2, w, h)                                       # 任务中心
+    end = time.time() + 30
+    while True:
+        img2 = shot("shell-after-click")
+        b2 = nav_buttons(img2)
+        if (len(b2) == 12 and near(inner(img2, b2[4]), PRIMARY) and not near(inner(img2, b2[0]), PRIMARY)) or time.time() > end:
+            break
+        time.sleep(2)
+    print("after click", [hexc(inner(img2, b)) for b in b2])
+    assert len(b2) == 12 and near(inner(img2, b2[4]), PRIMARY) and not near(inner(img2, b2[0]), PRIMARY), "the click did not reach the Shell"
+    nw0 = nav_width(img2)
+    machine.send_key("ctrl-equal")
+    time.sleep(3)
+    nw1 = nav_width(shot("shell-zoomed"))
+    machine.send_key("ctrl-0")
+    time.sleep(3)
+    nw2 = nav_width(shot("shell-zoom-reset"))
+    print("navigation width", nw0, nw1, nw2)
+    assert nw1 > nw0 + 10 and abs(nw2 - nw0) <= 2, (nw0, nw1, nw2)
+    click(75, (b2[0][0] + b2[0][1]) // 2, w, h)                                           # back to 首页
 
 with subtest("Shell SIGKILL: the session agent brings it back within 5 s (O06 part, D11 part)"):
     old = machine.succeed("pgrep -u alice -f bin/agentos-shell | head -1").strip()
@@ -71,17 +266,61 @@ with subtest("app container from the release images, offline, with no escape sur
     for n in ["probe container", "no network", "read-only rootfs", "capabilities / no_new_privs / seccomp", "no escape surfaces"]:
         assert n in lines and lines[n].startswith("ok"), (n, lines.get(n))
     machine.succeed("test -S /run/user/$(id -u alice)/wayland-1 || ls /run/user/$(id -u alice)/ | grep -q wayland")   # the surface exists outside
-    machine.send_key("alt-f2")
-    machine.succeed("chvt 2")
+    machine.send_key("alt-f1")
+    machine.succeed("chvt 1")
 
-with subtest("lock: swaylock confirms, logind LockedHint=yes, gateway refuses (I10/H03)"):
-    sid = user_session("alice", "tty2")
-    machine.succeed(f"loginctl lock-session {sid}")
+M = "sqlite3 /var/lib/agentos-machine/machine.sqlite"
+B = "sqlite3 /var/lib/agentos-broker/broker.sqlite"
+alice_uid = machine.succeed("id -u alice").strip()
+
+def scope(tag):
+    """What maintenance may do for workspace A and as whom (review F08): the owner setting, the broker's maintenance
+    policies, state, grants, workspace binding and member rows, and the UIDs any workspace process runs as."""
+    store, exec_uid, login = machine.succeed(f"{M} \"SELECT store_uuid, execution_uid, exec_login FROM workspaces WHERE workspace_id='{ws}'\"").strip().split("|")
+    q = lambda sql: machine.succeed(f"{B} \"{sql}\"").strip()
+    hpid = machine.succeed(f"systemctl --user -M {login}@ show -p MainPID --value agentos-host@{ws}.service 2>/dev/null || echo 0").strip() or "0"
+    huid = machine.succeed(f"stat -c %u /proc/{hpid} 2>/dev/null || echo none").strip() if hpid != "0" else "none"
+    v = {
+        "runWhenLoggedOut": machine.succeed(f"{M} \"SELECT run_when_logged_out FROM workspaces WHERE workspace_id='{ws}'\"").strip(),
+        "policies": q(f"SELECT policy_id, policy_version, policy_hash, resource_id, action_family, bounds_json, expires_at FROM maintenance_policies WHERE store_uuid='{store}' ORDER BY 1, 2"),
+        "maintenanceState": q(f"SELECT state FROM workspace_maintenance_state WHERE store_uuid='{store}'"),
+        "grants": q(f"SELECT grant_id, grant_version, principal_json, capability_id, resource_id, limits_json, expires_at FROM broker_grants WHERE store_uuid='{store}' ORDER BY 1, 2"),
+        "bindingUid": q(f"SELECT allowed_uid FROM workspace_bindings WHERE store_uuid='{store}'"),
+        "members": q(f"SELECT user_id, role, member_version, state FROM machine_members WHERE store_uuid='{store}' ORDER BY 1"),
+        "hostUid": huid,
+        # every process of this workspace, by UID: none may run as the person who is (or was) logged in
+        "workspaceUids": sorted(set(machine.succeed(f"ps -o uid= -u {exec_uid} | sort -u; true").split())),
+        "loginUidProcsInWorkspace": machine.succeed(f"for p in $(pgrep -u {alice_uid}); do grep -l 'agentos-host@{ws}' /proc/$p/cgroup 2>/dev/null; done | wc -l").strip(),
+    }
+    print("scope", tag, json.dumps(v, ensure_ascii=False))
+    assert v["runWhenLoggedOut"] == "0", v
+    assert v["hostUid"] in ("none", exec_uid), (v["hostUid"], exec_uid)              # the executor is the workspace UID
+    assert v["bindingUid"] != alice_uid and exec_uid != alice_uid, v                  # broker binds the workspace UID, not the login
+    assert v["loginUidProcsInWorkspace"] == "0", v
+    assert alice_uid not in v["grants"], v["grants"]
+    return v
+
+def not_wider(a, b, what):
+    """b grants nothing a did not: every policy/grant row in b was already in a, members unchanged."""
+    for k in ("policies", "grants"):
+        extra = set(b[k].splitlines()) - set(a[k].splitlines())
+        assert not extra, (what, k, extra)
+    assert b["members"] == a["members"], (what, a["members"], b["members"])
+    assert b["bindingUid"] in (a["bindingUid"], ""), (what, a["bindingUid"], b["bindingUid"])
+
+with subtest("lock from the Shell (Ctrl+Alt+L): swaylock confirms, logind LockedHint=yes, maintenance scope unchanged (I10/H03, review F08/F12)"):
+    sid = greetd_session()
+    assert sid
+    s_unlocked = scope("unlocked")
+    machine.succeed("grep -qx tty1 /sys/class/tty/tty0/active")
+    machine.send_key("ctrl-alt-l")                                   # the Shell's shortcut → session agent → swaylock
     machine.wait_until_succeeds("pgrep -u alice swaylock", timeout=60)
     machine.wait_until_succeeds(f"loginctl show-session {sid} -p LockedHint | grep -q yes", timeout=60)
-    machine.screenshot("locked")
-    machine.succeed("grep -qx tty2 /sys/class/tty/tty0/active")
-    time.sleep(2)                                                            # swaylock has its surfaces mapped
+    lk = shot("locked")
+    assert not near(px(lk, lk[0] - 4, 3), TOPBAR), "the Shell frame is still visible while locked"
+    s_locked = scope("locked")
+    assert s_locked == s_unlocked, (s_unlocked, s_locked)            # locking neither widens nor changes anything
+    time.sleep(2)                                                    # swaylock has its surfaces mapped
     machine.send_chars("alice-pw-1\n", delay=0.05)
     try:
         machine.wait_until_succeeds(f"loginctl show-session {sid} -p LockedHint | grep -q no", timeout=30)
@@ -89,12 +328,33 @@ with subtest("lock: swaylock confirms, logind LockedHint=yes, gateway refuses (I
         print(machine.execute(f"cat /sys/class/tty/tty0/active; loginctl show-session {sid}; ps -o pid,stat,comm,args -u alice; "
                               "journalctl -b --no-pager | grep -iE 'swaylock|pam_unix|agentos-session-agent|sway\\[' | tail -40")[1])
         machine.screenshot("unlock-failed")
-        # retry once, key by key
-        for ch in "alice-pw-1":
-            machine.send_key("minus" if ch == "-" else ch)
-        machine.send_key("ret")
+        type_secret("alice-pw-1", keywise=True)
         machine.wait_until_succeeds(f"loginctl show-session {sid} -p LockedHint | grep -q no", timeout=30)
     machine.wait_until_fails("pgrep -u alice swaylock", timeout=60)
+    shell_frame("unlocked")
+
+with subtest("logout, then log in again through ReGreet: the greeter returns, nothing of the session stays, maintenance scope never widens (D01, W08, review F02/F08)"):
+    # the Shell's 注销 goes to the session agent (same path as the lock above); ask the agent as alice, in her session
+    rt = f"/run/user/{alice_uid}"
+    machine.succeed(f"runuser -u alice -- env XDG_RUNTIME_DIR={rt} python3 -c \"import socket,json,struct;s=socket.socket(socket.AF_UNIX);s.connect('{rt}/agentos-session.sock');b=json.dumps({{'op':'logout'}}).encode();s.sendall(struct.pack('>I',len(b))+b);n=struct.unpack('>I',s.recv(4))[0];print(s.recv(n))\"")
+    machine.wait_until_fails("pgrep -u alice -x sway", timeout=60)
+    machine.wait_until_fails("pgrep -u alice -f bin/agentos-shell", timeout=60)
+    machine.wait_until_succeeds(f"! loginctl show-session {sid} -p State --value 2>/dev/null | grep -qE 'active|online'", timeout=60)
+    assert greetd_session() is None
+    greeter_ready()
+    shot("greeter-after-logout")
+    s_out = scope("logged-out")
+    not_wider(s_unlocked, s_out, "logout")
+    # log in again: ReGreet preselects alice and AgentOS from the state the first login left
+    regreet_login("alice-pw-1")
+    machine.wait_until_succeeds("pgrep -u alice -f bin/agentos-shell", timeout=120)
+    sid2 = greetd_session()
+    assert sid2 and sid2 != sid, (sid, sid2)
+    shell_frame("relogin")
+    time.sleep(5)
+    s_again = scope("logged-in-again")
+    not_wider(s_unlocked, s_again, "relogin")
+    sid = sid2
 
 with subtest("a killed locker never returns to an unlocked desktop (H03)"):
     machine.succeed(f"loginctl lock-session {sid}")
