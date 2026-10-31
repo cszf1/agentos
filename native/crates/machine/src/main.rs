@@ -140,12 +140,31 @@ fn keep_as_evidence(paths: &Paths, accepted: &std::path::Path, reason: &str) {
     for f in ["broker.sqlite", "broker.sqlite-wal", "broker.sqlite-shm"] {
         let src = std::path::Path::new("/var/lib/agentos-broker").join(f);
         if src.exists() {
-            let _ = std::fs::rename(&src, lost.join("broker").join(f));
+            // /var/lib/agentos-broker and machined's StateDirectory are separate mounts in machined's sandbox
+            // namespace (F10: ProtectSystem=strict + ReadWritePaths/StateDirectory bind mounts), so rename(2)
+            // answers EXDEV even on one filesystem (m9 41204728621): fall back to copy, fsync, then remove.
+            let dst = lost.join("broker").join(f);
+            if let Err(e) = move_file(&src, &dst) {
+                eprintln!("agentos-machined: could not keep {} as evidence: {e}", src.display());
+            }
         }
     }
     let _ = std::fs::write(lost.join("README"), format!("Remains of the installation before {} ({reason}, V1-R11). Evidence only; nothing here is replayed. Old workspace trees stay under /var/lib/agentos/workspaces and need an explicit import.\n", agentos_machine::util::now_ms()));
     let _ = std::fs::remove_file(accepted);
     eprintln!("agentos-machined: recovery accepted ({reason}); previous state kept in {}", lost.display());
+}
+
+/// rename(2), or copy + fsync + remove when source and target are on different mounts (EXDEV).
+fn move_file(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
+    match std::fs::rename(src, dst) {
+        Ok(()) => Ok(()),
+        Err(e) if e.raw_os_error() == Some(18) => {
+            std::fs::copy(src, dst)?;
+            std::fs::File::open(dst)?.sync_all()?;
+            std::fs::remove_file(src)
+        }
+        Err(e) => Err(e),
+    }
 }
 
 fn recovery_gate(paths: &Paths, socket: &str) -> Option<i32> {

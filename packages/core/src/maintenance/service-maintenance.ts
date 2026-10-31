@@ -151,6 +151,15 @@ export class ServiceMaintenance {
       this.jobs.rootUnavailable();
       return;
     }
+    // One registered write per (state, epoch): a broker refresh after a Host restart that finds the root behind the
+    // local epoch must not register a second copy of a control that is still waiting in the outbox (I08, F04b).
+    const waiting = this.store.all<{ frozen_request: string }>(
+      "SELECT frozen_request FROM root_sync_outbox WHERE kind = 'control' AND version = ? AND dispatch_state IN ('pending','sent')", epoch,
+    );
+    if (waiting.some((w) => (JSON.parse(w.frozen_request) as { state?: string }).state === state)) {
+      this.kick();
+      return;
+    }
     const body: MaintenanceControlBody = { identity, state, maintenanceEpoch: epoch };
     this.#enqueue("control", "workspace", epoch, body as unknown as Record<string, unknown>);
   }
