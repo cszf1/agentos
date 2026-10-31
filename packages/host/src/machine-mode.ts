@@ -11,7 +11,7 @@ import net from "node:net";
 import fs from "node:fs";
 import { randomUUID, randomBytes, createHash } from "node:crypto";
 import type { FastifyInstance } from "fastify";
-import { identityContext, type BuildGate, type Core, type MachineGate, type WorkspaceIdentity } from "@agentos/core";
+import { identityContext, pauseAsync, type BuildGate, type Core, type MachineGate, type WorkspaceIdentity } from "@agentos/core";
 import type { HostRuntime } from "./http.js";
 import type { Logger } from "./log.js";
 
@@ -304,6 +304,8 @@ export class MachineMode {
         }
         // Protocol-3 broker writes once the system layer exists (spec §14.3).
         if (this.rt.caps && !this.rt.caps.broker.client.v3) this.rt.caps.broker.client.v3 = (method, params) => this.v3Envelope(method, params);
+        // test-only race window (review F03): the registry change is applied (mirror, fences, receipt), ack not sent
+        if (last) await pauseAsync("registry.before_ack");
         if (last) await this.link.call("registry.ack", { registrySeq: last });
       } catch (e) {
         log.warn("machine registry unavailable", { error: (e as Error).message });

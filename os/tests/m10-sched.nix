@@ -24,7 +24,10 @@ pkgs.testers.runNixOSTest {
       # a one-turn task conversation is compactable only with a tiny kept-recent window (Pi's default keeps it all:
       # run 41132924898 "nothing older than the kept-recent window to summarise" → no background request ever sent)
       AGENTOS_COMPACTION_KEEP_RECENT_TOKENS = "1";
+      # review F03/F04: test-only pause points (root-owned directory; the release audit refuses this variable)
+      AGENTOS_TEST_PAUSE_DIR = "/run/agentos-test-pause";
     };
+    systemd.tmpfiles.rules = [ "d /run/agentos-test-pause 0755 root root -" ];
   };
   testScript = builtins.readFile ./lib.py + builtins.readFile ./members_lib.py + builtins.readFile ./m10-sched.py;
 }

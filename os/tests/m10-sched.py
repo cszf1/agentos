@@ -406,3 +406,140 @@ with subtest("no PAM password reached a model request body (I11 model content)")
     assert int(bodies) > 0
     for secret in ("alice-pw-1", "bob-pw-1"):
         machine.fail(f"grep -qF '{secret}' {FM}/bodies.log")
+
+# ---- review F03: the exact race windows of a revocation against a write commit (V1-I06) ----
+PAUSE = "/run/agentos-test-pause"
+
+def pause_count(name):
+    return int(machine.succeed(f"journalctl --no-pager -o cat | grep -cxF '[pause] {name}' || true").strip() or 0)
+
+def wait_pause(name, before, timeout=120):
+    machine.wait_until_succeeds(f"test $(journalctl --no-pager -o cat | grep -cxF '[pause] {name}') -gt {before}", timeout=timeout)
+
+def call_bg(n, reqs, tag):
+    """Like call(), but returns at once: the request runs in the tty n login while the test does other things."""
+    body = json.dumps([{"methodId": "session.bind"}] + reqs, ensure_ascii=False)
+    machine.succeed(f"echo {base64.b64encode(body.encode()).decode()} | base64 -d > /tmp/{tag}.json && chmod 0644 /tmp/{tag}.json")
+    out = f"/tmp/{tag}"
+    machine.send_key(f"alt-f{n}")
+    machine.wait_until_succeeds(f"grep -qx tty{n} /sys/class/tty/tty0/active")
+    script = f"{RPC} @/tmp/{tag}.json > {out} 2>&1; echo done >> {out}\n"
+    machine.succeed(f"echo {base64.b64encode(script.encode()).decode()} | base64 -d > {out}.sh && chmod 0644 {out}.sh && rm -f {out}")
+    machine.send_chars(f"sh {out}.sh &\n")
+    return out
+
+def bg_lines(out, timeout=240):
+    machine.wait_until_succeeds(f"grep -q '^done$' {out}", timeout=timeout)
+    return [json.loads(l) for l in machine.succeed(f"cat {out}").splitlines() if l.startswith("{")][1:]
+
+def ws_sql(ws, q):
+    return machine.succeed(f"sqlite3 /var/lib/agentos/workspaces/{ws}/data/os.sqlite \"{q}\"").strip()
+
+def host_pid(ws):
+    u = machine.succeed(f"stat -c %u /var/lib/agentos/workspaces/{ws}/data").strip()
+    return machine.succeed(f"pgrep -u {u} -f packages/host/dist/main.js | head -1").strip()
+
+def editor(name, pw, tty):
+    uid = make_user(name, pw, "u" + name)
+    tty_login(tty, name, pw)
+    r = call(1, [{"methodId": "members.setRole", "workspaceId": ws_a, "idempotencyKey": str(uuid.uuid4()), "body": {"userId": uid, "role": "viewer"}}], name + "v")[0]
+    assert r["status"] == 200, r
+    mv = int(sql(f"SELECT member_version FROM workspace_members WHERE workspace_id='{ws_a}' AND user_id='{uid}'"))
+    r = call(1, [{"methodId": "members.setRole", "workspaceId": ws_a, "idempotencyKey": str(uuid.uuid4()), "body": {"userId": uid, "role": "editor", "expectedMemberVersion": mv}}], name + "e")[0]
+    assert r["status"] == 200, r
+    for i in range(30):
+        if ws_sql(ws_a, f"SELECT role || state FROM membership_mirror WHERE user_id='{uid}'") == "editoractive":
+            break
+        time.sleep(1)
+    return uid
+
+def revoke(uid, tag):
+    rid = str(uuid.uuid4())
+    r = call(1, [{"methodId": "members.revoke", "workspaceId": ws_a, "idempotencyKey": rid, "body": {"userId": uid}}], tag)[0]
+    assert r["status"] in (200, 201, 202), r
+    return rid
+
+def member_view(uid, tag):
+    """What the owner's UI shows for that member (members.list through the gateway)."""
+    r = call(1, [{"methodId": "members.list", "workspaceId": ws_a}], tag)[0]
+    assert r["status"] == 200, r
+    ms = (r.get("body") or {}).get("members") or []
+    m = [x for x in ms if x.get("userId") == uid]
+    return m[0].get("state") if m else "absent"
+
+def ok_status(r):
+    return r["status"] in (200, 201, 202)
+
+r = call(1, [{"methodId": "workspaces.attach", "workspaceId": ws_a, "idempotencyKey": "att-f03", "body": {}}], "f03att")[0]
+assert r["status"] == 200, r
+machine.succeed(f"echo 1 > {FM}/hold")
+
+with subtest("F03a: revocation lands while an admitted write waits before its commit: the write commits once, the client is told so, the revocation completes after; a second client of the same user is refused at once (I06)"):
+    dave = editor("dave", "dave-pw-1", 3)
+    tty_login(4, "dave", "dave-pw-1")                       # dave's second, simultaneous client
+    machine.succeed(f"printf %s {dave} > {PAUSE}/gateway.write.before_commit")
+    n0 = pause_count("gateway.write.before_commit")
+    out = call_bg(3, [fwd(ws_a, "runs.post", body={"intent": "做一个书签应用", "targetAppId": None}, idem="f03a")], "f03a")
+    wait_pause("gateway.write.before_commit", n0)
+    rid = revoke(dave, "f03ar")
+    # the second client is refused at the gateway while the Host is still inside the first write
+    r2 = call(4, [fwd(ws_a, "runs.post", body={"intent": "再做一个", "targetAppId": None}, idem="f03a2"), fwd(ws_a, "runs.list")], "f03a2")
+    assert all(not ok_status(x) for x in r2), r2
+    assert sql(f"SELECT state FROM revocations WHERE revocation_id='{rid}'") == "revoking"
+    assert member_view(dave, "f03av1") in ("revoking", "absent"), "the owner's view must not show the revocation as complete before every ack"
+    machine.succeed(f"rm -f {PAUSE}/gateway.write.before_commit")
+    res = bg_lines(out)[0]
+    print("F03a write result", res)
+    n_runs = int(ws_sql(ws_a, f"SELECT COUNT(*) FROM runs WHERE initiator_user_id='{dave}'"))
+    assert ok_status(res) == (n_runs == 1) and n_runs in (0, 1), (res, n_runs)   # told success iff the fact exists
+    assert ok_status(res), res        # admitted and committed before this Host applied the revocation: kept (spec I06)
+    wait_revoked(rid)
+    assert sql(f"SELECT state FROM workspace_members WHERE workspace_id='{ws_a}' AND user_id='{dave}'") == "revoked"
+    assert ws_sql(ws_a, f"SELECT state FROM membership_mirror WHERE user_id='{dave}'") != "active"
+    assert ws_sql(ws_a, f"SELECT COUNT(*) FROM revocation_receipts WHERE revocation_id='{rid}'") == "1"
+    assert member_view(dave, "f03av2") in ("revoked", "absent")
+    # the committed run does not keep running for a revoked member; the replayed key returns the same fact or is refused
+    machine.wait_until_succeeds(f"sqlite3 /var/lib/agentos/workspaces/{ws_a}/data/os.sqlite \"SELECT status FROM runs WHERE initiator_user_id='{dave}'\" | grep -qvE 'queued|running|blocked'", timeout=120)
+    r3 = call(4, [fwd(ws_a, "runs.post", body={"intent": "做一个书签应用", "targetAppId": None}, idem="f03a")], "f03a3")[0]
+    assert not ok_status(r3), r3
+    assert int(ws_sql(ws_a, f"SELECT COUNT(*) FROM runs WHERE initiator_user_id='{dave}'")) == 1
+
+with subtest("F03b: the Host dies inside the write before its commit while a revocation is pending: no fact, the client is not told success, the revocation completes once on the restarted Host (I06)"):
+    erin = editor("erin", "erin-pw-1", 5)
+    machine.succeed(f"printf %s {erin} > {PAUSE}/gateway.write.before_commit")
+    n0 = pause_count("gateway.write.before_commit")
+    out = call_bg(5, [fwd(ws_a, "runs.post", body={"intent": "做一个相册应用", "targetAppId": None}, idem="f03b")], "f03b")
+    wait_pause("gateway.write.before_commit", n0)
+    rid = revoke(erin, "f03br")
+    pid = host_pid(ws_a)
+    machine.succeed(f"kill -KILL {pid}; rm -f {PAUSE}/gateway.write.before_commit")
+    res = bg_lines(out)[0]
+    print("F03b write result", res)
+    assert not ok_status(res), res
+    wait_revoked(rid, timeout=180)
+    assert int(ws_sql(ws_a, f"SELECT COUNT(*) FROM runs WHERE initiator_user_id='{erin}'")) == 0
+    assert ws_sql(ws_a, f"SELECT COUNT(*) FROM operations WHERE principal LIKE '%{erin}%'") == "0"
+    assert ws_sql(ws_a, f"SELECT COUNT(*) FROM revocation_receipts WHERE revocation_id='{rid}'") == "1"
+    assert member_view(erin, "f03bv") in ("revoked", "absent")
+    assert host_pid(ws_a) != pid
+
+with subtest("F03c: after the Host applied the new member version but before its ack: requests refused, root side still revoking, the owner's view not complete; a Host crash there re-applies once and acks (I06)"):
+    frank = editor("frank", "frank-pw-1", 6)
+    machine.succeed(f"touch {PAUSE}/registry.before_ack")
+    n0 = pause_count("registry.before_ack")
+    rid = revoke(frank, "f03cr")
+    wait_pause("registry.before_ack", n0)
+    assert ws_sql(ws_a, f"SELECT state FROM membership_mirror WHERE user_id='{frank}'") != "active"
+    assert ws_sql(ws_a, f"SELECT COUNT(*) FROM revocation_receipts WHERE revocation_id='{rid}'") == "1"
+    assert sql(f"SELECT state FROM revocations WHERE revocation_id='{rid}'") == "revoking"
+    assert member_view(frank, "f03cv1") in ("revoking", "absent")
+    r = call(6, [fwd(ws_a, "runs.post", body={"intent": "做一个日程应用", "targetAppId": None}, idem="f03c"), fwd(ws_a, "runs.list")], "f03c")
+    assert all(not ok_status(x) for x in r), r
+    time.sleep(5)
+    assert sql(f"SELECT state FROM revocations WHERE revocation_id='{rid}'") == "revoking"   # no ack, no completion
+    pid = host_pid(ws_a)
+    machine.succeed(f"kill -KILL {pid}; rm -f {PAUSE}/registry.before_ack")
+    wait_revoked(rid, timeout=180)
+    assert ws_sql(ws_a, f"SELECT COUNT(*) FROM revocation_receipts WHERE revocation_id='{rid}'") == "1"
+    assert int(ws_sql(ws_a, f"SELECT COUNT(*) FROM runs WHERE initiator_user_id='{frank}'")) == 0
+    assert member_view(frank, "f03cv2") in ("revoked", "absent")

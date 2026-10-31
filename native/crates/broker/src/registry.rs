@@ -361,4 +361,53 @@ mod tests {
         drop(c);
         let _ = std::fs::remove_file(path);
     }
+
+    #[test]
+    fn f04_broker_fences_writes_across_a_directory_gap_revocation_and_incarnation() {
+        use std::sync::{Arc, Condvar, Mutex};
+        let (c, path) = db();
+        let mut v = vec![];
+        apply(&c, &json!({ "registrySeq": 1, "kind": "workspace.registered", "body": { "workspaceId": "wa", "storeUUID": "sa", "executionUid": 60001, "workspaceIncarnation": 1 } }), &mut v).unwrap();
+        let snap = |seq: i64, v2: i64, st2: &str| json!({ "registrySeq": seq, "kind": if st2 == "active" { "members.snapshot" } else { "member.revoking" }, "body": { "workspaceId": "wa", "members": [
+            { "userId": "u1", "role": "owner", "memberVersion": 1, "state": "active" }, { "userId": "u2", "role": "editor", "memberVersion": v2, "state": st2 } ] } });
+        apply(&c, &snap(2, 1, "active"), &mut v).unwrap();
+        let w = |pol: &str| json!({ "policyFormat": 1, "machineInstallId": pol, "hosts": [], "managedRoots": [], "labNetworks": [], "serial": [], "units": [],
+            "workers": { "file": { "socket": "/run/f.sock", "unit": "f.service", "uid": 961 }, "service": { "socket": "/run/s.sock", "unit": "s.service", "uid": 961 },
+                         "network": { "socket": "/run/n.sock", "unit": "n.service", "uid": 961 }, "serial": { "socket": "/run/r.sock", "unit": "r.service", "uid": 961 } }, "testMode": false });
+        let b: Shared = Arc::new(crate::state::Broker {
+            db: Mutex::new(Some(c)), diag: None, policy: serde_json::from_value(w("m")).unwrap(), policy_version: "p1".into(),
+            instance_id: "bi".into(), install_id: "m".into(), wake: (Mutex::new(false), Condvar::new()),
+        });
+        let env = |user: &str, ver: i64, seq: i64, inc: i64| {
+            let ws = json!({ "workspaceId": "wa", "storeUuid": "sa", "executionUid": 60001, "workspaceIncarnation": inc, "machineControlEpoch": 1, "registrySeq": seq,
+                             "principalKind": "user", "userId": user, "memberVersion": ver });
+            let body = json!({ "op": "x" });
+            let h = agentos_protocol::canonical::domain_hash(V3_DOMAIN, &json!({ "workspace": ws, "body": body })).unwrap();
+            let mut ws2 = ws.clone();
+            ws2["envelopeHash"] = json!(h);
+            json!({ "workspace": ws2, "body": body })
+        };
+        let code = |r: Result<Value, BErr>| r.err().map(|e| e.code).unwrap_or_else(|| "OK".into());
+        assert_eq!(code(check_v3(&b, 60001, &env("u2", 1, 2, 1))), "OK");
+        // another execution UID cannot use this workspace's envelope (executor fence)
+        assert_eq!(code(check_v3(&b, 60002, &env("u2", 1, 2, 1))), "BROKER_POLICY_DENIED");
+        // broker↔machined cut: machined already revoked u2 at seq 3 and the Host applied it; the broker has not.
+        // A write decided under seq 3 is refused (never acted on a directory the broker has not seen)
+        assert_eq!(code(check_v3(&b, 60001, &env("u2", 2, 3, 1))), "REGISTRY_NOT_SYNCED");
+        assert_eq!(code(check_v3(&b, 60001, &env("u1", 1, 3, 1))), "REGISTRY_NOT_SYNCED");
+        // reconnect: the broker applies the revocation; u2's old and new versions are both refused, u1 continues
+        apply(&b.db.lock().unwrap().as_ref().unwrap(), &snap(3, 2, "revoking"), &mut v).unwrap();
+        assert_eq!(code(check_v3(&b, 60001, &env("u2", 1, 3, 1))), "MEMBERSHIP_REVOKED");
+        assert_eq!(code(check_v3(&b, 60001, &env("u2", 2, 3, 1))), "MEMBERSHIP_REVOKED");
+        assert_eq!(code(check_v3(&b, 60001, &env("u1", 1, 3, 1))), "OK");
+        // the revocation raised the store's revocation high-water mark (the broker's ack basis)
+        let hw: i64 = b.db.lock().unwrap().as_ref().unwrap().query_row("SELECT revocation_high_water FROM workspace_protocol WHERE store_uuid='sa'", [], |r| r.get(0)).unwrap();
+        assert_eq!(hw, 3);
+        // a new incarnation (restart/restore) fences the old executor instance
+        apply(&b.db.lock().unwrap().as_ref().unwrap(), &json!({ "registrySeq": 4, "kind": "workspace.incarnation", "body": { "workspaceId": "wa", "workspaceIncarnation": 2, "members": [] } }), &mut v).unwrap();
+        assert_eq!(code(check_v3(&b, 60001, &env("u1", 1, 4, 1))), "BROKER_IDENTITY_MISMATCH");
+        assert_eq!(code(check_v3(&b, 60001, &env("u1", 1, 4, 2))), "OK");
+        let _ = std::fs::remove_file(path);
+    }
+
 }

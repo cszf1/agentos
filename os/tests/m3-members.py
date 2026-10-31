@@ -136,6 +136,54 @@ with subtest("broker protocol 3 end to end: an owner pause reaches the broker as
     assert st.startswith("confirmed"), st
     assert machine.succeed(f"sqlite3 {BDB} \"SELECT state FROM workspace_maintenance_state WHERE store_uuid='{store_a}' ORDER BY incarnation DESC LIMIT 1\"").strip() == "running"
 
+with subtest("F04a: broker cut from machined during a revocation: the gateway and Host refuse at once, the root side stays revoking until the broker is back and acks; the broker then fences that member (I08)"):
+    gina = make_user("gina", "gina-pw-1", "ug")
+    r = call(1, [{"methodId": "members.setRole", "workspaceId": ws_a, "idempotencyKey": str(uuid.uuid4()), "body": {"userId": gina, "role": "viewer"}}], "g1")[0]
+    assert r["status"] == 200, r
+    mvg = int(sql(f"SELECT member_version FROM workspace_members WHERE workspace_id='{ws_a}' AND user_id='{gina}'"))
+    r = call(1, [{"methodId": "members.setRole", "workspaceId": ws_a, "idempotencyKey": str(uuid.uuid4()), "body": {"userId": gina, "role": "editor", "expectedMemberVersion": mvg}}], "g2")[0]
+    assert r["status"] == 200, r
+    machine.wait_until_succeeds(f"sqlite3 {BDB} \"SELECT state FROM machine_members WHERE store_uuid='{store_a}' AND user_id='{gina}'\" | grep -qx active", timeout=60)
+    machine.succeed("systemctl stop agentos-broker.path agentos-broker.service")     # the broker loses machined
+    rid_g = str(uuid.uuid4())
+    r = call(1, [{"methodId": "members.revoke", "workspaceId": ws_a, "idempotencyKey": rid_g, "body": {"userId": gina}}], "g3")[0]
+    assert r["status"] == 202, r
+    machine.wait_until_succeeds(f"sqlite3 {hostdb} \"SELECT COUNT(*) FROM revocation_receipts WHERE revocation_id='{rid_g}'\" | grep -qx 1", timeout=60)  # the Host applied it
+    time.sleep(10)
+    assert sql(f"SELECT state FROM revocations WHERE revocation_id='{rid_g}'") == "revoking", "completed without the broker's ack"
+    assert sql(f"SELECT state FROM workspace_members WHERE workspace_id='{ws_a}' AND user_id='{gina}'") == "revoking"
+    ml = call(1, [{"methodId": "members.list", "workspaceId": ws_a}], "g4")[0]
+    gm = [m for m in ml["body"]["members"] if m["userId"] == gina]
+    assert gm and gm[0]["state"] == "revoking", ml       # the owner's view does not show it complete
+    # the broker still has the old directory (active) while it is cut off
+    assert machine.succeed(f"sqlite3 {BDB} \"SELECT state FROM machine_members WHERE store_uuid='{store_a}' AND user_id='{gina}'\"").strip() == "active"
+    machine.succeed("systemctl start agentos-broker.service agentos-broker.path")    # reconnect
+    wait_revoked(rid_g)
+    assert machine.succeed(f"sqlite3 {BDB} \"SELECT state FROM machine_members WHERE store_uuid='{store_a}' AND user_id='{gina}'\"").strip() != "active"
+
+with subtest("F04b: broker cut from the Host while an owner's broker write is registered: it stays pending (not done) across a Host SIGKILL, and is delivered exactly once after reconnect (I08)"):
+    machine.succeed("systemctl stop agentos-broker.path; kill -STOP $(systemctl show -P MainPID agentos-broker.service)")
+    r = call(1, [fwd(ws_a, "maintenance.control.post", body={"action": "pause"}, idem="f04b-1")], "g5")[0]
+    assert r["status"] == 200, r
+    time.sleep(5)
+    st = last_control()
+    print("control while the broker is cut", st)
+    assert not st.startswith("confirmed"), st             # registered, not shown as done
+    n_out = machine.succeed(f"sqlite3 {hostdb} \"SELECT COUNT(*) FROM root_sync_outbox WHERE kind='control'\"").strip()
+    hp = machine.succeed(f"pgrep -u {ua} -f packages/host/dist/main.js | head -1").strip()
+    machine.succeed(f"kill -KILL {hp}")
+    machine.wait_until_succeeds(f"pgrep -u {ua} -f packages/host/dist/main.js | grep -vx {hp}", timeout=90)
+    assert machine.succeed(f"sqlite3 {hostdb} \"SELECT COUNT(*) FROM root_sync_outbox WHERE kind='control'\"").strip() == n_out   # survived the Host
+    assert not last_control().startswith("confirmed")
+    machine.succeed("kill -CONT $(systemctl show -P MainPID agentos-broker.service); systemctl start agentos-broker.path")
+    st = wait_control()
+    assert st.startswith("confirmed"), st
+    assert machine.succeed(f"sqlite3 {BDB} \"SELECT state FROM workspace_maintenance_state WHERE store_uuid='{store_a}' ORDER BY incarnation DESC LIMIT 1\"").strip() == "paused"
+    assert machine.succeed(f"sqlite3 {hostdb} \"SELECT COUNT(*) FROM root_sync_outbox WHERE kind='control' AND dispatch_state='confirmed'\"").strip() == machine.succeed(f"sqlite3 {hostdb} \"SELECT COUNT(*) FROM root_sync_outbox WHERE kind='control'\"").strip()
+    r = call(1, [fwd(ws_a, "maintenance.control.post", body={"action": "resume"}, idem="f04b-2")], "g6")[0]
+    assert r["status"] == 200, r
+    assert wait_control().startswith("confirmed")
+
 with subtest("a machine administrator gets no data entry into a workspace they are not a member of (I04, I03)"):
     r = call(2, [{"methodId": "workspaces.create", "idempotencyKey": str(uuid.uuid4()), "body": {"displayName": "Bob"}}], "m1")[0]
     assert r["status"] == 201, r

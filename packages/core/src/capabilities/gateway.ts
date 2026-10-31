@@ -1,6 +1,7 @@
 import { AgentOsError, canonicalJson, sha256Hex, type Capability } from "@agentos/contracts";
 import { iso, type Store } from "../persistence/store.js";
 import { actionOf, checkMember, currentIdentity, userDomain } from "../identity/context.js";
+import { pauseSync } from "../faults.js";
 
 /**
  * Who is calling. Built only by the host (HTTP session) or the Pi adapter (tool context);
@@ -190,6 +191,8 @@ export class CapabilityGateway {
         }
         throw e;
       }
+      // test-only race window (review F03): business change done, receipt and COMMIT not yet
+      pauseSync("gateway.write.before_commit", currentIdentity()?.userId);
       s.run(
         "INSERT INTO operations (principal, operation_key, request_hash, status_code, result_json, created_at) VALUES (?, ?, ?, ?, ?, ?)",
         pkey, req.operationKey, req.requestHash, out.status, JSON.stringify({ ok: true, body: out.body }), iso(s.clock.now()),
