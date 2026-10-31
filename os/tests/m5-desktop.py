@@ -101,7 +101,17 @@ def greeter_ready():
         greeter_diag()
         raise
     machine.wait_until_succeeds("grep -qx tty1 /sys/class/tty/tty0/active", timeout=60)
-    time.sleep(8)                                             # GTK has mapped the window in cage
+    # A running GTK process is not a mapped frame: first-start portal/shader setup can outlive a fixed sleep.
+    end = time.time() + 120
+    while True:
+        img = shot("greeter-ready")
+        colours = {px(img, x, y) for x in range(0, img[0], 37) for y in range(0, img[1], 23)}
+        if len(colours) > 3:
+            return
+        if time.time() >= end:
+            greeter_diag()
+            raise AssertionError(f"greeter output is blank after 120 s: {colours}")
+        time.sleep(2)
 
 def type_secret(pw, keywise=False):
     if keywise:                                               # QEMU's fast injection can drop a key (see m5 lock notes)

@@ -1,6 +1,6 @@
 # m20-sway (see m20-sway.nix). The driver answers the e2e's E2E-ASK requests with real QMP input and reads back what
 # Sway scanned out and what the Host stored. Everything the e2e asserts is also printed as "E2E <step> <json>".
-import base64, os, re, subprocess, time, uuid
+import os, re, subprocess
 machine.start()
 machine.wait_for_unit("agentos-session-gateway.service")
 
@@ -71,7 +71,17 @@ def greeter_ready():
         greeter_diag()
         raise
     machine.wait_until_succeeds("grep -qx tty1 /sys/class/tty/tty0/active", timeout=60)
-    time.sleep(8)
+    # A running GTK process is not a mapped frame: first-start portal/shader setup can outlive a fixed sleep.
+    end = time.time() + 120
+    while True:
+        img = shot("greeter-ready")
+        colours = {px(img, x, y) for x in range(0, img[0], 37) for y in range(0, img[1], 23)}
+        if len(colours) > 3:
+            return
+        if time.time() >= end:
+            greeter_diag()
+            raise AssertionError(f"greeter output is blank after 120 s: {colours}")
+        time.sleep(2)
 
 def regreet_login(pw):
     for attempt in range(3):
@@ -256,7 +266,7 @@ with subtest("agentos-shell-e2e as a real Wayland client in alice's Sway session
     machine.succeed(f"echo {base64.b64encode(run.encode()).decode()} | base64 -d > {D}/run.sh && chmod 0755 {D}/run.sh")
     sock = machine.succeed(f"ls {RT}/sway-ipc.*.sock | head -1").strip()
     machine.succeed(f"runuser -u alice -- env XDG_RUNTIME_DIR={RT} SWAYSOCK={sock} swaymsg exec {D}/run.sh")
-    machine.wait_until_succeeds(f"pgrep -u alice -x agentos-shell-e2e || pgrep -u alice -f bin/agentos-shell-e2e", timeout=60)
+    machine.wait_until_succeeds("pgrep -u alice -x agentos-shell-e2e || pgrep -u alice -f bin/agentos-shell-e2e", timeout=60)
     pid = machine.succeed("pgrep -u alice -f bin/agentos-shell-e2e | head -1").strip()
     machine.succeed(f"grep -q 'session-{sid}.scope' /proc/{pid}/cgroup")      # in the greetd login session
     seen, t0, text = 0, time.time(), ""
