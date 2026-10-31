@@ -11,6 +11,12 @@ use serde_json::{json, Value};
 pub const RELEASE_DOMAIN: &str = "agentos.release.manifest.v1";
 pub const ROTATION_DOMAIN: &str = "agentos.release.key-rotation.v1";
 
+#[cfg(test)]
+thread_local! {
+    /// Test-only: make the next rotate_key fail after its writes, before the commit (review R2-3 interruption test).
+    pub static ROTATE_FAULT: std::cell::Cell<bool> = std::cell::Cell::new(false);
+}
+
 const KEYS: &[&str] = &[
     "formatVersion", "releaseId", "releaseSequence", "version", "channel", "publishedAt", "expiresAt", "supportUntil", "sourceCommit",
     "flakeLockHash", "nixpkgsRevision", "platform", "hardwareProfiles", "baseClosurePath", "baseClosureHash", "closureContentHashes",
@@ -138,31 +144,68 @@ pub fn update_edge_ok(from: &str, to: &str) -> bool {
 
 impl Machine {
     pub fn add_trusted_key(&self, key_id: &str, pubkey_hex: &str, added_by: &str) -> R<()> {
-        if hex::decode(pubkey_hex).map(|b| b.len()).unwrap_or(0) != 32 {
-            return Err(MErr::new("INVALID_REQUEST", "public key must be 32 bytes hex"));
-        }
         self.tx(|c| {
-            if c.query_row("SELECT 1 FROM revoked_keys WHERE key_id = ?1", [key_id], |_| Ok(())).optional()?.is_some() {
-                return Err(MErr::new("UPDATE_SIGNATURE_INVALID", "key was revoked"));
+            if Self::insert_trusted_key(c, key_id, pubkey_hex, added_by)? {
+                Self::audit(c, added_by, "release.key_added", Some(key_id), "trusted", None)?;
             }
-            c.execute("INSERT OR IGNORE INTO trusted_keys (key_id, public_key_hex, added_by, added_at) VALUES (?1, ?2, ?3, ?4)", params![key_id, pubkey_hex, added_by, now_ms()])?;
-            Self::audit(c, added_by, "release.key_added", Some(key_id), "trusted", None)
+            Ok(())
         })
     }
 
-    /// Key rotation signed by a currently trusted key (spec §20.1).
+    /// Trust one key inside the caller's transaction (review R2-3). A key id that is already trusted is idempotent
+    /// only with the very same public key; a different key under that id is a conflict, never silently ignored.
+    /// Returns whether a row was added.
+    fn insert_trusted_key(c: &rusqlite::Connection, key_id: &str, pubkey_hex: &str, added_by: &str) -> R<bool> {
+        if key_id.is_empty() || key_id.len() > 64 || key_id.chars().any(|ch| ch.is_control()) {
+            return Err(MErr::new("INVALID_REQUEST", "bad key id"));
+        }
+        if hex::decode(pubkey_hex).map(|b| b.len()).unwrap_or(0) != 32 {
+            return Err(MErr::new("INVALID_REQUEST", "public key must be 32 bytes hex"));
+        }
+        let pk = pubkey_hex.to_ascii_lowercase();
+        if c.query_row("SELECT 1 FROM revoked_keys WHERE key_id = ?1", [key_id], |_| Ok(())).optional()?.is_some() {
+            return Err(MErr::new("UPDATE_SIGNATURE_INVALID", "key was revoked"));
+        }
+        let existing: Option<String> = c.query_row("SELECT public_key_hex FROM trusted_keys WHERE key_id = ?1", [key_id], |r| r.get(0)).optional()?;
+        match existing {
+            Some(e) if e.to_ascii_lowercase() == pk => Ok(false),
+            Some(_) => Err(MErr::new("CONFLICT", format!("key id {key_id} is already trusted with a different public key"))),
+            None => {
+                c.execute("INSERT INTO trusted_keys (key_id, public_key_hex, added_by, added_at) VALUES (?1, ?2, ?3, ?4)", params![key_id, pk, added_by, now_ms()])?;
+                Ok(true)
+            }
+        }
+    }
+
+    /// Key rotation signed by a currently trusted key (spec §20.1). One transaction (review R2-3): the signer is
+    /// re-read inside it, the new key is trusted (with the conflict check), the listed keys are revoked and the audit
+    /// row written together; any failure leaves the key set exactly as before.
     pub fn rotate_key(&self, statement: &Value, signed_by: &str, sig_hex: &str) -> R<()> {
         let o = statement.as_object().ok_or_else(|| MErr::new("INVALID_REQUEST", "rotation must be an object"))?;
         let new_id = o.get("newKeyId").and_then(|v| v.as_str()).ok_or_else(|| MErr::new("INVALID_REQUEST", "newKeyId"))?;
         let new_pk = o.get("newPublicKey").and_then(|v| v.as_str()).ok_or_else(|| MErr::new("INVALID_REQUEST", "newPublicKey"))?;
         let revoke: Vec<String> = o.get("revokeKeyIds").and_then(|v| v.as_array()).map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default();
-        let signer = self.trusted_key(signed_by)?;
-        verify_sig(&signer, &hash(ROTATION_DOMAIN, statement), sig_hex)?;
-        self.add_trusted_key(new_id, new_pk, &format!("rotation:{signed_by}"))?;
+        if revoke.iter().any(|k| k == new_id) {
+            return Err(MErr::new("INVALID_REQUEST", "a rotation cannot revoke the key it introduces"));
+        }
+        let digest = hash(ROTATION_DOMAIN, statement);
         self.tx(|c| {
+            if c.query_row("SELECT 1 FROM revoked_keys WHERE key_id = ?1", [signed_by], |_| Ok(())).optional()?.is_some() {
+                return Err(MErr::new("UPDATE_SIGNATURE_INVALID", "signing key was revoked"));
+            }
+            let signer: String = c
+                .query_row("SELECT public_key_hex FROM trusted_keys WHERE key_id = ?1", [signed_by], |r| r.get(0))
+                .optional()?
+                .ok_or_else(|| MErr::new("UPDATE_SIGNATURE_INVALID", "signing key is unknown"))?;
+            verify_sig(&signer, &digest, sig_hex)?;
+            Self::insert_trusted_key(c, new_id, new_pk, &format!("rotation:{signed_by}"))?;
             for k in &revoke {
                 c.execute("INSERT OR IGNORE INTO revoked_keys (key_id, revoked_at) VALUES (?1, ?2)", params![k, now_ms()])?;
                 c.execute("DELETE FROM trusted_keys WHERE key_id = ?1", [k])?;
+            }
+            #[cfg(test)]
+            if ROTATE_FAULT.with(|f| f.replace(false)) {
+                return Err(MErr::new("INTERNAL", "test fault: rotation interrupted before commit"));
             }
             Self::audit(c, "root", "release.key_rotated", Some(new_id), "rotated", None)
         })

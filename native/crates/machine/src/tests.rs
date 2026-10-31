@@ -864,3 +864,44 @@ fn r2_1_oci_archive_content_is_bound_to_the_signed_manifest() {
     assert!(crate::release::check_oci_bundle(&m, &sbom, &idx, &sha(&archive), Some(&[a.clone(), c])).is_err());
     assert!(crate::release::check_oci_bundle(&m, &sbom, &idx, &sha(&archive), Some(&[a.clone()])).is_err());
 }
+
+#[test]
+fn r2_3_duplicate_key_ids_conflict_and_an_interrupted_rotation_changes_nothing() {
+    let (t, _) = setup();
+    let (k1, k2, k3) = (sk(11), sk(12), sk(13));
+    let keys = |t: &T| -> Vec<(String, String)> {
+        let mut st = t.m.c.prepare("SELECT key_id, public_key_hex FROM trusted_keys ORDER BY key_id").unwrap();
+        st.query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(|x| x.unwrap()).collect()
+    };
+    let revoked = |t: &T| -> i64 { t.m.c.query_row("SELECT COUNT(*) FROM revoked_keys", [], |r| r.get(0)).unwrap() };
+    let audits = |t: &T, kind: &str| -> i64 { t.m.c.query_row("SELECT COUNT(*) FROM root_audit WHERE kind = ?1", [kind], |r| r.get(0)).unwrap() };
+    t.m.add_trusted_key("k1", &pk_hex(&k1), "test").unwrap();
+    // same id + same key: idempotent, no second audit row; same id + another key: conflict, nothing changed
+    t.m.add_trusted_key("k1", &pk_hex(&k1), "again").unwrap();
+    assert_eq!(audits(&t, "release.key_added"), 1);
+    assert_eq!(t.m.add_trusted_key("k1", &pk_hex(&k2), "evil").unwrap_err().code, "CONFLICT");
+    assert_eq!(keys(&t), vec![("k1".to_string(), pk_hex(&k1))]);
+    // a rotation that introduces an already trusted id with a different key is a conflict and revokes nothing
+    let sig_rot = |k: &ed25519_dalek::SigningKey, s: &serde_json::Value| sign_digest(k, &crate::util::hash(crate::release::ROTATION_DOMAIN, s));
+    let clash = serde_json::json!({ "newKeyId": "k1", "newPublicKey": pk_hex(&k3), "revokeKeyIds": [] });
+    assert_eq!(t.m.rotate_key(&clash, "k1", &sig_rot(&k1, &clash)).unwrap_err().code, "CONFLICT");
+    // a rotation cannot revoke the key it introduces
+    let selfrev = serde_json::json!({ "newKeyId": "k2", "newPublicKey": pk_hex(&k2), "revokeKeyIds": ["k2"] });
+    assert!(t.m.rotate_key(&selfrev, "k1", &sig_rot(&k1, &selfrev)).is_err());
+    assert_eq!(keys(&t), vec![("k1".to_string(), pk_hex(&k1))]);
+    // interrupted after trusting k2 and revoking k1 but before commit: the key set is exactly as before
+    let stmt = serde_json::json!({ "newKeyId": "k2", "newPublicKey": pk_hex(&k2), "revokeKeyIds": ["k1"] });
+    crate::release::ROTATE_FAULT.with(|f| f.set(true));
+    assert_eq!(t.m.rotate_key(&stmt, "k1", &sig_rot(&k1, &stmt)).unwrap_err().code, "INTERNAL");
+    assert_eq!(keys(&t), vec![("k1".to_string(), pk_hex(&k1))]);
+    assert_eq!(revoked(&t), 0);
+    assert_eq!(audits(&t, "release.key_rotated"), 0);
+    // the same signed statement then goes through as one unit: k2 trusted, k1 revoked, one audit row
+    t.m.rotate_key(&stmt, "k1", &sig_rot(&k1, &stmt)).unwrap();
+    assert_eq!(keys(&t), vec![("k2".to_string(), pk_hex(&k2))]);
+    assert_eq!(revoked(&t), 1);
+    assert_eq!(audits(&t, "release.key_rotated"), 1);
+    // replaying it is refused (its signer is revoked) and changes nothing
+    assert!(t.m.rotate_key(&stmt, "k1", &sig_rot(&k1, &stmt)).is_err());
+    assert_eq!(audits(&t, "release.key_rotated"), 1);
+}
