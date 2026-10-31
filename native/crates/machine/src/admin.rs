@@ -244,7 +244,7 @@ pub fn start(op: &str, argv: &[String], chown_to: Option<u32>) -> R<Value> {
     let out_dir = argv.iter().position(|a| a == "--out").and_then(|i| argv.get(i + 1)).filter(|d| d.starts_with("/home/")).cloned().unwrap_or_default();
     let script = format!("\"$0\" \"$@\" > {out} 2>&1; r=$?{chown}; echo $r > {rc}.tmp && mv {rc}.tmp {rc}");
     let st = std::process::Command::new("systemd-run")
-        .args(["--quiet", "--collect", "--service-type=exec", "--unit", &unit(op), "--description", "AgentOS administrator action", "--setenv", &format!("AGENTOS_ADMIN_OUT={out_dir}"), "--setenv", "AGENTOS_ADMIN_OPERATION=1"])
+        .args(["--quiet", "--collect", "--service-type=exec", "--unit", &unit(op), "--description", "AgentOS administrator action", "--setenv", &format!("AGENTOS_ADMIN_OUT={out_dir}"), "--setenv", "AGENTOS_ADMIN_OPERATION=1", "--setenv", "PATH=/run/wrappers/bin:/run/current-system/sw/bin"])
         .args(["/bin/sh", "-c", &script, &ctl])
         .args(argv)
         .stdin(std::process::Stdio::null())

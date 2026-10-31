@@ -3,18 +3,27 @@
 # (machined allocates the workspace, the import runs as its execution UID), serves it through the real gateway/Host,
 # takes one machine set and exports it with age; `target` (its own install identity and users) clones it and serves
 # the same records. Helpers from lib.py act on the global `machine`; the script rebinds it to the target half-way.
+import re
 SNAP = "/var/lib/agentos-snapshots"
 source, dest = machine, target
 APP = "9efaf674-4561-4c6b-9860-cf44e09fdd01"          # the fixture's app (3 records, revision sha256:428df8c7…)
 REV = "sha256:428df8c73bfcf3a1bc07029d9b5e31286728c4026d4cfe4a203fbc87211332d5"
 STORE = "1385edad-f864-464f-b9d1-d640406dfbfd"
 
-def ctl(args, ok=True):
-    rc, out = machine.execute(f"agentosctl {args} 2>&1")
+ADMIN_PW = {"machine": "alice-pw-1", "target": "bea-pw-2"}
+
+def admin(args, ok=True, n=1, pw=None, tag="adm"):
+    """Decision 80 / RELEASE_V1.0.md: the machine administrator runs `agentosctl admin …` in their own tty login
+    session (no root: root is locked, no sudo); the plan is confirmed with their password (PAM at the gateway)."""
+    pw = pw if pw is not None else ADMIN_PW[machine.name]
+    o = tty_run(n, f"printf '%s\\n' '{pw}' | agentosctl admin {args} --password-stdin; echo rc=$?", f"/tmp/{tag}")
+    rc = int(re.findall(r"^rc=(\d+)$", o, re.M)[-1])
     if ok:
-        assert rc == 0, (args, out)
-        return json.loads(out[out.index("{"):])
-    return rc, out
+        assert rc == 0, (args, o)
+        v = json.loads(o[o.index("{"):o.rindex("}") + 1])
+        assert v["state"] == "succeeded", v
+        return v["result"]
+    return rc, o
 
 def records_via_gateway(n, ws, tag):
     for i in range(60):
@@ -33,11 +42,28 @@ out = json.loads(must("printf 'alice-pw-1' | agentosctl firstboot --admin alice 
 ws_a, mid_src = out["workspaceId"], out["machineInstallId"]
 machine.wait_for_unit("agentos-broker.service")
 alice = sql("SELECT user_id FROM users WHERE login_name='alice'")
-machine.succeed("cp -rL /etc/agentos-test/v04-backup /root/v04 && chmod -R go-rwx /root/v04")
-pristine = machine.succeed("cd /root/v04 && find . -type f | sort | xargs sha256sum").strip()
+# the administrator brought the v0.4 backup along (copied into their home from removable media)
+tty_login(1, "alice", "alice-pw-1")
+machine.succeed("cp -rL /etc/agentos-test/v04-backup /home/alice/v04 && chown -R alice: /home/alice/v04 && chmod -R go-rwx /home/alice/v04")
+pristine = machine.succeed("cd /home/alice/v04 && find . -type f | sort | xargs sha256sum").strip()
+
+with subtest("administration without root: root is locked, the administrator has no sudo; a non-administrator and a wrong password are refused before anything runs (O09, decision 80)"):
+    machine.succeed("passwd -S root | awk '{print $2}' | grep -qx L")
+    machine.fail("id -nG alice | grep -qw wheel")
+    machine.fail("su - alice -c 'sudo -n true' 2>/dev/null")
+    p = call(1, [{"methodId": "machine.users.create", "idempotencyKey": str(uuid.uuid4()), "body": {"loginName": "carl", "role": "user", "password": "carl-pw-1"}}], "uc")[0]
+    ok = call(1, [{"methodId": "machine.actions.confirm", "idempotencyKey": str(uuid.uuid4()), "body": {"operationId": p["body"]["operationId"], "planHash": p["body"]["planHash"], "password": "alice-pw-1"}}], "ucc")[0]
+    assert '"succeeded"' in json.dumps(ok), ok
+    tty_login(2, "carl", "carl-pw-1")
+    rc, o = admin("backup --name nope", ok=False, n=2, pw="carl-pw-1", tag="carl")
+    assert rc != 0 and "NOT_FOUND_OR_FORBIDDEN" in o, o
+    rc, o = admin("backup --name nope", ok=False, pw="wrong-pw", tag="wrongpw")
+    assert rc != 0 and "authentication failed" in o, o
+    machine.fail(f"test -e {SNAP}/nope")
+    assert sql("SELECT COUNT(*) FROM machine_operations WHERE kind='admin.backup' AND state NOT IN ('planned','expired_no_effect','cancelled_no_effect')") == "0"
 
 with subtest("import: a v0.4 cold backup becomes a NEW workspace on this machine; the import runs as its execution UID (M01, M02, M05)"):
-    v = ctl("import-v04 --backup /root/v04 --owner alice --name Imported")
+    v = admin("import-v04 --backup /home/alice/v04 --owner alice --name Imported", tag="imp1")
     ws_i = v["workspaceId"]
     assert ws_i != ws_a and v["storeUUID"] == STORE and v["origin"] == "imported_v04", v
     imp = v["import"]
@@ -58,25 +84,24 @@ with subtest("import: a v0.4 cold backup becomes a NEW workspace on this machine
     assert q("SELECT COUNT(*) FROM maintenance_policies WHERE state IN ('enabled','syncing','pending_approval')") == "0"
     assert q("SELECT COUNT(*) FROM service_grants WHERE revoked_at IS NULL") == "0"
     # the backup itself is untouched and still usable (M01)
-    assert machine.succeed("cd /root/v04 && find . -type f | sort | xargs sha256sum").strip() == pristine
+    assert machine.succeed("cd /home/alice/v04 && find . -type f | sort | xargs sha256sum").strip() == pristine
 
 with subtest("import is resumable and never makes a second writable copy of the store (M07)"):
-    v2 = ctl("import-v04 --backup /root/v04 --owner alice --name Imported")
+    v2 = admin("import-v04 --backup /home/alice/v04 --owner alice --name Imported", tag="imp2")
     assert v2["workspaceId"] == ws_i and v2.get("resumed") is True, v2
     # the same store from a different backup (one byte more in the manifest): refused, nothing created
-    machine.succeed("cp -a /root/v04 /root/v04b && sed -i 's/\"complete\": true/\"complete\":  true/' /root/v04b/manifest.json")
-    rc, o = ctl("import-v04 --backup /root/v04b --owner alice --name Again", ok=False)
+    machine.succeed("cp -a /home/alice/v04 /home/alice/v04b && sed -i 's/\"complete\": true/\"complete\":  true/' /home/alice/v04b/manifest.json")
+    rc, o = admin("import-v04 --backup /home/alice/v04b --owner alice --name Again", ok=False, tag="imp3")
     assert rc != 0 and "STORE_ALREADY_REGISTERED" in o, o
     assert sql(f"SELECT COUNT(*) FROM workspaces WHERE store_uuid='{STORE}'") == "1"
     # a damaged backup is refused before anything is published (format/hash, M07)
-    machine.succeed("cp -a /root/v04 /root/v04c && printf x >> /root/v04c/os.sqlite && "
-                    "python3 -c \"import json;p='/root/v04c/manifest.json';m=json.load(open(p));m['storeUUID']='2385edad-f864-464f-b9d1-d640406dfbfd';json.dump(m,open(p,'w'))\"")
-    rc, o = ctl("import-v04 --backup /root/v04c --owner alice --name Bad", ok=False)
+    machine.succeed("cp -a /home/alice/v04 /home/alice/v04c && printf x >> /home/alice/v04c/os.sqlite && "
+                    "python3 -c \"import json;p='/home/alice/v04c/manifest.json';m=json.load(open(p));m['storeUUID']='2385edad-f864-464f-b9d1-d640406dfbfd';json.dump(m,open(p,'w'))\"")
+    rc, o = admin("import-v04 --backup /home/alice/v04c --owner alice --name Bad", ok=False, tag="imp4")
     assert rc != 0 and "IMPORT_HASH_MISMATCH" in o, o
     assert sql("SELECT COUNT(*) FROM workspaces WHERE store_uuid='2385edad-f864-464f-b9d1-d640406dfbfd'") == "0"   # nothing allocated
 
 with subtest("the imported workspace is served by its own Host through the real gateway (M02 on a machine)"):
-    tty_login(1, "alice", "alice-pw-1")
     r = call(1, [{"methodId": "workspaces.attach", "workspaceId": ws_i, "idempotencyKey": str(uuid.uuid4()), "body": {}}], "ai")[0]
     assert r["status"] == 200, r
     machine.wait_until_succeeds(f"pgrep -u {uid_i} -f packages/host/dist/main.js", timeout=120)
@@ -86,13 +111,14 @@ with subtest("the imported workspace is served by its own Host through the real 
     assert recs == src_recs, (recs, src_recs)
 
 with subtest("source: one machine set with the imported workspace, exported with age and read back"):
-    v = ctl(f"backup --out {SNAP}/o1")
-    machine.succeed("age-keygen -o /root/c.key 2>/root/c.pub")
-    rec = machine.succeed("grep -o 'age1[a-z0-9]*' /root/c.pub").strip()
-    e = ctl(f"backup export --set {SNAP}/o1 --recipient {rec} --out /root/carry")
+    v = admin("backup --name o1", tag="bk")
+    machine.succeed(f"test -d {SNAP}/o1 && test \"$(stat -c %U {SNAP}/o1)\" = root")          # the plain set stays root-only
+    tty_run(1, "age-keygen -o /home/alice/c.key 2>/home/alice/c.pub", "/tmp/keygen")             # the administrator's own key
+    rec = machine.succeed("grep -o 'age1[a-z0-9]*' /home/alice/c.pub").strip()
+    e = admin(f"backup export --set o1 --recipient {rec} --out /home/alice/carry", tag="exp")
     assert e["exportState"] == "verified" and e["offMachineCopy"] is True, e
-    machine.succeed(f"test -e /root/carry/ws-{ws_i}.age")
-    machine.succeed("cp /root/c.key /root/carry/ && tar -C /root -cf /root/carry.tar carry")
+    machine.succeed(f"test -e /home/alice/carry/ws-{ws_i}.age && test \"$(stat -c %U /home/alice/carry/ws-{ws_i}.age)\" = alice")
+    machine.succeed("cp /home/alice/c.key /home/alice/carry/ && tar -C /home/alice -cf /root/carry.tar carry")
     machine.copy_from_vm("/root/carry.tar", "")
 
 # ---- second machine ----
@@ -102,22 +128,18 @@ out = json.loads(must("printf 'bea-pw-2' | agentosctl firstboot --admin bea"))
 assert out["machineInstallId"] != mid_src
 machine.wait_for_unit("agentos-broker.service")
 machine.copy_from_host(str(source.out_dir / "carry.tar"), "/root/carry.tar")
-machine.succeed("tar -C /root -xf /root/carry.tar")
+tty_login(1, "bea", "bea-pw-2")
+machine.succeed("tar -C /home/bea -xf /root/carry.tar && chown -R bea: /home/bea/carry")       # the carried copy, in bea's home
 
 with subtest("off-machine restore: the imported workspace comes back on another machine under its local owner with the same records (R10)"):
-    for f in machine.succeed("ls /root/carry").split():
-        if f.startswith("ws-") and f.endswith(".age"):
-            w = f[3:-4]
-            machine.succeed(f"agentos-recovery-worker import --in /root/carry/{f} --identity /root/carry/c.key --staging /root/cset/ws/{w} | grep -q '\"ok\":true'")
-    machine.succeed("age -d -i /root/carry/c.key -o /root/cset/machine-set.json /root/carry/machine-set.json.age")
-    v = ctl("clone --set /root/cset --owner bea")
+    admin("import-set --in /home/bea/carry --identity /home/bea/carry/c.key --name cset", tag="iset")
+    v = admin("clone --set cset --owner bea", tag="cln")
     [w] = [x for x in v["workspaces"] if x["sourceWorkspaceId"] == ws_i]
     ws_n = w["workspaceId"]
     assert w["storeUUID"] == STORE, w
     uid_n = int(sql(f"SELECT execution_uid FROM workspaces WHERE workspace_id='{ws_n}'"))
     bea = sql("SELECT user_id FROM users WHERE login_name='bea'")
     assert sql(f"SELECT owner_user_id FROM workspaces WHERE workspace_id='{ws_n}'") == bea
-    tty_login(1, "bea", "bea-pw-2")
     r = call(1, [{"methodId": "workspaces.attach", "workspaceId": ws_n, "idempotencyKey": str(uuid.uuid4()), "body": {}}], "tn")[0]
     assert r["status"] == 200, r
     machine.wait_until_succeeds(f"pgrep -u {uid_n} -f packages/host/dist/main.js", timeout=120)

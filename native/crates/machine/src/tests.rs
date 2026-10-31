@@ -940,7 +940,7 @@ fn o09_admin_actions_take_only_confined_validated_params() {
     // inputs outside the administrator's home / media are refused, relative paths too
     assert_eq!(code(argv("admin.importV04", &json!({ "backup": "/etc", "owner": "alice" }), "alice")), "NOT_FOUND_OR_FORBIDDEN");
     assert_eq!(code(argv("admin.importV04", &json!({ "backup": "v04", "owner": "alice" }), "alice")), "INVALID_REQUEST");
-    assert_eq!(code(argv("admin.importSet", &json!({ "in": "/var/lib/agentos-machine", "identity": "/etc/shadow", "name": "x" }), "alice")), "NOT_FOUND_OR_FORBIDDEN");
+    assert_eq!(code(argv("admin.importSet", &json!({ "in": "/etc", "identity": "/etc/shadow", "name": "x" }), "alice")), "NOT_FOUND_OR_FORBIDDEN");
     // export: an age recipient and an output outside system directories
     assert_eq!(code(argv("admin.backup.export", &json!({ "set": "s1", "recipient": "ssh-rsa AAAA", "out": "/home/alice/c" }), "alice")), "INVALID_REQUEST");
     assert_eq!(code(argv("admin.backup.export", &json!({ "set": "s1", "recipient": "age1qqqq", "out": "/etc/x" }), "alice")), "NOT_FOUND_OR_FORBIDDEN");
