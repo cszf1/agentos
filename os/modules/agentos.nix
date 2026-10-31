@@ -23,6 +23,18 @@ let
   # Graphical systems only: it runs on tty1 before greetd; the password is read without echo and handed to
   # agentosctl on stdin (never argv, never a log). Review F11: before this an installed system had no way to create
   # its first account (root is locked), so the ISO install could never reach the ReGreet login.
+  # Runs as the greeter user before each ReGreet start (see default_session below). Keeps ReGreet's last user, maps
+  # every local login account (UID 1000-59999 with a login shell) to the AgentOS session.
+  greeterDefaults = pkgs.writeShellScript "agentos-greeter-defaults" ''
+    export PATH=${lib.makeBinPath [ pkgs.coreutils pkgs.gnugrep pkgs.gawk pkgs.getent ]}
+    f=/var/lib/regreet/state.toml
+    [ -d /var/lib/regreet ] && [ -w /var/lib/regreet ] || exit 0
+    last=$(grep -m1 '^last_user *= *"[a-z_][a-z0-9_-]*"$' "$f" 2>/dev/null)
+    users=$(getent passwd | awk -F: '$3 >= 1000 && $3 < 60000 && $7 !~ /(nologin|false)$/ && $1 ~ /^[a-z_][a-z0-9_-]*$/ { print $1 }')
+    [ -n "$last" ] || { u=$(printf '%s\n' "$users" | head -n1); [ -n "$u" ] && last="last_user = \"$u\""; }
+    { [ -n "$last" ] && printf '%s\n\n' "$last"; printf '[user_to_last_sess]\n'; for u in $users; do printf '%s = "AgentOS"\n' "$u"; done; } > "$f.tmp" && mv -f "$f.tmp" "$f"
+    exit 0
+  '';
   firstSetup = pkgs.writeShellScript "agentos-first-setup" ''
     set -u
     export PATH=${lib.makeBinPath [ native pkgs.coreutils pkgs.util-linux pkgs.gnugrep ]}
@@ -111,7 +123,14 @@ in {
   config = lib.mkIf cfg.enable {
     assertions = [ { assertion = cfg.graphical -> config.programs.sway.enable; message = "the AgentOS session needs Sway"; } ];
     environment.systemPackages = [ native node ] ++ lib.optionals cfg.graphical [ shell session pkgs.swaylock pkgs.swayidle pkgs.wl-clipboard pkgs.wireplumber ];
-    services.displayManager.sessionPackages = lib.mkIf cfg.graphical [ sessionDesktop ];
+    # AgentOS is the only session the greeter offers (programs.sway would add a bare "Sway" session that bypasses the
+    # Shell, spec §9.1 "登录后直接进入 AgentOS 全屏画布").
+    services.displayManager.sessionPackages = lib.mkIf cfg.graphical (lib.mkForce [ sessionDesktop ]);
+    # ReGreet 0.3 has no default session: with nothing remembered for a user it starts that user's login shell. Before
+    # each greeting, map every local login account to the AgentOS session in ReGreet's state (review F02/F11: a fresh
+    # install or a newly created user would otherwise land in bash instead of the Shell).
+    services.greetd.settings.default_session.command = lib.mkIf cfg.graphical (lib.mkForce
+      "${greeterDefaults} ; exec ${pkgs.dbus}/bin/dbus-run-session ${lib.getExe pkgs.cage} ${lib.escapeShellArgs config.programs.regreet.cageArgs} -- ${lib.getExe config.programs.regreet.package}");
     services.greetd.enable = cfg.graphical;
     programs.regreet.enable = cfg.graphical;
     security.pam.services.swaylock = lib.mkIf cfg.graphical { };

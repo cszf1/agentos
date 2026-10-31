@@ -152,10 +152,9 @@ with subtest("first boot from the local console (spec 19.4, review F11): adminis
     assert machine.succeed("systemctl show -p ConditionResult --value agentos-first-setup.service").strip() == "no"
 
 with subtest("ReGreet: a wrong password is refused and the greeter recovers; the right one starts Sway + the Qt Shell through greetd/PAM; no browser engine (D01, review F02)"):
-    # ReGreet 0.3 keeps the last user and their last session in /var/lib/regreet/state.toml: the state a previous
-    # login leaves. Restart greetd so ReGreet reads it (and AccountsService's user list) at start.
-    machine.succeed("install -d -o greeter -g greeter /var/lib/regreet && printf 'last_user = \"alice\"\\n\\n[user_to_last_sess]\\nalice = \"AgentOS\"\\n' > /var/lib/regreet/state.toml && chown greeter:greeter /var/lib/regreet/state.toml")
-    machine.succeed("systemctl restart greetd.service")
+    # Fresh machine: nothing remembered by ReGreet. The greeter wrapper (agentos-greeter-defaults) maps every local
+    # account to the AgentOS session, so Enter on the preselected user starts the Shell, not a login shell.
+    machine.wait_until_succeeds("grep -q 'alice = \"AgentOS\"' /var/lib/regreet/state.toml", timeout=120)
     greeter_ready()
     g = shot("greeter")
     assert len({px(g, x, y) for x in range(0, g[0], 37) for y in range(0, g[1], 23)}) > 3, "greeter output is blank"
