@@ -172,7 +172,15 @@ pub fn dispatch(m: &mut Machine, ex: &mut dyn Executor, secrets: &std::sync::Mut
             "members.transferBegin" => m.begin_transfer(&principal(&a)?.user_id, s(&a, "transferId")?, s(&a, "workspaceId")?, s(&a, "toUserId")?),
             "members.transferConfirm" => m.confirm_transfer(&principal(&a)?.user_id, s(&a, "transferId")?),
             "revocations.get" => m.revocation(s(&a, "revocationId")?),
-            "registry.pull" => Ok(json!({ "messages": m.pending_outbox(s(&a, "target")?, "*", 64)? })),
+            "registry.pull" => {
+                // registryHighWater: the directory position this target is complete up to once it applied these
+                // messages. Most registry sequence numbers belong to messages for other targets (Host quiesce,
+                // gateway state changes); without the high-water mark a target could never reach a position a Host
+                // decided under (REGISTRY_NOT_SYNCED forever, m17 W09). Read in the same core step as the batch.
+                let msgs = m.pending_outbox(s(&a, "target")?, "*", 64)?;
+                let high = if msgs.len() < 64 { m.registry_seq()? } else { msgs.last().and_then(|x| x["registrySeq"].as_i64()).unwrap_or(0) };
+                Ok(json!({ "messages": msgs, "registryHighWater": high }))
+            }
             "registry.ack" => Ok(json!({ "acked": m.ack_outbox(s(&a, "target")?, "*", i(&a, "registrySeq")?)? })),
             "ops.plan" => {
                 let p = principal(&a)?;
@@ -255,6 +263,18 @@ pub fn serve_conn(mut stream: UnixStream, tx: mpsc::Sender<(u32, i32, Value, mps
         } else {
             match std::str::from_utf8(&body).ok().and_then(|t| agentos_protocol::v1_json::parse_strict_json(t).ok()) {
                 None => json!({ "ok": false, "error": MErr::new("INVALID_REQUEST", "frame is not strict JSON").json() }),
+                // A Host saying goodbye while machined stops its workspace: the core thread is inside the stop and
+                // waits for this very Host to exit, so a synchronous reply would deadlock both until the Host's 30 s
+                // shutdown limit (m17 W09: every stop froze machined ~36 s and the broker's registry pull timed out).
+                // host.bye is idempotent bookkeeping; the core applies it later and the stop marks the instance
+                // stopped anyway, so the Host is answered at once.
+                Some(req) if cred.uid != 0 && req.get("op").and_then(|o| o.as_str()) == Some("host.bye") => {
+                    let (rtx, _rrx) = mpsc::channel();
+                    if tx.send((cred.uid, cred.pid, req, rtx)).is_err() {
+                        return;
+                    }
+                    json!({ "ok": true, "data": { "deferred": true } })
+                }
                 Some(req) => {
                     let (rtx, rrx) = mpsc::channel();
                     if tx.send((cred.uid, cred.pid, req, rtx)).is_err() {

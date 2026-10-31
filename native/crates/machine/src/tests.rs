@@ -815,3 +815,18 @@ fn s05_s06_a_killed_host_frees_its_slots_only_when_its_successor_says_hello_char
     let p3 = t.m.request_permit(&a.0, &rq(a, v, false));
     assert!(p3.is_ok());
 }
+
+#[test]
+fn w09_broker_gets_first_member_snapshot_and_a_high_water_past_other_targets() {
+    let (mut t, w) = setup();
+    let (ws, ada, _) = w[0].clone();
+    // the creation snapshot reaches the broker, so the owner's first protocol-3 write knows the member
+    let b = t.m.pending_outbox("broker", "*", 64).unwrap();
+    assert!(b.iter().any(|m| m["kind"] == "members.snapshot" && m["body"]["members"].as_array().map(|a| a.iter().any(|x| x["userId"] == ada.as_str())).unwrap_or(false)));
+    ack_all(&t.m);
+    // a stop enqueues only for the Host: the registry moves on without a broker message
+    let before = t.m.registry_seq().unwrap();
+    t.m.stop_workspace(&ws).unwrap();
+    assert!(t.m.registry_seq().unwrap() > before);
+    assert!(t.m.pending_outbox("broker", "*", 64).unwrap().is_empty());
+}

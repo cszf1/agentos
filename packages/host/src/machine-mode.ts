@@ -586,7 +586,8 @@ export class MachineMode {
   async stop(): Promise<void> {
     this.#stopped = true;
     try {
-      await this.link.call("host.bye", { instanceId: this.instanceId });
+      // Bounded: machined may be busy stopping this very workspace; it reconciles instances itself (spec §20.1 budget).
+      await Promise.race([this.link.call("host.bye", { instanceId: this.instanceId }), new Promise((r) => setTimeout(r, 3000).unref())]);
     } catch {
       /* machined gone: it reconciles instances itself */
     }

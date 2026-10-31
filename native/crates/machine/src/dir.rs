@@ -204,6 +204,11 @@ impl Machine {
         Ok(seq)
     }
 
+    /// The directory's current registry sequence (every target's messages share it).
+    pub fn registry_seq(&self) -> R<i64> {
+        Ok(self.c.query_row("SELECT registry_seq FROM machine_meta WHERE id = 1", [], |r| r.get(0))?)
+    }
+
     pub fn pending_outbox(&self, target_kind: &str, target_id: &str, limit: i64) -> R<Vec<Value>> {
         let mut st = self.c.prepare("SELECT registry_seq, kind, body_json, body_hash FROM registry_outbox WHERE target_kind = ?1 AND target_id = ?2 AND state = 'pending' ORDER BY registry_seq LIMIT ?3")?;
         let rows = st.query_map(params![target_kind, target_id, limit], |r| {
@@ -579,7 +584,9 @@ impl Machine {
                             c.execute("INSERT INTO workspace_members (workspace_id, user_id, role, member_version, state, changed_at) VALUES (?1, ?2, 'owner', 1, 'active', ?3)", params![ws, owner, now_ms()])?;
                         }
                         c.execute("UPDATE workspaces SET state = 'stopped' WHERE workspace_id = ?1 AND state = 'creating'", [ws])?;
-                        Self::enqueue(c, &[("gateway", "*"), ("host", ws)], "members.snapshot", &Self::member_snapshot(c, ws)?)?;
+                        // The broker checks protocol-3 writes against the member set too (spec §7.4): it needs the first snapshot,
+                        // or the owner's first write fails MEMBERSHIP_REVOKED "unknown member" until a later change.
+                        Self::enqueue(c, &[("gateway", "*"), ("host", ws), ("broker", "*")], "members.snapshot", &Self::member_snapshot(c, ws)?)?;
                         Self::audit(c, "root", "workspace.create", Some(ws), "stopped", None)
                     })?;
                     json!({ "state": "stopped" })

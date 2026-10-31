@@ -176,6 +176,16 @@ pub fn delete_verdict(c: &Connection, b: &Value) -> rusqlite::Result<Value> {
 }
 
 /// Pull/apply/ack loop. A message is acked only after its batch committed (the broker now enforces it).
+/// Messages for other targets (a Host's quiesce, gateway state changes) take registry sequence numbers too. Once
+/// every broker message up to `high` is applied, the broker's view is the directory's view at `high`, which is what a
+/// Host's protocol-3 envelope may claim (m17 W09: without this, REGISTRY_NOT_SYNCED never cleared).
+fn advance_high_water(c: &Connection, high: i64) -> rusqlite::Result<()> {
+    if high > 0 {
+        c.execute("INSERT INTO broker_meta(key,value) VALUES ('machine_registry_seq', ?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value WHERE CAST(excluded.value AS INTEGER) > CAST(broker_meta.value AS INTEGER)", [high.to_string()])?;
+    }
+    Ok(())
+}
+
 pub fn sync_loop(b: Shared) {
     loop {
         let r = (|| -> Result<(), String> {
@@ -184,6 +194,8 @@ pub fn sync_loop(b: Shared) {
             loop {
                 let v = call(&mut s, "registry.pull", json!({ "target": "broker" }))?;
                 let msgs = v["messages"].as_array().cloned().unwrap_or_default();
+                // Complete up to here once this batch is applied (machined reads both in one core step).
+                let high = v["registryHighWater"].as_i64().unwrap_or(0);
                 if let Some(last) = msgs.last().and_then(|m| m["registrySeq"].as_i64()) {
                     {
                         let g = b.db.lock().unwrap();
@@ -196,6 +208,7 @@ pub fn sync_loop(b: Shared) {
                                 return Err(e.to_string());
                             }
                         }
+                        advance_high_water(c, high).map_err(|e| e.to_string())?;
                         c.execute_batch("COMMIT").map_err(|e| e.to_string())?;
                     }
                     call(&mut s, "registry.ack", json!({ "target": "broker", "registrySeq": last }))?;
@@ -205,6 +218,13 @@ pub fn sync_loop(b: Shared) {
                         let _ = call(&mut s, "workspaces.deleteVerdict", v);
                     }
                     continue;
+                }
+                if high > 0 {
+                    let g = b.db.lock().unwrap();
+                    let c = g.as_ref().ok_or("broker log unavailable")?;
+                    if meta_i64(c, "machine_registry_seq") < high {
+                        advance_high_water(c, high).map_err(|e| e.to_string())?;
+                    }
                 }
                 std::thread::sleep(Duration::from_millis(250));
             }
