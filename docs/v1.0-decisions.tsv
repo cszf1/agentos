@@ -5,3 +5,4 @@ ts	phase	decision	why	evidence	result
 2026-10-30T10:30:23Z	implement	left HOST_VERSION at 0.4.0	the running host is still the v0.4 process; v1.0 is not a release	packages/contracts/src/index.ts	http test still expects 0.4.0
 2026-10-30T10:30:23Z	verify	marked 5 of 100 acceptance rows pass	the other rows need Nix, Qt, a seat, or a kill test this machine did not run	docs/ACCEPTANCE_V1.0.md	5 pass, 95 blocked
 2026-10-30T10:42:09Z	review	cross-family trail review did not run	Claude, Gemini, and GPT were unavailable in this session, so a second family never read the log	docs/v1.0-decisions.tsv	open
+2026-10-31T03:43:31Z	verify	round 21: W09 and U11 pass on KVM; decisions 42-47 recorded	m17-shared and m7-update passed on 8b69791	docs/V1.0_PROGRESS.md decisions 42-47; run 41163076525	71 pass / 18 partial / 11 not passed
