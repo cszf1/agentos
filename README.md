@@ -1,4 +1,29 @@
-# AgentOS v0.4
+# AgentOS v1.0 (branch `v1.0`, in acceptance)
+
+**v1.0 is an installable operating system, not a runtime you add to Debian/Ubuntu.** It is a NixOS-based
+distribution (x86_64 UEFI) that ships its own kernel, firmware list, greetd login, Sway session with the native Qt
+Shell, LUKS2 + Btrfs disk layout, the privileged `machined` service and broker, offline OCI images, and A/B system
+updates with rollback. You install it on an empty disk from its ISO; no host Linux is needed. The v0.4 runtime
+described further down is now one layer inside it (the per-workspace Host).
+
+| Build | Command |
+|---|---|
+| Installer ISO (offline, whole release closure on the medium) | `cd os && nix build .#agentos-iso` |
+| VM template (same layout) | `cd os && nix build .#agentos-qcow2` |
+| Release manifest, SBOM, firmware list, SHA256SUMS | `cd os && nix build .#agentos-release` |
+| VM acceptance checks (needs KVM) | `cd os && nix build .#checks.x86_64-linux.<name>`, or the `v1-vm-tests` workflow |
+
+- Install: boot the ISO and run `agentos-install inspect`, `plan --disk /dev/disk/by-id/X`, `confirm` (you type the
+  disk serial or WWN) and `run`; it erases the whole target disk and refuses disks under 64 GiB. Dual boot, Secure Boot, NVIDIA proprietary drivers and ARM64 install are out of scope for v1.0
+  (spec `docs/AGENTOS_MVP_V1.0.md`).
+- Tested hardware: only the `qemu-virtio` profile (QEMU/KVM). Bare-metal GPU, displays, Wi-Fi, audio, suspend and
+  physical disks are **not yet accepted**; see `docs/RELEASE_V1.0.md`.
+- Status: **not a completed release** (V1-O10). Item-by-item evidence: `docs/ACCEPTANCE_V1.0.md`; checklist
+  `docs/V1.0_CHECKLIST.md`; progress and design decisions `docs/V1.0_PROGRESS.md`; handoff `docs/HANDOFF_V1.0.md`.
+
+---
+
+## Earlier layer: AgentOS v0.4 runtime
 
 A single-user application runtime for Linux. You describe an app in natural language; a Pi Durable agent builds it
 through host tools; the host validates, prepares, health-checks and publishes it; a trusted React renderer shows it;
