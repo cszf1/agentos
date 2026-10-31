@@ -6,6 +6,7 @@ import fastifyStatic from "@fastify/static";
 import {
   AgentOsError,
   HOST_VERSION,
+  PRODUCT_VERSION,
   LIMITS,
   canonicalJson,
   isAgentOsError,
@@ -235,6 +236,7 @@ export function buildServer(rt: HostRuntime): FastifyInstance {
         agentState: rt.status.agentState,
         agentDiagnostic: rt.status.agentDiagnostic ?? rt.model.diagnostic,
         hostVersion: HOST_VERSION,
+        productVersion: PRODUCT_VERSION,
         ready: rt.status.phase === "ready" && rt.status.writable,
         runtimeReady: rt.sys?.runtimeReady ?? false,
         runtimeProblems: rt.sys ? rt.sys.environmentProblems.slice(0, 10) : ["the code runtime has not started"],

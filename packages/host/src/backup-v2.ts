@@ -179,6 +179,8 @@ export async function backupFull(config: HostConfig, output: string, driverIn?: 
     format: 2,
     complete: true,
     storeUUID: dbManifest.storeUUID,
+    // review F13: this backup format (v0.2+) records the Host runtime line here; v0.4-line importers read it. The
+    // product release is PRODUCT_VERSION and is not written into workspace backups.
     productVersion: HOST_VERSION,
     schemaVersion: dbManifest.schemaVersion,
     clientEpoch: dbManifest.clientEpoch,

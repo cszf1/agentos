@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "agentos-broker"
-version = "0.4.0"
+version = "1.0.0"
 dependencies = [
  "agentos-protocol",
  "hex",
@@ -17,7 +17,7 @@ dependencies = [
 
 [[package]]
 name = "agentos-desktop-session"
-version = "0.4.0"
+version = "1.0.0"
 dependencies = [
  "agentos-protocol",
  "libc",
@@ -27,7 +27,7 @@ dependencies = [
 
 [[package]]
 name = "agentos-machine"
-version = "0.4.0"
+version = "1.0.0"
 dependencies = [
  "agentos-protocol",
  "ed25519-dalek",
@@ -43,7 +43,7 @@ dependencies = [
 
 [[package]]
 name = "agentos-protocol"
-version = "0.4.0"
+version = "1.0.0"
 dependencies = [
  "hex",
  "libc",
@@ -55,7 +55,7 @@ dependencies = [
 
 [[package]]
 name = "agentos-provider-user"
-version = "0.4.0"
+version = "1.0.0"
 dependencies = [
  "agentos-protocol",
  "hex",
@@ -68,7 +68,7 @@ dependencies = [
 
 [[package]]
 name = "agentos-provider-workers"
-version = "0.4.0"
+version = "1.0.0"
 dependencies = [
  "agentos-protocol",
  "hex",
@@ -82,7 +82,7 @@ dependencies = [
 
 [[package]]
 name = "agentos-recovery-worker"
-version = "0.4.0"
+version = "1.0.0"
 dependencies = [
  "agentos-protocol",
  "hex",
@@ -94,7 +94,7 @@ dependencies = [
 
 [[package]]
 name = "agentos-session-gateway"
-version = "0.4.0"
+version = "1.0.0"
 dependencies = [
  "agentos-machine",
  "agentos-protocol",
@@ -108,7 +108,7 @@ dependencies = [
 
 [[package]]
 name = "agentos-telemetry"
-version = "0.4.0"
+version = "1.0.0"
 dependencies = [
  "agentos-protocol",
  "libc",
@@ -118,7 +118,7 @@ dependencies = [
 
 [[package]]
 name = "agentos-update-worker"
-version = "0.4.0"
+version = "1.0.0"
 dependencies = [
  "agentos-protocol",
  "hex",

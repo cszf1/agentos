@@ -250,6 +250,8 @@ export interface SystemInfo {
   cpus: number;
   nodeVersion: string;
   hostVersion: string;
+  /** review F13: the product release (hostVersion is the Host runtime compatibility line) */
+  productVersion?: string;
 }
 
 export interface StateView {
@@ -267,6 +269,8 @@ export interface StateView {
   agentState: "ready" | "blocked" | "unavailable";
   agentDiagnostic: string | null;
   hostVersion: string;
+  /** review F13: the product release (hostVersion is the Host runtime compatibility line) */
+  productVersion?: string;
   ready: boolean;
   /** v0.2: whether code apps can run on this host, and why not (spec §20.1). */
   runtimeReady?: boolean;

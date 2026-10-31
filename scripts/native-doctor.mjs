@@ -8,6 +8,8 @@ import net from "node:net";
 const ROOT = path.resolve(import.meta.dirname, "..");
 const bin = path.join(ROOT, "native", "target", "release");
 const out = {};
+// review F13: product release vs Host runtime compatibility line, read from the same places the packages use
+out.versions = { product: JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8")).version, hostRuntime: (fs.readFileSync(path.join(ROOT, "packages/contracts/src/index.ts"), "utf8").match(/HOST_VERSION = "([^"]+)"/) ?? [])[1] ?? null };
 const tryRun = (f) => {
   try {
     return f();

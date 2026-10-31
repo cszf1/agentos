@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/protocol", "crates/broker", "crates/provider-user", "crates/provider-workers", "crates/telemetry", "crates/machine", "crates/session-gateway", "crates/desktop-session", "crates/recovery-worker", "crates/update-worker"]
 
 [workspace.package]
-version = "0.4.0"
+version = "1.0.0"
 edition = "2021"
 license = "UNLICENSED"
 publish = false

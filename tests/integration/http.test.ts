@@ -71,6 +71,7 @@ describe("HTTP host (real process, faux model)", () => {
     expect(s.data.memory.totalBytes).toBeGreaterThan(0);
     expect(typeof s.data.uptimeSeconds).toBe("number");
     expect(s.data.hostVersion).toBe("0.4.0");
+    expect(s.data.productVersion).toBe("1.0.0"); // review F13
   });
 
   it("full HTTP CRUD with idempotency, CAS, unknown fields and stale epochs", async () => {

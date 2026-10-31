@@ -7,6 +7,7 @@ import { GcService, ArtifactStore, RUNTIME_POLICY, openCore } from "@agentos/cor
 import type { HostConfig } from "./config.js";
 import { catalogProblems, createDriver, loadCatalog } from "./runtime-setup.js";
 import { engineHasEnvLeakCve } from "@agentos/runtime-podman";
+import { HOST_VERSION, PRODUCT_VERSION } from "@agentos/contracts";
 
 /** Variables the podman API service may carry when started through deploy/podman-clean-env (allowlist). */
 export const ENGINE_ENV_ALLOW = new Set([
@@ -39,6 +40,8 @@ export interface Check {
 export async function doctor(config: HostConfig): Promise<{ ok: boolean; checks: Check[] }> {
   const checks: Check[] = [];
   const add = (name: string, ok: boolean, detail: string) => checks.push({ name, ok, detail });
+  // review F13: say which product release and which Host runtime line this doctor speaks for
+  add("versions", true, `AgentOS ${PRODUCT_VERSION} (Host runtime ${HOST_VERSION})`);
   const user = os.userInfo().username;
   const sub = (f: string) => {
     try {

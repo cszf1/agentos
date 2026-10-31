@@ -1,5 +1,5 @@
 import os from "node:os";
-import { HOST_VERSION, type SystemInfo } from "@agentos/contracts";
+import { HOST_VERSION, PRODUCT_VERSION, type SystemInfo } from "@agentos/contracts";
 
 /** Read-only system.info provider: real Node OS APIs, no shell output parsing. */
 export function readSystemInfo(): SystemInfo {
@@ -15,5 +15,6 @@ export function readSystemInfo(): SystemInfo {
     cpus: os.cpus().length,
     nodeVersion: process.version,
     hostVersion: HOST_VERSION,
+    productVersion: PRODUCT_VERSION,
   };
 }
