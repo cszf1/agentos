@@ -162,6 +162,9 @@ with subtest("F04a: broker cut from machined during a revocation: the gateway an
     assert machine.succeed(f"sqlite3 {BDB} \"SELECT state FROM machine_members WHERE store_uuid='{store_a}' AND user_id='{gina}'\"").strip() != "active"
 
 with subtest("F04b: broker cut from the Host while an owner's broker write is registered: it stays pending (not done) across a Host SIGKILL, and is delivered exactly once after reconnect (I08)"):
+    CNT = f"sqlite3 {hostdb} \"SELECT COUNT(*) FROM root_sync_outbox WHERE kind='control'"
+    n0 = int(machine.succeed(CNT + "\"").strip())
+    c0 = int(machine.succeed(CNT + " AND dispatch_state='confirmed'\"").strip())
     machine.succeed("systemctl stop agentos-broker.path; kill -STOP $(systemctl show -P MainPID agentos-broker.service)")
     r = call(1, [fwd(ws_a, "maintenance.control.post", body={"action": "pause"}, idem="f04b-1")], "g5")[0]
     assert r["status"] == 200, r
@@ -179,7 +182,9 @@ with subtest("F04b: broker cut from the Host while an owner's broker write is re
     st = wait_control()
     assert st.startswith("confirmed"), st
     assert machine.succeed(f"sqlite3 {BDB} \"SELECT state FROM workspace_maintenance_state WHERE store_uuid='{store_a}' ORDER BY incarnation DESC LIMIT 1\"").strip() == "paused"
-    assert machine.succeed(f"sqlite3 {hostdb} \"SELECT COUNT(*) FROM root_sync_outbox WHERE kind='control' AND dispatch_state='confirmed'\"").strip() == machine.succeed(f"sqlite3 {hostdb} \"SELECT COUNT(*) FROM root_sync_outbox WHERE kind='control'\"").strip()
+    # exactly one registered write for this request, delivered once (earlier subtests left rows of their own)
+    assert int(machine.succeed(CNT + "\"").strip()) == n0 + 1, machine.succeed(f"sqlite3 {hostdb} \"SELECT dispatch_state, IFNULL(broker_result,'') FROM root_sync_outbox WHERE kind='control'\"")
+    assert int(machine.succeed(CNT + " AND dispatch_state='confirmed'\"").strip()) == c0 + 1
     r = call(1, [fwd(ws_a, "maintenance.control.post", body={"action": "resume"}, idem="f04b-2")], "g6")[0]
     assert r["status"] == 200, r
     assert wait_control().startswith("confirmed")
