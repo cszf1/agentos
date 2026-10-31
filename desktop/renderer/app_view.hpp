@@ -134,7 +134,7 @@ class AppViewModel : public QObject {
   JValue rbundle_;
   QString q_;
   JValue filters_ = JValue::object();
-  int offset_ = 0, total_ = 0;
+  int offset_ = 0, total_ = 0, listSeq_ = 0;
   struct RForm {
     bool open = false;
     QString mode;

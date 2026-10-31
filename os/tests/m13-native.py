@@ -124,7 +124,15 @@ with item("no model: generation visibly unavailable; CRUD, query, version switch
     assert r["status"] == 202, r
     job = r["body"]["data"]["jobId"]   # Host answers {data: ...}
     machine.wait_until_succeeds(f"sqlite3 {OS} \"SELECT state FROM maintenance_jobs WHERE id='{job}'\" | grep -Eqx 'succeeded|no_change|awaiting_approval'", timeout=120)
-    print("O03 maintenance:", hsql(f"SELECT state || ' ' || COALESCE(outcome_reason,'') || ' run=' || COALESCE(run_id,'') FROM maintenance_jobs WHERE id='{job}'"))
+    show = f"SELECT state || ' ' || COALESCE(outcome_reason,'') || ' run=' || COALESCE(run_id,'') FROM maintenance_jobs WHERE id='{job}'"
+    print("O03 maintenance:", hsql(show))
+    # spec O03 says authorized maintenance: in suggest mode the owner's approval is the authorization, and the approved
+    # step must still run with no model (runs 41179796054/41179799013 stopped at awaiting_approval, never executing)
+    if hsql(f"SELECT state FROM maintenance_jobs WHERE id='{job}'") == "awaiting_approval":
+        r = call(1, [fwd(ws, "maintenance.jobs.approve.post", {}, params={"id": job}, idem="o3-approve")], "o3a")[0]
+        assert r["status"] == 202, r
+        machine.wait_until_succeeds(f"sqlite3 {OS} \"SELECT state FROM maintenance_jobs WHERE id='{job}'\" | grep -Eqx 'succeeded|no_change'", timeout=120)
+        print("O03 maintenance approved:", hsql(show))
     assert hsql("SELECT COUNT(*) FROM runs") == runs_before
 
 

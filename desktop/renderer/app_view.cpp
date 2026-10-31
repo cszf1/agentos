@@ -373,9 +373,10 @@ QVariantMap AppViewModel::recordState() const {
 
 void AppViewModel::loadRecords() {
   if (!sink_) return;
-  const int gen = generation_;
-  send(records::listRequest(appId_, rbundle_, q_, filters_, offset_), [this, gen](const RpcReply& r) {
-    if (gen != generation_) return;
+  const int gen = generation_, seq = ++listSeq_;
+  send(records::listRequest(appId_, rbundle_, q_, filters_, offset_), [this, gen, seq](const RpcReply& r) {
+    // replies can arrive out of order (the Host serves two foreground requests at once): only the newest list counts
+    if (gen != generation_ || seq != listSeq_) return;
     if (!r.ok()) {
       recordsError_ = describeError(r.errorCode, r.errorMessage);
       if (sink_) sink_->reportError(r.errorCode);

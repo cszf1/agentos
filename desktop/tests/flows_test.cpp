@@ -27,7 +27,7 @@ static void captureQml(QtMsgType t, const QMessageLogContext& c, const QString& 
 struct Backend {
   std::atomic<int> sessionEpoch{1};
   std::atomic<bool> locked{false};
-  std::atomic<bool> hostDown{false}, modelDown{false}, brokerDown{false}, planStale{false}, holdQueries{false};
+  std::atomic<bool> hostDown{false}, modelDown{false}, brokerDown{false}, planStale{false}, holdQueries{false}, holdRecordLists{false};
   JValue kanban = loadFixture(QStringLiteral("v1.0/slot-vectors/scenario-v2-kanban.json"));
   JValue console = loadFixture(QStringLiteral("v1.0/slot-vectors/scenario-v3-system-console.json"));
   JValue records = loadFixture(QStringLiteral("todo-v2.json"));
@@ -105,7 +105,7 @@ struct Backend {
       if (holdQueries) return JValue();  // answered later by the test
       return JValue::object({{QStringLiteral("output"), queryOutput(fp.get(QStringLiteral("appId")).str(), fp.get(QStringLiteral("queryId")).str())}, {QStringLiteral("revisionId"), appDetail(fp.get(QStringLiteral("appId")).str()).get(QStringLiteral("activeRevisionId"))}, {QStringLiteral("appEpoch"), 3}});
     }
-    if (route == QLatin1String("apps.records.list")) return JValue::object({{QStringLiteral("items"), JValue::array()}, {QStringLiteral("total"), 0}});
+    if (route == QLatin1String("apps.records.list")) return holdRecordLists ? JValue() : JValue::object({{QStringLiteral("items"), JValue::array()}, {QStringLiteral("total"), 0}});
     if (route == QLatin1String("apps.records.post")) return JValue::object({{QStringLiteral("id"), QStringLiteral("r-1")}, {QStringLiteral("recordVersion"), 1}});
     if (route == QLatin1String("apps.systemactions.post")) return brokerDown ? err(QStringLiteral("BROKER_UNAVAILABLE")) : JValue::object({{QStringLiteral("actionId"), QStringLiteral("act-1")}, {QStringLiteral("confirmationRequired"), true}});
     if (route == QLatin1String("systemactions.get"))
@@ -550,6 +550,36 @@ class FlowsTest : public QObject {
     QTRY_VERIFY_WITH_TIMEOUT(h.shell->rpc()->stats().reconnects >= 1, 5000);
     QTRY_VERIFY_WITH_TIMEOUT(h.shell->connected(), 5000);
     QTRY_VERIFY_WITH_TIMEOUT(h.sent(QStringLiteral("session.bind")).size() >= 2, 5000);
+  }
+
+  void staleRecordListAnswerNeverOverwritesNewerSearch() {
+    Harness h;
+    QVERIFY(h.up());
+    auto* rec = qobject_cast<AppViewModel*>(h.shell->appView(QStringLiteral("rec-app")));
+    QTRY_COMPARE(rec->mode(), QStringLiteral("records"));
+    QTRY_VERIFY(h.sent(QStringLiteral("apps.records.list")).size() >= 1);
+    h.be.holdRecordLists = true;
+    const int before = h.sent(QStringLiteral("apps.records.list")).size();
+    rec->setSearch(QString());
+    QTRY_COMPARE(h.sent(QStringLiteral("apps.records.list")).size(), before + 1);
+    const QString olderId = h.sent(QStringLiteral("apps.records.list")).last().get(QStringLiteral("requestId")).str();
+    rec->setSearch(QStringLiteral("NEEDLE"));
+    QTRY_COMPARE(h.sent(QStringLiteral("apps.records.list")).size(), before + 2);
+    const QString newerId = h.sent(QStringLiteral("apps.records.list")).last().get(QStringLiteral("requestId")).str();
+    const auto item = [](const QString& id, const QString& title) {
+      return JValue::object({{QStringLiteral("id"), id}, {QStringLiteral("recordVersion"), 1}, {QStringLiteral("data"), JValue::object({{QStringLiteral("title"), title}})}});
+    };
+    QMetaObject::invokeMethod(h.gw->gw, "reply", Qt::BlockingQueuedConnection, Q_ARG(QString, newerId),
+                              Q_ARG(agentos::JValue, JValue::object({{QStringLiteral("items"), JValue::array({item(QStringLiteral("r-n"), QStringLiteral("NEEDLE"))})}, {QStringLiteral("total"), 1}})));
+    QTRY_COMPARE(rec->recordState().value(QStringLiteral("total")).toInt(), 1);
+    QMetaObject::invokeMethod(h.gw->gw, "reply", Qt::BlockingQueuedConnection, Q_ARG(QString, olderId),
+                              Q_ARG(agentos::JValue, JValue::object({{QStringLiteral("items"), JValue::array({item(QStringLiteral("r-a"), QStringLiteral("a")), item(QStringLiteral("r-b"), QStringLiteral("b")),
+                                                                                                             item(QStringLiteral("r-n"), QStringLiteral("NEEDLE"))})},
+                                                                     {QStringLiteral("total"), 3}})));
+    QTest::qWait(300);
+    QCOMPARE(rec->recordState().value(QStringLiteral("total")).toInt(), 1);
+    QCOMPARE(static_cast<RecordsModel*>(rec->records())->rows(), 1);
+    QCOMPARE(rec->recordState().value(QStringLiteral("q")).toString(), QStringLiteral("NEEDLE"));
   }
 
   void eventGapTriggersSnapshotThenResubscribe() {
