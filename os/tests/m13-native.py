@@ -95,8 +95,13 @@ with item("real session: a query in flight in A, then rapid A→B→A→B switch
     marker = s["switch"]["marker"]
     OSB = f"/var/lib/agentos/workspaces/{ws_b}/data/os.sqlite"
     assert machine.succeed(f"sqlite3 {OSB} \"SELECT COUNT(*) FROM apps\"").strip() == "0"
-    machine.succeed(f"cat {OS} {OS}-wal 2>/dev/null | grep -qa '{marker}'")          # the record is in A's store
-    machine.fail(f"cat {OSB} {OSB}-wal 2>/dev/null | grep -qa '{marker}'")           # and nowhere in B's
+    # ask SQLite, not cat|grep: the driver runs `set -euo pipefail`, so a missing -wal or a SIGPIPE failed the pipe
+    # whatever grep found (run 41177042175), and machine.fail on the same pipe passed vacuously
+    has = f"SELECT COUNT(*) FROM records WHERE instr(data_json, '{marker}') > 0"
+    assert hsql(has) == "1", "the record is in A's store"
+    assert machine.succeed(f"sqlite3 {OSB} \"{has}\"").strip() == "0", "and not in B's"
+    rc = machine.execute(f"grep -rqaF -D skip '{marker}' /var/lib/agentos/workspaces/{ws_b}")[0]
+    assert rc == 1, f"no file of B holds A's marker (grep rc={rc})"
 
 with item("no model: generation visibly unavailable; CRUD, query, version switch and deterministic maintenance still work offline (O03)"):
     machine.succeed("echo AGENTOS_MODEL_MODE=real > /run/agentos-test/model.env")   # real mode, no provider configured
@@ -117,7 +122,7 @@ with item("no model: generation visibly unavailable; CRUD, query, version switch
     assert r["status"] == 200, r
     r = call(1, [fwd(ws, "maintenance.checks.post", {"templateId": "log-cleanup", "target": {"kind": "workspace", "id": "workspace"}}, idem="o3-chk")], "o3c")[0]
     assert r["status"] == 202, r
-    job = r["body"]["jobId"]
+    job = r["body"]["data"]["jobId"]   # Host answers {data: ...}
     machine.wait_until_succeeds(f"sqlite3 {OS} \"SELECT state FROM maintenance_jobs WHERE id='{job}'\" | grep -Eqx 'succeeded|no_change|awaiting_approval'", timeout=120)
     print("O03 maintenance:", hsql(f"SELECT state || ' ' || COALESCE(outcome_reason,'') || ' run=' || COALESCE(run_id,'') FROM maintenance_jobs WHERE id='{job}'"))
     assert hsql("SELECT COUNT(*) FROM runs") == runs_before
