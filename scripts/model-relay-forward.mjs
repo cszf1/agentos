@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Developer-side forwarder for model-relay-box.mjs: long-polls the relay, calls the real provider with the key that
 // exists only on this side (AGENTOS_MODEL_API_KEY), and posts the full response back. Dev/acceptance use only.
-const RELAY = process.env.RELAY_URL; // e.g. https://4501-<box>.instabox.tech
+const RELAY = process.env.RELAY_URL; // the relay base URL (https)
 const TOKEN = process.env.RELAY_TOKEN;
 const UPSTREAM = (process.env.AGENTOS_MODEL_BASE_URL || "https://tokenrhythm.studio/v1").replace(/\/v1\/?$/, "");
 const KEY = process.env.AGENTOS_MODEL_API_KEY;
