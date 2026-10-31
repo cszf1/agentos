@@ -138,7 +138,7 @@ in {
         # to logind/systemd/NetworkManager over D-Bus. Nothing else is writable; no network, no kernel or clock access.
         NoNewPrivileges = true;
         ProtectSystem = "strict";
-        ReadWritePaths = [ "/etc" "/home" "/root" "/var" "/run" "/media" "/mnt" ];
+        ReadWritePaths = [ "/etc" "/home" "/root" "/var" "/run" "-/media" "-/mnt" ];   # "-": a missing directory is skipped (run 41202938788: /media absent → 226/NAMESPACE)
         PrivateDevices = true;
         ProtectKernelTunables = true;
         ProtectKernelModules = true;
