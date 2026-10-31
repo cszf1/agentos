@@ -229,6 +229,7 @@ model the host starts; apps, commands, services and version switching work, gene
 | `AGENTOS_PODMAN_SOCKET` | `/run/user/<uid>/podman/podman.sock` | rootless engine API socket |
 | `AGENTOS_MODEL_MODE` | `real` | `faux` = deterministic acceptance model (no network) |
 | `AGENTOS_MODEL_PROVIDER` / `AGENTOS_MODEL_ID` / `AGENTOS_MODEL_BASE_URL` / `AGENTOS_MODEL_API_KEY` | unset | real model |
+| `AGENTOS_MODEL_ALLOWED_HOSTS` | unset | developer relay forwarder only (`scripts/model-relay-forward.mjs`): the https upstream host must be named here; no default upstream, redirects refused |
 
 ## Daily use
 

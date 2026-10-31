@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 // Developer-side forwarder for model-relay-box.mjs: long-polls the relay, calls the real provider with the key that
 // exists only on this side (AGENTOS_MODEL_API_KEY), and posts the full response back. Dev/acceptance use only.
+import { fetchUpstream, targetFor, upstreamFrom, upstreamHeaders } from "./model-relay-policy.mjs";
 const RELAY = process.env.RELAY_URL; // the relay base URL (https)
 const TOKEN = process.env.RELAY_TOKEN;
-const UPSTREAM = (process.env.AGENTOS_MODEL_BASE_URL || "https://tokenrhythm.studio/v1").replace(/\/v1\/?$/, "");
 const KEY = process.env.AGENTOS_MODEL_API_KEY;
 if (!RELAY || !TOKEN || !KEY) throw new Error("RELAY_URL, RELAY_TOKEN and AGENTOS_MODEL_API_KEY are required");
+// review F06: explicit https upstream, confirmed host, no redirects (see model-relay-policy.mjs)
+const UP = upstreamFrom(process.env);
 let served = 0;
 let inflight = 0;
 // FORWARD_MAX_MS: stop polling after this long and exit once in-flight answers are posted (a supervisor restarts it),
@@ -15,11 +17,9 @@ const startedAt = Date.now();
 async function handle(item) {
   inflight++;
   try {
-    const headers = { ...item.headers, authorization: `Bearer ${KEY}` };
-    delete headers["content-length"];
-    delete headers.connection;
-    delete headers["accept-encoding"];
-    const r = await fetch(`${UPSTREAM}${item.path}`, { method: item.method, headers, body: item.method === "GET" ? undefined : Buffer.from(item.body, "base64") });
+    const url = targetFor(UP, item.path);
+    const headers = upstreamHeaders(item.headers, KEY);
+    const r = await fetchUpstream(url, { method: item.method, headers, body: item.method === "GET" ? undefined : Buffer.from(item.body, "base64") });
     const body = Buffer.from(await r.arrayBuffer());
     const h = {};
     r.headers.forEach((v, k) => {
