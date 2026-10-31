@@ -111,7 +111,10 @@ TOPBAR, NAVBG, PRIMARY = (0x1f, 0x29, 0x37), (0xf3, 0xf4, 0xf6), (0xdc, 0xe7, 0x
 
 def nav_buttons(img):
     w, h, _ = img
-    rows = [y for y in range(h) if near(px(img, 3, y), NAVBG) and max(px(img, 12, y)) < 0xc0 and max(px(img, 12, y)) - min(px(img, 12, y)) < 24]
+    # FocusRing.qml uses a blue border on the focused (clicked) item, not the ordinary grey border.
+    rows = [y for y in range(h) if near(px(img, 3, y), NAVBG) and (
+        (max(px(img, 12, y)) < 0xc0 and max(px(img, 12, y)) - min(px(img, 12, y)) < 24)
+        or near(px(img, 12, y), (0x1a, 0x5f, 0xd0), 24))]
     lines = []
     for r in rows:
         if lines and r - lines[-1][1] <= 1: lines[-1][1] = r

@@ -16,14 +16,15 @@ def detector(filename):
     return namespace["nav_buttons"]
 
 
-def frame(buttons):
+def frame(buttons, focused=None):
     w, h = 64, 560
     data = bytearray(bytes(NAVBG) * (w * h))
     data[:42 * w * 3] = bytes(TOPBAR) * (42 * w)
     # The real topbar's workspace switcher spans y=6..35; it is NOT a navigation button.
     for y in [6, 35] + [edge for top, bottom in buttons for edge in (top, bottom)]:
         k = (y * w + 12) * 3
-        data[k:k + 3] = bytes((154, 154, 154))
+        color = (0x1a, 0x5f, 0xd0) if focused is not None and y in buttons[focused] else (154, 154, 154)
+        data[k:k + 3] = bytes(color)
     return w, h, bytes(data)
 
 
@@ -33,6 +34,12 @@ class NavigationPixelsTest(unittest.TestCase):
         for filename in ("m5-desktop.py", "m19-iso.py"):
             with self.subTest(filename=filename):
                 self.assertEqual(detector(filename)(frame(expected)), expected)
+
+    def test_blue_focus_border_does_not_hide_the_clicked_navigation_item(self):
+        expected = [(53 + i * 37, 85 + i * 37) for i in range(12)]
+        for filename in ("m5-desktop.py", "m19-iso.py"):
+            with self.subTest(filename=filename):
+                self.assertEqual(detector(filename)(frame(expected, focused=4)), expected)
 
     def test_toolbar_alone_cannot_pass_a_navigation_check(self):
         for filename in ("m5-desktop.py", "m19-iso.py"):

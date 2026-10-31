@@ -61,7 +61,7 @@ From an active local login, use `udisksctl mount --block-device /dev/disk/by-lab
 to mount removable media. Keep the normal polkit policy: this does not grant access to system disks or inactive
 sessions. Mounts normally appear under `/run/media/LOGIN/LABEL`; copy inputs to your own home before calling
 `agentosctl admin`, and copy an already verified encrypted export back to the medium afterwards. The privileged
-helper\'s path allowlist is unchanged; do not point it at arbitrary `/run` paths.
+helper's path allowlist is unchanged; do not point it at arbitrary `/run` paths.
 
 Verification refuses a new manifest without trusted time (spec §20.2). Check/fix the clock against a trusted source
 first. For an explicitly chosen offline verification, the administrator can then pass `--trusted-time` to
