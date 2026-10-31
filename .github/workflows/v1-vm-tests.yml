@@ -20,7 +20,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: v1-vm-${{ github.ref }}-${{ github.event.inputs.test || 'all' }}
+  # Different commits must not queue behind an obsolete long-running ISO/rekey check; each runner is isolated.
+  group: v1-vm-${{ github.ref }}-${{ github.event.inputs.test || 'all' }}-${{ github.sha }}
   cancel-in-progress: false
 
 jobs:
