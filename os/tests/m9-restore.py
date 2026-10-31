@@ -231,3 +231,41 @@ with subtest("machine directory lost: recovery mode, then an explicit new identi
     machine.wait_for_unit("agentos-broker.service")
     machine.succeed("test -f /var/lib/agentos-broker/broker.sqlite")
     machine.fail(f"journalctl -u agentos-broker --since @{t_fb} --no-pager | grep -q 'BROKER_IDENTITY_MISMATCH\\|BROKER_HISTORY_MISSING'")
+
+with subtest("only the broker log lost, machine directory intact: refused without authorization, recovery mode, explicit new identity (R11, review F07)"):
+    mid1 = ctl("status")["meta"]["machineInstallId"]
+    # the broker of the new identity has acknowledged registry messages, so it had a log
+    machine.wait_until_succeeds("sqlite3 /var/lib/agentos-machine/machine.sqlite \"SELECT COUNT(*) > 0 FROM registry_outbox WHERE target_kind='broker' AND state='acked'\" | grep -qx 1", timeout=120)
+    t_loss = machine.succeed("date +%s").strip()
+    machine.succeed("systemctl stop agentos-broker.path agentos-broker.service; rm -f /var/lib/agentos-broker/broker.sqlite*")
+    machine.succeed("systemctl start agentos-broker.service")
+    machine.wait_until_succeeds(f"journalctl -u agentos-broker --since @{t_loss} --no-pager | grep -q BROKER_HISTORY_MISSING", timeout=60)
+    machine.succeed("test -f /var/lib/agentos-machine/machine.sqlite")              # only the broker log is gone
+    # machined still on the old identity: a new identity is refused without the explicit flag
+    rc, o = ctl("recover --new-identity", ok=False)
+    assert rc != 0 and "recovery mode" in o, o
+    # machined restarted: it sees the broker had a log that is now gone and goes to recovery mode (no socket)
+    machine.succeed("systemctl restart agentos-machine.service")
+    machine.wait_until_succeeds("grep -q BROKER_HISTORY_MISSING /var/lib/agentos-machine/recovery-required", timeout=60)
+    machine.wait_until_fails("test -S /run/agentos/machine/machine.sock", timeout=30)
+    machine.succeed("test -f /var/lib/agentos-machine/machine.sqlite")              # nothing was emptied
+    rc, o = machine.execute("agentosctl status 2>&1")
+    assert rc != 0 and "recovery mode" in o, o
+    rc, o = ctl("recover --new-identity", ok=False)                               # no authorization for the broker loss
+    assert rc != 0 and "accept-broker-history-loss" in o, o
+    machine.succeed("test -f /var/lib/agentos-machine/recovery-required && test ! -e /var/lib/agentos-machine/recovery-accepted")
+    v = ctl("recover --new-identity --accept-broker-history-loss")
+    assert v["ok"] and v["accepted"] == "new-identity:broker-history-loss", v
+    machine.wait_until_succeeds("test -S /run/agentos/machine/machine.sock", timeout=60)
+    rc, o = machine.execute("agentosctl status 2>&1")
+    assert rc != 0 and "not installed" in o, o
+    newest = machine.succeed("ls -dt /var/lib/agentos-machine/lost-*/ | head -1").strip()
+    machine.succeed(f"test -f {newest}machine.sqlite && grep -q BROKER_HISTORY_MISSING {newest}README")   # old state kept as evidence
+    machine.fail("test -e /var/lib/agentos-machine/recovery-required")
+    t_fb2 = machine.succeed("date +%s").strip()
+    machine.execute("printf 'fay-pw-1' | agentosctl firstboot --admin fay --workspace F")
+    st = ctl("status")
+    assert st["meta"]["machineInstallId"] not in (mid0, mid1) and st["meta"]["firstBootState"] == "closed", st
+    machine.wait_for_unit("agentos-broker.service")
+    machine.wait_until_succeeds("test -f /var/lib/agentos-broker/broker.sqlite", timeout=60)
+    machine.fail(f"journalctl -u agentos-broker --since @{t_fb2} --no-pager | grep -q 'BROKER_IDENTITY_MISMATCH\\|BROKER_HISTORY_MISSING'")

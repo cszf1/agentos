@@ -750,15 +750,56 @@ fn restore(c: &mut Client, a: &[String]) {
 fn recover(a: &[String]) {
     root_only("recover");
     if !a.iter().any(|x| x == "--new-identity") {
-        die("usage: agentosctl recover --new-identity");
+        die("usage: agentosctl recover --new-identity [--accept-broker-history-loss]");
     }
     let req = std::path::Path::new("/var/lib/agentos-machine/recovery-required");
-    if !req.exists() {
-        die("the machine is not in recovery mode");
+    let reason = std::fs::read_to_string(req).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()).and_then(|v| v["reason"].as_str().map(String::from));
+    let broker_loss = a.iter().any(|x| x == "--accept-broker-history-loss");
+    let token = match reason.as_deref() {
+        Some("MACHINE_DIRECTORY_MISSING") => "new-identity",
+        // review F07: a lost broker log with an intact machine directory needs its own explicit authorization
+        Some("BROKER_HISTORY_MISSING") if broker_loss => "new-identity:broker-history-loss",
+        Some("BROKER_HISTORY_MISSING") => die("the broker's execution history is missing: a new installation identity forgets every root-side fact of the old one; add --accept-broker-history-loss to authorize it"),
+        Some(r) => die(&format!("unknown recovery reason {r}")),
+        None if broker_loss => {
+            // machined still runs on the old identity: only when the broker itself reports its history missing
+            let h = broker_health();
+            if h["result"]["mode"] != "diagnostics-only" || !h["result"]["diagnostics"].as_str().unwrap_or("").starts_with("BROKER_HISTORY_MISSING") {
+                die(&format!("the broker does not report a missing history: {h}"));
+            }
+            "new-identity:broker-history-loss"
+        }
+        None => die("the machine is not in recovery mode"),
+    };
+    if token.ends_with("broker-history-loss") {
+        // nothing may keep running on the identity that is being retired
+        let _ = std::process::Command::new("systemctl").args(["stop", "agentos-session-gateway.service", "agentos-broker.path", "agentos-broker.service"]).status();
+        if let Ok(mut c) = Client::connect(&sock()) {
+            let wss: Vec<Value> = c.call("workspaces.all", json!({})).map(|v| v["workspaces"].as_array().cloned().unwrap_or_default()).unwrap_or_default();
+            for w in wss.iter().filter(|w| matches!(w["state"].as_str(), Some("running" | "starting"))) {
+                let _ = c.call("workspaces.rootStop", json!({ "workspaceId": w["workspaceId"] }));
+            }
+        }
     }
-    agentos_machine::dir::write_private(std::path::Path::new("/var/lib/agentos-machine/recovery-accepted"), b"new-identity").unwrap_or_else(|e| die(&e.to_string()));
+    agentos_machine::dir::write_private(std::path::Path::new("/var/lib/agentos-machine/recovery-accepted"), token.as_bytes()).unwrap_or_else(|e| die(&e.to_string()));
     let ok = std::process::Command::new("systemctl").args(["restart", "agentos-machine.service"]).status().map(|s| s.success()).unwrap_or(false);
-    out(&json!({ "ok": ok, "accepted": "new-identity" }));
+    if token.ends_with("broker-history-loss") {
+        let _ = std::process::Command::new("systemctl").args(["start", "agentos-session-gateway.service", "agentos-broker.path"]).status();
+    }
+    out(&json!({ "ok": ok, "accepted": token }));
+}
+
+/// The broker's own readiness answer (root-only `broker-health`, review R2-2).
+fn broker_health() -> Value {
+    use std::os::unix::net::UnixStream;
+    let Ok(s) = UnixStream::connect("/run/agentos-broker/broker.sock") else { return json!({ "ok": false, "error": "no broker socket" }) };
+    let _ = s.set_read_timeout(Some(std::time::Duration::from_secs(10)));
+    let mut w = &s;
+    if agentos_protocol::frame::write_frame(&mut w, json!({"v": 1, "id": "h", "method": "broker-health", "params": {}}).to_string().as_bytes()).is_err() {
+        return json!({ "ok": false, "error": "write failed" });
+    }
+    let mut r = &s;
+    agentos_protocol::frame::read_frame(&mut r, agentos_protocol::frame::MAX_CONTROL_FRAME).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or(json!({ "ok": false, "error": "no answer" }))
 }
 
 /// Words whose line may carry a secret value; such a line is kept only as a marker (spec §27.3).

@@ -113,11 +113,65 @@ fn remnants(paths: &Paths) -> Vec<String> {
     out
 }
 
+/// The broker log is missing although the broker acknowledged at least one registry message (so it had a log).
+fn broker_log_lost(db: &std::path::Path) -> bool {
+    if std::path::Path::new("/var/lib/agentos-broker/broker.sqlite").exists() {
+        return false;
+    }
+    let Ok(c) = rusqlite::Connection::open_with_flags(db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY) else { return false };
+    c.query_row("SELECT COUNT(*) FROM registry_outbox WHERE target_kind = 'broker' AND state = 'acked'", [], |r| r.get::<_, i64>(0)).map(|n| n > 0).unwrap_or(false)
+}
+
+/// New installation identity: every remnant (machine directory and broker log files) moves into a root-only
+/// lost-<ms>/ as evidence (never replayed); machined then starts as an uninstalled machine.
+fn keep_as_evidence(paths: &Paths, accepted: &std::path::Path, reason: &str) {
+    let lost = paths.machine_dir.join(format!("lost-{}", agentos_machine::util::now_ms()));
+    let _ = std::fs::create_dir_all(lost.join("broker"));
+    let _ = std::fs::set_permissions(&lost, std::fs::Permissions::from_mode(0o700));
+    if let Ok(rd) = std::fs::read_dir(&paths.machine_dir) {
+        for e in rd.flatten() {
+            let n = e.file_name().to_string_lossy().to_string();
+            if n.starts_with("lost-") || n == "recovery-accepted" {
+                continue;
+            }
+            let _ = std::fs::rename(e.path(), lost.join(&n));
+        }
+    }
+    for f in ["broker.sqlite", "broker.sqlite-wal", "broker.sqlite-shm"] {
+        let src = std::path::Path::new("/var/lib/agentos-broker").join(f);
+        if src.exists() {
+            let _ = std::fs::rename(&src, lost.join("broker").join(f));
+        }
+    }
+    let _ = std::fs::write(lost.join("README"), format!("Remains of the installation before {} ({reason}, V1-R11). Evidence only; nothing here is replayed. Old workspace trees stay under /var/lib/agentos/workspaces and need an explicit import.\n", agentos_machine::util::now_ms()));
+    let _ = std::fs::remove_file(accepted);
+    eprintln!("agentos-machined: recovery accepted ({reason}); previous state kept in {}", lost.display());
+}
+
 fn recovery_gate(paths: &Paths, socket: &str) -> Option<i32> {
     let db = paths.machine_dir.join("machine.sqlite");
     let required = paths.machine_dir.join("recovery-required");
     let accepted = paths.machine_dir.join("recovery-accepted");
     if db.exists() {
+        // review F07 (V1-R11): the machine directory is intact but the broker's execution log is gone although the
+        // broker had acknowledged registry messages (it had a log). The broker alone only refuses (diagnostics
+        // only); the machine goes to recovery mode too, and only an explicit `agentosctl recover --new-identity
+        // --accept-broker-history-loss` gives a new installation identity. The old state is kept as evidence.
+        if broker_log_lost(&db) {
+            if accepted.exists() && std::fs::read_to_string(&accepted).map(|t| t.trim() == "new-identity:broker-history-loss").unwrap_or(false) {
+                keep_as_evidence(paths, &accepted, "BROKER_HISTORY_MISSING");
+                return None;
+            }
+            let _ = std::fs::remove_file(socket);
+            let body = json!({ "state": "recovery_required", "reason": "BROKER_HISTORY_MISSING", "remnants": remnants(paths) });
+            let _ = agentos_machine::dir::write_private(&required, body.to_string().as_bytes());
+            eprintln!("agentos-machined: BROKER_HISTORY_MISSING: the broker log is gone after the broker acknowledged registry messages; recovery mode (no socket). Run `agentosctl recover --new-identity --accept-broker-history-loss` as root.");
+            let _ = std::process::Command::new("systemd-notify").args(["--ready", "--status=recovery required: broker history missing"]).status();
+            loop {
+                std::thread::sleep(std::time::Duration::from_secs(3600));
+            }
+        }
+        let _ = std::fs::remove_file(&required);
         return None;
     }
     let rem = remnants(paths);
@@ -126,28 +180,7 @@ fn recovery_gate(paths: &Paths, socket: &str) -> Option<i32> {
         return None;
     }
     if accepted.exists() {
-        // New installation identity: keep every remnant as evidence (never replayed), then start empty.
-        let lost = paths.machine_dir.join(format!("lost-{}", agentos_machine::util::now_ms()));
-        let _ = std::fs::create_dir_all(lost.join("broker"));
-        let _ = std::fs::set_permissions(&lost, std::fs::Permissions::from_mode(0o700));
-        if let Ok(rd) = std::fs::read_dir(&paths.machine_dir) {
-            for e in rd.flatten() {
-                let n = e.file_name().to_string_lossy().to_string();
-                if n.starts_with("lost-") || n == "recovery-accepted" {
-                    continue;
-                }
-                let _ = std::fs::rename(e.path(), lost.join(&n));
-            }
-        }
-        for f in ["broker.sqlite", "broker.sqlite-wal", "broker.sqlite-shm"] {
-            let src = std::path::Path::new("/var/lib/agentos-broker").join(f);
-            if src.exists() {
-                let _ = std::fs::rename(&src, lost.join("broker").join(f));
-            }
-        }
-        let _ = std::fs::write(lost.join("README"), format!("Remains of the installation before {} (V1-R11). Evidence only; nothing here is replayed. Old workspace trees stay under /var/lib/agentos/workspaces and need an explicit import.\n", agentos_machine::util::now_ms()));
-        let _ = std::fs::remove_file(&accepted);
-        eprintln!("agentos-machined: recovery accepted; previous state kept in {}", lost.display());
+        keep_as_evidence(paths, &accepted, "MACHINE_DIRECTORY_MISSING");
         return None;
     }
     // A socket file left by the previous instance would look like a live machined to clients and checks: remove it,
