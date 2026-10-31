@@ -25,6 +25,10 @@
       releaseModules = [ ./modules/base.nix ./modules/graphics.nix ./modules/agentos.nix ./hardware/qemu.nix ./modules/disk-layout.nix
         { agentos.enable = true; agentos.softwareRendering = true; agentos.releaseImages = pkgs.agentos-oci; } ];
       agentosSystem = mk releaseModules;
+      # review F15: the same system for real Intel/AMD machines (hardware/physical.nix instead of hardware/qemu.nix,
+      # GPU rendering instead of pixman). Built in CI (build-physical); booting it needs real hardware (H01–H08).
+      physicalSystem = mk ([ ./modules/base.nix ./modules/graphics.nix ./modules/agentos.nix ./hardware/physical.nix ./modules/disk-layout.nix
+        { agentos.enable = true; agentos.softwareRendering = false; agentos.releaseImages = pkgs.agentos-oci; } ]);
       toplevel = agentosSystem.config.system.build.toplevel;
       rev = self.rev or "dirty";
       release = import ./release.nix {
@@ -63,6 +67,7 @@
       packages.${system} = {
         inherit (pkgs) agentos-native agentos-node agentos-shell agentos-oci agentos-shell-e2e;
         agentos-toplevel = toplevel;
+        agentos-physical = physicalSystem.config.system.build.toplevel;
         agentos-release = release;
         agentos-installer = installerPkg;
         agentos-iso = installerSystem.config.system.build.isoImage;
