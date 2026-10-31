@@ -1,116 +1,97 @@
-# AgentOS v1.0 外部审查修复 — 交接文档（2026-10-31 23:30 CST）
+# AgentOS v1.0 外部审查修复交接（2026-11-01，进行中）
 
-给接手的 AI：先完整读本文件，再读 `docs/V1.0_REVIEW_FIXES.md`、`docs/V1.0_PROGRESS.md`（决定 1–84）、`docs/HANDOFF_V1.0.md`、`docs/V1.0_VM_TESTS.md`、`docs/RELEASE_V1.0.md`。规格唯一基准是 `docs/AGENTOS_MVP_V1.0.md`。
+先读本文件、`V1.0_REVIEW_FIXES.md`、`V1.0_PROGRESS.md`、`HANDOFF_V1.0.md`、`V1.0_VM_TESTS.md`、`RELEASE_V1.0.md`。规格唯一基准是 `docs/AGENTOS_MVP_V1.0.md`。历史决定和旧 run 以 PROGRESS 为准，不要照抄旧交接中的过时待办。
 
-## 0. 铁律（用户定的，必须遵守）
+## 0. 铁律
 
-1. 规格里每一项都要做完；做不到的在验收报告里写明原因，不能跳过，不能写成通过。中途不要停下来只汇报半成品。
-2. **规格文档 `docs/AGENTOS_MVP_V*.md` 禁止修改。**
-3. 提交作者只用：`cszf1 <246938975+cszf1@users.noreply.github.com>`（`git config user.name cszf1; git config user.email 246938975+cszf1@users.noreply.github.com`）。
-4. **只推 `v1.0` 分支，不动 `main`**（main 目前停在 2aaa004，审查修复全部完成并经用户同意后再快进）。
-5. 仓库是公开的：推送前扫描密钥、token、私钥、内部地址/主机名（建议 `gitleaks detect` 或 `git diff | grep` 自查）。真实模型 API key 不得进入仓库、CI 或 VM；VM/CI 里模型一律用 faux。
-6. 证据等级不能混用：KVM（GitHub Actions）、TCG、单元/集成、Host 级真实模型、实体机。**TCG 或单元结果不能写成 KVM 通过；需要实体硬件的项标“需实体机，未验收”。** 没有证据不能标通过。
-7. 当前范围：**只做虚拟机/KVM 层面能完成的内容**，实体机和 WSL 版暂不做。
-8. workflow 只做测试所需修改；给 ISO 加 artifact 上传、建 GitHub Release 尚未获用户授权。
+1. 本轮继续完成所有可由 VM/KVM 验证的项目：失败取证、修复、重跑；**最终固定完整 SHA 上全部 27 项成功**。不能只交半成品，不能拼接不同提交的绿灯宣称最终全量通过。
+2. **规格 `docs/AGENTOS_MVP_V*.md` 不许修改。** 实体机和 WSL 不在本轮范围；独立操作者等人工要求不能自动替代。
+3. **本地只编辑/Git；所有编译、运行、单元/集成及回归测试也在云端。** KVM 用 GitHub Actions；普通云端编译机无 KVM 的结果不算 KVM。
+4. 只推 `cszf1/agentos` 的 `v1.0`；`main` 仍是 `2aaa004273a9548f45215c8faed7a395883c820b`，不得合并，除非完成后另获同意。
+5. 作者只能 `cszf1 <246938975+cszf1@users.noreply.github.com>`。公开仓库推送前扫描新增行中的凭据、私钥、内部地址/主机信息；真实模型 key 不进仓库、CI 或 VM，CI/VM 一律 faux。
+6. KVM、TCG、云端单元/集成、Host 真实模型、实体机分级；skip、ignored、部分成功、进行中均不计通过。不得用 root shell、SQL 写入、服务覆盖或降低断言造安装后系统的管理员验收。
+7. workflow 仅改测试所需内容；不上传 ISO artifact、不创建 Release。最终清理本次临时资源，不删原构建机资料，不 hard reset、不盲做 GC。
 
-## 1. 当前状态
+## 1. 现状与证据
 
-- 仓库：https://github.com/cszf1/agentos ，分支 `v1.0`
-- 最新代码提交：`961913b204e2b8933dc74e7cccd4d23569c61553`（本交接文档提交在其后，只加文档）
-- 验收统计（ACCEPTANCE/CHECKLIST/HANDOFF 三处一致）：**69 通过 / 20 部分 / 11 未通过**
-  - 审查降级的 8 项中已改回通过：I06、U05、R11
-  - 已有 KVM 证据但**文档还没改**：I08（m3 run 41208150103）、U04（m7 run 41208171776）。改完应为 71/18/11。
-  - U09：m7 部分已过，还差 m5。
-- 审查修复清单原文：`docs/review/REVIEW_V1.0_EXTERNAL_2026-10-31.md`（F01–F16 + R2-1..R2-5）。逐项跟踪：`docs/V1.0_REVIEW_FIXES.md`。
+- 仓库：https://github.com/cszf1/agentos ，分支 `v1.0`。代码候选 `b7c16fbded74f1047ece7f36e32705e08371bad6`；实际 HEAD 看 Git，实际验收 SHA 看 Actions 的 `headSha`。
+- 验收统计三处一致：**71 通过 / 18 部分 / 11 未通过**。I06、U05、R11、I08、U04 已按有效证据恢复；U09、D01、W08 等没有提前升项。
+- 两轮审查原文：`docs/review/REVIEW_V1.0_EXTERNAL_2026-10-31.md`；逐项状态在 `V1.0_REVIEW_FIXES.md`。PROGRESS/TSV 当前续至决定 93，后续编号按最新尾项递增。
+- 第一轮全量 `41220513266@4b1d863` 终态 **23 成功 / 4 失败**：失败 m5、m6-qcow2、m19、m20；其余包括 m18、build-repro、m3/m7 都成功。这不是最终全绿。
+- 云端 Node 基线：typecheck/contracts:check、184 passed、4 skipped；Rust 基线：79 passed、1 ignored。最新云端 VM helper 单测 5+3+7+6+6 通过，**不是最终 KVM 的 27 项通过**。
 
-### 各编号状态
+### 当前四项新派发
 
-| 编号 | 状态 | 证据 / 待办 |
+| 测试 | run | 候选 |
 |---|---|---|
-| F01 qcow2 克隆共享卷密钥 | 代码完成（首启在线重加密），测试假阴性已修 | 等 m6-qcow2 结果（run 41208160898 停时仍在跑） |
-| F02 真实 greetd/ReGreet 登录 | 代码完成 | m5 卡在截图：pngtopnm 输出灰度 P5，测试辅助只认 P6。**修 m5 与 m20 的截图函数兼容 P5**，重跑 |
-| F03 / I06 | KVM 通过 | m10 run 41203693428 |
-| F04 / I08 | KVM 通过 | m3 run 41208150103（F04a/F04b/I09）；**改文档** |
-| F05 安装断电续作 | VM 部分 KVM 通过 | m6-install 41199835140、41201721418；真实盘部分需实体机 |
-| F06 模型转发默认外部地址 | 单元通过 | — |
-| F07 / R11 | KVM 通过 | m9 41206160753 |
-| F08 锁屏/注销权限边界 | 代码完成，并入 m5 | 等 m5 |
-| F09 qcow2 解密后内容比对 | 模板构建已归一化 Nix db 时间、shadow 顺序、/tmp/state | 等 build-repro（41208175425） |
-| F10 machined/broker 沙箱 | KVM 通过（m2 41202745108 等） | 最终 test=all 再确认没改坏别的 |
-| F11 最终 ISO 安装 | m19-iso 已写，串口启动项解析已修 | 等 m19（41211143889） |
-| F12 真实 Wayland 关键旅程 | m20-sway 已写（真实 Sway + QMP 输入 + 像素） | 等 m20（41211147184），迭代到通过 |
-| F13 版本号 | 单元/typecheck 通过 | — |
-| F14 workflow 覆盖最终提交 | 已改 | 最终 test=all |
-| F15 实体机 profile | build-physical 通过 | 实体部分需实体机 |
-| F16 全历史密钥扫描 | build-audit 通过 | `.gitleaksignore` 有 1 条测试 UUID 误报 |
-| R2-1 / U04 | KVM 通过 | m7 41208171776；**改文档** |
-| R2-2 / U09 | 单元 + m7 通过 | 差 m5 |
-| R2-3 / U05 | 已改回通过 | — |
-| R2-4 / U06 | KVM 通过 | m16 41201709583 |
-| R2-5 发行序号 | build-release 检查通过 | — |
-| O09 | 已实现管理员无 root 路径 `agentosctl admin`（决定 80） | m18 41211149850 待看；仍为部分（“独立操作者”需人工） |
+| m6-qcow2 | 41253713306 | b7c16fb |
+| m19-iso | 41253715864 | b7c16fb |
+| m5-desktop | 41253718507 | b7c16fb |
+| m20-sway | 41253721127 | b7c16fb |
 
-停下时仍在跑、尚未读结果的 run：m19 41211143889、m20 41211147184、m18 41211149850、m6-qcow2 41208160898、build-repro 41208175425。
+必须查询真实终态，不把本表当成通过记录。
 
-## 2. 剩余工作（按顺序）
+### 最近失败、已做的候选修复
 
-1. 读上面 5 个 run 的结果；失败就读日志修复，重跑到通过。
-2. 修 m5 / m20 截图对 P5（灰度 PNM）的兼容，重跑 m5，拿 F02、F08、F12 与 U09 的证据。
-3. 用 `docs/tools/v1doc.py` 改 I08、U04（以及拿到证据后的 U09、D01、W08 等）；用 `docs/tools/rfset.py` 填 REVIEW_FIXES 行；PROGRESS 从**决定 85** 起续写，同时追加 `docs/v1.0-decisions.tsv`。
-4. m20-sway 迭代到通过后，按证据逐项改回 D02–D07、D09、D11、D12；D09 的“慢读端有界”在单图形用户 VM 里做不到就保持部分并写明原因。
-5. 实现 m19 单 VM 连贯演练：ISO 安装 → v0.4 导入 → 升级失败回退 → 导出到第二台恢复，全部按 RELEASE 文档以管理员身份执行。
-   - 已识别前提：安装后的系统没有 udisks，管理员无 root，没法挂 U 盘拷文件。计划**决定 85：启用 udisks2，USB 可移动介质由本地活动会话挂载**。
-   - 升级回退：先 `update adopt-base` 登记正在运行的发行；候选版用同一闭包、更高序号的 manifest；只放 narinfo 的 `file://` 缓存；试启动时不做图形登录 → 健康门槛不过 → commit 被拒 → 重启回到已知可用版本。
-   - 签名：`agentosctl update digest` 需要连 machined，driver 侧无法直接调用；需用 Python 复刻 canonical JSON + 域名哈希，或另想办法。
-   - O09 的“独立操作者”部分写明需人工。
-6. 最终提交派发 `test=all`，**全部 27 项通过才算完成**，报告里写完整 SHA。
-7. 交付：更新 ACCEPTANCE/CHECKLIST/HANDOFF/PROGRESS/REVIEW_FIXES，统计三处一致；列出仍需实体机或人工的项。
+- **m6 `41224497581@7eb2d21`**：UEFI 固件使 root-shell 通道可读，旧助手立即进入 connect()，在等真正握手时无法输入 initrd 口令；最终全局超时。现在确认完整 `Spawning backdoor root shell...` 才 connect，保留分段标记、丢弃固件前导、EOF 必须失败；只答复新口令请求。新增 UEFI/分段/大前导/EOF 回归，保留两克隆独立卷钥、旧模板钥拒绝、断电续作和身份保持断言。
+- **m19 `41224808760@7f93ba5`**：真实 ISO 安装子项完成，但花了 3093.67 秒；随后第一次解锁后的管理员画面等待尚未结束，就被全局时限终止。固定 nixpkgs 的串口助手每次一秒重试只消费一条排队历史行；现直接读实时日志，命令 RC 收据只认本次发送后区段。m6 同步修正日志排队等待。OCR 记录实际文本变化，失败时保存真实屏幕到日志；未向发行系统放测试 agent 或 root shell。
+- **m5 `41226378451@129024c`**：授权快照已正确显示 Host/binding/workspace UID=20000、登录 UID 工作区进程数 0；Ctrl+Alt+L 后未检测到 swaylock。候选先真实鼠标聚焦 Shell，记录前后 compositor 焦点，仍经 Shell 快捷键/会话代理锁定，不替换成直接 IPC 锁定；失败时留进程、会话及屏幕证据。
+- **m20 `41226381662@129024c`**：成员 viewer→editor 的正式 CAS 已过，进入 E2E 启动检测超时。长进程名不能靠 `pgrep -x`，裸 argv0 也不保证包含 `bin/`；候选用包的完整路径启动、按完整命令行检测，并把启动失败纳入 finally，避免丢失 out.log/屏幕。真实 Wayland、PAM 会话 cgroup、QMP 输入、像素和 Host 数据库断言不变。
 
-## 3. 测试方式
+### 已有有效证据与边界
 
-### GitHub Actions（所有 KVM 证据都在这里）
-- workflow：`.github/workflows/v1-vm-tests.yml`，公开仓库的 `ubuntu-latest`（4 vCPU / 16 GB / KVM，免费）。
-- push 到 v1.0 时，除 `docs/**` 和 `*.md` 以外的改动会自动跑全套 27 项；为避免中途反复全量，可在提交信息加 `[skip ci]`，再手动派发单项：
+| 编号 | 现有证据 / 剩余 |
+|---|---|
+| F01 | 代码与反向测试在 m6；完整新 KVM 仍待通过 |
+| F02 / F08 | m5 的真实登录、点击/缩放、Shell 重启、离线 OCI 已越过；完整锁定/注销/健康负面仍待 |
+| F03 / I06 | m10 KVM 已通过；最终矩阵再确认 |
+| F04 / I08 | m3 `41208150103@6be1e0b` 通过，4b1d863 全量中的 m3 job 也成功，账本已恢复 |
+| F05 | m6-install VM 已通过；真实盘断电部分仍需实体机 |
+| F06 | 云端模型 relay policy 4 项通过；VM 不使用真实 key |
+| F07 / R11 | m9 KVM 已通过；最终矩阵再确认 |
+| F09 | `41208175425@6be1e0b` 及 4b1d863 的 build-repro 成功：六输出逐位一致；qcow2 解密树/闭包/NixDB 逻辑比较通过，不能写 qcow2 字节相同 |
+| F10 | m2 KVM 已通过；最终矩阵再确认沙箱未回归 |
+| F11 | m19 完整两机连贯演练仍待通过，不能仅凭安装子项升 U01 |
+| F12 | m20 正在真实 Sway/QMP 路径迭代，不能拿 offscreen 代替 |
+| F13 | 云端 versions 2、HTTP 7、model-relay-policy 4 项核实；productVersion=1.0.0，hostVersion=0.4.0 为兼容层 |
+| F14 | workflow 覆盖已补；最终固定完整 SHA 的 all=27 尚未完成 |
+| F15 / F16 | build-physical/build-audit 已成功；不等于实体机验收，测试 UUID 误报豁免不等于放过凭据 |
+| R2-1 / U04 | m7 `41208171776@6be1e0b` 及 4b1d863 对应 job 成功，账本已恢复 |
+| R2-2 / U09 | 单元和 m7 已过，仍差完整 m5 |
+| R2-3..5 | U05/U06、发行序号检查已有证据；最终矩阵再确认 |
+| O09 | m18 `41217251403@34117e4` 与 4b1d863 对应 job 成功，正式管理员路径已验证；完整 ISO 连贯演练未通过，独立操作者要求仍需人工 |
+
+## 2. 接下来按顺序做
+
+1. 取当前四个 run 的终态；失败拿日志/artifact，按实际故障继续修复，不因等待时间长就放宽安全、健康或 UI 断言。
+2. m19 必须走完同一 ISO 安装两台、v0.4 导入、不健康试启动拒绝、known-good 回退、加密导出和新身份恢复。介质由活动本地会话用上游 udisks 策略挂载，材料复制到家目录；不扩大 root helper 路径白名单。
+3. 离线可信时间必须显式核对：host/guest 差在规定边界内，再传 `--trusted-time`；不改到期字段、不关闭签名、NAR、序号或支持期检查。同一既有闭包的更高 sequence 不能冒称新代际下载证据。
+4. m5/m20 完整成功后，逐项按覆盖更新 D01、W08、U09 和 D02–D07、D09、D11、D12；D09 未覆盖的慢读端/跨客户端有界部分明确保留，O09 的独立操作者保留。
+5. 文档和修复定稿后，固定最终 SHA 手动 `test=all`；全部 27 项成功才满足本轮矩阵要求。若失败，修复后在新最终提交再跑全量。
+6. 同步 ACCEPTANCE/CHECKLIST/HANDOFF/PROGRESS/REVIEW_FIXES/VM_TESTS/RELEASE，云端统计无 mismatch；最后清理临时测试资源，不合并 main、不发 ISO、不建 Release。
+
+## 3. 运行方式与安全同步
+
+- workflow：`.github/workflows/v1-vm-tests.yml`，19 个 VM + 8 个构建检查，另有 plan job，不把 plan 算入 27。
+- 派发：`gh workflow run v1-vm-tests.yml -R cszf1/agentos --ref v1.0 -f test=<检查名或all>`。
+- 查结果：`gh run view <run> -R cszf1/agentos --json headSha,status,conclusion,jobs`；失败用 `--log-failed` 和日志 artifact。
+- 原云仓库的 origin 可能是本地 bundle；先检查 remote/工作树。无修改且 HEAD 是目标祖先时，才可按公开 URL fetch 并 ff-only：
+  ```sh
+  git fetch https://github.com/cszf1/agentos.git refs/heads/v1.0:refs/remotes/github/v1.0
+  git merge-base --is-ancestor HEAD github/v1.0
+  git merge --ff-only github/v1.0
   ```
-  gh workflow run v1-vm-tests.yml -R cszf1/agentos --ref v1.0 -f test=m5-desktop
-  gh run list -R cszf1/agentos --workflow v1-vm-tests.yml -L 10
-  gh run view <run-id> -R cszf1/agentos --log-failed
-  ```
-- 检查名：m2-identity m3-members m5-desktop m6-install m6-qcow2 m7-update m8-backup m9-restore m10-sched m11-ops m12-clone m13-native m14-create m15-wifi m16-fetch m17-shared m18-o09 m19-iso m20-sway build-release build-audit build-iso build-qcow2 build-shell build-oci build-repro build-physical，或 `all`。
-- 偶发失败：magic-nix-cache 返回 418 属于缓存限流，直接重派。
+  不把 hard reset 当同步方法；有 dirty 或分叉先查清楚，不能覆盖。
+- 云编译机空间有限，先查容量和活跃构建，不盲 GC、不用通配删除原资料。本次临时机不注入 Vault/Secrets，任务结束精确删除。
+- 本地不执行 Node/Rust/Python 测试或文档工具；只保留编辑/Git。
 
-### InstaBox 构建机 `agentos-v1`（只做编译和单元测试，没有 KVM）
-- 账号：InstaBox 用户的第二个账号（Google 登录，账号由用户提供）。`instabox ssh agentos-v1` 进入；闲置 30 分钟自动休眠，`instabox start agentos-v1` 唤醒。
-- Debian 13 + Nix，4 vCPU / 8 GB，`/data` 20 GB，**当前已用 87%，做 Nix 构建前先 `nix-collect-garbage -d` 清理**。
-- 仓库副本：`/data/home/agentos-v1`（当前停在 ce8e204，落后于 961913b，先 `git fetch && git reset --hard origin/v1.0` 或重新 clone）。
-- Rust 单元测试：`bash /data/home/rt.sh <日志名> -p agentos-machine`（后台跑用 `setsid nohup ... &`），结果写到 `/data/home/<日志名>`。
-- 注意：长任务用 setsid 后台；不要用 `pkill -f` 匹配到自己的命令行；`/tmp` 是内存盘，跑前清 `/tmp/agentos-*`。机器上没有 KVM，QEMU 只能 TCG，**TCG 结果不能当 KVM 证据**。
-- `/data/home/README.md`、`MACHINE.md` 有更多机器说明。
+## 4. 文档工具（只在云端运行）
 
-### 本地
-- Node 24 用于 Host/前端单元测试与 typecheck；Rust/Nix 编译建议放到构建机或你本地有 Nix 的 Linux。
+- `python3 -B docs/tools/v1doc.py stats`：重算并要求 `checklist mismatch: []`。
+- `echo '实际证据' | python3 -B docs/tools/v1doc.py set V1-I08 通过 'KVM VM（Actions）' '检查说明'`：示例，不重复给已通过项造新证据。
+- `python3 -B docs/tools/rfset.py F04 '状态' '提交' '证据' '剩余'`：维护审查行。
+- 正确验收文件名为 `docs/ACCEPTANCE_V1.0.md`；ISO 定义在 `os/flake.nix`，安装器包装在 `os/packages/installer.nix`。
 
-## 4. 文档工具（已放进仓库）
+## 5. 不冒充完成的人工项
 
-- `python3 docs/tools/v1doc.py stats` — 重算 ACCEPTANCE 与 HANDOFF 的统计并核对 CHECKLIST 一致。
-- `echo "新证据说明" | python3 docs/tools/v1doc.py set V1-I08 通过 'KVM VM（Actions）' '检查说明'` — 改一项状态（ID 形如 `V1-I08`）。
-- `python3 docs/tools/rfset.py F04 '状态' '提交' '证据' '剩余'` — 改 REVIEW_FIXES 一行。
-- 改完务必跑一次 `v1doc.py stats`，确认输出里 `checklist mismatch: []`。
-
-## 5. 本次审查修复中顺带修掉的产品问题（已在决定 72–84）
-
-- 锁屏/注销按钮与 Ctrl+Alt+L 发送 machined 不认识的动作，一直被拒 → 改走登录会话自己的 agent。
-- 新装系统 root 锁定，没法建第一个账户 → 新增 `agentos-first-setup`（tty1，登录界面前）。
-- ReGreet 给没见过的用户起普通 shell → AgentOS 成为唯一会话，greeter 前脚本映射所有本地账户。
-- 管理员无 root/sudo，无法按 RELEASE 文档做导入/备份/恢复 → `agentosctl admin <命令>`：经 gateway 计划固定 `admin.*` 动作、PAM 口令认证、60 秒一次性 ticket，machined 以临时 systemd 单元运行固定 root helper（决定 80）。
-- Host 重启后重复登记 control、待发写入被永久拒绝（决定 81）。
-- machined 沙箱里 rename 跨挂载 EXDEV，broker 日志没进 lost 目录 → 复制+fsync+删除（决定 82）。
-- 记录表单每输入一个字符就重建字段、丢焦点（m20 设计时发现，`recordFormNames` 修复）。
-
-## 6. 不在当前范围（以后再说）
-
-- 实体机验收（显卡/显示器热插拔、Wi-Fi、音频亮度、休眠唤醒、电池、不支持硬件提示、真实硬盘序列号/WWN、真实断电、性能）。候选测试机：用户的旧 Lenovo ThinkCentre 一体机，或新买迷你主机。
-- 人工项：独立操作者按文档完整演练（O09）、桌面手感与中文输入法、真实模型接入 —— 建议在本地 QEMU 里由人做。
-- AgentOS 的 WSL 版本（未授权开发）。
-- NixOS 26.05 维护期到 2026-12-31，正式发布若晚于此需先升级底座并重跑全套验收。
-- InstaBox 新出的 CI（`runs-on: instabox-medium`）实测没有 `/dev/kvm`，不能跑这里的 VM 测试。
+实体机/真实输入法、真实盘与显卡、参考机计时、真实串口，以及 O09 独立操作者。O01/O02 的原生真实模型路径不通过向 VM 注入真实 key 完成；O10 在 100 项证据齐全前仍未通过。最终报告分级列出原因，不宣称全部 v1.0 已完成或发布。
