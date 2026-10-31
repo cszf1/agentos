@@ -55,7 +55,19 @@ firmware = {"formatVersion": 1, "kind": "agentos-firmware-list", "root": fw_root
             "files": sorted(fw_files, key=lambda x: x["path"])}
 if any(v == "not-in-closure" for v in fw_pkgs.values()):
     sys.exit("firmware file outside the release closure")
-sbom = {"formatVersion": 1, "kind": "agentos-closure-sbom", "root": top, "firmware": firmware, "components": [
+# review R2-1: the offline OCI archive's bytes and image IDs are pinned through the signed sbomHash
+def sha_stream(f):
+    h = hashlib.sha256()
+    with open(f, "rb") as fh:
+        for b in iter(lambda: fh.read(1 << 20), b""):
+            h.update(b)
+    return "sha256:" + h.hexdigest()
+oci_archive = None
+if oci_index:
+    idx = json.load(open(oci_index))
+    arch = os.path.join(os.path.dirname(oci_index), idx.get("archive", "images.tar"))
+    oci_archive = {"file": idx.get("archive", "images.tar"), "sha256": sha_stream(arch), "indexSha256": sha(oci_index), "imageIds": oci_digests}
+sbom = {"formatVersion": 1, "kind": "agentos-closure-sbom", "root": top, "firmware": firmware, "ociArchive": oci_archive, "components": [
     {"storePath": p["path"], "name": re.sub(r"^/nix/store/[a-z0-9]{32}-", "", p["path"]), "narHash": p["narHash"], "narSize": p["narSize"]} for p in sorted(paths, key=lambda x: x["path"])]}
 sbom_s = canon(sbom)
 open(f"{out}/sbom.json", "w").write(sbom_s)

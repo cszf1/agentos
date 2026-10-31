@@ -12,6 +12,9 @@ pkgs.testers.runNixOSTest {
     boot.loader.systemd-boot.enable = true;
     boot.loader.efi.canTouchEfiVariables = lib.mkForce true;
     environment.systemPackages = [ pkgs.jq pkgs.openssl pkgs.sqlite pkgs.python3 ];
+    # review R2-1: two small real OCI (docker-archive) images; the U04 subtest signs releases over their real bytes
+    environment.etc."agentos-u04/a.tar.gz".source = pkgs.dockerTools.buildImage { name = "agentos-u04-a"; tag = "a"; copyToRoot = pkgs.writeTextDir "u04" "image a\n"; };
+    environment.etc."agentos-u04/b.tar.gz".source = pkgs.dockerTools.buildImage { name = "agentos-u04-b"; tag = "b"; copyToRoot = pkgs.writeTextDir "u04" "image b\n"; };
     # U11: a second, really different system closure (its own toplevel, init and /etc) for the older generation the
     # rollback boots; the running system is the newer one. The older generation runs the AgentOS programs of an
     # earlier v1.0 commit (flake.nix olderAgentos; same schemas, declared compatible 1..2).

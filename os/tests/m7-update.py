@@ -123,14 +123,22 @@ with subtest("release verification: tampered manifest/closure/OCI/signature, unk
         return h
     hashes = sorted({nar(v["narHash"]) for v in items})
     now = int(machine.succeed("date +%s%3N").strip())
+    SBOM_HASH = ["sha256:" + "7" * 64]
     h = lambda c: "sha256:" + c * 64
-    oci = sorted([h("5"), h("6")])
+    # review R2-1: real OCI archives; image ID = sha256 of the image config named in the archive's manifest.json
+    def image_id(tar):
+        cfg = machine.succeed(f"tar -xzOf {tar} manifest.json | jq -r '.[0].Config'").strip()
+        return "sha256:" + machine.succeed(f"tar -xzOf {tar} {cfg} | sha256sum | cut -d' ' -f1").strip()
+    IA, IB = image_id("/etc/agentos-u04/a.tar.gz"), image_id("/etc/agentos-u04/b.tar.gz")
+    assert IA != IB
+    fsha = lambda f: "sha256:" + machine.succeed(f"sha256sum {f} | cut -d' ' -f1").strip()
+    oci = [IA]
     def manifest(**over):
         m = {"formatVersion": 1, "releaseId": str(_uuid.uuid4()), "releaseSequence": 7, "version": "1.0.0", "channel": "stable",
              "publishedAt": now - 1000, "expiresAt": now + 86400000, "supportUntil": now + 86400000 * 30,
              "sourceCommit": "a" * 40, "flakeLockHash": h("1"), "nixpkgsRevision": "b" * 40, "platform": "x86_64-linux",
              "hardwareProfiles": ["qemu-virtio"], "baseClosurePath": sysp, "baseClosureHash": h("2"), "closureContentHashes": hashes,
-             "kernelVersion": "6.18.59", "initrdHash": h("4"), "ociDigests": oci, "sbomHash": h("7"),
+             "kernelVersion": "6.18.59", "initrdHash": h("4"), "ociDigests": oci, "sbomHash": SBOM_HASH[0],
              "compatibility": {"workspaceSchema": [5, 5], "machineSchema": [1, 2], "brokerSchema": [4, 4], "brokerProtocol": [3, 3], "nativeRpc": [1, 1]},
              "migrationClass": "none", "healthProfile": "default", "minRecoveryVersion": "1.0.0", "keyId": "rel1"}
         m.update(over)
@@ -142,11 +150,15 @@ with subtest("release verification: tampered manifest/closure/OCI/signature, unk
         esc = "".join("\\x" + d[7 + i:9 + i] for i in range(0, 64, 2))
         machine.succeed(f"printf '{esc}' > /root/rel/d.bin && test $(stat -c %s /root/rel/d.bin) = 32")
         machine.succeed(f"openssl pkeyutl -sign -inkey /root/rel/{key} -rawin -in /root/rel/d.bin -out /root/rel/s.bin && od -An -tx1 /root/rel/s.bin | tr -d ' \\n' > {spath}")
-    def verify(mpath, spath, extra="--trusted-time --images /root/rel/index.json"):
+    def verify(mpath, spath, extra="--trusted-time --images /root/rel/index.json --sbom /root/rel/sbom.json"):
         return machine.execute(f"agentosctl update verify --manifest {mpath} --signature {spath} {extra} 2>&1")
     machine.succeed(f"agentosctl update trust-key --key-id rel1 --public-key {pk}")
-    put("/root/rel/index.json", {"formatVersion": 1, "archive": "images.tar", "images": [{"name": f"i{n}", "imageId": d} for n, d in enumerate(oci)]})
-    machine.succeed("echo archive > /root/rel/images.tar")
+    put("/root/rel/index.json", {"formatVersion": 1, "archive": "images.tar", "images": [{"name": "agentos-u04-a", "imageId": IA}]})
+    machine.succeed("cp /etc/agentos-u04/a.tar.gz /root/rel/images.tar")
+    def sbom_for(path, archive_sha, ids):
+        put(path, {"formatVersion": 1, "kind": "agentos-closure-sbom", "ociArchive": {"file": "images.tar", "sha256": archive_sha, "imageIds": ids}, "components": []})
+        return fsha(path)
+    SBOM_HASH[0] = GOOD_SBOM = sbom_for("/root/rel/sbom.json", fsha("/root/rel/images.tar"), [IA])
     good = manifest()
     put("/root/rel/good.json", good)
     sign("/root/rel/good.json", "rel.pem", "/root/rel/good.sig")
@@ -183,20 +195,58 @@ with subtest("release verification: tampered manifest/closure/OCI/signature, unk
     assert rc != 0 and "UPDATE_CONTENT_MISMATCH" in o, o
     # shipped OCI images differ from the signed ociDigests; OCI archive missing
     put("/root/rel/index-bad.json", {"formatVersion": 1, "archive": "images.tar", "images": [{"name": "i0", "imageId": oci[0]}, {"name": "i1", "imageId": h("e")}]})
-    rc, o = verify("/root/rel/good.json", "/root/rel/good.sig", "--trusted-time --images /root/rel/index-bad.json")
+    rc, o = verify("/root/rel/good.json", "/root/rel/good.sig", "--trusted-time --images /root/rel/index-bad.json --sbom /root/rel/sbom.json")
     assert rc != 0 and "UPDATE_CONTENT_MISMATCH" in o, o
     machine.succeed("mkdir -p /root/rel2 && cp /root/rel/index.json /root/rel2/")
-    rc, o = verify("/root/rel/good.json", "/root/rel/good.sig", "--trusted-time --images /root/rel2/index.json")
+    rc, o = verify("/root/rel/good.json", "/root/rel/good.sig", "--trusted-time --images /root/rel2/index.json --sbom /root/rel/sbom.json")
     assert rc != 0 and "UPDATE_CONTENT_MISMATCH" in o, o
+    # review R2-1: the archive's real bytes and real content are checked (copies in their own directories)
+    def oci_case(name, prep, sbom="/root/rel/sbom.json", mpath="/root/rel/good.json", spath="/root/rel/good.sig"):
+        d = f"/root/oci-{name}"
+        machine.succeed(f"rm -rf {d} && mkdir -p {d} && cp /root/rel/index.json /root/rel/images.tar {d}/")
+        machine.succeed(prep.replace("D/", d + "/"))
+        rc, o = verify(mpath, spath, f"--trusted-time --images {d}/index.json --sbom {sbom}")
+        print("R2-1", name, rc, o.strip().splitlines()[-1] if o.strip() else o)
+        assert rc != 0 and "UPDATE_CONTENT_MISMATCH" in o, (name, o)
+        return o
+    sz = int(machine.succeed("stat -c %s /root/rel/images.tar").strip())
+    oci_case("flip", f"printf '\\377' | dd of=D/images.tar bs=1 seek={sz // 2} conv=notrunc status=none")
+    oci_case("truncate", f"truncate -s {sz // 2} D/images.tar")
+    # a changed layer: unpack, change the layer's file, pack again (gzip of a modified docker-archive)
+    oci_case("layer", "cd D && mkdir x && tar -xzf images.tar -C x && L=$(jq -r '.[0].Layers[0]' x/manifest.json) && mkdir l && tar -xf x/$L -C l && echo tampered > l/u04 && tar -cf x/$L -C l . && tar -czf images.tar -C x . && rm -rf x l")
+    # the attacker also rewrites the SBOM to the new bytes: the signed sbomHash no longer matches
+    machine.succeed("mkdir -p /root/oci-sbom && cp /root/rel/index.json /root/oci-sbom/ && cp /etc/agentos-u04/b.tar.gz /root/oci-sbom/images.tar")
+    sbom_for("/root/oci-sbom/sbom.json", fsha("/root/oci-sbom/images.tar"), [IA])
+    rc, o = verify("/root/rel/good.json", "/root/rel/good.sig", "--trusted-time --images /root/oci-sbom/index.json --sbom /root/oci-sbom/sbom.json")
+    assert rc != 0 and "UPDATE_CONTENT_MISMATCH" in o and "sbomHash" in o, o
+    # replaced manifest.json inside the archive (points at image b's config): bytes differ from the signed hash
+    oci_case("manifest", "cd D && mkdir x && tar -xzf images.tar -C x && cp x/manifest.json m.json && jq '.[0].RepoTags=[\"evil:1\"]' m.json > x/manifest.json && tar -czf images.tar -C x . && rm -rf x m.json")
+    # index right, hashes right (the release signed image b's archive under image a's ID): the import finds b, not a
+    machine.succeed("mkdir -p /root/rel-b && cp /root/rel/index.json /root/rel-b/ && cp /etc/agentos-u04/b.tar.gz /root/rel-b/images.tar")
+    SBOM_HASH[0] = sbom_for("/root/rel-b/sbom.json", fsha("/root/rel-b/images.tar"), [IA])
+    put("/root/rel/wrong.json", manifest())
+    sign("/root/rel/wrong.json", "rel.pem", "/root/rel/wrong.sig")
+    rc, o = verify("/root/rel/wrong.json", "/root/rel/wrong.sig", "--trusted-time --images /root/rel-b/index.json --sbom /root/rel-b/sbom.json")
+    print("R2-1 content", o)
+    assert rc != 0 and "UPDATE_CONTENT_MISMATCH" in o and "importing the archive gave image IDs" in o and IB in o, o
+    SBOM_HASH[0] = GOOD_SBOM
+    # a release that declares OCI images but ships no SBOM / no index is refused
+    rc, o = verify("/root/rel/good.json", "/root/rel/good.sig", "--trusted-time --images /root/rel/index.json")
+    assert rc != 0 and "UPDATE_CONTENT_MISMATCH" in o, o
+    rc, o = verify("/root/rel/good.json", "/root/rel/good.sig", "--trusted-time")
+    assert rc != 0 and "UPDATE_CONTENT_MISMATCH" in o, o
+    # the positive case imported the real archive and reports its content ID
+    rc, o = verify("/root/rel/good.json", "/root/rel/good.sig")
+    assert rc == 0 and IA in o, o
     # missing files are refusals, never skips
     rc, o = verify("/root/rel/good.json", "/root/rel/none.sig")
     assert rc != 0 and "UPDATE_SIGNATURE_INVALID" in o, o
     rc, o = verify("/root/rel/none.json", "/root/rel/good.sig")
     assert rc != 0 and "UPDATE_SIGNATURE_INVALID" in o, o
-    rc, o = verify("/root/rel/good.json", "/root/rel/good.sig", "--trusted-time --images /root/rel/none-index.json")
+    rc, o = verify("/root/rel/good.json", "/root/rel/good.sig", "--trusted-time --images /root/rel/none-index.json --sbom /root/rel/sbom.json")
     assert rc != 0 and "UPDATE_SIGNATURE_INVALID" in o, o
     # without trusted time nothing is accepted automatically
-    rc, o = verify("/root/rel/good.json", "/root/rel/good.sig", "--images /root/rel/index.json")
+    rc, o = verify("/root/rel/good.json", "/root/rel/good.sig", "--images /root/rel/index.json --sbom /root/rel/sbom.json")
     assert rc != 0 and "UPDATE_SIGNATURE_INVALID" in o, o
     # nothing above registered a release, and the store keeps require-sigs
     assert machine.succeed("sqlite3 /var/lib/agentos-machine/machine.sqlite 'SELECT COUNT(*) FROM releases' 2>/dev/null || echo 0").strip() == "0"

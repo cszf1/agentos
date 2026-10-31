@@ -830,3 +830,37 @@ fn w09_broker_gets_first_member_snapshot_and_a_high_water_past_other_targets() {
     assert!(t.m.registry_seq().unwrap() > before);
     assert!(t.m.pending_outbox("broker", "*", 64).unwrap().is_empty());
 }
+
+#[test]
+fn r2_1_oci_archive_content_is_bound_to_the_signed_manifest() {
+    use serde_json::json;
+    use sha2::{Digest, Sha256};
+    let sha = |b: &[u8]| format!("sha256:{}", hex::encode(Sha256::digest(b)));
+    let a = format!("sha256:{}", "a".repeat(64));
+    let b = format!("sha256:{}", "b".repeat(64));
+    let archive = b"real archive bytes".to_vec();
+    let sbom = serde_json::to_vec(&json!({"formatVersion": 1, "ociArchive": {"file": "images.tar", "sha256": sha(&archive), "imageIds": [b.clone(), a.clone()]}})).unwrap();
+    let m = json!({"ociDigests": [a.clone(), b.clone()], "sbomHash": sha(&sbom)});
+    let idx = json!({"images": [{"imageId": b.clone()}, {"imageId": a.clone()}]});
+    let ids = vec![a.clone(), b[7..].to_string()];
+    crate::release::check_oci_bundle(&m, &sbom, &idx, &sha(&archive), Some(&ids)).unwrap();
+    let code = |r: crate::err::R<()>| r.unwrap_err().code;
+    // byte flip / truncation / changed layer: the archive no longer hashes to the signed value
+    let mut flipped = archive.clone();
+    flipped[3] ^= 1;
+    assert_eq!(code(crate::release::check_oci_bundle(&m, &sbom, &idx, &sha(&flipped), None)), "UPDATE_CONTENT_MISMATCH");
+    assert_eq!(code(crate::release::check_oci_bundle(&m, &sbom, &idx, &sha(&archive[..5]), None)), "UPDATE_CONTENT_MISMATCH");
+    // an SBOM rewritten to the new archive hash breaks the signed sbomHash
+    let sbom2 = serde_json::to_vec(&json!({"formatVersion": 1, "ociArchive": {"file": "images.tar", "sha256": sha(&flipped), "imageIds": [a.clone(), b.clone()]}})).unwrap();
+    assert_eq!(code(crate::release::check_oci_bundle(&m, &sbom2, &idx, &sha(&flipped), None)), "UPDATE_CONTENT_MISMATCH");
+    // no ociArchive entry at all
+    let sbom3 = serde_json::to_vec(&json!({"formatVersion": 1})).unwrap();
+    assert!(crate::release::check_oci_bundle(&json!({"ociDigests": [a.clone()], "sbomHash": sha(&sbom3)}), &sbom3, &idx, &sha(&archive), None).is_err());
+    // index names other images
+    let idx2 = json!({"images": [{"imageId": a.clone()}]});
+    assert!(crate::release::check_oci_bundle(&m, &sbom, &idx2, &sha(&archive), None).is_err());
+    // index and hashes right, but the content imports to other image IDs (signed the wrong archive)
+    let c = format!("sha256:{}", "c".repeat(64));
+    assert!(crate::release::check_oci_bundle(&m, &sbom, &idx, &sha(&archive), Some(&[a.clone(), c])).is_err());
+    assert!(crate::release::check_oci_bundle(&m, &sbom, &idx, &sha(&archive), Some(&[a.clone()])).is_err());
+}

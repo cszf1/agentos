@@ -381,3 +381,48 @@ impl Machine {
         })
     }
 }
+
+/// OCI content binding (review R2-1, spec §20.1 "OCI digest 列表"): the signed manifest's sbomHash pins the SBOM, the
+/// SBOM's `ociArchive` pins the archive bytes (sha256) and lists the image IDs; the shipped index must name exactly
+/// the signed ociDigests, the archive bytes must hash to the SBOM value, and the image IDs recomputed by importing
+/// the archive into an isolated store must be exactly the signed ociDigests. `imported` is None only when the caller
+/// has not imported yet (then only the static checks run).
+pub fn check_oci_bundle(manifest: &Value, sbom_bytes: &[u8], index: &Value, archive_sha256: &str, imported: Option<&[String]>) -> R<()> {
+    use sha2::{Digest, Sha256};
+    let bad = |m: String| MErr::new("UPDATE_CONTENT_MISMATCH", m);
+    let sorted = |v: &Value| -> Vec<String> {
+        let mut x: Vec<String> = v.as_array().cloned().unwrap_or_default().iter().filter_map(|i| i.as_str().map(String::from)).collect();
+        x.sort();
+        x
+    };
+    let want = sorted(&manifest["ociDigests"]);
+    let sh = format!("sha256:{}", hex::encode(Sha256::digest(sbom_bytes)));
+    if manifest["sbomHash"].as_str() != Some(sh.as_str()) {
+        return Err(bad(format!("sbom.json hashes to {sh}, the signed sbomHash is {}", manifest["sbomHash"])));
+    }
+    let sbom: Value = serde_json::from_slice(sbom_bytes).map_err(|_| bad("sbom.json is not JSON".into()))?;
+    let oa = &sbom["ociArchive"];
+    if !oa.is_object() {
+        return Err(bad("the signed SBOM carries no ociArchive entry".into()));
+    }
+    if sorted(&oa["imageIds"]) != want {
+        return Err(bad("the SBOM's OCI image IDs are not exactly the signed ociDigests".into()));
+    }
+    let mut got: Vec<String> = index["images"].as_array().cloned().unwrap_or_default().iter().filter_map(|i| i["imageId"].as_str().map(String::from)).collect();
+    got.sort();
+    if got != want {
+        return Err(bad("the shipped OCI index does not name exactly the signed ociDigests".into()));
+    }
+    if oa["sha256"].as_str() != Some(archive_sha256) {
+        return Err(bad(format!("the OCI archive hashes to {archive_sha256}, the signed SBOM says {}", oa["sha256"])));
+    }
+    if let Some(ids) = imported {
+        let mut ids: Vec<String> = ids.iter().map(|i| if i.starts_with("sha256:") { i.clone() } else { format!("sha256:{i}") }).collect();
+        ids.sort();
+        ids.dedup();
+        if ids != want {
+            return Err(bad(format!("importing the archive gave image IDs {ids:?}, not the signed ociDigests")));
+        }
+    }
+    Ok(())
+}

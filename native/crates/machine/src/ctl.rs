@@ -194,7 +194,7 @@ fn update_worker() -> String {
 /// more or less); the OCI index shipped with the release must carry exactly the signed image IDs. Missing files are
 /// a refusal, never a skip. Nothing is registered here.
 fn update_verify(c: &mut Client, a: &[String]) {
-    let usage = "usage: agentosctl update verify --manifest <file> --signature <file> [--trusted-time] [--images <index.json>]";
+    let usage = "usage: agentosctl update verify --manifest <file> --signature <file> [--trusted-time] [--images <index.json> --sbom <sbom.json>]";
     let mpath = arg(a, "--manifest").unwrap_or_else(|| die(usage));
     let spath = arg(a, "--signature").unwrap_or_else(|| die(usage));
     let m = read_json(&mpath);
@@ -218,23 +218,71 @@ fn update_verify(c: &mut Client, a: &[String]) {
     if r["ok"] != true {
         die(&format!("UPDATE_CONTENT_MISMATCH: {}", r["error"]["message"].as_str().unwrap_or("closure check failed")));
     }
+    // review R2-1: the OCI archive's real bytes and the image IDs it actually contains are bound to the signature
+    // through the signed sbomHash (sbom.json → ociArchive {sha256, imageIds}); a release that declares OCI images
+    // must ship index, archive and SBOM, and each is checked, never skipped.
     let mut images = Value::Null;
-    if let Some(ix) = arg(a, "--images") {
+    let declares = m["ociDigests"].as_array().map(|x| !x.is_empty()).unwrap_or(false);
+    if declares || arg(a, "--images").is_some() {
+        let ix = arg(a, "--images").unwrap_or_else(|| die("UPDATE_CONTENT_MISMATCH: the release declares OCI images; --images <index.json> is required"));
+        let sb = arg(a, "--sbom").unwrap_or_else(|| die("UPDATE_CONTENT_MISMATCH: the release declares OCI images; --sbom <sbom.json> is required"));
         let idx = read_json(&ix);
-        let mut got: Vec<String> = idx["images"].as_array().cloned().unwrap_or_default().iter().filter_map(|i| i["imageId"].as_str().map(String::from)).collect();
-        let mut want: Vec<String> = m["ociDigests"].as_array().cloned().unwrap_or_default().iter().filter_map(|i| i.as_str().map(String::from)).collect();
-        got.sort();
-        want.sort();
-        if got != want {
-            die("UPDATE_CONTENT_MISMATCH: the shipped OCI images are not exactly the signed ociDigests");
-        }
+        let sbom_bytes = std::fs::read(&sb).unwrap_or_else(|e| die(&format!("UPDATE_SIGNATURE_INVALID: release file {sb} missing or unreadable: {e}")));
         let archive = std::path::Path::new(&ix).with_file_name(idx["archive"].as_str().unwrap_or("images.tar"));
         if !archive.is_file() {
             die(&format!("UPDATE_CONTENT_MISMATCH: OCI archive {} missing", archive.display()));
         }
-        images = json!(got.len());
+        let ash = sha256_file(&archive).unwrap_or_else(|e| die(&format!("UPDATE_CONTENT_MISMATCH: reading {}: {e}", archive.display())));
+        agentos_machine::release::check_oci_bundle(&m, &sbom_bytes, &idx, &ash, None).unwrap_or_else(|e| die(&e.to_string()));
+        let ids = import_isolated(&archive).unwrap_or_else(|e| die(&format!("UPDATE_CONTENT_MISMATCH: importing the OCI archive into an isolated store failed: {e}")));
+        agentos_machine::release::check_oci_bundle(&m, &sbom_bytes, &idx, &ash, Some(&ids)).unwrap_or_else(|e| die(&e.to_string()));
+        images = json!({ "count": ids.len(), "archiveSha256": ash, "importedIds": ids });
     }
     out(&json!({ "ok": true, "releaseId": v["releaseId"], "manifestHash": v["manifestHash"], "closurePaths": r["result"]["paths"], "ociImages": images }));
+}
+
+fn sha256_file(p: &std::path::Path) -> std::io::Result<String> {
+    use sha2::{Digest, Sha256};
+    let mut f = std::fs::File::open(p)?;
+    let mut h = Sha256::new();
+    let mut buf = vec![0u8; 1 << 20];
+    loop {
+        let n = f.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        h.update(&buf[..n]);
+    }
+    Ok(format!("sha256:{}", hex::encode(h.finalize())))
+}
+
+/// Load the archive into a throw-away container store (own root/runroot, vfs, no registries, no network) and read
+/// back the image IDs podman computed from the content. The store is removed afterwards.
+fn import_isolated(archive: &std::path::Path) -> Result<Vec<String>, String> {
+    let d = std::env::temp_dir().join(format!("agentosctl-oci-{}", uuid()));
+    std::fs::create_dir_all(&d).map_err(|e| e.to_string())?;
+    let podman = |args: &[&str]| {
+        std::process::Command::new(std::env::var("AGENTOS_PODMAN").unwrap_or_else(|_| "podman".into()))
+            .arg("--root").arg(d.join("root")).arg("--runroot").arg(d.join("run")).args(["--storage-driver", "vfs", "--cgroup-manager", "cgroupfs", "--events-backend", "none"])
+            .args(args)
+            .output()
+    };
+    let res = (|| {
+        let l = podman(&["load", "-q", "-i", archive.to_str().ok_or("bad path")?]).map_err(|e| e.to_string())?;
+        if !l.status.success() {
+            return Err(String::from_utf8_lossy(&l.stderr).trim().chars().take(400).collect());
+        }
+        let o = podman(&["images", "-a", "--no-trunc", "--format", "{{.ID}}"]).map_err(|e| e.to_string())?;
+        if !o.status.success() {
+            return Err(String::from_utf8_lossy(&o.stderr).trim().to_string());
+        }
+        let mut ids: Vec<String> = String::from_utf8_lossy(&o.stdout).lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect();
+        ids.sort();
+        ids.dedup();
+        Ok(ids)
+    })();
+    let _ = std::fs::remove_dir_all(&d);
+    res
 }
 
 fn root_only(what: &str) {
