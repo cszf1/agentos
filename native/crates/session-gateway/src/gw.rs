@@ -459,6 +459,7 @@ pub fn handle_client(gw: Arc<Gw>, stream: UnixStream) {
         let send2 = send.clone();
         let tx2 = ctx.clone();
         let dbus2 = dbus.clone();
+        let closer2 = r.try_clone().ok();
         std::thread::spawn(move || {
             let out = route(&gw2, conn, cred.uid, cred.pid as u32, &dbus2, &env, tx2);
             let mut resp = json!({ "requestId": env.request_id, "workspaceId": env.workspace_id, "clientEpoch": env.client_epoch });
@@ -472,8 +473,17 @@ pub fn handle_client(gw: Arc<Gw>, stream: UnixStream) {
                     resp["error"] = e;
                 }
             }
-            let _ = send2(&resp);
+            // Free the slot before the reply can reach the client: the client sends its next request as soon as it
+            // reads this reply, and a reader that still counted this one closed a healthy connection at exactly 32
+            // (m13 W05 run 41167999147: 9 reconnects, each re-sending 32 requests and re-binding).
             inflight2.fetch_sub(1, Ordering::SeqCst);
+            if !send2(&resp) {
+                // A reply that cannot be queued must not vanish (the client would hold the slot forever): drop the
+                // connection so the client reconnects and re-sends by requestId (spec §27.1 slow reader).
+                if let Some(c) = &closer2 {
+                    let _ = c.shutdown(std::net::Shutdown::Both);
+                }
+            }
         });
     }
     gw.sessions.lock().unwrap().remove(&conn);
@@ -563,11 +573,9 @@ pub fn route(gw: &Gw, conn: u64, uid: u32, pid: u32, dbus: &zbus::blocking::Conn
         return bind(gw, conn, uid, pid, dbus);
     }
     if e.method == "session.status" {
-        // Answer from a fresh contact, not from whatever the registry loop saw last (up to 250 ms + one call ago):
-        // m10 S08 read "reachable" right after machined stopped because no gateway call had failed yet.
-        if gw.since_machine_ok().map(|d| d > Duration::from_millis(200)).unwrap_or(true) {
-            let _ = gw.machine("status", json!({}));
-        }
+        // Answer from a contact made for this request: a success a few ms ago says nothing about now (m10 runs
+        // 41130998160 and 41167999147 read "reachable" right after machined stopped).
+        let _ = gw.machine("status", json!({}));
         let st = live(gw, conn, dbus);
         let sessions = gw.sessions.lock().unwrap();
         let s = sessions.get(&conn).ok_or_else(|| err("SESSION_REQUIRED", "not bound"))?;

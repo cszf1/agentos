@@ -175,6 +175,9 @@ AppViewModel* openView(Real& r, const QString& appId) {
 }
 
 int rows(AppViewModel* v) { return v ? static_cast<RecordsModel*>(v->records())->rows() : -1; }
+// the server's record count: rows() stops at one page (records::kPage = 20), so "rows == n + 1" never holds once an
+// app has 20 records (the to-do app has that many by the offline phase: mainline + daily + switching writes)
+int total(AppViewModel* v) { return v ? v->recordState().value(QStringLiteral("total")).toInt() : -1; }
 
 // what the user would see when a record write does not land: the view mode, the form state and the Shell's notice
 QString writeDiag(Real& r, AppViewModel* v, int n, const QVariantMap& afterSubmit) {
@@ -390,12 +393,15 @@ class E2E : public QObject {
     QVERIFY(!todo.isEmpty());
     AppViewModel* v = openView(r, todo);
     QVERIFY(v);
-    const int n = rows(v);
+    // the first page has arrived before we count
+    QTRY_VERIFY2_WITH_TIMEOUT(rows(v) > 0 && (rows(v) == total(v) || rows(v) >= 20), qPrintable(writeDiag(r, v, -1, {})), 20000);
+    const int n = total(v);
     v->openCreate();
     v->setDraft(QStringLiteral("title"), QStringLiteral("断网也能记"));
     v->submitRecord();
-    // the Shell's notice names the refusal if the write fails (m13 run 41145058422: POST records answered 403)
-    QTRY_VERIFY2_WITH_TIMEOUT(rows(v) == n + 1, qPrintable(QStringLiteral("notice: ") + r.shell->notice() + QStringLiteral(" banner: ") + r.shell->banner()), 20000);
+    const QVariantMap afterSubmit = v->recordState();
+    // m13 run 41167999147: POST records answered 201 yet rows never reached n + 1 (likely a full first page); count the total
+    QTRY_VERIFY2_WITH_TIMEOUT(total(v) == n + 1, qPrintable(writeDiag(r, v, n, afterSubmit)), 20000);
     v->setSearch(QStringLiteral("断网"));
     QTRY_VERIFY_WITH_TIMEOUT(rows(v) == 1, 20000);
     v->setSearch(QString());
@@ -431,13 +437,13 @@ class E2E : public QObject {
     QVERIFY(v);
     QVERIFY2(v->mode() == QLatin1String("records"), qPrintable(writeDiag(r, v, -1, {})));
     // the first page has arrived before we count (rows == total, or a full page)
-    QTRY_VERIFY2_WITH_TIMEOUT(rows(v) > 0 && (rows(v) == v->recordState().value(QStringLiteral("total")).toInt() || rows(v) >= 20), qPrintable(writeDiag(r, v, -1, {})), 20000);
-    const int n = rows(v);
+    QTRY_VERIFY2_WITH_TIMEOUT(rows(v) > 0 && (rows(v) == total(v) || rows(v) >= 20), qPrintable(writeDiag(r, v, -1, {})), 20000);
+    const int n = total(v);
     v->openCreate();
     v->setDraft(QStringLiteral("title"), marker);
     v->submitRecord();
     const QVariantMap afterSubmit = v->recordState();
-    QTRY_VERIFY2_WITH_TIMEOUT(rows(v) == n + 1, qPrintable(writeDiag(r, v, n, afterSubmit)), 20000);
+    QTRY_VERIFY2_WITH_TIMEOUT(total(v) == n + 1, qPrintable(writeDiag(r, v, n, afterSubmit)), 20000);
     auto textHas = [&](const QString& needle) {
       bool hit = false;
       walkItems(r.view->root(), [&](QQuickItem* i) {
@@ -445,6 +451,8 @@ class E2E : public QObject {
       });
       return hit;
     };
+    v->setSearch(marker);  // past one page the new record need not be on page 1: find it by its marker
+    QTRY_VERIFY2_WITH_TIMEOUT(rows(v) == 1, qPrintable(writeDiag(r, v, n, afterSubmit)), 20000);
     QTRY_VERIFY_WITH_TIMEOUT(textHas(marker), 10000);  // A's view really shows the body we look for later
     const int dropped0 = r.shell->lateDropped();
     // a query in flight in A, then switch away and back and away again without waiting for anything

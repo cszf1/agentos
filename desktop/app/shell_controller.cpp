@@ -260,7 +260,13 @@ void ShellController::reconnect() { rpc_->reconnectNow(); }
 void ShellController::rebind() { bind(); }
 
 void ShellController::bind() {
+  // One bind at a time: after a reconnect every re-sent request answers SESSION_REQUIRED (rebind), and one bind each,
+  // each followed by a full reload, queued 713 requests in m13 W05 (run 41167999147). A pending bind is re-sent by
+  // the transport on reconnect, so it also covers this call.
+  if (bindPending_) return;
+  bindPending_ = true;
   request(QStringLiteral("session.bind"), JValue::object(), [this](const RpcReply& r) {
+    bindPending_ = false;
     if (!r.ok()) {
       sessionBound_ = false;
       setNotice(describeError(r.errorCode, r.errorMessage));

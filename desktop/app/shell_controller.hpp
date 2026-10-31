@@ -204,7 +204,7 @@ class ShellController : public QObject, public RequestSink {
     int gen = 0;
   };
   RpcClient* rpc_;
-  bool connected_ = false, sessionBound_ = false, locked_ = false, hostAvailable_ = true, modelAvailable_ = true, brokerAvailable_ = true, writesStopped_ = false;
+  bool connected_ = false, sessionBound_ = false, bindPending_ = false, locked_ = false, hostAvailable_ = true, modelAvailable_ = true, brokerAvailable_ = true, writesStopped_ = false;
   QString userId_, userName_, role_;
   qint64 sessionEpoch_ = 1;
   QString ws_, wsName_, storeUUID_;
