@@ -15,20 +15,20 @@
 
 ## 总表（按证据级别）
 
-**通过 67 / 部分 22 / 未通过 11（共 100 项）**（外部审查 2026-10-31 降级 D01 I06 I08 W08 R11 U04 U05 U09，修复后按新证据重判，见 docs/V1.0_REVIEW_FIXES.md）。每项只计入它的**最高**证据级别（例如“KVM VM＋单元”计入 KVM VM）；同一项另需实体机的（U01、U02、H03）在 KVM 行计数，并在下面实体机清单里重复列出。“通过”只在该级别证据覆盖规格这一行全部内容时给出。
+**通过 69 / 部分 20 / 未通过 11（共 100 项）**（外部审查 2026-10-31 降级 D01 I06 I08 W08 R11 U04 U05 U09，修复后按新证据重判，见 docs/V1.0_REVIEW_FIXES.md）。每项只计入它的**最高**证据级别（例如“KVM VM＋单元”计入 KVM VM）；同一项另需实体机的（U01、U02、H03）在 KVM 行计数，并在下面实体机清单里重复列出。“通过”只在该级别证据覆盖规格这一行全部内容时给出。
 
 | 证据级别 | 通过 | 部分 | 未通过 | 合计 | 说明 |
 |---|---|---|---|---|---|
-| KVM VM（Actions） | 56 | 9 | 0 | 65 | GitHub Actions 上 /dev/kvm 加速的 NixOS VM 检查（主要证据含 KVM VM） |
+| KVM VM（Actions） | 57 | 8 | 0 | 65 | GitHub Actions 上 /dev/kvm 加速的 NixOS VM 检查（主要证据含 KVM VM） |
 | TCG VM | 0 | 0 | 0 | 0 | 开发沙箱软件模拟 VM（只做冒烟，不作通过依据） |
-| 单元/集成 | 11 | 11 | 0 | 22 | vitest / cargo test / Qt ctest，含真实 v0.4 旧备份导入与 Actions 逐位重建（无 VM 级证据） |
+| 单元/集成 | 12 | 10 | 0 | 22 | vitest / cargo test / Qt ctest，含真实 v0.4 旧备份导入与 Actions 逐位重建（无 VM 级证据） |
 | Host 级真实模型 | 0 | 2 | 0 | 2 | 开发沙箱里开发模式 Host + 真实模型（TokenRhythm qwen3.8-flash），无原生 UI、无 machined |
 | 需实体机，未验收 | 0 | 0 | 10 | 10 | 只能在实体硬件 / 固定参考机上完成，本轮无此硬件 |
 | 无可用证据 | 0 | 0 | 1 | 1 | 既无 VM 也无单元证据，或属于整体发布结论 |
 
-- **KVM VM（Actions）**（65）：V1-B04、V1-B05、V1-B08、V1-I01、V1-I02、V1-I03、V1-I04、V1-I05、V1-I06◐、V1-I07、V1-I08◐、V1-I09、V1-I10、V1-I11、V1-I12、V1-W01、V1-W02、V1-W03、V1-W04、V1-W05、V1-W06、V1-W07、V1-W08◐、V1-W09、V1-W10、V1-D01◐、V1-D08、V1-H03◐、V1-S01、V1-S02、V1-S03、V1-S04、V1-S05、V1-S06、V1-S07、V1-S08、V1-U01◐、V1-U02◐、V1-U03、V1-U04◐、V1-U06、V1-U07、V1-U08、V1-U09◐、V1-U10、V1-U11、V1-U12、V1-R01、V1-R02、V1-R03、V1-R04、V1-R05、V1-R06、V1-R07、V1-R08、V1-R09、V1-R10、V1-R11、V1-R12、V1-M04、V1-M06、V1-O03、V1-O06、V1-O07、V1-O08
+- **KVM VM（Actions）**（65）：V1-B04、V1-B05、V1-B08、V1-I01、V1-I02、V1-I03、V1-I04、V1-I05、V1-I06、V1-I07、V1-I08◐、V1-I09、V1-I10、V1-I11、V1-I12、V1-W01、V1-W02、V1-W03、V1-W04、V1-W05、V1-W06、V1-W07、V1-W08◐、V1-W09、V1-W10、V1-D01◐、V1-D08、V1-H03◐、V1-S01、V1-S02、V1-S03、V1-S04、V1-S05、V1-S06、V1-S07、V1-S08、V1-U01◐、V1-U02◐、V1-U03、V1-U04◐、V1-U06、V1-U07、V1-U08、V1-U09◐、V1-U10、V1-U11、V1-U12、V1-R01、V1-R02、V1-R03、V1-R04、V1-R05、V1-R06、V1-R07、V1-R08、V1-R09、V1-R10、V1-R11、V1-R12、V1-M04、V1-M06、V1-O03、V1-O06、V1-O07、V1-O08
 - **TCG VM**：无。
-- **单元/集成**（22）：V1-B01、V1-B02、V1-B03、V1-B06、V1-B07、V1-D02◐、V1-D03◐、V1-D04◐、V1-D05◐、V1-D06◐、V1-D07◐、V1-D09◐、V1-D11◐、V1-D12◐、V1-U05◐、V1-M01、V1-M02、V1-M03、V1-M05、V1-M07、V1-M08、V1-O09◐
+- **单元/集成**（22）：V1-B01、V1-B02、V1-B03、V1-B06、V1-B07、V1-D02◐、V1-D03◐、V1-D04◐、V1-D05◐、V1-D06◐、V1-D07◐、V1-D09◐、V1-D11◐、V1-D12◐、V1-U05、V1-M01、V1-M02、V1-M03、V1-M05、V1-M07、V1-M08、V1-O09◐
 - **Host 级真实模型**（2）：V1-O01◐、V1-O02◐
 - **需实体机，未验收**（10）：V1-D10☐、V1-H01☐、V1-H02☐、V1-H04☐、V1-H05☐、V1-H06☐、V1-H07☐、V1-H08☐、V1-O04☐、V1-O05☐
 - **无可用证据**（1）：V1-O10☐
@@ -58,12 +58,9 @@
 ### 未完成项与原因
 
 - **V1-D01**（部分，外部审查降级）：F02：未走真实 greetd/ReGreet 登录路径（测试手打 exec agentos-session），缺注销/再登录/失败恢复。修复进度见 docs/V1.0_REVIEW_FIXES.md。
-- **V1-I06**（部分，外部审查降级）：F03：撤权与写提交的精确竞争窗口（DB 提交前、成员代次变化后、最终 ACK 前注入故障）未测。修复进度见 docs/V1.0_REVIEW_FIXES.md。
 - **V1-I08**（部分，外部审查降级）：F04：broker↔machined、broker↔Host 断开与执行者 fence 未单独测。修复进度见 docs/V1.0_REVIEW_FIXES.md。
 - **V1-W08**（部分，外部审查降级）：F08：锁屏/注销/重新登录时维护范围、执行主体、broker 权限未比较。修复进度见 docs/V1.0_REVIEW_FIXES.md。
-- **V1-R11**（部分，外部审查降级）：F07：只丢 broker 日志、machine 目录完整时没有完整恢复演练（测试另删 machine.sqlite）。修复进度见 docs/V1.0_REVIEW_FIXES.md。
 - **V1-U04**（部分，外部审查降级）：R2-1：update verify 只比对索引 imageId 与文件存在，测试用 echo 冒充归档，未校验归档真实内容。修复进度见 docs/V1.0_REVIEW_FIXES.md。
-- **V1-U05**（部分，外部审查降级）：R2-3：rotate_key 分两个事务，重复 keyId 不同公钥被 INSERT OR IGNORE 静默忽略。修复进度见 docs/V1.0_REVIEW_FIXES.md。
 - **V1-U09**（部分，外部审查降级）：R2-2：健康门槛只看 broker socket 存在，diagnostics-only 仍可通过。修复进度见 docs/V1.0_REVIEW_FIXES.md。
 - **V1-D02 旧声明式应用**（部分，单元/集成）：只有 Qt offscreen 单元证据（desktop/tests 9 个 ctest 套件）；m13-native 在 VM 里驱动的是主线/日常/离线/切换流程，没有逐条对这一行的规则在真实会话中断言，按规则不把单元证据当作 VM 通过。
 - **V1-D03 组件全集**（部分，单元/集成）：只有 Qt offscreen 单元证据（desktop/tests 9 个 ctest 套件）；m13-native 在 VM 里驱动的是主线/日常/离线/切换流程，没有逐条对这一行的规则在真实会话中断言，按规则不把单元证据当作 VM 通过。
@@ -115,7 +112,7 @@
 | V1-I03 | 用户不可见数据 | 通过 | KVM VM（Actions） | m2-identity：B 列不到 A 的工作区，get/forward A 的 ID 统一 404 NOT_FOUND_OR_FORBIDDEN；m3-members 中机器管理员对非成员工作区同样 404。 |
 | V1-I04 | 角色矩阵 | 通过 | KVM VM（Actions）＋单元/集成 | tests/identity/access.test.ts 角色×动作全矩阵；m3-members：viewer 读 200、写/成员管理 404，editor 写入但 owner 动作（maintenance.control）被 Host 矩阵拒绝，owner 可执行，机器管理员无数据入口。 CI：run 41088865318 中 I04/I03/W04/I06/I08 通过，I09 子测试失败——禁用 bob 被 machined 以 CONFLICT 拒绝（bob 是工作区 “Bob” 的唯一 owner，须先转移所有权），属正确行为、断言有误；已改为断言该拒绝并禁用一个不拥有工作区的新用户，重跑 run 41090308175，I09/I10/W07/I11 CI 待结果。 |
 | V1-I05 | 自身任务和共享任务 | 通过 | KVM VM（Actions）＋单元/集成 | access.test.ts 角色判定；m11-ops（run 41089329164）KVM 通过：editor 读不到/取消不了 owner 的 run transcript，能读并取消自己的；owner 能取消 editor 的 run。 |
-| V1-I06 | 撤销与写提交竞争 | 部分 | KVM VM（Actions） | **外部审查降级（2026-10-31）**：F03：撤权与写提交的精确竞争窗口（DB 提交前、成员代次变化后、最终 ACK 前注入故障）未测。修复与新证据见 docs/V1.0_REVIEW_FIXES.md。原证据：m3-members：Host 运行中撤销 → 被撤销者的读写立即被拒；revocations 只有在 gateway/host/broker 三方 ack 后才变 revoked。写提交与撤销的精确竞争窗口与 UI 结果一致性未做。 KVM 通过（run 41088865318）：根因是此前测试等待语句的 sqlite 查询三重转义、从未被解析，并非缺 ack。 |
+| V1-I06 | 撤销与写提交竞争 | 通过 | KVM VM（Actions） | **外部审查修复 F03（KVM 通过）**：m10-sched F03a/F03b/F03c 子测试在 run 41203693428（a673dd5ab5413570b63c1c09b52e7e7e777f2db0，push 全量）通过：两个同步客户端；F03a 撤权落在已准入写的 DB 提交前（测试暂停点 gateway.write.before_commit）——写恰好提交一次、客户端被告知、撤权随后完成；F03b Host 在提交前崩溃且撤权待定——无事实、客户端未得到成功、撤权完成；F03c Host 已应用新成员代次但未 ACK（registry.before_ack）——新请求被拒、root 侧仍 revoking、owner 视图不显示完成，ACK 后一致。 原证据：m3-members：Host 运行中撤销 → 被撤销者的读写立即被拒；revocations 只有在 gateway/host/broker 三方 ack 后才变 revoked。写提交与撤销的精确竞争窗口与 UI 结果一致性未做。 KVM 通过（run 41088865318）：根因是此前测试等待语句的 sqlite 查询三重转义、从未被解析，并非缺 ack。 |
 | V1-I07 | 撤销与模型派发 | 通过 | KVM VM（Actions）＋单元/集成 | m10-sched（run 41089904864）KVM 通过：bob 的 run 在机器 permit 排队时被撤销 → permit 立即撤回，忙槽释放后不取得 permit，该 run 的 model_attempts 全为 denied/failed/interrupted，没有请求到达模型端点；Rust 单元（本轮在 开发机 cargo test 通过）：native/crates/machine/src/tests.rs s04_final_check_after_waiting_member_version_revocation_and_stop。 |
 | V1-I08 | 撤销时 | 部分 | KVM VM（Actions） | **外部审查降级（2026-10-31）**：F04：broker↔machined、broker↔Host 断开与执行者 fence 未单独测。修复与新证据见 docs/V1.0_REVIEW_FIXES.md。原证据：m3-members：Host 停止时撤销，gateway 立即拒绝，root 侧保持 revoking ≥8 秒，Host 重新启动并 ack 后才 revoked。broker 失联与执行者 fence 未单独做。 KVM 通过（run 41088865318）：根因是此前测试等待语句的 sqlite 查询三重转义、从未被解析，并非缺 ack。 |
 | V1-I09 | owner | 通过 | KVM VM（Actions）＋单元/集成 | m3-members（run 41095505484，KVM）I09 子测试通过：最后 owner 不能被移除/降级（CONFLICT）；禁用唯一 owner bob 被以 CONFLICT 拒绝且无效果；禁用不拥有工作区的 erin 后其会话被结束，shadow 显示口令锁定（L）且账户过期（1970），真实 VT 登录被拒、PAM 未开新会话。Rust 单元 i09_owner_transfer_needs_both_sides_and_current_versions（本轮 开发机 通过）：转移须原 owner 发起、接收方本人确认，任一方 memberVersion 变化则 PLAN_STALE，确认后角色互换并向 gateway/host/broker 各发 owner.changed，重放幂等。 m3-members（run 41124900360，7960f01，KVM）子测试“owner transfer and disable: the old approvals wait for review; a stale memberVersion or plan is refused (I09, I12)”通过：所有权转移与禁用后旧批准策略转 paused_needs_review 已在 VM 中断言。 |
@@ -189,7 +186,7 @@
 | V1-U02 | 磁盘重验/中断 | 部分 | KVM VM（Actions）；实盘需实体机，未验收 | m6-install：小盘/系统盘被拒、计划后磁盘变化被拒且不写入、复制中崩溃只在同一盘续作。 m6-install（run 41123410008，7a7c58c，KVM）三个 U02 子测试通过：inspect 列出磁盘身份、小盘/系统盘被拒；plan 与 run 之间磁盘身份变化被拒且未写入；复制中崩溃只在同一盘续作。真实 WWN/serial 需实体盘。 |
 | V1-U03 | 首启身份 | 通过 | KVM VM（Actions） | m6-qcow2（run 41112945968，b896597，KVM）全部子测试通过：同一 agentos-qcow2 模板的两个克隆各自首启——模板公开密钥只开盘一次，agentos-disk-rekey 要求新口令并删除模板槽后 machined 才启动（时间戳核对），模板密钥再开盘失败、新口令成功，LUKS2+Btrfs、运行系统即发行 toplevel；首启前 agentosctl status 报未安装，firstboot 后两个克隆 machineInstallId 不同（broker 身份由同一 machine 身份/secret 派生，随之不同），无监听端口；重启后要求新口令、身份保持。m2-identity（KVM）：同一机器重复 firstboot 被拒，不复制账户/工作区。 回归：m6-qcow2（run 41141170398，347f920，KVM）全部子测试再次通过。 |
 | V1-U04 | 签名与内容 | 部分 | KVM VM（Actions）＋单元/集成 | **外部审查降级（2026-10-31）**：R2-1：update verify 只比对索引 imageId 与文件存在，测试用 echo 冒充归档，未校验归档真实内容。修复与新证据见 docs/V1.0_REVIEW_FIXES.md。原证据：machined 发行校验（Rust 单元，开发机 cargo test 通过）：native/crates/machine/src/tests.rs u04_u05_signatures_content_sequence_and_trusted_key_rotation——篡改 manifest、错误私钥、未知 keyId、缺字段、非法 OCI digest、无可信时间全部 UPDATE_SIGNATURE_INVALID；update-worker tests/update.rs closure_content_must_match_the_signed_list_exactly；require_sigs_on；发行配置 require-sigs = true。Host 导入发行 OCI 后镜像 ID 必须等于签名清单 ociDigests（7941b6b），m5-desktop（run 41102571678，KVM）发行镜像应用容器子测试在该检查下通过。本轮新增 agentosctl update digest/trust-key/verify（签名、密钥、字段、序号、到期、store 中闭包 NAR hash 与清单完全一致、随发行的 OCI index 镜像 ID 与 ociDigests 完全一致、OCI 归档存在；任何文件缺失即拒绝）与 m7-update U04 子测试：openssl ed25519 真签名，篡改 manifest/签名、非可信密钥签名、未知 keyId、闭包多/少/不在 store、OCI ID 不符/归档缺失、签名/manifest/index 文件缺失、无可信时间全部被拒，且未登记任何发行，nix require-sigs=true。m7-update（run 41107424181，KVM）U04 子测试通过：上述全部篡改/缺失情形被拒、未登记任何发行。 |
-| V1-U05 | 序列与密钥轮换 | 部分 | 单元/集成 | **外部审查降级（2026-10-31）**：R2-3：rotate_key 分两个事务，重复 keyId 不同公钥被 INSERT OR IGNORE 静默忽略。修复与新证据见 docs/V1.0_REVIEW_FIXES.md。原证据：Rust 单元（开发机 cargo test 通过）：native/crates/machine/src/tests.rs u04_u05_signatures_content_sequence_and_trusted_key_rotation——更低/相同 sequence 与同 releaseId 不同内容为 RELEASE_REPLAYED，过期清单拒绝；轮换声明必须由当前受信密钥签名（伪造签名/未知签名者无效果），受信轮换后新钥可用、旧钥被吊销且其签名的清单被拒；u11_migration_waits_for_commit_and_rollback_needs_a_compatible_generation：known-good 回退不降低 accepted_release_sequence。directory.test.ts 同样覆盖旧 sequence 与高水位。 |
+| V1-U05 | 序列与密钥轮换 | 通过 | 单元/集成 | **外部审查修复 R2-3/R2-5（单元/集成）**：R2-3 rotate_key 在一个事务内信任新钥（冲突检查）、吊销旧钥并写审计；重复 keyId 仅公钥相同才幂等，否则 KEY_CONFLICT——单元 r2_3_duplicate_key_ids_conflict_and_an_interrupted_rotation_changes_nothing（开发构建机 cargo test 通过）。R2-5 releaseSequence 由签名环境输入（AGENTOS_RELEASE_SEQUENCE）或提交时间单调分配，低于/等于上一发行被拒，下一发行接续：checks.release-sequence 在 build-release 通过（run 41202490570 @7b69243，run 41203693428 @a673dd5）。 原证据：Rust 单元（开发机 cargo test 通过）：native/crates/machine/src/tests.rs u04_u05_signatures_content_sequence_and_trusted_key_rotation——更低/相同 sequence 与同 releaseId 不同内容为 RELEASE_REPLAYED，过期清单拒绝；轮换声明必须由当前受信密钥签名（伪造签名/未知签名者无效果），受信轮换后新钥可用、旧钥被吊销且其签名的清单被拒；u11_migration_waits_for_commit_and_rollback_needs_a_compatible_generation：known-good 回退不降低 accepted_release_sequence。directory.test.ts 同样覆盖旧 sequence 与高水位。 |
 | V1-U06 | 下载与低空间 | 通过 | KVM VM（Actions）＋单元/集成 | agentos-update-worker arm 先做前置检查（native/crates/update-worker/src/preflight.rs）：ESP 可用 ≥16 MiB、store 可用 ≥ max(候选闭包所需, 256 MiB)、无市电且电池 <40% 未充电则拒绝（UPDATE_PRECONDITION），拒绝时不写 one-shot、不改 default/条目。Rust u06_* 通过；m7-update U06 子测试 KVM 通过（run 41089647759，真实 bootctl：低电/空间不足不 armed、loader 状态与条目不变）。 下载断线续传：m16-fetch（run 41140426572，KVM）全部子测试通过——候选闭包只在签名发行缓存（不在 store）；`agentosctl update fetch` 中途断开链路 → 退出码非 0、UPDATE_DOWNLOAD_INTERRUPTED，machined update_jobs 保持 downloading、原因“download interrupted”与已完整到达的路径数可见，store 中只有完整路径（2 ≤ 已有 < 闭包）；恢复链路后同一命令只下载缺少的路径（已有路径的 URL 不再出现在访问日志）→ staged、路径数等于闭包；再执行一次 fetched=0；未签名/错签名缓存被拒、不进入 store。下载/暂存不写 loader 条目与 default（arm 之前不触碰启动项），低空间/低电不 armed 见上（m7）。 |
 | V1-U07 | 启动项写入断电 | 通过 | KVM VM（Actions）＋单元/集成 | m7-update：known-good 与候选条目完整、default 为 known-good；update-worker Rust 测试覆盖各发布点中断。VM 断电未做。 m7-update（run 41133427331，5c1364f，KVM）全部子测试通过，含“power cut at every ESP publish point”：在 boot.after_copy_linux、boot.after_copy_initrd、boot.before_dir_publish、boot.before_entry、boot.after_entry 五个发布点让 update-worker 死掉后直接 machine.crash()（不关机、不 sync），每次重启都从持久 default（known-good）启动、one-shot 为空、known-good 条目与内核/initrd 逐字节完整；可见条目总是指向完整资产，目录发布前没有任何候选残留（只有 .tmp），after_entry 之后是完整候选；同一命令从残留续作得到完整候选。（此前 run 41131384220 暴露的 FAT 目录项丢失已由 5c1364f 每个发布点 syncfs ESP 修复。） |
 | V1-U08 | 单次试启动 | 通过 | KVM VM（Actions） | m7-update：one-shot 只启动候选一次、default 不变；无 init 的坏候选复位后进入 default，不无限重试。 |
@@ -245,7 +242,7 @@
 
 ## 统计
 
-未通过 11 项，通过 67 项，部分 22 项（共 100 项）。
+未通过 11 项，通过 69 项，部分 20 项（共 100 项）。
 
 ## 回归与偶发失败记录
 
