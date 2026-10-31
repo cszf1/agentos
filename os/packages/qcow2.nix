@@ -1,6 +1,9 @@
 # agentos-qcow2 (spec §19.1, V1-U03): the blank VM template, made from the SAME release toplevel the ISO carries
 # by running the SAME offline installer (agentos-install plan/confirm/run) inside a build VM against an empty
-# qcow2. Layout is identical to an installed disk (GPT, ESP, LUKS2, Btrfs subvolumes). The LUKS container opens
+# qcow2. Layout is identical to an installed disk (GPT, ESP, LUKS2, Btrfs subvolumes). `--template` pins what an ISO
+# install leaves random: GPT disk/partition UUIDs (uuid5 of the toplevel), the ESP (zeroed, `mkfs --invariant` with a
+# derived volume id, files copied in sorted order at a fixed clock, no random seed). The LUKS2 volume key, salts and
+# UUID stay fresh per build (decisions 11, 48, 49; os/repro-explain-qcow2.py accepts only that). The LUKS container opens
 # with the public template key; first boot (agentos-disk-rekey) makes the operator set a real passphrase and
 # removes the template slot before machined may start. No machine identity, account or password is in the image.
 { lib, pkgs, vmTools, qemu, system, installer, name ? "agentos-qcow2", diskGiB ? 64 }:

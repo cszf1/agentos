@@ -258,7 +258,7 @@ TPL_EPOCH = "1980-01-01 00:00:00"   # FAT's first representable time; every temp
 
 def normalize_template_esp(dev):
     """Rebuild the template's ESP so it is reproducible: same volume id and boot sector (mkfs --invariant), every
-    directory and file written in sorted order by mtools under a fixed clock (FAT stores creation and modification
+    directory and file written in sorted order by mtools under a fixed clock onto a zeroed partition (FAT stores creation and modification
     times the kernel driver would take from the build VM's clock), and no loader random seed (a seed shared by every
     clone of the template is not a seed; the booted machine writes its own)."""
     esp = part(dev, 1)
@@ -271,6 +271,9 @@ def normalize_template_esp(dev):
         if os.path.exists(f"{src}/{seed}"):
             os.remove(f"{src}/{seed}")
     volid = hashlib.sha256(f"agentos-template:{SYSTEM}:esp".encode()).hexdigest()[:8]
+    # mkfs does not clear the data area: free clusters kept the first ESP's directory entries (build-VM clock) and
+    # loader random seed, so two builds differed with the same files (build-repro 41164440050)
+    sh("blkdiscard", "-z", esp)
     sh("mkfs.vfat", "--invariant", "-F", "32", "-n", "AGENTOS-ESP", "-i", volid, esp)
     env = dict(os.environ, MTOOLS_SKIP_CHECK="1", TZ="UTC")
     for root, dirs, files in sorted(os.walk(src)):

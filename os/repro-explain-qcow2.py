@@ -40,13 +40,31 @@ def fat_files(raw, off):
             out[os.path.relpath(p, d)] = hashlib.sha256(open(p, "rb").read()).hexdigest()
     return out
 
-def fat_diff(ra, rb, off):
+def fat_diff(ra, rb, off, size):
     """Which files differ inside a FAT partition, or (same files) that only FAT metadata differs."""
     fa, fb = fat_files(ra, off), fat_files(rb, off)
     if fa is None or fb is None:
         return "files not readable (mtools missing or not FAT)"
     diff = sorted(k for k in set(fa) | set(fb) if fa.get(k) != fb.get(k))
-    return f"files differing: {diff}" if diff else f"same {len(fa)} files; only FAT metadata (times, order, allocation) differs"
+    if diff:
+        return f"files differing: {diff}"
+    blocks = differing_blocks(ra, rb, off, size)
+    return f"same {len(fa)} files; {len(blocks)} differing 4 KiB blocks outside file contents (FAT metadata or unallocated clusters), first at partition offsets {blocks[:8]}"
+
+def differing_blocks(ra, rb, off, size=None, bs=4096):
+    out = []
+    with open(ra, "rb") as fa, open(rb, "rb") as fb:
+        fa.seek(off)
+        fb.seek(off)
+        pos = 0
+        while size is None or pos < size:
+            a, b = fa.read(bs), fb.read(bs)
+            if not a:
+                break
+            if a != b:
+                out.append(pos)
+            pos += bs
+    return out
 
 a, b = sys.argv[1], sys.argv[2]
 for q, r in ((a, "/tmp/repro-a.raw"), (b, "/tmp/repro-b.raw")):
@@ -84,7 +102,7 @@ for pa, pb in zip(ta["partitions"], tb["partitions"]):
             unexplained.append("LUKS cipher")
     elif not same:
         unexplained.append(f"partition {pa.get('name')} content")
-        line += "; " + fat_diff(ra, rb, off)
+        line += "; " + fat_diff(ra, rb, off, size)
     print(line)
 # bytes outside every partition (protective MBR, primary/backup GPT and gaps)
 parts = sorted((p["start"] * 512, (p["start"] + p["size"]) * 512) for p in ta["partitions"])
