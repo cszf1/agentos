@@ -16,7 +16,8 @@ def admin(args, ok=True, n=1, pw=None, tag="adm"):
     """Decision 80 / RELEASE_V1.0.md: the machine administrator runs `agentosctl admin …` in their own tty login
     session (no root: root is locked, no sudo); the plan is confirmed with their password (PAM at the gateway)."""
     pw = pw if pw is not None else ADMIN_PW[machine.name]
-    o = tty_run(n, f"printf '%s\\n' '{pw}' | agentosctl admin {args} --password-stdin; echo rc=$?", f"/tmp/{tag}")
+    # one group, so tty_run's redirection catches agentosctl's output too (run 41209639290 only had "rc=1")
+    o = tty_run(n, f"{{ printf '%s\\n' '{pw}' | agentosctl admin {args} --password-stdin; echo rc=$?; }}", f"/tmp/{tag}")
     rc = int(re.findall(r"^rc=(\d+)$", o, re.M)[-1])
     if ok:
         assert rc == 0, (args, o)
