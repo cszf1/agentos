@@ -95,7 +95,6 @@ pkgs.testers.runNixOSTest {
             # review F01: read the template's volume key while the rekey service waits for the passphrase
             tvk = volume_key(m, "--key-file=/etc/agentos/template-disk.key")
             tvks.append(tvk)
-            m.succeed("printf '" + "".join("\\x" + tvk[i:i+2] for i in range(0, len(tvk), 2)) + "' > /run/template-vk.bin")
             if n == 2:
                 assert tvks[0] == tvks[1], "the two clones did not start from the same template volume key"
                 # power cut in the middle of the volume key re-encryption: the next boot resumes it
@@ -127,6 +126,9 @@ pkgs.testers.runNixOSTest {
             vk = volume_key(m, f"--key-file=<(printf clone-pass-{n})")
             assert vk != tvk, "the clone still uses the template volume key"
             vks.append(vk)
+            # /run is a tmpfs: clone 2 lost it in the deliberate power cut. Recreate the original template key
+            # from the driver-held value, never confuse a missing key file with rejection of a valid old key.
+            m.succeed("printf '" + "".join("\\x" + tvk[i:i+2] for i in range(0, len(tvk), 2)) + "' > /run/template-vk.bin")
             rc, o = m.execute(f"cryptsetup open --volume-key-file=/run/template-vk.bin {LUKS} tvkcheck 2>&1")
             print("template volume key on the clone:", rc, o)
             assert rc != 0 and "not match" in o.lower(), o

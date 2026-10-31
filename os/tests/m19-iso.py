@@ -14,7 +14,9 @@ common = (f"{QEMU} -m 3072 -smp 2 -nic none "
           f"-drive if=pflash,format=raw,unit=0,readonly=on,file={OVMF_CODE} -drive if=pflash,format=raw,unit=1,file={vars_} "
           f"-drive file={disk},if=none,id=t,format=qcow2 -device virtio-blk-pci,drive=t,serial=AGENTOS-T1 "
           "-vga none -device virtio-gpu-pci -device qemu-xhci,id=xhci -device usb-tablet,bus=xhci.0")
-iso_cmd = common + f" -drive file={ISO_DIR}/agentos.iso,media=cdrom,readonly=on,if=ide -kernel {ISO_DIR}/bzImage -initrd {ISO_DIR}/initrd -append '{append}'"
+# Use the ISO initrd's virtio-scsi optical path, not an implicit legacy IDE controller.
+iso_cmd = common + (f" -device virtio-scsi-pci,id=iso-scsi -drive file={ISO_DIR}/agentos.iso,if=none,id=cd,format=raw,media=cdrom,readonly=on "
+                    f"-device scsi-cd,drive=cd,bus=iso-scsi.0 -kernel {ISO_DIR}/bzImage -initrd {ISO_DIR}/initrd -append '{append}'")
 PASS = "correct horse battery"
 TARGET = "/dev/disk/by-id/virtio-AGENTOS-T1"
 
@@ -64,14 +66,7 @@ def powered_off(m, timeout=300):
 def shot(m, name):
     m.screenshot(name)
     raw = subprocess.run([PNGTOPNM, os.path.join(m.out_dir, name + ".png")], check=True, capture_output=True).stdout
-    parts, i = [], 0
-    while len(parts) < 4:
-        while raw[i:i + 1].isspace(): i += 1
-        j = i
-        while not raw[j:j + 1].isspace(): j += 1
-        parts.append(raw[i:j]); i = j
-    assert parts[0] == b"P6", parts
-    return int(parts[1]), int(parts[2]), raw[i + 1:]
+    return pnm_rgb(raw)
 
 def px(img, x, y):
     w, _, d = img

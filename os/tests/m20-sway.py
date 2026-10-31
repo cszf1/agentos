@@ -7,14 +7,7 @@ machine.wait_for_unit("agentos-session-gateway.service")
 def shot(name):
     machine.screenshot(name)
     raw = subprocess.run([PNGTOPNM, os.path.join(machine.out_dir, name + ".png")], check=True, capture_output=True).stdout
-    parts, i = [], 0
-    while len(parts) < 4:
-        while raw[i:i + 1].isspace(): i += 1
-        j = i
-        while not raw[j:j + 1].isspace(): j += 1
-        parts.append(raw[i:j]); i = j
-    assert parts[0] == b"P6", parts
-    return int(parts[1]), int(parts[2]), raw[i + 1:]
+    return pnm_rgb(raw)
 
 def px(img, x, y):
     w, _, d = img
@@ -220,7 +213,7 @@ def handle(n, a):
         if w == "burst-prepare":
             app = a["appId"]
             ep = int(hsql(f"SELECT epoch FROM apps WHERE id='{app}'"))
-            reqs = [{"methodId": "session.bind"}]
+            reqs: list[dict[str, object]] = [{"methodId": "session.bind"}]
             for i in range(300):
                 reqs.append(fwd(ws, "apps.records.post", {"expectedAppEpoch": ep, "data": {"title": f"burst-{i}", "done": False}}, params={"appId": app}, idem=f"burst-{i}"))
             rid = str(uuid.uuid4())

@@ -36,5 +36,5 @@ pkgs.testers.runNixOSTest {
     OVMF_CODE = "${pkgs.OVMF.firmware}"
     OVMF_VARS = "${pkgs.OVMF.variables}"
     PNGTOPNM = "${pkgs.netpbm}/bin/pngtopnm"
-  '' + builtins.readFile ./m19-iso.py;
+  '' + builtins.readFile ./pnm.py + builtins.readFile ./m19-iso.py;
 }

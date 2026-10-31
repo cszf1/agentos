@@ -21,5 +21,5 @@ pkgs.testers.runNixOSTest {
     systemd.user.services."agentos-host@".serviceConfig.EnvironmentFile = lib.mkAfter [ "-/run/agentos-test/model.env" ];
     systemd.tmpfiles.rules = [ "d /run/agentos-test 0755 root root -" "f /run/agentos-test/model.env 0644 root root - AGENTOS_MODEL_MODE=faux" ];
   };
-  testScript = "PNGTOPNM = \"${pkgs.netpbm}/bin/pngtopnm\"\n" + builtins.readFile ./lib.py + builtins.readFile ./members_lib.py + builtins.readFile ./m20-sway.py;
+  testScript = "PNGTOPNM = \"${pkgs.netpbm}/bin/pngtopnm\"\n" + builtins.readFile ./lib.py + builtins.readFile ./members_lib.py + builtins.readFile ./pnm.py + builtins.readFile ./m20-sway.py;
 }

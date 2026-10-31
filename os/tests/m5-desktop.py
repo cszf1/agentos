@@ -7,14 +7,7 @@ def shot(name):
     """Screenshot of the VM display as (w, h, rgb bytes): what Sway actually scanned out."""
     machine.screenshot(name)
     raw = subprocess.run([PNGTOPNM, os.path.join(machine.out_dir, name + ".png")], check=True, capture_output=True).stdout
-    parts, i = [], 0
-    while len(parts) < 4:                                   # P6 <w> <h> <max>\n<data>
-        while raw[i:i + 1].isspace(): i += 1
-        j = i
-        while not raw[j:j + 1].isspace(): j += 1
-        parts.append(raw[i:j]); i = j
-    assert parts[0] == b"P6", parts
-    return int(parts[1]), int(parts[2]), raw[i + 1:]
+    return pnm_rgb(raw)
 
 def px(img, x, y):
     w, _, d = img

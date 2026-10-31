@@ -116,7 +116,9 @@ with subtest("the imported workspace is served by its own Host through the real 
 with subtest("source: one machine set with the imported workspace, exported with age and read back"):
     v = admin("backup --name o1", tag="bk")
     machine.succeed(f"test -d {SNAP}/o1 && test \"$(stat -c %U {SNAP}/o1)\" = root")          # the plain set stays root-only
-    tty_run(1, "age-keygen -o /home/alice/c.key 2>/home/alice/c.pub", "/tmp/keygen")             # the administrator's own key
+    # Group the whole command: tty_run appends its own stdout/stderr redirection. Export the public key
+    # explicitly instead of scraping stderr (whose redirection the wrapper would otherwise replace).
+    tty_run(1, "{ age-keygen -o /home/alice/c.key && age-keygen -y /home/alice/c.key > /home/alice/c.pub; }", "/tmp/keygen")
     rec = machine.succeed("grep -o 'age1[a-z0-9]*' /home/alice/c.pub").strip()
     e = admin(f"backup export --set o1 --recipient {rec} --out /home/alice/carry", tag="exp")
     assert e["exportState"] == "verified" and e["offMachineCopy"] is True, e

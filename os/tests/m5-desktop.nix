@@ -15,5 +15,5 @@ pkgs.testers.runNixOSTest {
     environment.systemPackages = [ pkgs.python3 pkgs.sqlite ];
     environment.etc."agentos-test/rpc.py".source = ./rpc.py;
   };
-  testScript = "PNGTOPNM = \"${pkgs.netpbm}/bin/pngtopnm\"\n" + builtins.readFile ./lib.py + builtins.readFile ./m5-desktop.py;
+  testScript = "PNGTOPNM = \"${pkgs.netpbm}/bin/pngtopnm\"\n" + builtins.readFile ./lib.py + builtins.readFile ./pnm.py + builtins.readFile ./m5-desktop.py;
 }
