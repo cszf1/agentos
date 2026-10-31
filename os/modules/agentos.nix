@@ -129,8 +129,11 @@ in {
     # ReGreet 0.3 has no default session: with nothing remembered for a user it starts that user's login shell. Before
     # each greeting, map every local login account to the AgentOS session in ReGreet's state (review F02/F11: a fresh
     # install or a newly created user would otherwise land in bash instead of the Shell).
-    services.greetd.settings.default_session.command = lib.mkIf cfg.graphical (lib.mkForce
-      "${greeterDefaults} ; exec ${pkgs.dbus}/bin/dbus-run-session ${lib.getExe pkgs.cage} ${lib.escapeShellArgs config.programs.regreet.cageArgs} -- ${lib.getExe config.programs.regreet.package}");
+    # (greetd runs the command as "exec <command>" under /bin/sh, so the defaults step and the greeter are one script)
+    services.greetd.settings.default_session.command = lib.mkIf cfg.graphical (lib.mkForce "${pkgs.writeShellScript "agentos-greeter" ''
+      ${greeterDefaults}
+      exec ${pkgs.dbus}/bin/dbus-run-session ${lib.getExe pkgs.cage} ${lib.escapeShellArgs config.programs.regreet.cageArgs} -- ${lib.getExe config.programs.regreet.package}
+    ''}");
     services.greetd.enable = cfg.graphical;
     programs.regreet.enable = cfg.graphical;
     security.pam.services.swaylock = lib.mkIf cfg.graphical { };
