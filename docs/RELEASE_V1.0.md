@@ -55,6 +55,20 @@ files). Machine sets (plaintext workspace data) live only under the root-only `/
 are named, never given as a path; an exported copy is age-encrypted to the recipient the administrator names.
 A non-administrator, a wrong password or a stale/expired plan is refused before anything runs.
 
+### Removable recovery media and offline verification
+
+From an active local login, use `udisksctl mount --block-device /dev/disk/by-label/LABEL --no-user-interaction`
+to mount removable media. Keep the normal polkit policy: this does not grant access to system disks or inactive
+sessions. Mounts normally appear under `/run/media/LOGIN/LABEL`; copy inputs to your own home before calling
+`agentosctl admin`, and copy an already verified encrypted export back to the medium afterwards. The privileged
+helper\'s path allowlist is unchanged; do not point it at arbitrary `/run` paths.
+
+Verification refuses a new manifest without trusted time (spec §20.2). Check/fix the clock against a trusted source
+first. For an explicitly chosen offline verification, the administrator can then pass `--trusted-time` to
+`update adopt-base` / `update verify`; this is an authenticated assertion, not a default or an expiry bypass.
+The isolated automated ISO drill checks the guest RTC against the test host immediately before making that
+assertion. Manifest expiry, support limit, signature, content and sequence checks still apply.
+
 ## Recovery materials
 
 | Situation | As the machine administrator (`agentosctl admin …`, no root) |

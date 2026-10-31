@@ -88,6 +88,12 @@ jobs:
         with:
           use-flakehub: false
 
+      - name: Screenshot helper regressions
+        if: ${{ matrix.test == 'm5-desktop' }}
+        run: |
+          python3 -B os/tests/test_pnm.py
+          python3 -B os/tests/test_navigation_pixels.py
+
       - name: Build test driver
         if: ${{ !startsWith(matrix.test, 'build-') }}
         working-directory: os

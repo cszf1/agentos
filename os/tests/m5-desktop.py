@@ -38,7 +38,7 @@ def nav_buttons(img):
     x, rows, y = 12, [], 0
     while y < h:
         c = px(img, x, y)
-        if max(c) < 0xc0 and max(c) - min(c) < 24:            # border grey #9a9a9a (not the dark top bar: it is blue-grey)
+        if near(px(img, 3, y), NAVBG) and max(c) < 0xc0 and max(c) - min(c) < 24:            # border grey #9a9a9a (not the dark top bar: it is blue-grey)
             rows.append(y)
         y += 1
     # merge adjacent rows into lines, pair lines into buttons (top border, bottom border)

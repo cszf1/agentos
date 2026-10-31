@@ -127,6 +127,10 @@ async function main() {
   assert.notEqual(process.getuid(), 0, "the drill must NOT run as root");
   if (phase === "source") {
     assert.equal(user, "alice");
+    // Explicit offline verification flow (§20.2): the operator checks the RTC against the trusted test host
+    // before asserting --trusted-time. Expiry/support fields are still verified; nothing changes their values.
+    const trustedNow = Number(process.argv[3]);
+    assert(Number.isSafeInteger(trustedNow) && Math.abs(Date.now() - trustedNow) < 120_000, "RTC is not trusted");
     fs.mkdirSync(work, { recursive: true, mode: 0o700 });
     for (const f of ["drill.mjs", "config.json", "manifest.json", "sbom.json", "v04"]) {
       fs.cpSync(path.join(here, f), path.join(work, f), { recursive: true });
@@ -143,9 +147,9 @@ async function main() {
     signed(path.join(work, "candidate.json"), candidate, privateKey);
     const pub = publicKey.export({ format: "der", type: "spki" }).subarray(-32).toString("hex");
     admin(["update", "trust-key", "--key-id", base.keyId, "--public-key", pub]);
-    admin(["update", "adopt-base", "--manifest", path.join(work, "base.json"), "--signature", path.join(work, "base.json.sig")]);
+    admin(["update", "adopt-base", "--manifest", path.join(work, "base.json"), "--signature", path.join(work, "base.json.sig"), "--trusted-time"]);
     const verified = admin(["update", "verify", "--manifest", path.join(work, "candidate.json"),
-      "--signature", path.join(work, "candidate.json.sig"), "--images", cfg.images, "--sbom", path.join(work, "sbom.json"), "--open"]);
+      "--signature", path.join(work, "candidate.json.sig"), "--images", cfg.images, "--sbom", path.join(work, "sbom.json"), "--trusted-time", "--open"]);
     assert.equal(verified.ok, true, JSON.stringify(verified));
     const updateId = verified.update.updateId;
     const cache = makeCache(base.baseClosurePath);

@@ -59,11 +59,25 @@ def last_json(log, key):
     assert hits, f"no {key} line on the console"
     return json.loads(hits[-1])
 
+def console_prompt(m, pattern, timeout):
+    # The console reader delivers complete lines, but a shell prompt has no trailing newline (m19 41217257273).
+    # Blank Enter is harmless on this autologin installer and flushes the prompt; do not wait 15 minutes for it.
+    end = time.time() + timeout
+    while time.time() < end:
+        m.send_console("\n")
+        try:
+            m.wait_for_console_text(pattern, timeout=10)
+            return
+        except Exception:
+            if m.process is not None and m.process.poll() is not None:
+                raise
+    raise AssertionError(f"installer prompt {pattern!r} did not appear")
+
 def iso_root_shell(m):
     # the installer's own autologin on the serial console it was booted with
-    m.wait_for_console_text(r"nixos@nixos", timeout=900)
+    console_prompt(m, r"nixos@nixos", timeout=900)
     m.send_console("sudo -i\n")
-    m.wait_for_console_text(r"root@nixos", timeout=120)
+    console_prompt(m, r"root@nixos", timeout=120)
     m.send_console("stty -echo; export TERM=dumb\n")
     time.sleep(1)
 
@@ -97,7 +111,7 @@ TOPBAR, NAVBG, PRIMARY = (0x1f, 0x29, 0x37), (0xf3, 0xf4, 0xf6), (0xdc, 0xe7, 0x
 
 def nav_buttons(img):
     w, h, _ = img
-    rows = [y for y in range(h) if max(px(img, 12, y)) < 0xc0 and max(px(img, 12, y)) - min(px(img, 12, y)) < 24]
+    rows = [y for y in range(h) if near(px(img, 3, y), NAVBG) and max(px(img, 12, y)) < 0xc0 and max(px(img, 12, y)) - min(px(img, 12, y)) < 24]
     lines = []
     for r in rows:
         if lines and r - lines[-1][1] <= 1: lines[-1][1] = r
@@ -180,7 +194,7 @@ def operator_phase(m, user, phase, marker, from_media=False, timeout=1200):
     if from_media:
         mount = "udisksctl mount -b /dev/disk/by-label/AOS-CARRY --no-user-interaction && "
         script = f"/run/media/{user}/AOS-CARRY/drill.mjs"
-    m.send_chars(f"{mount}{NODE} {script} {phase}\n", delay=0.03)
+    m.send_chars(f"{mount}{NODE} {script} {phase} {int(time.time() * 1000)}\n", delay=0.03)
     m.wait_for_text(marker, timeout=timeout)
     shot(m, "operator-" + user + "-" + phase)
 

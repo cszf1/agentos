@@ -123,6 +123,9 @@ with subtest("first boot on the console, a second workspace and a member to revo
     machine.wait_for_unit("greetd.service")
     ws = json.loads(machine.succeed("agentosctl status"))["workspaceList"][0]["workspaceId"]
     machine.wait_for_unit("agentos-broker.service")
+    # Cage takes VT1 when its backend starts. Let it finish before typing into VT3, otherwise the password
+    # can land in the greeter instead of login (the getty waited out its 60 s password timeout in 41218403903).
+    greeter_ready()
     tty_login(3, "alice", "alice-pw-1")
     # (members_lib.make_user works on tty1, which is the greeter here)
     p = call(3, [{"methodId": "machine.users.create", "idempotencyKey": str(uuid.uuid4()), "body": {"loginName": "bob", "role": "user", "password": "bob-pw-1"}}], "ubp")[0]
