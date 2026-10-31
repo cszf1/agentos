@@ -4,9 +4,10 @@
 # install leaves random: GPT disk/partition UUIDs (uuid5 of the toplevel), the ESP (zeroed, `mkfs --invariant` with a
 # derived volume id, files copied in sorted order at a fixed clock, no random seed). The LUKS2 volume key, salts and
 # UUID stay fresh per build (decisions 11, 48, 49; os/repro-explain-qcow2.py accepts only that). The LUKS container opens
-# with the public template key; first boot (agentos-disk-rekey) makes the operator set a real passphrase and
-# removes the template slot before machined may start. No machine identity, account or password is in the image.
-{ lib, pkgs, vmTools, qemu, system, installer, name ? "agentos-qcow2", diskGiB ? 64 }:
+# with the public template key; first boot (agentos-disk-rekey) makes the operator set a real passphrase, removes
+# every other slot, re-encrypts the (small, luksGiB) LUKS partition with a fresh volume key and grows it to the disk
+# before machined may start, so clones never share a volume key (review F01). No machine identity, account or password is in the image.
+{ lib, pkgs, vmTools, qemu, system, installer, name ? "agentos-qcow2", diskGiB ? 64, luksGiB ? 16 }:
 let
   vm = vmTools.override {
     rootModules = [ "virtio_pci" "virtio_mmio" "virtio_blk" "virtio_balloon" "virtio_rng" "ext4" "virtiofs" "crc32c"
@@ -38,7 +39,7 @@ vm.runInLinuxVM (pkgs.runCommand name {
   # no udev dm rules in the build VM: libdevmapper must not wait for udev cookies (it would wait forever)
   export DM_DISABLE_UDEV=1
   echo "build VM: $(nproc) cpus, $(free -m | awk '/Mem:/{print $2}') MiB; crypt: $(grep -c . /proc/crypto) lines; dm targets: $(dmsetup targets 2>&1 | tr '\n' ' ')"
-  export AGENTOS_SYSTEM=${system} AGENTOS_INSTALL_ALLOW_PATH=1 AGENTOS_INSTALL_TEMPLATE_BUILD=1
+  export AGENTOS_SYSTEM=${system} AGENTOS_INSTALL_ALLOW_PATH=1 AGENTOS_INSTALL_TEMPLATE_BUILD=1 AGENTOS_TEMPLATE_LUKS_GIB=${toString luksGiB}
   plan=$(agentos-install plan --disk /dev/vda --template --timezone UTC)
   echo "$plan"
   ph=$(echo "$plan" | jq -r .planHash)

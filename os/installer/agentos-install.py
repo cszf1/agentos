@@ -194,6 +194,13 @@ def cmd_plan(args):
         if not os.environ.get("AGENTOS_INSTALL_TEMPLATE_BUILD"):
             raise Refuse("--template is only for the qcow2 image build")
         plan["template"] = True
+        # review F01: only the template's LUKS partition is re-encrypted with a fresh volume key at first boot, so it
+        # is kept small and grown to the whole disk afterwards (agentos-disk-rekey)
+        gib = int(os.environ.get("AGENTOS_TEMPLATE_LUKS_GIB", "16"))
+        if not 4 <= gib <= 60:
+            raise Refuse("template LUKS size must be 4..60 GiB")
+        plan["layout"] = dict(plan["layout"], luks2=f"{gib} GiB (template; grown to the disk at first boot)")
+        plan["templateLuksGiB"] = gib
     st = {"state": "plan_ready", "plan": plan, "planHash": phash(plan), "updatedAt": time.time()}
     save(st)
     return {"planHash": st["planHash"], "plan": plan, "confirmWith": "type the disk serial (or WWN when there is no serial)"}
@@ -326,7 +333,8 @@ def cmd_run(args):
         sh("wipefs", "-a", dev)
         sh("sgdisk", "--zap-all", dev)
         ids = ["-U", tpl_uuid("disk"), "-u", f"1:{tpl_uuid('esp')}", "-u", f"2:{tpl_uuid('luks')}"] if st["plan"].get("template") else []
-        sh("sgdisk", "-n1:1MiB:+2GiB", "-t1:ef00", "-c1:agentos-esp", "-n2:0:0", "-t2:8309", "-c2:agentos-luks", *ids, dev)
+        luks_end = f"+{int(st['plan']['templateLuksGiB'])}GiB" if st["plan"].get("template") else "0"
+        sh("sgdisk", "-n1:1MiB:+2GiB", "-t1:ef00", "-c1:agentos-esp", f"-n2:0:{luks_end}", "-t2:8309", "-c2:agentos-luks", *ids, dev)
         sh("partprobe", dev, check=False)
         sh("udevadm", "settle")
         wait_for(part(dev, 1))
