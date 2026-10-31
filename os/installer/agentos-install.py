@@ -2,13 +2,20 @@
 """AgentOS offline installer (spec §19.2–19.4, V1-U01/U02).
 
 States: inspecting → plan_ready → confirmed → partitioning → copying → configuring → verifying → installed.
-Failures keep the state and step in /run/agentos-install/state.json (and, after partitioning, on the target ESP).
+Failures keep the state and step in /run/agentos-install/state.json and, once the target is partitioned, in
+EFI/agentos/install-state.json on the target's ESP, which survives a power cut (review F05). After a reboot from the
+install medium `recover` reads it without writing anything; `recover --resume` adopts it only when the disk's stable
+identity (serial or WWN; for a disk without either, model + size + the install id on its ESP and no second disk
+carrying that id) still matches. major:minor numbers are never used as an identity across boots.
 
   agentos-install inspect                                  candidate disks (JSON)
   agentos-install plan --disk /dev/disk/by-id/X [--timezone Asia/Taipei]
   agentos-install confirm --plan-hash H --serial SERIAL    the local user types the disk serial (or WWN) shown
   agentos-install run --passphrase-stdin                   partition → copy → configure → verify → installed
   agentos-install status
+  agentos-install recover --disk /dev/disk/by-id/X [--resume]   after a power cut: read the install state kept on
+                                                           the target's ESP (read-only); --resume adopts it so `run`
+                                                           continues (review F05)
 
 The plan binds WWN/serial, major:minor, size, the partition-table digest and the install-medium identity. Before the
 first destructive write every value is read again; the install medium itself, a mounted/swap/held device, a
@@ -172,6 +179,15 @@ def identity(d):
     return {k: d[k] for k in ["serial", "wwn", "majMin", "sizeBytes", "partitionTableDigest", "model"]}
 
 
+STABLE = ["serial", "wwn", "sizeBytes", "model"]   # what may be compared across boots (never majMin)
+
+
+def confirm_token(ident):
+    """What the local user types to confirm the target: its serial, else its WWN; a disk with neither has no stable
+    hardware identity, so the user types its exact size (the plan shows it) behind an explicit marker."""
+    return ident["serial"] or ident["wwn"] or f"no-serial:{ident['sizeBytes']}"
+
+
 def cmd_plan(args):
     disk = args["--disk"]
     if not disk.startswith("/dev/disk/by-id/") and not os.environ.get("AGENTOS_INSTALL_ALLOW_PATH"):
@@ -185,6 +201,7 @@ def cmd_plan(args):
             raise Refuse("bad timezone")
     plan = {"formatVersion": 1, "disk": disk, "identity": identity(d), "medium": medium_identity(), "timezone": tz, "system": SYSTEM,
             "erase": "the whole disk", "layout": {"esp": "2 GiB", "luks2": "rest", "btrfs": SUBVOLS}, "installId": str(uuid.uuid4())}
+    plan["confirmToken"] = confirm_token(plan["identity"])
     if "--template" in args:
         # the template is one image for many machines and must build bit for bit the same from the same inputs
         # (V1-O09): every identifier the installer draws itself is derived from the release toplevel instead
@@ -203,7 +220,7 @@ def cmd_plan(args):
         plan["templateLuksGiB"] = gib
     st = {"state": "plan_ready", "plan": plan, "planHash": phash(plan), "updatedAt": time.time()}
     save(st)
-    return {"planHash": st["planHash"], "plan": plan, "confirmWith": "type the disk serial (or WWN when there is no serial)"}
+    return {"planHash": st["planHash"], "plan": plan, "confirmWith": f"type {plan['confirmToken']} (the disk serial, else its WWN, else no-serial:<size in bytes>)"}
 
 
 def cmd_confirm(args):
@@ -212,8 +229,7 @@ def cmd_confirm(args):
         raise Refuse(f"state is {st['state']}")
     if args["--plan-hash"] != st["planHash"]:
         raise Refuse("plan hash does not match the plan on screen")
-    ident = st["plan"]["identity"]
-    want = ident["serial"] or ident["wwn"] or ident["majMin"]
+    want = st["plan"].get("confirmToken") or confirm_token(st["plan"]["identity"])
     if args["--serial"] != want:
         raise Refuse("typed serial does not match the target disk")
     st["state"] = "confirmed"
@@ -245,12 +261,49 @@ def wait_for(p, t=30):
     raise Refuse(f"{p} did not appear")
 
 
+ESP_STATE = "EFI/agentos/install-state.json"
+
+
+def esp_write_state(st):
+    """Keep the install state on the target ESP from partitioning on (review F05): /run is gone after a power cut.
+    No secret is in it (the passphrase never is). The template build keeps none (its ESP must be reproducible)."""
+    if st["plan"].get("template"):
+        return
+    dev = os.path.realpath(st["plan"]["disk"])
+    esp = part(dev, 1)
+    if not os.path.exists(esp):
+        return
+    body = json.dumps({"formatVersion": 1, "kind": "agentos-install-state", **{k: st[k] for k in st if k not in ("lastError",)}}, indent=1)
+    mounted_here = subprocess.run(["mountpoint", "-q", f"{MNT}/boot"]).returncode == 0
+    root = f"{MNT}/boot" if mounted_here else "/run/agentos-install/esp"
+    if not mounted_here:
+        os.makedirs(root, exist_ok=True)
+        if subprocess.run(["mount", esp, root], capture_output=True).returncode != 0:
+            return
+    try:
+        os.makedirs(f"{root}/EFI/agentos", exist_ok=True)
+        tmp = f"{root}/{ESP_STATE}.tmp"
+        with open(tmp, "w") as f:
+            f.write(body)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, f"{root}/{ESP_STATE}")
+        fd = os.open(f"{root}/EFI/agentos", os.O_RDONLY)
+        os.fsync(fd)
+        os.close(fd)
+    finally:
+        if not mounted_here:
+            subprocess.run(["umount", root])
+
+
 def step(st, name):
     progress(f"state {name}")
     st["state"] = name
     st["step"] = name
     st["updatedAt"] = time.time()
     save(st)
+    if name in ("copying", "configuring", "verifying"):
+        esp_write_state(st)
     if os.environ.get("AGENTOS_FAULT_POINT") == f"install.{name}":
         os.kill(os.getpid(), 9)
 
@@ -338,6 +391,8 @@ def cmd_run(args):
         sh("partprobe", dev, check=False)
         sh("udevadm", "settle")
         wait_for(part(dev, 1))
+        st["gptLabelId"] = gpt_label_id(dev)
+        save(st)
         sh("mkfs.vfat", "-F", "32", "-n", "AGENTOS-ESP", part(dev, 1))
         sh("mkdir", "-p", "/run/agentos-install/esp")
         sh("mount", part(dev, 1), "/run/agentos-install/esp")
@@ -347,6 +402,7 @@ def cmd_run(args):
             f.flush()
             os.fsync(f.fileno())
         sh("umount", "/run/agentos-install/esp")
+        esp_write_state(st)
         kdf = ["--pbkdf", "argon2id"]
         if st["plan"].get("template"):
             # the template key is public and first boot replaces this slot: no benchmark (fixed small cost) so the
@@ -427,9 +483,86 @@ def cmd_run(args):
             raise Refuse("verification failed: " + "; ".join(problems))
         if st["plan"].get("template"):
             normalize_template_esp(dev)
+        elif os.path.exists(f"{MNT}/boot/{ESP_STATE}"):
+            os.remove(f"{MNT}/boot/{ESP_STATE}")
         sh("sync")
         step(st, "installed")
     return {"state": "installed", "installId": st["plan"]["installId"], "hardwareConfigHash": st.get("hardwareConfigHash")}
+
+
+def esp_read(dev):
+    """Read-only look at a disk's ESP: (marker, state) or (None, None). Mounted ro; nothing is written."""
+    esp = part(dev, 1)
+    if not os.path.exists(esp):
+        return None, None
+    mp = f"/run/agentos-install/ro-{os.path.basename(dev)}"
+    os.makedirs(mp, exist_ok=True)
+    if subprocess.run(["mount", "-o", "ro", esp, mp], capture_output=True).returncode != 0:
+        return None, None
+    try:
+        def rd(p):
+            try:
+                return json.load(open(f"{mp}/{p}"))
+            except Exception:
+                return None
+        return rd("EFI/agentos/install.json"), rd(ESP_STATE)
+    finally:
+        subprocess.run(["umount", mp])
+
+
+def gpt_label_id(dev):
+    for line in sh("sfdisk", "--dump", dev, check=False).splitlines():
+        if line.startswith("label-id:"):
+            return line.split(":", 1)[1].strip()
+    return ""
+
+
+def cmd_recover(args):
+    disk = args.get("--disk")
+    if not disk:
+        raise Refuse("recover needs --disk /dev/disk/by-id/…")
+    if not disk.startswith("/dev/disk/by-id/") and not os.environ.get("AGENTOS_INSTALL_ALLOW_PATH"):
+        raise Refuse("name the target by /dev/disk/by-id/…")
+    cur = find(disk)
+    marker, st = esp_read(cur["path"])
+    found = {"disk": cur["path"], "marker": marker is not None, "state": (st or {}).get("state"), "installId": (marker or {}).get("installId")}
+    if "--resume" not in args:
+        return {"recover": found, "readOnly": True}
+    if not marker or not st or st.get("kind") != "agentos-install-state":
+        raise Refuse("no interrupted AgentOS install on this disk (no install state on its ESP); start a new plan")
+    if st.get("state") not in ("copying", "configuring", "verifying"):
+        raise Refuse(f"the install state on this disk is {st.get('state')}; nothing to resume")
+    if marker.get("installId") != st["plan"]["installId"] or marker.get("planHash") != st.get("planHash"):
+        raise Refuse("the ESP marker and the install state disagree; refusing")
+    want = st["plan"]["identity"]
+    now = identity(cur)
+    for k in STABLE:
+        if now[k] != want[k]:
+            raise Refuse(f"this is not the planned disk ({k} differs); refusing")
+    if not st.get("gptLabelId") or gpt_label_id(cur["path"]) != st["gptLabelId"]:
+        raise Refuse("this disk's partition table is not the one this install wrote (GPT label id differs); refusing")
+    # without serial/WWN the ESP install id is what tells same-model disks apart: it must be on exactly one disk
+    carriers = []
+    for d in disks():
+        if d["path"] != cur["path"] and any(p.startswith(("mounted", "install medium", "held")) for p in d["problems"]):
+            continue
+        m, _ = esp_read(d["path"]) if d["path"] != cur["path"] else (marker, None)
+        if m and m.get("installId") == marker["installId"]:
+            carriers.append(d["path"])
+    if carriers != [cur["path"]]:
+        raise Refuse(f"install id {marker['installId']} is on {len(carriers)} disks ({', '.join(carriers)}); cannot tell which one to resume")
+    bad = [p for p in cur["problems"] if not p.startswith("smaller")]
+    if bad:
+        raise Refuse(f"target refused now: {'; '.join(bad)}")
+    if medium_identity() != st["plan"]["medium"]:
+        raise Refuse("this is not the install medium the plan was made with")
+    st.pop("kind", None)
+    st.pop("formatVersion", None)
+    st["plan"]["identity"] = dict(want, majMin=now["majMin"])
+    st["plan"]["disk"] = disk   # this boot's numbers; never compared across boots
+    st["recoveredAt"] = time.time()
+    save(st)
+    return {"recover": found, "readOnly": False, "state": st["state"], "next": "agentos-install run --passphrase-stdin"}
 
 
 def main():
@@ -454,6 +587,8 @@ def main():
             out = cmd_confirm(args)
         elif cmd == "run":
             out = cmd_run(args)
+        elif cmd == "recover":
+            out = cmd_recover(args)
         elif cmd == "status":
             out = load()
         else:

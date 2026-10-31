@@ -16,13 +16,16 @@ in
 pkgs.testers.runNixOSTest {
   name = "agentos-m6-install";
   nodes.machine = { lib, ... }: {
-    virtualisation = { memorySize = 3072; cores = 2; diskSize = 8192; emptyDiskImages = [ 65536 1024 ]; writableStore = true; };
+    virtualisation = { memorySize = 3072; cores = 2; diskSize = 8192; emptyDiskImages = [ 65536 1024 65536 ]; writableStore = true; };
     virtualisation.additionalPaths = [ top ];
     environment.systemPackages = [ installer pkgs.jq pkgs.gptfdisk pkgs.cryptsetup pkgs.btrfs-progs ];
     networking.useDHCP = false;
     networking.interfaces = lib.mkForce { };
     nix.settings.substituters = lib.mkForce [ ];
     boot.supportedFilesystems = [ "btrfs" "vfat" ];
+    # the ISO's medium identity file (os/flake.nix); without it the installer falls back to the boot id, which is
+    # not an install medium identity across a power cut
+    environment.etc."agentos-install-medium.json".text = builtins.toJSON { system = toString top; test = "m6-install"; };
   };
   testScript = ''
     import json, os, shutil
@@ -78,7 +81,10 @@ pkgs.testers.runNixOSTest {
 
     with subtest("identity change between plan and run is refused; nothing written (U02)"):
         p = inst("plan --disk /dev/vdb --timezone Asia/Taipei")
-        serial = p["plan"]["identity"]["serial"] or p["plan"]["identity"]["wwn"] or p["plan"]["identity"]["majMin"]
+        serial = p["plan"]["confirmToken"]
+        # review F05: a virtio disk without serial/WWN is confirmed by its exact size, never by major:minor
+        assert not p["plan"]["identity"]["serial"] and serial == f"no-serial:{p['plan']['identity']['sizeBytes']}", p["plan"]
+        assert p["plan"]["identity"]["majMin"] not in serial
         inst(f"confirm --plan-hash sha256:{'0'*64} --serial {serial}", ok=False)
         inst(f"confirm --plan-hash {p['planHash']} --serial wrong", ok=False)
         inst(f"confirm --plan-hash {p['planHash']} --serial {serial}")
@@ -87,6 +93,46 @@ pkgs.testers.runNixOSTest {
         assert "changed" in v["error"], v
         machine.succeed("test $(sgdisk -p /dev/vdb | grep -c '^ *[0-9]') -eq 1")  # only the foreign partition
         machine.succeed("sgdisk --zap-all /dev/vdb")
+
+    with subtest("power cut during copying: after a reboot from the install medium the state is read back from the target ESP, wrong disks are refused, an explicit recover resumes (U02, review F05)"):
+        p = inst("plan --disk /dev/vdb --timezone Asia/Taipei")
+        inst(f"confirm --plan-hash {p['planHash']} --serial {p['plan']['confirmToken']}")
+        iid = p["plan"]["installId"]
+        machine.fail("printf 'correct horse battery' | AGENTOS_INSTALL_ALLOW_PATH=1 AGENTOS_FAULT_POINT=install.copying agentos-install run --passphrase-stdin")
+        machine.crash()                      # power cut: no unmount, no sync, /run is gone
+        machine.start()
+        machine.wait_for_unit("multi-user.target")
+        assert inst("status")["state"] == "inspecting"      # nothing left in /run
+        before = machine.succeed("sha256sum /dev/vdb1 | cut -d' ' -f1; sgdisk -p /dev/vdb | sha256sum").strip()
+        r = inst("recover --disk /dev/vdb")                  # read-only look
+        assert r["readOnly"] and r["recover"]["state"] == "copying" and r["recover"]["installId"] == iid, r
+        assert machine.succeed("sha256sum /dev/vdb1 | cut -d' ' -f1; sgdisk -p /dev/vdb | sha256sum").strip() == before, "recover inspection wrote to the disk"
+        assert inst("status")["state"] == "inspecting"
+        # wrong disks: an empty same-model/same-size disk without serial, the small disk, the system disk
+        v = inst("recover --disk /dev/vdd --resume", ok=False)
+        assert "no interrupted AgentOS install" in v["error"], v
+        inst("recover --disk /dev/vdc --resume", ok=False)
+        inst("recover --disk /dev/vda --resume", ok=False)
+        # a disk with existing partitions and a foreign AgentOS-looking ESP (another install id) is refused
+        machine.succeed("sgdisk -n1:1MiB:+64MiB -t1:ef00 -c1:agentos-esp /dev/vdd && mkfs.vfat /dev/vdd1 && mkdir -p /tmp/e && mount /dev/vdd1 /tmp/e && mkdir -p /tmp/e/EFI/agentos && echo '{\"installId\":\"someone-else\"}' > /tmp/e/EFI/agentos/install.json && umount /tmp/e")
+        v = inst("recover --disk /dev/vdd --resume", ok=False)
+        assert "no interrupted AgentOS install" in v["error"], v
+        # same model, same size, no serial, and a byte copy of our ESP (same install id on two disks): ambiguous
+        machine.succeed("sgdisk --zap-all /dev/vdd && sgdisk -n1:1MiB:+2GiB -t1:ef00 -c1:agentos-esp /dev/vdd && dd if=/dev/vdb1 of=/dev/vdd1 bs=4M status=none && sync")
+        v = inst("recover --disk /dev/vdd --resume", ok=False)
+        print("clone refused:", v["error"])
+        v = inst("recover --disk /dev/vdb --resume", ok=False)
+        assert "2 disks" in v["error"], v
+        machine.succeed("sgdisk --zap-all /dev/vdd && wipefs -a /dev/vdd")
+        # the explicit entry adopts the state from the ESP; run then continues on the same disk
+        r = inst("recover --disk /dev/vdb --resume")
+        assert not r["readOnly"] and r["state"] == "copying", r
+        v = inst("run --passphrase-stdin", stdin="correct horse battery")
+        assert v["state"] == "installed" and v["installId"] == iid, v
+        machine.fail("test -e /mnt/boot/EFI/agentos/install-state.json")   # cleared once installed
+        machine.succeed("test -s /mnt/etc/agentos/install.json")
+        machine.succeed("sync; umount -R /mnt; cryptsetup close agentos-root")
+        machine.succeed("sgdisk --zap-all /dev/vdb && wipefs -a /dev/vdb")
 
     with subtest("a crash during copying resumes on the same disk only (U02)"):
         p = inst("plan --disk /dev/vdb --timezone Asia/Taipei")

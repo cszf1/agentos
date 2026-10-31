@@ -43,7 +43,7 @@ vm.runInLinuxVM (pkgs.runCommand name {
   plan=$(agentos-install plan --disk /dev/vda --template --timezone UTC)
   echo "$plan"
   ph=$(echo "$plan" | jq -r .planHash)
-  ser=$(echo "$plan" | jq -r '.plan.identity | (if .serial != "" then .serial elif .wwn != "" then .wwn else .majMin end)')
+  ser=$(echo "$plan" | jq -r '.plan.confirmToken')
   agentos-install confirm --plan-hash "$ph" --serial "$ser"
   agentos-install run --passphrase-stdin < ${../modules/template-disk.key}
   test -z "$(ls -A /mnt/var/lib/agentos-machine 2>/dev/null)"
