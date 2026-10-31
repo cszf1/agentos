@@ -51,6 +51,13 @@
       ];
       # qcow2: the SAME release toplevel installed by the SAME installer onto a blank template disk (spec §19.1).
       qcow2 = pkgs.callPackage ./packages/qcow2.nix { system = toplevel; installer = installerPkg; qemu = pkgs.qemu-utils; };
+      # V1-U11: an earlier v1.0 commit (32ea4db: same machine/workspace/broker schemas and lockfiles as the head, before
+      # the W09/O03 code fixes) whose AgentOS programs the m7 older generation boots. Fetched by fixed revision.
+      olderAgentos = pkgs.agentos-older (builtins.fetchGit {
+        url = "https://github.com/cszf1/agentos.git";
+        ref = "refs/heads/v1.0";
+        rev = "32ea4dbafb0c8679a8b3ce2ca795c18f6c86478e";
+      });
       test = name: file: extra: import file ({ inherit pkgs; modules = [ ./modules/base.nix ./modules/agentos.nix ]; } // extra);
     in {
       packages.${system} = {
@@ -77,7 +84,7 @@
         m3-members = test "m3" ./tests/m3-members.nix { };
         m6-install = import ./tests/m6-install.nix { inherit pkgs releaseModules nixpkgs; mkSystem = mk; };
         m6-qcow2 = import ./tests/m6-qcow2.nix { inherit pkgs releaseModules nixpkgs; mkSystem = mk; };
-        m7-update = test "m7" ./tests/m7-update.nix { };
+        m7-update = test "m7" ./tests/m7-update.nix { older = olderAgentos; };
         m8-backup = test "m8" ./tests/m8-backup.nix { };
         m9-restore = test "m9" ./tests/m9-restore.nix { };
         m10-sched = test "m10" ./tests/m10-sched.nix { };

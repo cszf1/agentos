@@ -276,6 +276,12 @@ with subtest("commit window: a crash after the intent or after the default resol
     OLDGEN = machine.succeed(f"readlink -f {NEWGEN}/specialisation/oldgen").strip()
     assert OLDGEN.startswith("/nix/store/") and OLDGEN != NEWGEN, (OLDGEN, NEWGEN)
     machine.succeed(f"test -e {OLDGEN}/etc/agentos-oldgen-only && test ! -e {NEWGEN}/etc/agentos-oldgen-only")
+    # the older generation runs the AgentOS programs of an earlier v1.0 commit (U11): other native and Host builds
+    NEWPROG = machine.succeed(f"cat {NEWGEN}/etc/agentos-programs").split()
+    OLDPROG = machine.succeed(f"cat {OLDGEN}/etc/agentos-programs").split()
+    print("AgentOS programs, newer:", NEWPROG, "older:", OLDPROG)
+    assert len(OLDPROG) == 2 and OLDPROG[0] != NEWPROG[0] and OLDPROG[1] != NEWPROG[1], (NEWPROG, OLDPROG)
+    machine.succeed(f"grep -q '{OLDPROG[0]}/bin/agentos-machined' {OLDGEN}/etc/systemd/system/agentos-machine.service")
     machine.succeed("cat > /root/mcall.py <<'PY'\nimport json, socket, struct, sys\ns = socket.socket(socket.AF_UNIX); s.connect('/run/agentos/machine/machine.sock')\nb = json.dumps({'op': sys.argv[1], 'args': json.loads(sys.argv[2])}).encode()\ns.sendall(struct.pack('>I', len(b)) + b)\nn = struct.unpack('>I', s.recv(4, socket.MSG_WAITALL))[0]\nprint(s.recv(n, socket.MSG_WAITALL).decode())\nPY")
     def mcall(op, args):
         return json.loads(machine.succeed(f"python3 /root/mcall.py {op} '{json.dumps(args)}'"))
@@ -420,6 +426,10 @@ with subtest("rollback boots the older registered entry: records stay readable; 
     assert machine.succeed("readlink -f /run/current-system").strip() == OLDGEN, machine.succeed("readlink -f /run/current-system")
     assert machine.succeed("cat /etc/agentos-generation").strip() == "oldgen"
     machine.succeed("test -e /etc/agentos-oldgen-only")
+    # and the older AgentOS code is what serves: machined's running binary comes from the earlier commit's build
+    exe = machine.succeed("readlink -f /proc/$(systemctl show -p MainPID --value agentos-machine.service)/exe").strip()
+    print("machined after the rollback:", exe)
+    assert exe.startswith(OLDPROG[0] + "/"), (exe, OLDPROG)
     machine.wait_for_unit("agentos-update-reconcile.service")
     assert msql(f"SELECT group_concat(seq || ':' || kind || ':' || outcome, ',') FROM root_audit WHERE seq > {seq_a} AND seq <= {newgen_rows.split(',')[-1].split(':')[0]}") == newgen_rows
     st = json.loads(machine.succeed("agentosctl status"))

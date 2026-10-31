@@ -2,8 +2,8 @@
 { config, lib, pkgs, ... }:
 let
   cfg = config.agentos;
-  native = pkgs.agentos-native;
-  node = pkgs.agentos-node;
+  native = cfg.nativePackage;
+  node = cfg.nodePackage;
   shell = pkgs.agentos-shell;
   sysPath = lib.makeBinPath (with pkgs; [ shadow util-linux systemd coreutils podman ]);
   swayConfig = pkgs.writeText "agentos-sway.conf" ''
@@ -52,6 +52,9 @@ in {
       type = lib.types.nullOr lib.types.package; default = null;
       description = "approved OCI images (pkgs.agentos-oci) imported into each workspace's rootless storage instead of being built online; the release sets it";
     };
+    # The AgentOS programs of this generation. Only m7's U11 older generation overrides them (an earlier v1.0 commit).
+    nativePackage = lib.mkOption { type = lib.types.package; default = pkgs.agentos-native; description = "machined, gateway, broker, workers, agentosctl"; };
+    nodePackage = lib.mkOption { type = lib.types.package; default = pkgs.agentos-node; description = "Host, admin tools, runtime adapter"; };
     softwareRendering = lib.mkOption { type = lib.types.bool; default = false; description = "pixman/software rendering for virtual GPUs (QEMU profile)"; };
   };
 
