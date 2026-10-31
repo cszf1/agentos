@@ -49,6 +49,9 @@ jobs:
         test: ${{ fromJSON(needs.plan.outputs.tests) }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # review F16: the history layer of build-audit scans every commit object, so that job needs the full clone
+          fetch-depth: ${{ matrix.test == 'build-audit' && '0' || '1' }}
 
       - name: Free disk space
         run: |
@@ -159,6 +162,19 @@ jobs:
           fi
           echo "commit $GITHUB_SHA" | tee -a "$RUNNER_TEMP/build-$A.log"
           find -L "$RUNNER_TEMP"/out-$A* -maxdepth 3 -type f \( -name '*.iso' -o -name '*.qcow2' \) -exec sha256sum {} \; | tee -a "$RUNNER_TEMP/build-$A.log"
+
+      - name: Layered release audit (review F16)
+        if: ${{ matrix.test == 'build-audit' }}
+        run: |
+          set -o pipefail
+          git fetch --no-tags origin '+refs/heads/*:refs/remotes/origin/*' || true
+          REL=$(cd os && nix build .#agentos-release --print-out-paths --no-link)
+          NIXPKGS_ALLOW_INSECURE=1 nix shell --impure nixpkgs#gitleaks nixpkgs#cargo-audit nixpkgs#pnpm nixpkgs#nodejs_24 nixpkgs#jq nixpkgs#openssl --inputs-from ./os -c \
+            bash os/audit-layers.sh "$RUNNER_TEMP/out-agentos-audit" "$REL" "$RUNNER_TEMP/audit" 2>&1 | tee "$RUNNER_TEMP/audit-layers.log"
+          rc=${PIPESTATUS[0]}
+          cp "$RUNNER_TEMP"/audit/*.json "$RUNNER_TEMP/" || true
+          echo "commit $GITHUB_SHA" | tee -a "$RUNNER_TEMP/audit-layers.log"
+          exit $rc
 
       - name: Upload logs
         if: always()

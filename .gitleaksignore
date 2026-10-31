@@ -1,0 +1,3 @@
+# review F16: reviewed gitleaks findings that are not secrets (full-history scan, os/audit-layers.sh)
+# an idempotency key (a fixed UUID) in a recovery test, not a credential
+3c87ce5a3960baca40122265b870c6a8bc0bdf13:tests/recovery/v02-recovery.test.ts:generic-api-key:192
