@@ -138,7 +138,13 @@ in {
     # (greetd runs the command as "exec <command>" under /bin/sh, so the defaults step and the greeter are one script)
     services.greetd.settings.default_session.command = lib.mkIf cfg.graphical (lib.mkForce "${pkgs.writeShellScript "agentos-greeter" ''
       ${greeterDefaults}
-      exec ${pkgs.dbus}/bin/dbus-run-session ${lib.getExe pkgs.cage} ${lib.escapeShellArgs config.programs.regreet.cageArgs} -- ${lib.getExe config.programs.regreet.package}
+      # not exec: when the greeter ends, its exit status and last words reach the journal (m5 41208155307: the first
+      # greeter died silently and ReGreet never came back)
+      ${pkgs.dbus}/bin/dbus-run-session ${lib.getExe pkgs.cage} ${lib.escapeShellArgs config.programs.regreet.cageArgs} -- ${lib.getExe config.programs.regreet.package} 2>&1 \
+        | ${pkgs.util-linux}/bin/logger -t agentos-greeter
+      rc=''${PIPESTATUS[0]}
+      ${pkgs.util-linux}/bin/logger -t agentos-greeter "greeter ended rc=$rc"
+      exit "$rc"
     ''}");
     services.greetd.enable = cfg.graphical;
     programs.regreet.enable = cfg.graphical;

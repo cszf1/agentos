@@ -66,8 +66,17 @@ def greetd_session(user="alice"):
             return f[0]
     return None
 
+def greeter_diag():
+    print(machine.execute("ps -eo pid,user,comm,args | grep -iE 'greet|cage|regreet' | grep -v grep; ls -la /var/lib/regreet /var/log/regreet; "
+                          "cat /var/lib/regreet/state.toml; tail -40 /var/log/regreet/log; journalctl -b --no-pager -o short-monotonic "
+                          "-u greetd -t agentos-greeter -t agentos-greeter-defaults | tail -60")[1])
+
 def greeter_ready():
-    machine.wait_until_succeeds("pgrep -x regreet", timeout=120)
+    try:
+        machine.wait_until_succeeds("pgrep -x regreet || pgrep -f bin/regreet", timeout=120)
+    except BaseException:
+        greeter_diag()
+        raise
     machine.wait_until_succeeds("grep -qx tty1 /sys/class/tty/tty0/active", timeout=60)
     time.sleep(8)
 

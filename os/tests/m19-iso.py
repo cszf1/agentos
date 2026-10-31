@@ -210,6 +210,7 @@ with subtest("evidence from the installed disk, read by a second ISO boot: unloc
         "hostStarted": f"{J} | grep -c 'Started AgentOS Host for workspace'",
         "shellStarted": f"{J} | grep -cE 'agentos-session-agent|agentos-shell'",
         "passwordInJournal": f"{J} | grep -c 'alice-pw-1'",
+        "rootLocked": "awk -F: '$1==\"root\" && substr($2,1,1)==\"!\"' /ev/etc/shadow | grep -c .",
         "luksKeyslots": "cryptsetup luksDump /dev/disk/by-partlabel/agentos-luks | grep -cE '^ +[0-9]+: luks2'",
     }
     ev = {}
@@ -221,6 +222,7 @@ with subtest("evidence from the installed disk, read by a second ISO boot: unloc
     assert ev["regreetLast"] == 1 and ev["regreetSession"] == 1, ev
     assert ev["hostStarted"] >= 1, ev
     assert ev["passwordInJournal"] == 0 and ev["luksKeyslots"] == 1, ev
+    assert ev["rootLocked"] == 1, ev                            # the installed release: root locked (O09, decision 80)
     run(iso2, "umount /ev; cryptsetup close agentos-root; true", "close")
     iso2.send_console("poweroff\n")
     powered_off(iso2, 120)
