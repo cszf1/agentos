@@ -212,6 +212,18 @@ with subtest("a commit behind a failing health gate leaves the persistent defaul
     v = json.loads(out.strip().splitlines()[-1])
     assert not v["ok"] and v["error"]["code"] == "NEEDS_ATTENTION" and "greeter_frame" in v["error"]["message"], v
     assert machine.succeed(f"tail -c +5 {efi} | tr -d '\\000'").strip() == before
+    # review R2-2: a broker in diagnostics-only mode (log lost) keeps its socket and an active unit; the commit is
+    # still refused and names the broker's own readiness answer
+    machine.succeed("systemctl stop agentos-broker.path agentos-broker.service; mkdir -p /root/broker-keep; mv /var/lib/agentos-broker/broker.sqlite* /root/broker-keep/")
+    machine.succeed("systemctl start agentos-broker.service")
+    machine.wait_until_succeeds("journalctl -u agentos-broker -b --no-pager | grep -q 'diagnostics-only mode'", timeout=60)
+    machine.succeed("systemctl is-active agentos-broker.service && test -S /run/agentos-broker/broker.sock")
+    rc, out = machine.execute(f"{UW} commit --release-id {GOOD} --health-gate --state-dir /var/lib/agentos-machine")
+    print(out)
+    v = json.loads(out.strip().splitlines()[-1])
+    assert not v["ok"] and v["error"]["code"] == "NEEDS_ATTENTION" and "broker_identity" in v["error"]["message"] and "diagnostics-only" in v["error"]["message"], v
+    assert machine.succeed(f"tail -c +5 {efi} | tr -d '\\000'").strip() == before
+    machine.succeed("systemctl stop agentos-broker.service; mv /root/broker-keep/broker.sqlite* /var/lib/agentos-broker/; systemctl start agentos-broker.service agentos-broker.path")
 
 with subtest("power cut at every ESP publish point leaves only the complete old entries or a complete candidate; known-good still boots (U07)"):
     NEW = "dddddddd-dddd-4ddd-8ddd-dddddddddddd"

@@ -141,6 +141,31 @@ with subtest("health gate: false ready, SSH only, no Qt frame and an incompatibl
     machine.succeed("mv /run/agentos-broker/broker.sock.hidden /run/agentos-broker/broker.sock")
     print(r3)
     assert r3["healthy"] is False and "broker_identity" in json.dumps(r3["failing"]), r3
+    # review R2-2: the broker in diagnostics-only mode (its log lost) keeps its socket and its unit active, and must
+    # still fail the gate: readiness is read through the broker protocol (broker-health), not from the socket
+    machine.succeed("systemctl stop agentos-broker.path agentos-broker.service; mkdir -p /root/broker-keep; mv /var/lib/agentos-broker/broker.sqlite* /root/broker-keep/")
+    machine.succeed("systemctl start agentos-broker.service")
+    machine.wait_until_succeeds("journalctl -u agentos-broker -b --no-pager | grep -q 'diagnostics-only mode'", timeout=60)
+    machine.succeed("systemctl is-active agentos-broker.service && test -S /run/agentos-broker/broker.sock")
+    r5 = gate()
+    print("diagnostics-only broker", r5)
+    assert r5["healthy"] is False and "broker_identity" in json.dumps(r5["failing"]) and "diagnostics-only" in json.dumps(r5["failing"]), r5
+    machine.succeed("systemctl stop agentos-broker.service; mv /root/broker-keep/broker.sqlite* /var/lib/agentos-broker/; systemctl start agentos-broker.service agentos-broker.path")
+    machine.wait_for_unit("agentos-broker.service")
+    # review R2-2: greetd active is not a frame: the greeter session on seat0 must have a compositor answering. Hide the
+    # greeter's Wayland socket (greetd and the session stay up) and the gate fails on greeter_frame.
+    gs = machine.succeed("{ for s in $(loginctl list-sessions --no-legend | awk '{print $1}'); do [ \"$(loginctl show-session $s -p Class --value)\" = greeter ] && loginctl show-session $s -p User --value; done; true; } | head -1").strip()
+    print("greeter uid", gs)
+    assert gs, machine.succeed("loginctl list-sessions")
+    socks = machine.succeed(f"ls /run/user/{gs} | grep '^wayland-[0-9]*$'").split()
+    for w in socks:
+        machine.succeed(f"mv /run/user/{gs}/{w} /run/user/{gs}/hidden-{w}")
+    machine.succeed("systemctl is-active greetd.service")
+    r6 = gate()
+    for w in socks:
+        machine.succeed(f"mv /run/user/{gs}/hidden-{w} /run/user/{gs}/{w}")
+    print("greeter without a compositor socket", r6)
+    assert r6["healthy"] is False and "greeter_frame" in json.dumps(r6["failing"]) and "Wayland" in json.dumps(r6["failing"]), r6
     # SSH only: the system answers a remote shell but no greeter and no machined
     machine.succeed("systemctl stop greetd.service agentos-machine.service")
     r4 = gate()
