@@ -137,29 +137,35 @@ with subtest("broker protocol 3 end to end: an owner pause reaches the broker as
     assert machine.succeed(f"sqlite3 {BDB} \"SELECT state FROM workspace_maintenance_state WHERE store_uuid='{store_a}' ORDER BY incarnation DESC LIMIT 1\"").strip() == "running"
 
 with subtest("F04a: broker cut from machined during a revocation: the gateway and Host refuse at once, the root side stays revoking until the broker is back and acks; the broker then fences that member (I08)"):
-    gina = make_user("gina", "gina-pw-1", "ug")
-    r = call(1, [{"methodId": "members.setRole", "workspaceId": ws_a, "idempotencyKey": str(uuid.uuid4()), "body": {"userId": gina, "role": "viewer"}}], "g1")[0]
+    fay = make_user("fay", "fay-pw-1", "uy")
+    r = call(1, [{"methodId": "members.setRole", "workspaceId": ws_a, "idempotencyKey": str(uuid.uuid4()), "body": {"userId": fay, "role": "viewer"}}], "g1")[0]
     assert r["status"] == 200, r
-    mvg = int(sql(f"SELECT member_version FROM workspace_members WHERE workspace_id='{ws_a}' AND user_id='{gina}'"))
-    r = call(1, [{"methodId": "members.setRole", "workspaceId": ws_a, "idempotencyKey": str(uuid.uuid4()), "body": {"userId": gina, "role": "editor", "expectedMemberVersion": mvg}}], "g2")[0]
+    mvg = int(sql(f"SELECT member_version FROM workspace_members WHERE workspace_id='{ws_a}' AND user_id='{fay}'"))
+    r = call(1, [{"methodId": "members.setRole", "workspaceId": ws_a, "idempotencyKey": str(uuid.uuid4()), "body": {"userId": fay, "role": "editor", "expectedMemberVersion": mvg}}], "g2")[0]
     assert r["status"] == 200, r
-    machine.wait_until_succeeds(f"sqlite3 {BDB} \"SELECT state FROM machine_members WHERE store_uuid='{store_a}' AND user_id='{gina}'\" | grep -qx active", timeout=60)
+    machine.wait_until_succeeds(f"sqlite3 {BDB} \"SELECT state FROM machine_members WHERE store_uuid='{store_a}' AND user_id='{fay}'\" | grep -qx active", timeout=60)
     machine.succeed("systemctl stop agentos-broker.path agentos-broker.service")     # the broker loses machined
     rid_g = str(uuid.uuid4())
-    r = call(1, [{"methodId": "members.revoke", "workspaceId": ws_a, "idempotencyKey": rid_g, "body": {"userId": gina}}], "g3")[0]
+    r = call(1, [{"methodId": "members.revoke", "workspaceId": ws_a, "idempotencyKey": rid_g, "body": {"userId": fay}}], "g3")[0]
     assert r["status"] == 202, r
     machine.wait_until_succeeds(f"sqlite3 {hostdb} \"SELECT COUNT(*) FROM revocation_receipts WHERE revocation_id='{rid_g}'\" | grep -qx 1", timeout=60)  # the Host applied it
     time.sleep(10)
     assert sql(f"SELECT state FROM revocations WHERE revocation_id='{rid_g}'") == "revoking", "completed without the broker's ack"
-    assert sql(f"SELECT state FROM workspace_members WHERE workspace_id='{ws_a}' AND user_id='{gina}'") == "revoking"
+    assert sql(f"SELECT state FROM workspace_members WHERE workspace_id='{ws_a}' AND user_id='{fay}'") == "revoking"
     ml = call(1, [{"methodId": "members.list", "workspaceId": ws_a}], "g4")[0]
-    gm = [m for m in ml["body"]["members"] if m["userId"] == gina]
+    gm = [m for m in ml["body"]["members"] if m["userId"] == fay]
     assert gm and gm[0]["state"] == "revoking", ml       # the owner's view does not show it complete
     # the broker still has the old directory (active) while it is cut off
-    assert machine.succeed(f"sqlite3 {BDB} \"SELECT state FROM machine_members WHERE store_uuid='{store_a}' AND user_id='{gina}'\"").strip() == "active"
+    assert machine.succeed(f"sqlite3 {BDB} \"SELECT state FROM machine_members WHERE store_uuid='{store_a}' AND user_id='{fay}'\"").strip() == "active"
     machine.succeed("systemctl start agentos-broker.service agentos-broker.path")    # reconnect
     wait_revoked(rid_g)
-    assert machine.succeed(f"sqlite3 {BDB} \"SELECT state FROM machine_members WHERE store_uuid='{store_a}' AND user_id='{gina}'\"").strip() != "active"
+    assert machine.succeed(f"sqlite3 {BDB} \"SELECT state FROM machine_members WHERE store_uuid='{store_a}' AND user_id='{fay}'\"").strip() != "active"
+    # fay owns nothing: disable the account so the machine stays within MAX_USERS (4 active) for the later subtests
+    # (run 41206157877: erin in I09 was refused MACHINE_CAPACITY)
+    p = call(1, [{"methodId": "machine.users.disable", "idempotencyKey": str(uuid.uuid4()), "body": {"userId": fay}}], "ydp")[0]
+    assert p["status"] == 201, p
+    ok = call(1, [{"methodId": "machine.actions.confirm", "idempotencyKey": str(uuid.uuid4()), "body": {"operationId": p["body"]["operationId"], "planHash": p["body"]["planHash"], "password": "alice-pw-1"}}], "ydc")[0]
+    assert '"succeeded"' in json.dumps(ok), ok
 
 with subtest("F04b: broker cut from the Host while an owner's broker write is registered: it stays pending (not done) across a Host SIGKILL, and is delivered exactly once after reconnect (I08)"):
     CNT = f"sqlite3 {hostdb} \"SELECT COUNT(*) FROM root_sync_outbox WHERE kind='control'"

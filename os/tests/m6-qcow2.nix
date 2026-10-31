@@ -115,8 +115,12 @@ pkgs.testers.runNixOSTest {
             rk = int(m.succeed("systemctl show -P ExecMainExitTimestampMonotonic agentos-disk-rekey.service").strip())
             ms = int(m.succeed("systemctl show -P ExecMainStartTimestampMonotonic agentos-machine.service").strip())
             assert 0 < rk <= ms, (rk, ms)
-            m.fail("cryptsetup open --test-passphrase --key-file=/etc/agentos/template-disk.key /dev/disk/by-partlabel/agentos-luks")
-            m.succeed(f"printf clone-pass-{n} | cryptsetup open --test-passphrase --key-file=- /dev/disk/by-partlabel/agentos-luks")
+            # the partition keeps its GPT name after the grow, and udev shows it again under by-partlabel
+            dev = m.succeed("cryptsetup status agentos-root | sed -n 's/^ *device: *//p'").strip()
+            assert m.succeed(f"blkid -p -s PART_ENTRY_NAME -o value {dev}").strip() == "agentos-luks", dev
+            m.wait_until_succeeds(f"test \"$(readlink -f {LUKS})\" = {dev}", timeout=30)
+            m.fail(f"test -e {dev} && cryptsetup open --test-passphrase --key-file=/etc/agentos/template-disk.key {dev}")
+            m.succeed(f"printf clone-pass-{n} | cryptsetup open --test-passphrase --key-file=- {dev}")
             m.succeed("cryptsetup status agentos-root | grep -q LUKS2 && findmnt -no FSTYPE / | grep -q btrfs")
             # review F01: a fresh volume key, the template volume key no longer opens the disk, no reencryption left,
             # one key slot, and the partition/filesystem grew from the 10 GiB template partition to the disk

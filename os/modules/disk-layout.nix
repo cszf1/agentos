@@ -99,6 +99,9 @@ in {
       sfdisk --relocate gpt-bak-std "$disk" || true
       echo ", +" | sfdisk --no-reread --no-tell-kernel -N "$nr" "$disk"
       partx --update --nr "$nr" "$disk"
+      # partx changes the partition under udev: let it recreate /dev/disk/by-partlabel/agentos-luks (the next boot's
+      # initrd and the operator use that name; m6-qcow2 41203693428 found it missing right after the grow)
+      udevadm trigger --action=change --settle "/dev/$part" 2>/dev/null || { udevadm trigger --action=change "/dev/$part"; udevadm settle; }
       cryptsetup resize --key-file="$f" agentos-root
       btrfs filesystem resize max /
       cryptsetup config --label agentos-luks "$real"

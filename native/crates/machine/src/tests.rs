@@ -927,3 +927,30 @@ fn r2_4_staging_needs_the_target_releases_own_closure() {
     t.m.advance_update(uid, "staged", &f("rA", "sha256:rA", "/nix/store/aaaa-agentos-system")).unwrap();
     assert_eq!(t.m.update(uid).unwrap()["state"], "staged");
 }
+
+#[test]
+fn o09_admin_actions_take_only_confined_validated_params() {
+    use crate::admin::argv;
+    use serde_json::json;
+    let code = |r: crate::err::R<Vec<String>>| r.err().map(|e| e.code).unwrap_or_default();
+    // a set name lives under the root-only snapshot directory; no path, no traversal
+    assert_eq!(argv("admin.backup", &json!({ "name": "s1", "pinned": true }), "alice").unwrap(), vec!["backup", "--out", "/var/lib/agentos-snapshots/s1", "--pinned"]);
+    assert_eq!(code(argv("admin.backup", &json!({ "name": "../etc" }), "alice")), "INVALID_REQUEST");
+    assert_eq!(code(argv("admin.backup", &json!({ "name": "/root/x" }), "alice")), "INVALID_REQUEST");
+    // inputs outside the administrator's home / media are refused, relative paths too
+    assert_eq!(code(argv("admin.importV04", &json!({ "backup": "/etc", "owner": "alice" }), "alice")), "NOT_FOUND_OR_FORBIDDEN");
+    assert_eq!(code(argv("admin.importV04", &json!({ "backup": "v04", "owner": "alice" }), "alice")), "INVALID_REQUEST");
+    assert_eq!(code(argv("admin.importSet", &json!({ "in": "/var/lib/agentos-machine", "identity": "/etc/shadow", "name": "x" }), "alice")), "NOT_FOUND_OR_FORBIDDEN");
+    // export: an age recipient and an output outside system directories
+    assert_eq!(code(argv("admin.backup.export", &json!({ "set": "s1", "recipient": "ssh-rsa AAAA", "out": "/home/alice/c" }), "alice")), "INVALID_REQUEST");
+    assert_eq!(code(argv("admin.backup.export", &json!({ "set": "s1", "recipient": "age1qqqq", "out": "/etc/x" }), "alice")), "NOT_FOUND_OR_FORBIDDEN");
+    // update steps: fixed set, fixed fields; a cache is https or a confined file:// directory
+    assert_eq!(code(argv("admin.update", &json!({ "step": "rm" }), "alice")), "INVALID_REQUEST");
+    assert_eq!(code(argv("admin.update", &json!({ "step": "trust-key", "keyId": "k", "publicKey": "zz" }), "alice")), "INVALID_REQUEST");
+    let u = "11111111-1111-4111-8111-111111111111";
+    assert_eq!(code(argv("admin.update", &json!({ "step": "fetch", "updateId": u, "from": "http://cache", "closure": "/nix/store/a" }), "alice")), "NOT_FOUND_OR_FORBIDDEN");
+    assert_eq!(code(argv("admin.update", &json!({ "step": "fetch", "updateId": u, "from": "file:///etc", "closure": "/nix/store/a" }), "alice")), "NOT_FOUND_OR_FORBIDDEN");
+    assert_eq!(argv("admin.update", &json!({ "step": "activate", "updateId": u }), "alice").unwrap(), vec!["update", "activate", "--update-id", u]);
+    assert_eq!(code(argv("admin.clone", &json!({ "set": "s1", "owner": "Bad Name" }), "alice")), "INVALID_REQUEST");
+    assert!(crate::ops::kind_admin("admin.restore").unwrap());
+}

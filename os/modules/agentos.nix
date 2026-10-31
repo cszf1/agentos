@@ -26,13 +26,19 @@ let
   # Runs as the greeter user before each ReGreet start (see default_session below). Keeps ReGreet's last user, maps
   # every local login account (UID 1000-59999 with a login shell) to the AgentOS session.
   greeterDefaults = pkgs.writeShellScript "agentos-greeter-defaults" ''
-    export PATH=${lib.makeBinPath [ pkgs.coreutils pkgs.gnugrep pkgs.gawk pkgs.getent ]}
+    export PATH=${lib.makeBinPath [ pkgs.coreutils pkgs.gnugrep pkgs.gawk pkgs.getent pkgs.util-linux ]}
     f=/var/lib/regreet/state.toml
-    [ -d /var/lib/regreet ] && [ -w /var/lib/regreet ] || exit 0
+    if ! { [ -d /var/lib/regreet ] && [ -w /var/lib/regreet ]; }; then
+      logger -t agentos-greeter-defaults "/var/lib/regreet missing or not writable for uid $(id -u); state not written"
+      exit 0
+    fi
     last=$(grep -m1 '^last_user *= *"[a-z_][a-z0-9_-]*"$' "$f" 2>/dev/null)
     users=$(getent passwd | awk -F: '$3 >= 1000 && $3 < 60000 && $7 !~ /(nologin|false)$/ && $1 ~ /^[a-z_][a-z0-9_-]*$/ { print $1 }')
     [ -n "$last" ] || { u=$(printf '%s\n' "$users" | head -n1); [ -n "$u" ] && last="last_user = \"$u\""; }
     { [ -n "$last" ] && printf '%s\n\n' "$last"; printf '[user_to_last_sess]\n'; for u in $users; do printf '%s = "AgentOS"\n' "$u"; done; } > "$f.tmp" && mv -f "$f.tmp" "$f"
+    # run as root before greetd starts (ExecStartPre) the file must still belong to the greeter, which rewrites it
+    [ "$(id -u)" = 0 ] && chown --reference=/var/lib/regreet "$f" 2>/dev/null
+    logger -t agentos-greeter-defaults "mapped to AgentOS: $(printf '%s ' $users)"
     exit 0
   '';
   firstSetup = pkgs.writeShellScript "agentos-first-setup" ''
@@ -135,6 +141,8 @@ in {
       exec ${pkgs.dbus}/bin/dbus-run-session ${lib.getExe pkgs.cage} ${lib.escapeShellArgs config.programs.regreet.cageArgs} -- ${lib.getExe config.programs.regreet.package}
     ''}");
     services.greetd.enable = cfg.graphical;
+    # also as root before greetd itself starts (m5 41205165186: the greeter-side run left no state.toml behind)
+    systemd.services.greetd.serviceConfig.ExecStartPre = lib.mkIf cfg.graphical [ "+${greeterDefaults}" ];
     programs.regreet.enable = cfg.graphical;
     security.pam.services.swaylock = lib.mkIf cfg.graphical { };
     # Gateway re-authentication of a machine administrator (spec §12.2): plain local unix auth, no other module.

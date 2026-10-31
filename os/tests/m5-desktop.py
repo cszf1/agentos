@@ -154,7 +154,12 @@ with subtest("first boot from the local console (spec 19.4, review F11): adminis
 with subtest("ReGreet: a wrong password is refused and the greeter recovers; the right one starts Sway + the Qt Shell through greetd/PAM; no browser engine (D01, review F02)"):
     # Fresh machine: nothing remembered by ReGreet. The greeter wrapper (agentos-greeter-defaults) maps every local
     # account to the AgentOS session, so Enter on the preselected user starts the Shell, not a login shell.
-    machine.wait_until_succeeds("grep -q 'alice = \"AgentOS\"' /var/lib/regreet/state.toml", timeout=120)
+    try:
+        machine.wait_until_succeeds("grep -q 'alice = \"AgentOS\"' /var/lib/regreet/state.toml", timeout=120)
+    except BaseException:
+        print(machine.execute("ls -la /var/lib/regreet; cat /var/lib/regreet/state.toml; journalctl -b --no-pager -o cat -t agentos-greeter-defaults; "
+                              "getent passwd | awk -F: '$3>=1000'; systemctl cat greetd | grep -E 'Exec|command'; pgrep -a regreet; tail -20 /var/log/regreet/log")[1])
+        raise
     greeter_ready()
     g = shot("greeter")
     assert len({px(g, x, y) for x in range(0, g[0], 37) for y in range(0, g[1], 23)}) > 3, "greeter output is blank"
