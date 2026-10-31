@@ -121,6 +121,8 @@
           test "$(jq .releaseSequence r4/manifest.json)" = 2001
           mkdir -p $out && cp r1/manifest.json $out/prev.json && cp r2/manifest.json $out/next.json
         '';
+        # review F11: the release ISO as the only install entry, through first unlock, first boot, ReGreet and the Shell
+        m19-iso = import ./tests/m19-iso.nix { inherit pkgs; iso = installerSystem.config.system.build.isoImage; };
         m5-desktop = import ./tests/m5-desktop.nix { inherit pkgs; modules = [ ./modules/base.nix ./modules/graphics.nix ./modules/agentos.nix ]; };
       };
     };
