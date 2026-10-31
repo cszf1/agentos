@@ -125,7 +125,9 @@ pub fn serve() -> i32 {
     let gid = group_id("agentos-broker").unwrap_or(0);
     let c = std::ffi::CString::new(SOCKET_PATH).unwrap();
     unsafe { libc::chown(c.as_ptr(), owner, gid) };
-    notify_ready();
+    // Diagnostics-only still answers on the socket (describe/diagnose), so systemd sees the unit started; the STATUS
+    // says why, and readiness for the update health gate is only ever read through `broker-health` (review R2-2).
+    notify_ready(b.diag.as_deref());
     for s in listener.incoming() {
         let Ok(s) = s else { continue };
         if CONNECTIONS.load(Ordering::SeqCst) >= MAX_CONNECTIONS {
@@ -142,12 +144,53 @@ pub fn serve() -> i32 {
     0
 }
 
-fn notify_ready() {
+fn notify_ready(diag: Option<&str>) {
     if let Ok(p) = std::env::var("NOTIFY_SOCKET") {
         if let Ok(s) = std::os::unix::net::UnixDatagram::unbound() {
-            let _ = s.send_to(b"READY=1", p);
+            let msg = match diag {
+                None => "READY=1\nSTATUS=ready".to_string(),
+                Some(d) => format!("READY=1\nSTATUS=diagnostics-only: {}", d.chars().filter(|c| *c != '\n').take(200).collect::<String>()),
+            };
+            let _ = s.send_to(msg.as_bytes(), p);
         }
     }
+}
+
+/// Root-only readiness report (review R2-2, spec §21.3): the update health gate reads the broker's own view of its
+/// identity, log and mode instead of trusting that the socket exists. `brokerReady` is true only when the execution
+/// log is open, belongs to this install, and the broker is not in diagnostics-only mode.
+pub fn health_report(b: &Broker) -> Value {
+    let (log_open, schema) = match b.db.lock() {
+        Ok(g) => match g.as_ref() {
+            Some(c) => (true, db::meta(c, "schema_version")),
+            None => (false, None),
+        },
+        Err(_) => (false, None),
+    };
+    let ready = b.diag.is_none() && log_open;
+    json!({
+        "brokerReady": ready,
+        "mode": if ready { "ready" } else { "diagnostics-only" },
+        "diagnostics": b.diag,
+        "logOpen": log_open,
+        "logSchema": schema,
+        "machineInstallId": b.install_id,
+        "instanceId": b.instance_id,
+        "policyVersion": b.policy_version,
+    })
+}
+
+fn handle_root_health(b: &Shared, s: UnixStream) {
+    s.set_read_timeout(Some(Duration::from_secs(10))).ok();
+    let mut r = &s;
+    let Ok(body) = read_frame(&mut r, MAX_CONTROL_FRAME) else { return };
+    let Ok(v) = parse_strict(&body) else { return reply_err(&s, "", BErr::new("INVALID_SYSTEM_PLAN", "bad frame")) };
+    let id = v.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
+    if v.get("method").and_then(|m| m.as_str()) != Some("broker-health") {
+        return reply_err(&s, &id, BErr::new("BROKER_POLICY_DENIED", "root may only read broker-health"));
+    }
+    let mut w = &s;
+    let _ = write_frame(&mut w, json!({"v": 1, "id": id, "ok": true, "result": health_report(b)}).to_string().as_bytes());
 }
 
 fn group_id(name: &str) -> Option<u32> {
@@ -167,6 +210,9 @@ pub struct Session {
 
 fn handle_conn(b: &Shared, s: UnixStream) {
     let Ok(pc) = peer_cred(&s) else { return };
+    if pc.uid == 0 {
+        return handle_root_health(b, s);
+    }
     // Only installed host UIDs may talk to the broker at all (the socket mode is a second layer).
     let machine_host = b.db.lock().unwrap().as_ref().and_then(|c| crate::registry::machine_host(c, pc.uid, None)).is_some();
     if !b.policy.hosts.iter().any(|h| h.uid == pc.uid) && !machine_host {
@@ -605,4 +651,53 @@ fn history(b: &Shared, sess: &mut Session, h: &HistoryParams) -> Result<Value, B
     let ops: Vec<Value> = st.query_map(params![b.install_id, h.store_uuid, h.since_seq as i64, limit], row_view)?.filter_map(|x| x.ok()).collect();
     let last: i64 = db::meta(c, "seq").and_then(|s| s.parse().ok()).unwrap_or(0);
     Ok(json!({"operations": ops, "lastSeq": last}))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn broker(conn: Option<rusqlite::Connection>, diag: Option<String>) -> Broker {
+        let w = |n: &str| json!({"socket": format!("/run/{n}.sock"), "unit": format!("{n}.service"), "uid": 961});
+        let policy: policy::Policy = serde_json::from_value(json!({
+            "policyFormat": 1, "machineInstallId": "m-health", "hosts": [], "managedRoots": [], "labNetworks": [], "serial": [], "units": [],
+            "workers": {"file": w("f"), "service": w("s"), "network": w("n"), "serial": w("r")}, "testMode": false
+        }))
+        .unwrap();
+        Broker {
+            db: Mutex::new(conn),
+            diag,
+            policy,
+            policy_version: "p1".into(),
+            instance_id: "bi_test".into(),
+            install_id: "m-health".into(),
+            wake: (Mutex::new(false), Condvar::new()),
+        }
+    }
+
+    #[test]
+    fn r2_2_diagnostics_only_broker_is_never_reported_ready() {
+        // lost log (V1-R11): the socket would exist and the unit be active, but the broker must say it is not ready
+        let b = broker(None, Some("BROKER_HISTORY_MISSING: the execution log is gone".into()));
+        let r = health_report(&b);
+        assert_eq!(r["brokerReady"], false);
+        assert_eq!(r["mode"], "diagnostics-only");
+        assert!(r["diagnostics"].as_str().unwrap().starts_with("BROKER_HISTORY_MISSING"));
+        // identity mismatch keeps the log closed too
+        let r = health_report(&broker(None, Some("BROKER_IDENTITY_MISMATCH: other install".into())));
+        assert_eq!(r["brokerReady"], false);
+        // a diagnostics string with an open connection is still not ready (never trust one signal alone)
+        let path = std::env::temp_dir().join(format!("broker-health-{}-{}.sqlite", std::process::id(), now()));
+        let _ = std::fs::remove_file(&path);
+        let c = db::create(path.to_str().unwrap(), "m-health", "p1").unwrap();
+        assert_eq!(health_report(&broker(Some(c), Some("x".into())))["brokerReady"], false);
+        // the normal case: log open, no diagnostics, identity reported
+        let c = db::open_existing(path.to_str().unwrap()).unwrap();
+        let r = health_report(&broker(Some(c), None));
+        assert_eq!(r["brokerReady"], true, "{r}");
+        assert_eq!(r["machineInstallId"], "m-health");
+        assert_eq!(r["logOpen"], true);
+        assert!(r["logSchema"].is_string());
+        let _ = std::fs::remove_file(&path);
+    }
 }

@@ -237,3 +237,49 @@ fn u06_preflight_refuses_low_space_and_low_battery_and_arms_nothing() {
     assert!(!ls.contains("oneshot") || !ls.contains(CAND), "loader state changed: {ls}");
     assert!(esp.entry_complete(GOOD) && esp.entry_complete(CAND), "existing entries untouched");
 }
+
+#[test]
+fn r2_2_broker_gate_reads_the_broker_protocol_not_the_socket() {
+    use serde_json::json;
+    // no answer at all (socket missing or broker dead)
+    assert!(!health::broker_check(None, Some("m1")).ok);
+    // diagnostics-only: the unit is active and the socket answers, but the broker says it is not ready
+    let diag = json!({"ok": true, "result": {"brokerReady": false, "mode": "diagnostics-only", "diagnostics": "BROKER_HISTORY_MISSING: log gone", "machineInstallId": "m1"}});
+    let c = health::broker_check(Some(&diag), Some("m1"));
+    assert!(!c.ok && c.detail.contains("BROKER_HISTORY_MISSING"), "{}", c.detail);
+    // a ready broker on another install's log
+    let other = json!({"ok": true, "result": {"brokerReady": true, "mode": "ready", "machineInstallId": "m2"}});
+    assert!(!health::broker_check(Some(&other), Some("m1")).ok);
+    // machined has no identity: nothing to compare with
+    let ready = json!({"ok": true, "result": {"brokerReady": true, "mode": "ready", "machineInstallId": "m1"}});
+    assert!(!health::broker_check(Some(&ready), None).ok);
+    // refused request
+    assert!(!health::broker_check(Some(&json!({"ok": false, "error": {"code": "BROKER_POLICY_DENIED"}})), Some("m1")).ok);
+    assert!(health::broker_check(Some(&ready), Some("m1")).ok);
+    // a gate whose broker stays diagnostics-only never turns healthy
+    let r = health::gate(&mut |_| { let mut c = green(); c.retain(|x| x.name != "broker_identity"); c.push(health::broker_check(Some(&diag), Some("m1"))); c }, 5);
+    assert_eq!(r["healthy"], false);
+    assert!(r["failing"].to_string().contains("broker_identity"));
+}
+
+#[test]
+fn r2_2_graphics_gate_needs_a_live_local_session_with_a_compositor_and_an_output() {
+    let s = |id: &str, class: &str, seat: &str, remote: &str, state: &str, user: &str| -> health::Session {
+        [("Id", id), ("Class", class), ("Seat", seat), ("Remote", remote), ("State", state), ("User", user)].iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+    };
+    let live = |u: &str| u == "990" || u == "1000";
+    // greeter on seat0 with cage answering, output connected
+    assert!(health::graphics_check(&[s("c1", "greeter", "seat0", "no", "active", "990")], &live, true).ok);
+    // logged-in user session instead of the greeter
+    assert!(health::graphics_check(&[s("3", "user", "seat0", "no", "active", "1000")], &live, true).ok);
+    // greetd up but its greeter died (no compositor answering)
+    assert!(!health::graphics_check(&[s("c1", "greeter", "seat0", "no", "active", "991")], &live, true).ok);
+    // only a remote (SSH) session
+    assert!(!health::graphics_check(&[s("5", "user", "", "yes", "active", "1000")], &live, true).ok);
+    // a closing session does not count
+    assert!(!health::graphics_check(&[s("c1", "greeter", "seat0", "no", "closing", "990")], &live, true).ok);
+    // compositor alive but no connected display connector
+    assert!(!health::graphics_check(&[s("c1", "greeter", "seat0", "no", "active", "990")], &live, false).ok);
+    // no sessions at all
+    assert!(!health::graphics_check(&[], &live, true).ok);
+}

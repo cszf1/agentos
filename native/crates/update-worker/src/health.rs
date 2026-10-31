@@ -58,6 +58,87 @@ pub fn gate(rounds: &mut dyn FnMut(u64) -> Vec<Check>, step_s: u64) -> Value {
     json!({ "healthy": false, "failing": last_bad })
 }
 
+/// Broker readiness through its own protocol (review R2-2): the socket existing, or the unit being active, is not
+/// readiness — a broker in diagnostics-only mode (lost or foreign log) keeps both. The reply must say brokerReady and
+/// name the same machine install id machined reports.
+pub fn broker_check(reply: Option<&Value>, machine_id: Option<&str>) -> Check {
+    let bad = |d: String| Check { name: "broker_identity", ok: false, detail: d };
+    let Some(r) = reply else { return bad("broker-health: no answer on /run/agentos-broker/broker.sock".into()) };
+    if r["ok"] != true {
+        return bad(format!("broker-health refused: {}", r["error"]));
+    }
+    let res = &r["result"];
+    if res["brokerReady"] != true {
+        return bad(format!("broker not ready (mode {}): {}", res["mode"], res["diagnostics"]));
+    }
+    match (res["machineInstallId"].as_str(), machine_id) {
+        (Some(b), Some(m)) if b == m => Check { name: "broker_identity", ok: true, detail: String::new() },
+        (b, m) => bad(format!("broker install id {:?} differs from machined's {:?}", b, m)),
+    }
+}
+
+/// One logind session as read from `loginctl show-session` (key=value).
+pub type Session = std::collections::HashMap<String, String>;
+
+/// Graphical output check (review R2-2): a local, live session on seat0 (the greeter, or a logged-in user) whose
+/// user has a Wayland compositor answering on its socket, and a display connector reported connected. `greetd`
+/// being active alone (it can be active with its greeter crashed and nothing on screen) does not pass.
+pub fn graphics_check(sessions: &[Session], wayland_live: &dyn Fn(&str) -> bool, connector_connected: bool) -> Check {
+    let mut seen = vec![];
+    for s in sessions {
+        let g = |k: &str| s.get(k).map(|x| x.as_str()).unwrap_or("");
+        let local = g("Seat") == "seat0" && g("Remote") == "no" && matches!(g("State"), "active" | "online") && matches!(g("Class"), "greeter" | "user");
+        seen.push(format!("{}:{}/{}/{}", g("Id"), g("Class"), g("Seat"), g("State")));
+        if local && wayland_live(g("User")) {
+            if !connector_connected {
+                return Check { name: "greeter_frame", ok: false, detail: "no display connector is connected".into() };
+            }
+            return Check { name: "greeter_frame", ok: true, detail: String::new() };
+        }
+    }
+    Check { name: "greeter_frame", ok: false, detail: format!("no local seat0 greeter/user session with a live Wayland compositor (sessions: {})", seen.join(", ")) }
+}
+
+fn broker_health_rpc() -> Option<Value> {
+    use std::os::unix::net::UnixStream;
+    let s = UnixStream::connect("/run/agentos-broker/broker.sock").ok()?;
+    s.set_read_timeout(Some(std::time::Duration::from_secs(10))).ok()?;
+    s.set_write_timeout(Some(std::time::Duration::from_secs(10))).ok()?;
+    let mut w = &s;
+    agentos_protocol::frame::write_frame(&mut w, json!({"v": 1, "id": "health", "method": "broker-health", "params": {}}).to_string().as_bytes()).ok()?;
+    let mut r = &s;
+    let body = agentos_protocol::frame::read_frame(&mut r, agentos_protocol::frame::MAX_CONTROL_FRAME).ok()?;
+    serde_json::from_slice(&body).ok()
+}
+
+fn sessions() -> Vec<Session> {
+    let out = std::process::Command::new("loginctl").args(["list-sessions", "--no-legend"]).output();
+    let ids: Vec<String> = out.map(|o| String::from_utf8_lossy(&o.stdout).lines().filter_map(|l| l.split_whitespace().next().map(String::from)).collect()).unwrap_or_default();
+    ids.iter()
+        .filter_map(|id| {
+            let o = std::process::Command::new("loginctl")
+                .args(["show-session", id, "-p", "Id", "-p", "Seat", "-p", "Remote", "-p", "State", "-p", "Class", "-p", "User"])
+                .output()
+                .ok()?;
+            Some(String::from_utf8_lossy(&o.stdout).lines().filter_map(|l| l.split_once('=').map(|(k, v)| (k.to_string(), v.to_string()))).collect())
+        })
+        .collect()
+}
+
+/// A compositor is live for this uid when some wayland-* socket in its runtime dir accepts a connection.
+fn wayland_live(uid: &str) -> bool {
+    let Ok(rd) = std::fs::read_dir(format!("/run/user/{uid}")) else { return false };
+    rd.flatten().any(|e| {
+        let n = e.file_name().to_string_lossy().to_string();
+        n.starts_with("wayland-") && !n.ends_with(".lock") && std::os::unix::net::UnixStream::connect(e.path()).is_ok()
+    })
+}
+
+fn connector_connected() -> bool {
+    let Ok(rd) = std::fs::read_dir("/sys/class/drm") else { return false };
+    rd.flatten().any(|e| std::fs::read_to_string(e.path().join("status")).map(|s| s.trim() == "connected").unwrap_or(false))
+}
+
 /// Real probes used on a booted system.
 pub fn probe_system(state_dir: &str, compat: (i64, i64)) -> Vec<Check> {
     let mut v = vec![];
@@ -68,10 +149,10 @@ pub fn probe_system(state_dir: &str, compat: (i64, i64)) -> Vec<Check> {
     let st = std::process::Command::new("agentosctl").arg("status").output();
     let stv: Value = st.ok().and_then(|o| serde_json::from_slice(&o.stdout).ok()).unwrap_or(Value::Null);
     v.push(Check { name: "machine_identity", ok: stv["meta"]["machineInstallId"].is_string(), detail: "agentosctl status".into() });
-    let br = std::path::Path::new("/run/agentos-broker/broker.sock").exists();
-    v.push(Check { name: "broker_identity", ok: br, detail: "broker socket".into() });
+    v.push(broker_check(broker_health_rpc().as_ref(), stv["meta"]["machineInstallId"].as_str()));
     let greeter = std::process::Command::new("systemctl").args(["is-active", "greetd.service"]).output().map(|o| o.status.success()).unwrap_or(false);
-    v.push(Check { name: "greeter_frame", ok: greeter, detail: "greetd active".into() });
+    let g = graphics_check(&sessions(), &wayland_live, connector_connected());
+    v.push(if greeter { g } else { Check { name: "greeter_frame", ok: false, detail: "greetd not active".into() } });
     let canvas = std::process::Command::new("agentos-shell").arg("--health-canvas").env("QT_QPA_PLATFORM", "offscreen").output().map(|o| o.status.success()).unwrap_or(false);
     v.push(Check { name: "shell_canvas", ok: canvas, detail: "agentos-shell --health-canvas".into() });
     // every registered workspace, stopped ones included (status.workspaceList; a missing list is not "all compatible")
