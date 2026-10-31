@@ -524,6 +524,10 @@ with subtest("F03b: the Host dies inside the write before its commit while a rev
     assert host_pid(ws_a) != pid
 
 with subtest("F03c: after the Host applied the new member version but before its ack: requests refused, root side still revoking, the owner's view not complete; a Host crash there re-applies once and acks (I06)"):
+    # the machine allows 4 active local accounts (alice, bob, dave, erin): disable dave, revoked in F03a, to make room
+    p = call(1, [{"methodId": "machine.users.disable", "idempotencyKey": str(uuid.uuid4()), "body": {"userId": dave}}], "f03dd")[0]
+    ok = call(1, [{"methodId": "machine.actions.confirm", "idempotencyKey": str(uuid.uuid4()), "body": {"operationId": p["body"]["operationId"], "planHash": p["body"]["planHash"], "password": "alice-pw-1"}}], "f03ddc")[0]
+    assert '"succeeded"' in json.dumps(ok), ok
     frank = editor("frank", "frank-pw-1", 6)
     machine.succeed(f"touch {PAUSE}/registry.before_ack")
     n0 = pause_count("registry.before_ack")

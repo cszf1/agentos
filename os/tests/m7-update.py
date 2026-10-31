@@ -204,23 +204,23 @@ with subtest("release verification: tampered manifest/closure/OCI/signature, unk
     def oci_case(name, prep, sbom="/root/rel/sbom.json", mpath="/root/rel/good.json", spath="/root/rel/good.sig"):
         d = f"/root/oci-{name}"
         machine.succeed(f"rm -rf {d} && mkdir -p {d} && cp /root/rel/index.json /root/rel/images.tar {d}/")
-        machine.succeed(prep.replace("D/", d + "/"))
+        machine.succeed(prep.replace("@D@", d))
         rc, o = verify(mpath, spath, f"--trusted-time --images {d}/index.json --sbom {sbom}")
         print("R2-1", name, rc, o.strip().splitlines()[-1] if o.strip() else o)
         assert rc != 0 and "UPDATE_CONTENT_MISMATCH" in o, (name, o)
         return o
     sz = int(machine.succeed("stat -c %s /root/rel/images.tar").strip())
-    oci_case("flip", f"printf '\\377' | dd of=D/images.tar bs=1 seek={sz // 2} conv=notrunc status=none")
-    oci_case("truncate", f"truncate -s {sz // 2} D/images.tar")
+    oci_case("flip", f"printf '\\377' | dd of=@D@/images.tar bs=1 seek={sz // 2} conv=notrunc status=none")
+    oci_case("truncate", f"truncate -s {sz // 2} @D@/images.tar")
     # a changed layer: unpack, change the layer's file, pack again (gzip of a modified docker-archive)
-    oci_case("layer", "cd D && mkdir x && tar -xzf images.tar -C x && L=$(jq -r '.[0].Layers[0]' x/manifest.json) && mkdir l && tar -xf x/$L -C l && echo tampered > l/u04 && tar -cf x/$L -C l . && tar -czf images.tar -C x . && rm -rf x l")
+    oci_case("layer", "cd @D@ && mkdir x && tar -xzf images.tar -C x && L=$(jq -r '.[0].Layers[0]' x/manifest.json) && mkdir l && tar -xf x/$L -C l && echo tampered > l/u04 && tar -cf x/$L -C l . && tar -czf images.tar -C x . && rm -rf x l")
     # the attacker also rewrites the SBOM to the new bytes: the signed sbomHash no longer matches
     machine.succeed("mkdir -p /root/oci-sbom && cp /root/rel/index.json /root/oci-sbom/ && cp /etc/agentos-u04/b.tar.gz /root/oci-sbom/images.tar")
     sbom_for("/root/oci-sbom/sbom.json", fsha("/root/oci-sbom/images.tar"), [IA])
     rc, o = verify("/root/rel/good.json", "/root/rel/good.sig", "--trusted-time --images /root/oci-sbom/index.json --sbom /root/oci-sbom/sbom.json")
     assert rc != 0 and "UPDATE_CONTENT_MISMATCH" in o and "sbomHash" in o, o
     # replaced manifest.json inside the archive (points at image b's config): bytes differ from the signed hash
-    oci_case("manifest", "cd D && mkdir x && tar -xzf images.tar -C x && cp x/manifest.json m.json && jq '.[0].RepoTags=[\"evil:1\"]' m.json > x/manifest.json && tar -czf images.tar -C x . && rm -rf x m.json")
+    oci_case("manifest", "cd @D@ && mkdir x && tar -xzf images.tar -C x && cp x/manifest.json m.json && jq '.[0].RepoTags=[\"evil:1\"]' m.json > x/manifest.json && tar -czf images.tar -C x . && rm -rf x m.json")
     # index right, hashes right (the release signed image b's archive under image a's ID): the import finds b, not a
     machine.succeed("mkdir -p /root/rel-b && cp /root/rel/index.json /root/rel-b/ && cp /etc/agentos-u04/b.tar.gz /root/rel-b/images.tar")
     SBOM_HASH[0] = sbom_for("/root/rel-b/sbom.json", fsha("/root/rel-b/images.tar"), [IA])
