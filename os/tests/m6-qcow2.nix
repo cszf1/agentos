@@ -47,6 +47,23 @@ pkgs.testers.runNixOSTest {
                 pass
         raise Exception(f"console never showed {done!r}")
 
+    def unlock_existing(m, text, timeout=900):
+        # An ask-password completion log is not a boot protocol (clone 2 had already reached multi-user in
+        # 41217247103, yet that one log line never appeared). The instrumented image's root-shell socket becomes
+        # readable ONLY after the guest has unlocked and booted. Check it before typing so a ready OS never gets
+        # another passphrase as a shell command. connect() consumes the normal test-driver handshake.
+        import select
+        assert m.shell is not None, "the instrumented VM has no test-driver socket"
+        end = _t.time() + timeout
+        while _t.time() < end:
+            if m.connected:
+                return
+            if select.select([m.shell], [], [], 1)[0]:
+                m.connect()
+                return
+            m.send_console(text + "\n")
+        raise Exception("the encrypted disk did not unlock and boot")
+
     assert open("${image}/system").read().strip() == TOP
 
     def boot(n):
@@ -151,7 +168,7 @@ pkgs.testers.runNixOSTest {
         with subtest(f"clone {n}: after a reboot the disk asks for the new passphrase; identity kept"), kill_on_fail():
             m.shutdown()
             m.start()
-            feed(m, "clone-pass-" + str(n), "Password query on /dev/ttyS0 finished")
+            unlock_existing(m, "clone-pass-" + str(n))
             m.wait_for_unit("agentos-machine.service", timeout=900)
             assert json.loads(m.succeed("agentosctl status"))["meta"]["machineInstallId"] == ids[-1]
             m.shutdown()

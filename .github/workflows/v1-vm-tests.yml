@@ -88,11 +88,12 @@ jobs:
         with:
           use-flakehub: false
 
-      - name: Screenshot helper regressions
-        if: ${{ matrix.test == 'm5-desktop' }}
+      - name: VM helper regressions
+        if: ${{ matrix.test == 'm5-desktop' || matrix.test == 'm6-qcow2' }}
         run: |
           python3 -B os/tests/test_pnm.py
           python3 -B os/tests/test_navigation_pixels.py
+          python3 -B os/tests/test_boot_console.py
 
       - name: Build test driver
         if: ${{ !startsWith(matrix.test, 'build-') }}
