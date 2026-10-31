@@ -423,7 +423,7 @@ class E2E : public QObject {
     QTRY_COMPARE_WITH_TIMEOUT(r.actionState(QStringLiteral("app.deploy")), QStringLiteral("reconciled"), 120000);
     report(QStringLiteral("version"), {});
   }
-#include "e2e_sway_phase.inc"
+  void sway();  // e2e_sway_phase.inc (defined after the class: moc does not follow includes inside it)
 
   void switching() {
     if (phase != QLatin1String("switch")) QSKIP("phase");
@@ -497,6 +497,8 @@ class E2E : public QObject {
                                       {QStringLiteral("lateDropped"), dropped}, {QStringLiteral("marker"), marker}});
   }
 };
+
+#include "e2e_sway_phase.inc"
 
 QTEST_MAIN(E2E)
 #include "e2e_test.moc"

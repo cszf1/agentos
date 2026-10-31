@@ -1,6 +1,6 @@
-// Body of E2E::sway() (included inside the class; see e2e_sway.hpp for the handshake). Each block ends with one
+// E2E::sway() (included after the class; see e2e_sway.hpp for the handshake). Each block ends with one
 // "E2E <step> <json>" line the VM script checks against the Host's database. A failed QVERIFY ends the phase.
-void sway() {
+void E2E::sway() {
   if (phase != QLatin1String("sway")) QSKIP("phase");
   Asker A(envOr("AGENTOS_E2E_ASK_DIR", QStringLiteral("/tmp/agentos-e2e-sway")));
   QScreen* scr = QGuiApplication::primaryScreen();

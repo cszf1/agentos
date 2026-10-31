@@ -101,6 +101,7 @@
         m16-fetch = test "m16" ./tests/m16-fetch.nix { };
         m17-shared = test "m17" ./tests/m17-shared.nix { };
         m18-o09 = test "m18" ./tests/m18-o09.nix { };
+        m20-sway = test "m20" ./tests/m20-sway.nix { };
         # review R2-5: releaseSequence allocation (no VM): commit time default, explicit sequence, refusal of a sequence
         # that does not rise above the previous published manifest; the next release follows the previous one
         release-sequence = pkgs.runCommand "agentos-release-sequence-check" { nativeBuildInputs = [ pkgs.python3 pkgs.jq ]; } ''
