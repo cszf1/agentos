@@ -16,6 +16,7 @@
 #include "json_list_model.hpp"
 
 #include <QDateTime>
+#include <QJsonDocument>
 #include <QQuickStyle>
 #include <cstdio>
 
@@ -169,6 +170,16 @@ AppViewModel* openView(Real& r, const QString& appId) {
 }
 
 int rows(AppViewModel* v) { return v ? static_cast<RecordsModel*>(v->records())->rows() : -1; }
+
+// what the user would see when a record write does not land: the view mode, the form state and the Shell's notice
+QString writeDiag(Real& r, AppViewModel* v, int n, const QVariantMap& afterSubmit) {
+  const auto js = [](const QVariant& x) { return QString::fromUtf8(QJsonDocument::fromVariant(x).toJson(QJsonDocument::Compact)); };
+  return QStringLiteral("mode=%1 title=%2 n=%3 rows=%4 afterSubmit=%5 now=%6 notice=%7 banner=%8 transport=%9")
+      .arg(v ? v->mode() : QStringLiteral("-"), v ? v->title() : QStringLiteral("-"))
+      .arg(n)
+      .arg(rows(v))
+      .arg(js(afterSubmit), js(v ? v->recordState() : QVariantMap()), r.shell->notice(), r.shell->banner(), js(r.shell->transportStats()));
+}
 
 }  // namespace
 
@@ -413,11 +424,15 @@ class E2E : public QObject {
     const QString marker = QStringLiteral("A-ONLY-") + QString::number(QDateTime::currentMSecsSinceEpoch());
     AppViewModel* v = openView(r, todo);
     QVERIFY(v);
+    QVERIFY2(v->mode() == QLatin1String("records"), qPrintable(writeDiag(r, v, -1, {})));
+    // the first page has arrived before we count (rows == total, or a full page)
+    QTRY_VERIFY2_WITH_TIMEOUT(rows(v) > 0 && (rows(v) == v->recordState().value(QStringLiteral("total")).toInt() || rows(v) >= 20), qPrintable(writeDiag(r, v, -1, {})), 20000);
     const int n = rows(v);
     v->openCreate();
     v->setDraft(QStringLiteral("title"), marker);
     v->submitRecord();
-    QTRY_VERIFY_WITH_TIMEOUT(rows(v) == n + 1, 20000);
+    const QVariantMap afterSubmit = v->recordState();
+    QTRY_VERIFY2_WITH_TIMEOUT(rows(v) == n + 1, qPrintable(writeDiag(r, v, n, afterSubmit)), 20000);
     auto textHas = [&](const QString& needle) {
       bool hit = false;
       walkItems(r.view->root(), [&](QQuickItem* i) {
