@@ -100,3 +100,56 @@ with subtest("no model: generation visibly unavailable; CRUD, query and version 
     assert s["generation"]["modelAvailable"] is False, s
     assert hsql("SELECT COUNT(*) FROM runs") == runs_before
 
+
+with subtest("machined unreachable: a new build stops before any builder starts and the reason is visible; it runs once machined is back (S08 build)"):
+    # Force a real rebuild: stop the code app, damage its linked artifact (the Host then rebuilds it from the fixed
+    # recipe, spec §14.4), stop machined, and start the app inside the gateway's write grace. The build job must wait
+    # for its machine build slot (no builder container) and the Host must record why.
+    ep = int(hsql(f"SELECT epoch FROM apps WHERE id='{kanban}'"))
+    r = call(1, [fwd(ws, "apps.runtime.stop.post", {"expectedAppEpoch": ep}, params={"appId": kanban}, idem="b8-stop")], "b8s")[0]
+    assert r["status"] in (200, 202), r
+    for _ in range(60):
+        if hsql(f"SELECT COALESCE(active_instance_id,'') FROM app_runtime WHERE app_id='{kanban}'") == "":
+            break
+        time.sleep(2)
+    assert hsql(f"SELECT COALESCE(active_instance_id,'') FROM app_runtime WHERE app_id='{kanban}'") == "", "the code app did not stop"
+    ep = int(hsql(f"SELECT epoch FROM apps WHERE id='{kanban}'"))
+    rel = hsql(f"SELECT a.relative_path FROM revision_artifacts ra JOIN artifacts a ON a.id = ra.artifact_id JOIN apps p ON p.id = ra.app_id AND p.active_revision_id = ra.revision_id WHERE ra.app_id='{kanban}'")
+    adir = f"/var/lib/agentos/workspaces/{ws}/data/artifacts/{rel.split('/')[-1]}"
+    machine.succeed(f"test -d {adir}")
+    jobs0 = int(hsql(f"SELECT COUNT(*) FROM build_jobs WHERE app_id='{kanban}'"))
+    unreach0 = int(hsql("SELECT COUNT(*) FROM events WHERE kind='machine.unreachable'"))
+    machine.succeed(f"f=$(find {adir} -type f ! -name manifest.json | sort | head -1) && test -n \"$f\" && printf 'x' >> \"$f\"")
+    machine.succeed("rm -f /tmp/b8-go")
+    b8 = [fwd(ws, "apps.runtime.list", params={"appId": kanban}), {"methodId": "$wait", "path": "/tmp/b8-go"},
+          fwd(ws, "apps.runtime.start.post", {"expectedAppEpoch": ep}, params={"appId": kanban}, idem="b8-start")]
+    body = json.dumps([{"methodId": "session.bind"}] + b8, ensure_ascii=False)
+    machine.succeed(f"echo {base64.b64encode(body.encode()).decode()} | base64 -d > /tmp/b8.json && chmod 0644 /tmp/b8.json && rm -f /tmp/b8.out")
+    machine.succeed(f"echo {base64.b64encode((RPC + ' @/tmp/b8.json > /tmp/b8.out 2>&1; echo done >> /tmp/b8.out' + chr(10)).encode()).decode()} | base64 -d > /tmp/b8.sh && chmod 0644 /tmp/b8.sh")
+    machine.send_key("alt-f1")
+    machine.wait_until_succeeds("grep -qx tty1 /sys/class/tty/tty0/active")
+    machine.send_chars("sh /tmp/b8.sh\n")
+    machine.wait_until_succeeds("test $(grep -c '^{' /tmp/b8.out) -ge 2", timeout=120)
+    machine.succeed("systemctl stop agentos-machine.service")
+    machine.succeed("touch /tmp/b8-go")
+    machine.wait_until_succeeds("grep -q '^done$' /tmp/b8.out", timeout=60)
+    L = [json.loads(l) for l in machine.succeed("cat /tmp/b8.out").splitlines() if l.startswith("{")]
+    print("S08 build start during outage:", L[-1])
+    assert L[-1]["status"] in (200, 202), L
+    # the rebuild job exists and waits for its slot: queued, no builder container, and the Host says why
+    machine.wait_until_succeeds(f"test $(sqlite3 {OS} \"SELECT COUNT(*) FROM build_jobs WHERE app_id='{kanban}'\") -gt {jobs0}", timeout=120)
+    machine.wait_until_succeeds(f"test $(sqlite3 {OS} \"SELECT COUNT(*) FROM events WHERE kind='machine.unreachable'\") -gt {unreach0}", timeout=60)
+    ev = json.loads(hsql("SELECT payload_json FROM events WHERE kind='machine.unreachable' ORDER BY rowid DESC LIMIT 1"))
+    print("S08 build reason:", ev)
+    assert ev["waiting"] == "build" and "build requests are paused" in ev["reason"], ev
+    time.sleep(10)
+    job = hsql(f"SELECT id || '|' || status || '|' || COALESCE(container_id,'') FROM build_jobs WHERE app_id='{kanban}' ORDER BY created_at DESC LIMIT 1").split("|")
+    assert job[1] == "queued" and job[2] == "", job                   # nothing was built while machined was away
+    names = machine.succeed(f"runuser -u {login} -- env XDG_RUNTIME_DIR=/run/user/{uid} podman ps -a --format '{{{{.Names}}}}' 2>/dev/null || true")
+    assert f"agentos-b-{job[0][:12]}" not in names, names
+    machine.succeed("systemctl start agentos-machine.service")
+    machine.wait_for_unit("agentos-machine.service")
+    # the waiting build gets its slot and leaves the queue; the Host records the recovery
+    machine.wait_until_succeeds(f"sqlite3 {OS} \"SELECT status FROM build_jobs WHERE id='{job[0]}'\" | grep -qv '^queued$'", timeout=300)
+    machine.wait_until_succeeds(f"sqlite3 {OS} \"SELECT COUNT(*) FROM events WHERE kind='machine.reachable'\" | grep -qv '^0$'", timeout=60)
+    print("S08 build after recovery:", hsql(f"SELECT status || ' ' || COALESCE(error_json,'') FROM build_jobs WHERE id='{job[0]}'"))
