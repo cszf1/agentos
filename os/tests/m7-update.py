@@ -377,7 +377,9 @@ with subtest("commit window: a crash after the intent or after the default resol
         uid = str(uuid.uuid4())
         mok("updates.open", {"updateId": uid, "toReleaseId": rid, "plan": {"to": rid}})
         for st in ("downloading", "staged", "waiting_confirmation", "quiescing"):
-            mok("updates.advance", {"updateId": uid, "to": st, "fields": {}})
+            # review R2-4: staging names the target release's own closure
+            f = {"releaseId": rid, "manifestHash": f"sha256:{rid}", "closurePath": f"/nix/store/{rid}"} if st == "staged" else {}
+            mok("updates.advance", {"updateId": uid, "to": st, "fields": f})
         b = mok("barrier.hold", {"ownerKind": "update", "ownerId": uid, "scope": {}})["barrierId"]
         mok("updates.advance", {"updateId": uid, "to": "armed", "fields": {"barrierId": b, "candidateEntryId": f"agentos-{rid}.conf", "previousEntryId": f"agentos-{known}.conf"}})
         # C1 is the older generation (its own closure); every other entry is the newer one. Run 41143311441: C2's entry

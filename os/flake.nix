@@ -96,6 +96,26 @@
         m16-fetch = test "m16" ./tests/m16-fetch.nix { };
         m17-shared = test "m17" ./tests/m17-shared.nix { };
         m18-o09 = test "m18" ./tests/m18-o09.nix { };
+        # review R2-5: releaseSequence allocation (no VM): commit time default, explicit sequence, refusal of a sequence
+        # that does not rise above the previous published manifest; the next release follows the previous one
+        release-sequence = pkgs.runCommand "agentos-release-sequence-check" { nativeBuildInputs = [ pkgs.python3 pkgs.jq ]; } ''
+          set -e
+          mkdir -p top/firmware r1 r2 r3 r4 && echo k > top/kernel && echo i > top/initrd
+          printf '%s\n' "$PWD/top" "sha256:0000000000000000000000000000000000000000000000000000000000000000" 1 "" 0 > reg
+          run() { python3 ${./release.py} reg "$PWD/top" aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa "$1" bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb sha256:0000000000000000000000000000000000000000000000000000000000000000 1.0.0 top/kernel top/initrd 6.18 "$2"; }
+          run 1000 r1
+          test "$(jq .releaseSequence r1/manifest.json)" = 1000
+          AGENTOS_PREVIOUS_MANIFEST=r1/manifest.json run 2000 r2
+          test "$(jq .releaseSequence r2/manifest.json)" = 2000
+          test "$(jq -r .releaseId r1/manifest.json)" != "$(jq -r .releaseId r2/manifest.json)"
+          # an older commit time, or the same sequence, after the previous release: refused
+          if AGENTOS_PREVIOUS_MANIFEST=r2/manifest.json run 1500 r3; then echo "a lower sequence was accepted"; exit 1; fi
+          if AGENTOS_PREVIOUS_MANIFEST=r2/manifest.json AGENTOS_RELEASE_SEQUENCE=2000 run 3000 r3; then echo "an equal sequence was accepted"; exit 1; fi
+          # the signing environment's explicit sequence wins over the commit time
+          AGENTOS_PREVIOUS_MANIFEST=r2/manifest.json AGENTOS_RELEASE_SEQUENCE=2001 run 1500 r4
+          test "$(jq .releaseSequence r4/manifest.json)" = 2001
+          mkdir -p $out && cp r1/manifest.json $out/prev.json && cp r2/manifest.json $out/next.json
+        '';
         m5-desktop = import ./tests/m5-desktop.nix { inherit pkgs; modules = [ ./modules/base.nix ./modules/graphics.nix ./modules/agentos.nix ]; };
       };
     };

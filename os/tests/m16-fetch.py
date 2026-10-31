@@ -113,6 +113,12 @@ with subtest("an unsigned or wrongly signed cache is refused: nothing enters the
     msql("UPDATE update_jobs SET state='cancelled'")
     uid2 = "78787878-7878-4878-8878-787878787878"
     mok("updates.open", {"updateId": uid2, "toReleaseId": rid2, "plan": {"to": rid2}})
+    # review R2-4: another valid store path (a member of the same closure) is not this update's target closure
+    other = next(p for p in closure if p != root)
+    rc, o = machine.execute(f"NIX_CONFIG='{NIXCFG}' agentosctl update fetch --update-id {uid2} --from http://127.0.0.1:8099 --closure {other} 2>&1")
+    print(o)
+    assert rc != 0 and "UPDATE_CONTENT_MISMATCH" in o and "nothing was downloaded" in o, o
+    assert msql(f"SELECT state FROM update_jobs WHERE update_id='{uid2}'") == "verified"
     rc, o = machine.execute(f"agentosctl update fetch --update-id {uid2} --from http://127.0.0.1:8099 --closure {root} 2>&1")   # no trusted key
     print(o)
     assert rc != 0 and "UPDATE_DOWNLOAD_INTERRUPTED" in o, o
