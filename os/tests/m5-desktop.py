@@ -311,7 +311,7 @@ def scope(tag):
         "hostUid": huid,
         # every process of this workspace, by UID: none may run as the person who is (or was) logged in
         "workspaceUids": sorted(set(machine.succeed(f"ps -o uid= -u {exec_uid} | sort -u; true").split())),
-        "loginUidProcsInWorkspace": machine.succeed(f"for p in $(pgrep -u {alice_uid}); do grep -l 'agentos-host@{ws}' /proc/$p/cgroup 2>/dev/null; done | wc -l").strip(),
+        "loginUidProcsInWorkspace": machine.succeed(f"pids=$(pgrep -u {alice_uid}) || test $? -eq 1; for p in $pids; do grep -l 'agentos-host@{ws}' /proc/$p/cgroup 2>/dev/null || test $? -eq 1 || test ! -e /proc/$p/cgroup; done | wc -l").strip(),
     }
     print("scope", tag, json.dumps(v, ensure_ascii=False))
     assert v["runWhenLoggedOut"] == "0", v

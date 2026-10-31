@@ -136,7 +136,8 @@ with subtest("first boot on the console, a second workspace and a member to revo
     # A new member MUST first be a viewer; promotion is a separate authorized change, not an invitation bypass.
     r = call(3, [{"methodId": "members.setRole", "workspaceId": ws, "idempotencyKey": str(uuid.uuid4()), "body": {"userId": bob, "role": "viewer"}}], "mbv")[0]
     assert r["status"] == 200, r
-    r = call(3, [{"methodId": "members.setRole", "workspaceId": ws, "idempotencyKey": str(uuid.uuid4()), "body": {"userId": bob, "role": "editor"}}], "mb")[0]
+    mv = int(sql(f"SELECT member_version FROM workspace_members WHERE workspace_id='{ws}' AND user_id='{bob}'"))
+    r = call(3, [{"methodId": "members.setRole", "workspaceId": ws, "idempotencyKey": str(uuid.uuid4()), "body": {"userId": bob, "role": "editor", "expectedMemberVersion": mv}}], "mb")[0]
     assert r["status"] == 200, r
     r = call(3, [{"methodId": "workspaces.create", "idempotencyKey": str(uuid.uuid4()), "body": {"displayName": "B"}}], "cb")[0]
     assert r["status"] == 201, r

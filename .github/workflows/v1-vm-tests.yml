@@ -95,6 +95,7 @@ jobs:
           python3 -B os/tests/test_pnm.py
           python3 -B os/tests/test_navigation_pixels.py
           python3 -B os/tests/test_boot_console.py
+          python3 -B os/tests/test_scope_counter.py
 
       - name: Build test driver
         if: ${{ !startsWith(matrix.test, 'build-') }}
