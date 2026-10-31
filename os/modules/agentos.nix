@@ -232,6 +232,9 @@ in {
         AGENTOS_RUNTIME = "podman";
         AGENTOS_PODMAN_SOCKET = "%t/podman/podman.sock";
         AGENTOS_MODEL_MODE = "real";
+        # the Host's unprivileged native reader (agentos-provider-user); without it every resource probe is
+        # "native reader not installed" and maintenance only observes (m17 W09 run 41162223586)
+        AGENTOS_NATIVE_BIN = "${native}/bin";
         NODE_ENV = "production";
       } // lib.optionalAttrs (cfg.releaseImages != null) { AGENTOS_RELEASE_IMAGES = "${cfg.releaseImages}"; };
       path = [ pkgs.podman pkgs.util-linux pkgs.coreutils ];
