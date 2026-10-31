@@ -21,6 +21,12 @@
 //!                                                               resumable — paths already present are never fetched again)
 //!   agentosctl update commit --update-id <id>                  (root: health gate → commit intent → persistent default
 //!                                                               read back → committed, deferred migration once)
+//!   agentosctl update adopt-base --manifest <file> --signature <file>   (root: the running system's signed manifest
+//!                                                               becomes current + known-good with its own ESP entry)
+//!   agentosctl update activate --update-id <id>                (root: staged → armed, one-shot trial entry)
+//!   agentosctl import-set --in <dir> --identity <file> --out <dir> (root: an exported set back into a plain set)
+//!   agentosctl admin <command> …                               (a machine administrator, no root: the command becomes
+//!                                                               a planned admin.* machine action confirmed with PAM)
 //!   agentosctl update reconcile                                (root, every boot: resolves the open update from facts —
 //!                                                               machined state + commit intent + what the loader booted)
 use agentos_machine::server::Client;
@@ -49,6 +55,10 @@ fn main() {
     let a: Vec<String> = std::env::args().collect();
     if a.get(1).map(|s| s.as_str()) == Some("recover") {
         recover(&a);
+        return;
+    }
+    if a.get(1).map(|s| s.as_str()) == Some("admin") {
+        admin_client(&a[2..]);
         return;
     }
     let mut c = match Client::connect(&sock()) {
@@ -126,6 +136,15 @@ fn main() {
             root_only("update fetch");
             update_fetch(&mut c, &a);
         }
+        (Some("update"), Some("adopt-base")) => {
+            root_only("update adopt-base");
+            update_adopt_base(&mut c, &a);
+        }
+        (Some("update"), Some("activate")) => {
+            root_only("update activate");
+            update_activate(&mut c, &a);
+        }
+        (Some("import-set"), _) => import_set(&a),
         (Some("update"), Some("commit")) => {
             root_only("update commit");
             update_commit(&mut c, &a);
@@ -238,7 +257,8 @@ fn update_verify(c: &mut Client, a: &[String]) {
         agentos_machine::release::check_oci_bundle(&m, &sbom_bytes, &idx, &ash, Some(&ids)).unwrap_or_else(|e| die(&e.to_string()));
         images = json!({ "count": ids.len(), "archiveSha256": ash, "importedIds": ids });
     }
-    out(&json!({ "ok": true, "releaseId": v["releaseId"], "manifestHash": v["manifestHash"], "closurePaths": r["result"]["paths"], "ociImages": images }));
+    let opened = if a.iter().any(|x| x == "--open") { update_open(c, &mpath, &spath, trusted) } else { Value::Null };
+    out(&json!({ "ok": true, "releaseId": v["releaseId"], "manifestHash": v["manifestHash"], "closurePaths": r["result"]["paths"], "ociImages": images, "update": opened }));
 }
 
 fn sha256_file(p: &std::path::Path) -> std::io::Result<String> {
@@ -1071,4 +1091,335 @@ fn update_fetch(c: &mut Client, a: &[String]) {
     }
     let done = adv(c, "staged", json!({ "releaseId": target["releaseId"], "manifestHash": target["manifestHash"], "closurePath": closure }));
     out(&json!({ "updateId": id, "state": done["state"], "paths": names.len(), "alreadyPresent": have.len(), "fetched": names.len() - have.len() }));
+}
+
+// ---------------------------------------------------------------- machine administrator flows (decision 80)
+
+/// `agentosctl admin <command>` for a machine administrator WITHOUT root (root stays locked, no sudo): the command
+/// becomes a fixed `admin.*` (or power) machine action planned through the session gateway from the administrator's
+/// own local login session, confirmed with their password (PAM at the gateway, one-time ticket bound to planHash),
+/// then carried out by machined's fixed root helper. Prints the plan, the outcome and the helper's JSON output.
+fn admin_client(a: &[String]) {
+    let usage = "usage: agentosctl admin <command> [--password-stdin] [--yes]
+  status
+  backup --name <set> [--pinned] [--include-archived]
+  backup export --set <set> --recipient <age1…> --out <dir in your home or on /media>
+  backup abandon
+  restore --set <set> [--restore-id <id>]
+  import-set --in <dir with ws-*.age> --identity <age identity file> --name <set>
+  clone --set <set> --owner <login>
+  import-v04 --backup <dir> --owner <login> [--name <name>]
+  update trust-key --key-id <id> --public-key <hex>
+  update adopt-base --manifest <file> --signature <file> [--trusted-time]
+  update verify --manifest <file> --signature <file> [--trusted-time] [--images <index.json> --sbom <sbom.json>] [--open]
+  update fetch --update-id <id> --from <https://cache | file:///dir> --closure <store path>
+  update activate --update-id <id>
+  update commit --update-id <id>
+  reboot";
+    let cmd: Vec<&str> = a.iter().map(|s| s.as_str()).filter(|s| !s.starts_with("--")).take(2).collect();
+    let has = |f: &str| a.iter().any(|x| x == f);
+    let get = |f: &str| arg(a, f);
+    let need = |f: &str| get(f).unwrap_or_else(|| die(&format!("{f} is required\n{usage}")));
+    let (kind, params): (&str, Value) = match (cmd.first().copied(), cmd.get(1).copied()) {
+        (Some("status"), _) => ("", Value::Null),
+        (Some("backup"), Some("export")) => ("admin.backup.export", json!({ "set": need("--set"), "recipient": need("--recipient"), "out": need("--out") })),
+        (Some("backup"), Some("abandon")) => ("admin.backup.abandon", json!({})),
+        (Some("backup"), _) => ("admin.backup", json!({ "name": need("--name"), "pinned": has("--pinned"), "includeArchived": has("--include-archived") })),
+        (Some("restore"), _) => ("admin.restore", json!({ "set": need("--set"), "restoreId": get("--restore-id") })),
+        (Some("import-set"), _) => ("admin.importSet", json!({ "in": need("--in"), "identity": need("--identity"), "name": need("--name") })),
+        (Some("clone"), _) => ("admin.clone", json!({ "set": need("--set"), "owner": need("--owner") })),
+        (Some("import-v04"), _) => ("admin.importV04", json!({ "backup": need("--backup"), "owner": need("--owner"), "name": get("--name") })),
+        (Some("update"), Some("trust-key")) => ("admin.update", json!({ "step": "trust-key", "keyId": need("--key-id"), "publicKey": need("--public-key") })),
+        (Some("update"), Some("adopt-base")) => ("admin.update", json!({ "step": "adopt-base", "manifest": need("--manifest"), "signature": need("--signature"), "trustedTime": has("--trusted-time") })),
+        (Some("update"), Some("verify")) => ("admin.update", json!({ "step": "verify", "manifest": need("--manifest"), "signature": need("--signature"), "trustedTime": has("--trusted-time"), "images": get("--images"), "sbom": get("--sbom"), "open": has("--open") })),
+        (Some("update"), Some("fetch")) => ("admin.update", json!({ "step": "fetch", "updateId": need("--update-id"), "from": need("--from"), "closure": need("--closure") })),
+        (Some("update"), Some("activate")) => ("admin.update", json!({ "step": "activate", "updateId": need("--update-id") })),
+        (Some("update"), Some("commit")) => ("admin.update", json!({ "step": "commit", "updateId": need("--update-id") })),
+        (Some("reboot"), _) => ("power.reboot", json!({})),
+        _ => die(usage),
+    };
+    // relative paths are taken from where the administrator stands
+    let mut params = params;
+    if let Some(o) = params.as_object_mut() {
+        o.retain(|_, v| !v.is_null());
+        for k in ["out", "in", "identity", "backup", "manifest", "signature", "images", "sbom"] {
+            if let Some(Value::String(p)) = o.get(k).cloned() {
+                if !p.starts_with('/') {
+                    let cwd = std::env::current_dir().unwrap_or_default();
+                    o.insert(k.into(), json!(cwd.join(p).to_string_lossy()));
+                }
+            }
+        }
+    }
+    let gsock = std::env::var("AGENTOS_GATEWAY_SOCKET").unwrap_or_else(|_| "/run/agentos/gateway.sock".into());
+    let mut g = Gw::connect(&gsock);
+    let b = g.call("session.bind", json!({}), None);
+    if b["status"] != 200 {
+        die(&format!("{}: run this from your own local login session (a text console or the desktop) as a machine administrator", err_text(&b)));
+    }
+    g.epoch = b["body"]["sessionEpoch"].as_i64().unwrap_or(1);
+    if b["body"]["role"] != "admin" {
+        die("NOT_FOUND_OR_FORBIDDEN: this account is not a machine administrator");
+    }
+    if kind.is_empty() {
+        let st = g.call("machine.status", json!({}), None);
+        out(&st["body"]);
+        return;
+    }
+    let p = g.call("machine.actions.plan", json!({ "actionKind": kind, "params": params }), Some(&uuid()));
+    if p["status"] != 201 && p["status"] != 200 {
+        die(&err_text(&p));
+    }
+    let plan = &p["body"];
+    let op = plan["operationId"].as_str().unwrap_or_default().to_string();
+    eprintln!("plan {op}: {kind}\n  {}\n  expires {}", plan["impact"]["command"].as_str().map(String::from).unwrap_or_else(|| plan["impact"].to_string()), plan["expiresAt"]);
+    let mut body = json!({ "operationId": op, "planHash": plan["planHash"] });
+    if plan["admin"] == true {
+        let pw = if has("--password-stdin") {
+            let mut s = String::new();
+            std::io::stdin().read_line(&mut s).unwrap_or_else(|_| die("password on stdin"));
+            s.trim_end_matches(['\n', '\r']).to_string()
+        } else {
+            read_password("Administrator password: ")
+        };
+        body["password"] = json!(pw);
+    } else if !has("--yes") {
+        eprint!("Confirm {kind}? [y/N] ");
+        let mut s = String::new();
+        let _ = std::io::stdin().read_line(&mut s);
+        if !s.trim().eq_ignore_ascii_case("y") {
+            let _ = g.call("machine.actions.cancel", json!({ "operationId": op }), Some(&uuid()));
+            die("cancelled; nothing was done");
+        }
+    }
+    let r = g.call("machine.actions.confirm", body, Some(&uuid()));
+    if r["status"] != 200 {
+        die(&err_text(&r));
+    }
+    let mut v = r["body"].clone();
+    let t0 = std::time::Instant::now();
+    while matches!(v["state"].as_str(), Some("reconciling") | Some("dispatching") | Some("authorized")) && t0.elapsed() < std::time::Duration::from_secs(6 * 3600) {
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        let x = g.call("machine.actions.get", json!({ "operationId": op }), None);
+        if x["status"] == 200 {
+            v = x["body"].clone();
+        } else if x["body"]["error"]["code"] == "SESSION_STALE" || x["body"]["error"]["code"] == "SESSION_REQUIRED" {
+            die(&format!("{} (the operation {op} keeps running; read it again with a new session)", err_text(&x)));
+        }
+    }
+    let res = &v["result"];
+    let show = json!({ "operationId": op, "kind": kind, "state": v["state"], "effectCertainty": v["effectCertainty"], "result": if res["output"].is_null() { res.clone() } else { res["output"].clone() } });
+    out(&show);
+    if v["state"] != "succeeded" {
+        if let Some(l) = res["log"].as_str() {
+            eprintln!("{}", l.lines().rev().take(6).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("\n"));
+        }
+        std::process::exit(1);
+    }
+}
+
+fn err_text(r: &Value) -> String {
+    let e = &r["body"]["error"];
+    let e = if e.is_null() { &r["body"] } else { e };
+    format!("{}: {}", e["code"].as_str().unwrap_or("ERROR"), e["message"].as_str().unwrap_or(&r.to_string()))
+}
+
+fn read_password(prompt: &str) -> String {
+    use std::io::Write;
+    eprint!("{prompt}");
+    let _ = std::io::stderr().flush();
+    let fd = 0;
+    let mut t: libc::termios = unsafe { std::mem::zeroed() };
+    let tty = unsafe { libc::tcgetattr(fd, &mut t) } == 0;
+    let old = t;
+    if tty {
+        t.c_lflag &= !libc::ECHO;
+        unsafe { libc::tcsetattr(fd, libc::TCSANOW, &t) };
+    }
+    let mut s = String::new();
+    let r = std::io::stdin().read_line(&mut s);
+    if tty {
+        unsafe { libc::tcsetattr(fd, libc::TCSANOW, &old) };
+        eprintln!();
+    }
+    r.unwrap_or_else(|_| die("no password"));
+    s.trim_end_matches(['\n', '\r']).to_string()
+}
+
+/// native-rpc/1 over the gateway socket: 4-byte big-endian length + JSON (spec §9.2).
+struct Gw {
+    s: std::os::unix::net::UnixStream,
+    epoch: i64,
+}
+
+impl Gw {
+    fn connect(path: &str) -> Gw {
+        let s = std::os::unix::net::UnixStream::connect(path).unwrap_or_else(|e| die(&format!("session gateway {path}: {e}")));
+        let _ = s.set_read_timeout(Some(std::time::Duration::from_secs(600)));
+        Gw { s, epoch: 1 }
+    }
+    fn call(&mut self, method: &str, body: Value, idem: Option<&str>) -> Value {
+        use std::io::Write;
+        let mut req = json!({ "requestId": uuid(), "methodId": method, "workspaceId": "00000000-0000-0000-0000-000000000000", "clientEpoch": 1, "sessionEpoch": self.epoch, "body": body, "params": {} });
+        if let Some(k) = idem {
+            req["idempotencyKey"] = json!(k);
+        }
+        let b = serde_json::to_vec(&req).unwrap_or_default();
+        let mut f = (b.len() as u32).to_be_bytes().to_vec();
+        f.extend_from_slice(&b);
+        self.s.write_all(&f).unwrap_or_else(|e| die(&format!("gateway write: {e}")));
+        loop {
+            let mut h = [0u8; 4];
+            self.s.read_exact(&mut h).unwrap_or_else(|e| die(&format!("gateway read: {e}")));
+            let mut buf = vec![0u8; u32::from_be_bytes(h) as usize];
+            self.s.read_exact(&mut buf).unwrap_or_else(|e| die(&format!("gateway read: {e}")));
+            let v: Value = serde_json::from_slice(&buf).unwrap_or(Value::Null);
+            if v["type"] == "event" {
+                continue;
+            }
+            return v;
+        }
+    }
+}
+
+/// Root helper of `admin import-set`: an exported set (ws-<id>.age per workspace + machine-set.json.age, read back
+/// by `backup export`) becomes a plain set under --out, every workspace through the fixed recovery worker's import
+/// (age decryption, then every file hash checked). Resumable: workspaces already imported are skipped.
+fn import_set(a: &[String]) {
+    root_only("import-set");
+    let usage = "usage: agentosctl import-set --in <dir> --identity <file> --out <dir>";
+    let src = arg(a, "--in").unwrap_or_else(|| die(usage));
+    let id = arg(a, "--identity").unwrap_or_else(|| die(usage));
+    let dst = arg(a, "--out").unwrap_or_else(|| die(usage));
+    std::fs::create_dir_all(format!("{dst}/ws")).unwrap_or_else(|e| die(&format!("{dst}: {e}")));
+    let _ = std::fs::set_permissions(&dst, std::os::unix::fs::PermissionsExt::from_mode(0o700));
+    let mut done = vec![];
+    let mut names: Vec<String> = std::fs::read_dir(&src).unwrap_or_else(|e| die(&format!("{src}: {e}"))).flatten().map(|e| e.file_name().to_string_lossy().to_string()).collect();
+    names.sort();
+    for f in names {
+        let Some(w) = f.strip_prefix("ws-").and_then(|x| x.strip_suffix(".age")) else { continue };
+        if !agentos_machine::util::is_uuid(w) {
+            die(&format!("INVALID_REQUEST: unexpected file {f}"));
+        }
+        let staging = format!("{dst}/ws/{w}");
+        if std::path::Path::new(&staging).join("manifest.json").exists() {
+            done.push(json!({ "workspaceId": w, "resumed": true }));
+            continue;
+        }
+        let v = rw(&["import", "--in", &format!("{src}/{f}"), "--identity", &id, "--staging", &staging]);
+        if v["ok"] != true {
+            die(&format!("IMPORT_HASH_MISMATCH: {f}: {}", v["error"]));
+        }
+        done.push(json!({ "workspaceId": w }));
+    }
+    if done.is_empty() {
+        die("INVALID_REQUEST: no ws-<id>.age in --in");
+    }
+    let o = std::process::Command::new("age").args(["-d", "-i", &id, "-o", &format!("{dst}/machine-set.json"), &format!("{src}/machine-set.json.age")]).output().unwrap_or_else(|e| die(&format!("age: {e}")));
+    if !o.status.success() {
+        die(&format!("IMPORT_HASH_MISMATCH: machine-set.json.age: {}", String::from_utf8_lossy(&o.stderr).trim()));
+    }
+    out(&json!({ "ok": true, "set": dst, "workspaces": done }));
+}
+
+/// Verify a release (signature, fields, closure content) and return (manifest, signature hex, verify result).
+fn verified(c: &mut Client, mpath: &str, spath: &str, trusted: bool) -> (Value, String, Value) {
+    let m = read_json(mpath);
+    let sig = std::fs::read_to_string(spath).unwrap_or_else(|e| die(&format!("UPDATE_SIGNATURE_INVALID: signature file {spath} missing: {e}"))).trim().to_string();
+    let v = c.call("releases.verify", json!({ "manifest": m, "signature": sig, "trustedTime": trusted })).unwrap_or_else(|e| die(&e.to_string()));
+    (m, sig, v)
+}
+
+fn sha256_hex_file(p: &str) -> String {
+    sha256_file(std::path::Path::new(p)).unwrap_or_else(|e| die(&format!("{p}: {e}")))
+}
+
+/// Write a complete ESP entry for a system closure under a release id (the fixed update worker does the writing).
+fn entry_for(rid: &str, system: &str) -> Value {
+    let rl = |p: &str| std::fs::canonicalize(format!("{system}/{p}")).unwrap_or_else(|e| die(&format!("NEEDS_ATTENTION: {system}/{p}: {e}"))).to_string_lossy().into_owned();
+    let kernel = rl("kernel");
+    let initrd = rl("initrd");
+    let ih = sha256_hex_file(&initrd);
+    let params = std::fs::read_to_string(format!("{system}/kernel-params")).unwrap_or_default().trim().to_string();
+    uw_ok(&["write-entry", "--esp", "/boot", "--release-id", rid, "--kernel", &kernel, "--initrd", &initrd, "--initrd-hash", &ih, "--init", &format!("{system}/init"), "--cmdline", &params, "--title", &format!("AgentOS {}", &rid[..8.min(rid.len())])])
+}
+
+/// `update adopt-base`: the signed manifest of the system that is running becomes the current and known-good release
+/// (machined's adoptBase), with its own complete ESP entry as the persistent default. Needed once on a machine
+/// installed from an unsigned tree, before any update can be armed against a known-good entry.
+fn update_adopt_base(c: &mut Client, a: &[String]) {
+    let usage = "usage: agentosctl update adopt-base --manifest <file> --signature <file> [--trusted-time]";
+    let mpath = arg(a, "--manifest").unwrap_or_else(|| die(usage));
+    let spath = arg(a, "--signature").unwrap_or_else(|| die(usage));
+    let trusted = a.iter().any(|x| x == "--trusted-time");
+    let (m, sig, _) = verified(c, &mpath, &spath, trusted);
+    let cur = std::fs::canonicalize("/run/current-system").unwrap_or_default().to_string_lossy().into_owned();
+    if m["baseClosurePath"].as_str() != Some(cur.as_str()) {
+        die(&format!("UPDATE_CONTENT_MISMATCH: the manifest's closure {} is not the running system {cur}", m["baseClosurePath"]));
+    }
+    let v = c.call("releases.adoptBase", json!({ "manifest": m, "signature": sig, "trustedTime": trusted })).unwrap_or_else(|e| die(&e.to_string()));
+    let rid = v["releaseId"].as_str().unwrap_or_default().to_string();
+    let e = entry_for(&rid, &cur);
+    let d = uw_ok(&["commit", "--release-id", &rid]);
+    out(&json!({ "ok": true, "releaseId": rid, "releaseSequence": v["releaseSequence"], "entry": e["result"], "default": d["result"] }));
+}
+
+/// `update activate`: a staged update is armed for exactly one trial boot (spec §21.3): the machine barrier closes
+/// new business, the candidate's complete entry is written next to the known-good one, and the loader's one-shot
+/// points at it while the persistent default stays known-good. The next reboot runs the trial; the boot-time
+/// reconciliation enters validation, and only `update commit` (health gate) moves the default.
+fn update_activate(c: &mut Client, a: &[String]) {
+    let id = arg(a, "--update-id").unwrap_or_else(|| die("usage: agentosctl update activate --update-id <id>"));
+    let u = c.call("updates.get", json!({ "updateId": id })).unwrap_or_else(|e| die(&e.to_string()));
+    let st = u["state"].as_str().unwrap_or_default().to_string();
+    if st == "armed" {
+        out(&json!({ "updateId": id, "state": "armed", "next": "reboot to run the one-shot trial boot" }));
+        return;
+    }
+    if !matches!(st.as_str(), "staged" | "waiting_confirmation" | "quiescing") {
+        die(&format!("CONFLICT: update {id} is {st}; activation needs a staged update"));
+    }
+    let meta = c.call("status", json!({})).unwrap_or_else(|e| die(&e.to_string()))["meta"].clone();
+    let kg = meta["knownGoodReleaseId"].as_str().map(String::from).unwrap_or_else(|| die("NEEDS_ATTENTION: no known-good release is registered (run update adopt-base first)"));
+    if !std::path::Path::new(&format!("/boot/loader/entries/agentos-{kg}.conf")).exists() {
+        die(&format!("NEEDS_ATTENTION: the known-good release {kg} has no entry on the ESP; refusing to arm"));
+    }
+    let to = u["toReleaseId"].as_str().unwrap_or_default().to_string();
+    let closure = u["target"]["closurePath"].as_str().unwrap_or_default().to_string();
+    if !closure.starts_with("/nix/store/") || !std::path::Path::new(&closure).join("init").exists() {
+        die(&format!("UPDATE_CONTENT_MISMATCH: the staged closure {closure} is not a system in the store"));
+    }
+    let adv = |c: &mut Client, to_state: &str, fields: Value| c.call("updates.advance", json!({ "updateId": id, "to": to_state, "fields": fields })).unwrap_or_else(|e| die(&e.to_string()));
+    if st == "staged" {
+        adv(c, "waiting_confirmation", json!({}));
+    }
+    if st != "quiescing" {
+        adv(c, "quiescing", json!({}));
+    }
+    let b = c.call("barrier.hold", json!({ "ownerKind": "update", "ownerId": id, "scope": {} })).unwrap_or_else(|e| die(&e.to_string()));
+    entry_for(&to, &closure);
+    let armed = uw(&["arm", "--esp", "/boot", "--release-id", &to, "--known-good", &kg]);
+    if armed["ok"] != true {
+        adv(c, "needs_attention", json!({ "error": armed["error"] }));
+        die(&format!("NEEDS_ATTENTION: {}", armed["error"]["message"].as_str().unwrap_or("arming failed")));
+    }
+    let done = adv(c, "armed", json!({ "barrierId": b["barrierId"], "candidateEntryId": format!("agentos-{to}.conf"), "previousEntryId": format!("agentos-{kg}.conf") }));
+    out(&json!({ "updateId": id, "state": done["state"], "candidate": to, "knownGood": kg, "oneshot": armed["result"]["oneshot"], "default": armed["result"]["default"], "next": "reboot to run the one-shot trial boot" }));
+}
+
+/// `update verify --open`: after a successful verification the release is registered and one update is opened to
+/// it (its id derived from the manifest hash, so the same release opens the same update).
+fn update_open(c: &mut Client, mpath: &str, spath: &str, trusted: bool) -> Value {
+    let (m, sig, _) = verified(c, mpath, spath, trusted);
+    let r = c.call("releases.register", json!({ "manifest": m, "signature": sig, "trustedTime": trusted })).unwrap_or_else(|e| die(&e.to_string()));
+    let rid = r["releaseId"].as_str().unwrap_or_default().to_string();
+    let mh = r["manifestHash"].as_str().unwrap_or_default().to_string();
+    let uid = derived_uuid(&["update", &rid, &mh]);
+    match c.call("updates.get", json!({ "updateId": uid })) {
+        Ok(u) if !u.is_null() => json!({ "updateId": uid, "state": u["state"] }),
+        _ => {
+            let u = c.call("updates.open", json!({ "updateId": uid, "toReleaseId": rid, "plan": { "to": rid } })).unwrap_or_else(|e| die(&e.to_string()));
+            json!({ "updateId": uid, "state": u["state"] })
+        }
+    }
 }

@@ -1,5 +1,6 @@
 //! agentos-machined: the single coordinator of the machine directory (spec §5). It owns machine.sqlite, never loads Pi,
 //! never reads prompts and never executes model-provided commands. Root helpers it starts take fixed parameter schemas.
+pub mod admin;
 pub mod backends;
 pub mod ckpt;
 pub mod db;

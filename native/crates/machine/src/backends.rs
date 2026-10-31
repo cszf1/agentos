@@ -286,6 +286,13 @@ impl Executor for RealExecutor {
                 // every precondition is checked again inside the dispatch transaction (begin_delete)
                 Ok((format!("workspace:{ws}:delete"), 1, json!({ "workspaceId": ws, "dataDisposition": p["dataDisposition"], "exportSetId": p["exportSetId"], "summary": if kind == "workspaces.delete" { "delete the workspace data; its UID and storeUUID stay as a tombstone" } else { "owner confirms deleting this workspace" } })))
             }
+            k if k.starts_with("admin.") => {
+                if !crate::admin::KINDS.contains(&k) {
+                    return Err(MErr::new("INVALID_REQUEST", "unknown admin action"));
+                }
+                // argv and paths are validated at plan (with the initiator's login) and again at dispatch
+                Ok((format!("admin:{k}"), 1, Value::Null))
+            }
             "updates.activate" | "updates.rollback" | "restores.confirm" => Ok((format!("{kind}:{}", p["id"].as_str().unwrap_or_default()), 1, json!({ "id": p["id"] }))),
             "workspaces.modelCredential.set" => {
                 let ws = p["workspaceId"].as_str().unwrap_or_default();
@@ -451,6 +458,20 @@ impl Executor for RealExecutor {
                 m.delete_consent_check(op["initiator"].as_str().unwrap_or_default(), ws)?;
                 Ok(json!({ "consented": true, "workspaceId": ws }))
             }
+            k if k.starts_with("admin.") => {
+                let u = m.user(op["initiator"].as_str().unwrap_or_default())?;
+                if u["role"] != "admin" || u["state"] != "active" {
+                    return Err(MErr::new("FAILED_NO_EFFECT", "the initiator is no longer an active machine administrator"));
+                }
+                let login = u["loginName"].as_str().unwrap_or_default().to_string();
+                let argv = crate::admin::argv(k, p, &login)?;
+                let uid = u["loginUid"].as_u64().map(|x| x as u32);
+                let id = op["operationId"].as_str().unwrap_or_default();
+                let mut r = crate::admin::start(id, &argv, uid)?;
+                r["operationId"] = json!(id);
+                Machine::audit(&m.c, &login, &format!("admin.helper:{k}"), None, "started", Some(id))?;
+                Ok(r)
+            }
             "workspaces.delete" => m.begin_delete(
                 op["initiator"].as_str().unwrap_or_default(),
                 p["workspaceId"].as_str().unwrap_or_default(),
@@ -485,6 +506,8 @@ impl Executor for RealExecutor {
             "users.create" | "users.disable" | "workspaces.runWhenLoggedOut" | "workspaces.deleteConsent" => Some(!dispatched.is_null() && dispatched.get("code").is_none()),
             // Phase 1 of a deletion is applied once the workspace is `deleting` (the broker verdict finishes it).
             "workspaces.delete" => Some(matches!(dispatched["state"].as_str(), Some("deleting") | Some("deleted"))),
+            // administrator helpers settle when their exit code is read (Machine::settle_admin)
+            k if k.starts_with("admin.") => None,
             _ => None,
         }
     }

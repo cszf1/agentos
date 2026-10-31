@@ -35,6 +35,16 @@ pub const KINDS: &[(&str, bool)] = &[
     ("workspaces.runWhenLoggedOut", false),
     // Owner setting: the workspace's model credential; the key arrives only as a secretRef (spec §5.2, V1-I11).
     ("workspaces.modelCredential.set", false),
+    // Machine administrator flows that used to need a root shell (decision 80): each runs the fixed root helper
+    // (agentosctl subcommand, argv from validated params, see admin.rs) only after PAM-authenticated confirmation.
+    ("admin.backup", true),
+    ("admin.backup.export", true),
+    ("admin.backup.abandon", true),
+    ("admin.restore", true),
+    ("admin.importSet", true),
+    ("admin.clone", true),
+    ("admin.importV04", true),
+    ("admin.update", true),
 ];
 
 /// Parameter names that would carry a secret; a plan never stores one (the gateway puts the secret in machined's
@@ -78,6 +88,7 @@ const OP_COLS: &str = "operation_id, kind, resource_id, resource_generation, pla
 
 impl Machine {
     pub fn operation(&self, p: &Principal, operation_id: &str) -> R<Value> {
+        self.settle_admin(operation_id, false)?;
         let v = self.c.query_row(&format!("SELECT {OP_COLS} FROM machine_operations WHERE operation_id = ?1"), [operation_id], op_json).optional()?.ok_or_else(MErr::hidden)?;
         if v["initiator"] != p.user_id.as_str() && !p.admin {
             return Err(MErr::hidden());
@@ -146,7 +157,15 @@ impl Machine {
                 return Err(MErr::hidden());
             }
         }
-        let (resource_id, generation, impact) = ex.probe(kind, params_v)?;
+        let (resource_id, generation, impact) = if kind.starts_with("admin.") {
+            // the plan shows the exact root helper command (built from validated params and the initiator's login)
+            let login = self.user(&p.user_id)?["loginName"].as_str().unwrap_or_default().to_string();
+            let argv = crate::admin::argv(kind, params_v, &login)?;
+            let (rid, gen, _) = ex.probe(kind, params_v)?;
+            (rid, gen, json!({ "command": format!("agentosctl {}", argv.join(" ")), "runsAs": "root helper (transient unit), after this confirmation only" }))
+        } else {
+            ex.probe(kind, params_v)?
+        };
         let epoch = self.control_epoch()?;
         let id = uuid();
         let expires = now_ms() + PLAN_MS;
@@ -242,6 +261,8 @@ impl Machine {
                 match ex.reconcile(&kind, &params_v, &res) {
                     Some(true) => ("succeeded", "applied", res),
                     Some(false) => ("failed_no_effect", "none", res),
+                    // an administrator helper is running: the operation stays reconciling until its exit code is read
+                    None if kind.starts_with("admin.") && res.get("helper").is_some() => ("reconciling", "unknown", res),
                     None => ("indeterminate", "unknown", res),
                 }
             }
@@ -257,6 +278,39 @@ impl Machine {
             Self::audit(c, &p.user_id, &format!("op.result:{kind}"), None, state, Some(operation_id))
         })?;
         self.operation(p, operation_id)
+    }
+
+    /// An administrator helper's outcome (decision 80): exit 0 → succeeded; a refusal the helper reports with a
+    /// pre-effect code → failed_no_effect; any other failure, or a helper that is gone without a result when machined
+    /// restarts (`restarted`) → indeterminate. Never re-run.
+    pub fn settle_admin(&self, operation_id: &str, restarted: bool) -> R<()> {
+        let row: Option<(String, String)> = self.c.query_row("SELECT kind, state FROM machine_operations WHERE operation_id = ?1", [operation_id], |r| Ok((r.get(0)?, r.get(1)?))).optional()?;
+        let Some((kind, state)) = row else { return Ok(()) };
+        if !kind.starts_with("admin.") || !matches!(state.as_str(), "reconciling" | "dispatching") {
+            return Ok(());
+        }
+        let (st, cert, res) = match crate::admin::finished(operation_id) {
+            Some(f) if f["exitCode"] == 0 => ("succeeded", "applied", f),
+            Some(f) => {
+                let log = f["log"].as_str().unwrap_or_default();
+                let code = log.lines().rev().find_map(|l| l.strip_prefix("agentosctl: ")).and_then(|m| m.split(':').next()).unwrap_or("").to_string();
+                const NO_EFFECT: &[&str] = &["INVALID_REQUEST", "IMPORT_HASH_MISMATCH", "IMPORT_FORMAT_UNSUPPORTED", "STORE_ALREADY_REGISTERED", "UPDATE_SIGNATURE_INVALID", "UPDATE_CONTENT_MISMATCH", "UPDATE_PRECONDITION", "UPDATE_KEY_UNTRUSTED", "UPDATE_SEQUENCE_REGRESSION", "UPDATE_EXPIRED", "CONFLICT", "NOT_FOUND_OR_FORBIDDEN", "NEEDS_ATTENTION", "CLONE_SAME_MACHINE", "usage"];
+                if NO_EFFECT.iter().any(|c| code.starts_with(c)) {
+                    ("failed_no_effect", "none", f)
+                } else {
+                    ("indeterminate", "unknown", f)
+                }
+            }
+            None if restarted && !crate::admin::helper_alive(operation_id) => ("indeterminate", "unknown", json!({ "reason": "the helper is gone without a result" })),
+            None => return Ok(()),
+        };
+        self.tx(|c| {
+            let n = c.execute("UPDATE machine_operations SET state = ?2, effect_certainty = ?3, result_json = ?4 WHERE operation_id = ?1 AND state IN ('reconciling','dispatching')", params![operation_id, st, cert, canon(&res)])?;
+            if n > 0 {
+                Self::audit(c, "root", &format!("op.result:{kind}"), None, st, Some(operation_id))?;
+            }
+            Ok(())
+        })
     }
 
     pub fn cancel_operation(&self, p: &Principal, operation_id: &str) -> R<Value> {
@@ -281,6 +335,11 @@ impl Machine {
         };
         let n = rows.len();
         for (id, kind, params_t) in rows {
+            if kind.starts_with("admin.") {
+                // the helper is its own transient unit and survives a machined restart: read its result back
+                self.settle_admin(&id, true)?;
+                continue;
+            }
             let pv: Value = serde_json::from_str(&params_t).unwrap_or(Value::Null);
             let (state, cert) = match ex.reconcile(&kind, &pv, &Value::Null) {
                 Some(true) => ("succeeded", "applied"),
