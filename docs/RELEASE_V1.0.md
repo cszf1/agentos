@@ -11,7 +11,7 @@ can be cut once the remaining evidence exists. Nothing here claims an untested p
 |---|---|---|
 | ReleaseManifest (`manifest.json`), SBOM (`sbom.json`, with the firmware list), firmware list (`firmware.json`: every file of the system firmware path, its store package and sha256), `SHA256SUMS` | `nix build .#agentos-release` | unsigned in this tree; signed only in the release environment (§20.1). `releaseSequence` monotonic, `expiresAt`/`supportUntil` = publish time + 365 days, `hardwareProfiles = ["qemu-virtio"]`. |
 | Installer ISO | `nix build .#agentos-iso` | carries the whole release closure and the OCI archive: offline install. |
-| VM template | `nix build .#agentos-qcow2` | same toplevel, same installer, public template LUKS key replaced on first boot (`agentos-disk-rekey`). |
+| VM template | `nix build .#agentos-qcow2` | same toplevel, same installer and layout (GPT, ESP, LUKS2, Btrfs). GPT/partition UUIDs and the ESP are byte-identical across builds; the LUKS2 volume key, salts and UUID are fresh per build. The public template LUKS key is replaced on first boot (`agentos-disk-rekey`); clones of one image share the volume key. |
 | Approved OCI images | `nix build .#agentos-oci` | built offline from fixed inputs; image IDs must equal the manifest's `ociDigests`. |
 
 Verification on the target: `agentosctl update verify` (signature against a trusted key, every field, sequence,

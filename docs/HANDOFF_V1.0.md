@@ -37,29 +37,33 @@
 
 ## 4. 当前状态（交接时）
 
-**71 通过 / 18 部分 / 11 未通过**（第二十一轮更新，与 ACCEPTANCE 总表一致）
+**71 通过 / 18 部分 / 11 未通过**（第二十二轮核对，与 ACCEPTANCE 总表、清单一致）
 
 | 证据等级 | 通过 | 部分 | 未通过 |
 |---|---|---|---|
 | KVM（Actions） | 59 | 4 | 0 |
+| TCG VM | 0 | 0 | 0 |
 | 单元/集成 | 12 | 12 | 0 |
 | Host 级真实模型 | 0 | 2 | 0 |
-| 需实体机 | 0 | 0 | 10 |
-| O10（发布完成） | 0 | 0 | 1 |
+| 需实体机，未验收 | 0 | 0 | 10 |
+| 无可用证据（O10） | 0 | 0 | 1 |
+| 合计 | 71 | 18 | 11 |
 
-最近一轮 Actions：m6-install、m18-o09、m7-update、m12-clone、m6-qcow2 通过；m2、m3、m5、m8–m11、m14–m16 及 build-release/iso/oci/qcow2/shell/audit 之前已通过。m13-native 和 m17-shared 失败（见下）；build-repro 41145515019 后来完成为失败（qcow2 ESP install.json 计划哈希不同）。
+分级与 ACCEPTANCE 总表相同：每项只计入最高证据级别；U01、U02、H03 计在 KVM 行（部分），实体部分在 5.3 重复列出。
 
-第二十一轮（见 ACCEPTANCE“提交与 CI（第二十一轮）”与 PROGRESS 决定 42–47）：W09、U11 已 KVM 通过（run 41163076525）；O03/W05、S08、O09 的修复在 run 41164440050。
+最近一轮 Actions：run 41164440050（2b19b67，全部 24 项）中 22 项通过，包括 O09 的 build-qcow2、m6-qcow2、m6-install、m18-o09、m7-update。m13-native 失败（daily 阶段提交没有产生 run，W05/O03/S08 未执行）；build-repro 失败（ESP 空闲簇残留，决定 48 已修）。run 41167999147（1ed913d）带 m13 诊断，正在运行。
+
+第二十一轮：W09、U11 已 KVM 通过（run 41163076525）。第二十二轮：见 PROGRESS 决定 48、49 与“状态（第二十二轮）”。
 
 ## 5. 剩余工作（按优先级）
 
 ### 5.1 需要改代码或补测试
 
 1. **W09（m17-shared）**：【第二十一轮已解决，决定 42，KVM run 41163076525 通过】两个 workspace 共享物理资源时，broker 调用 machined 的 `registry.pull` 每 10 秒读超时一次，registry 同步失败。新资源缺 `resource_state` 行的问题已修（broker `apply_observation`）。下一步：查 machined 侧 `registry.pull` 处理是否阻塞（锁、等待资源状态、请求帧未结束），在 VM 日志里对照 broker 与 machined 的时间线。
-2. **O03、W05（m13-native）**：【第二十一轮：O03 根因是选错应用（决定 43）；W05 加了诊断，见 run 41164440050】daily 阶段之后写记录失败。O03 返回 403；W05 的请求没有到达 Host。O03 的“生成不可用”部分已通过；D08、M06 已通过。下一步：查 daily 阶段后 session/memberVersion/权限令牌是否被轮换（403 常见原因），以及 W05 的请求在网关还是代理层被丢。
-3. **S08**：【第二十一轮：m13 已加构建子测试（决定 44），见 run 41164440050】machined 不可达时的一般降级已实现；还缺独立 VM 断言“此时新构建会被停止/拒绝”。需加一个 VM 检查或在已有检查里补断言。
+2. **O03、W05（m13-native）**：【第二十二轮：41164440050 的 m13 在 daily 阶段就失败（提交没有产生 run），O03/W05 未执行；1ed913d 让各项互不阻断并打印 Shell 状态，见 run 41167999147】【第二十一轮：O03 根因是选错应用（决定 43）】daily 阶段之后写记录失败。O03 返回 403；W05 的请求没有到达 Host。O03 的“生成不可用”部分已通过；D08、M06 已通过。下一步：查 daily 阶段后 session/memberVersion/权限令牌是否被轮换（403 常见原因），以及 W05 的请求在网关还是代理层被丢。
+3. **S08**：【第二十二轮：子测试已写（决定 44），41164440050 中因 daily 失败未执行，见 run 41167999147】machined 不可达时的一般降级已实现；还缺独立 VM 断言“此时新构建会被停止/拒绝”。需加一个 VM 检查或在已有检查里补断言。
 4. **U11**：【第二十一轮已解决，决定 45，KVM run 41163076525 通过】已有兼容性拒绝和回退证据，但两个系统闭包里是同一份 AgentOS 代码。需要构造真正的旧代际（旧版本 AgentOS 代码）闭包，验证回退到旧代码代际后数据和服务正常。
-5. **O09**：m6-install、m18-o09、m7-update 已在同一提交通过；需要 build-repro 在**同一提交**上也通过，四项组合才能算闭环。可复现构建中 native/node/shell/release/OCI/ISO 已逐位一致；qcow2 的 GPT/ESP 已固定（tpl_uuid 用 uuid5、normalize_template_esp），LUKS2 分区内的随机量（卷密钥、salt、UUID）由解释脚本说明；剩下的 ESP install.json 计划哈希差异第二十一轮已修（决定 46）。
+5. **O09**：m6-install、m18-o09、m7-update 已在同一提交通过；需要 build-repro 在**同一提交**上也通过，四项组合才能算闭环。可复现构建中 native/node/shell/release/OCI/ISO 已逐位一致；qcow2 的 GPT/ESP 已固定（tpl_uuid 用 uuid5、normalize_template_esp），LUKS2 分区内的随机量（卷密钥、salt、UUID）由解释脚本说明；ESP install.json 计划哈希差异第二十一轮已修（决定 46）；41164440050 中剩下的 ESP 差异是空闲簇残留，第二十二轮已修（决定 48），待同一提交 build-repro 重跑。
 
 ### 5.2 现有环境做不到，保持“部分”
 
