@@ -41,3 +41,13 @@ def pnm_rgb(raw: bytes) -> tuple[int, int, bytes]:
         rgb[2::3] = data
         data = bytes(rgb)
     return w, h, data
+
+
+def log_failure_screen(m, tag):
+    """Keep the actual scanout in failure logs even when Nix discards a failed derivation's PNG files."""
+    import base64
+    from pathlib import Path
+    m.screenshot(tag)
+    encoded = base64.b64encode((Path(m.out_dir) / (tag + ".png")).read_bytes()).decode("ascii")
+    for i in range(0, len(encoded), 4096):
+        print("FAILED-SCREEN", tag, i, encoded[i:i + 4096], flush=True)

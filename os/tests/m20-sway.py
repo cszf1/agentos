@@ -269,15 +269,15 @@ steps = {}
 with subtest("agentos-shell-e2e as a real Wayland client in alice's Sway session, driven by real input (D02-D07, D09, D11, D12)"):
     machine.succeed(f"rm -rf {D} && mkdir -m 1777 {D} && touch {D}/out.log && chown alice {D}/out.log")
     run = (f"#!/bin/sh\ncd {D} && exec env QT_QPA_PLATFORM=wayland AGENTOS_E2E_PHASE=sway AGENTOS_E2E_ASK_DIR={D} AGENTOS_E2E_WS_B={ws_b} "
-           f"QTEST_FUNCTION_TIMEOUT=5400000 sh -c 'agentos-shell-e2e -maxwarnings 0 sway; echo rc=$?; echo done' >> {D}/out.log 2>&1\n")
+           f"QTEST_FUNCTION_TIMEOUT=5400000 sh -c '{E2E} -maxwarnings 0 sway; echo rc=$?; echo done' >> {D}/out.log 2>&1\n")
     machine.succeed(f"echo {base64.b64encode(run.encode()).decode()} | base64 -d > {D}/run.sh && chmod 0755 {D}/run.sh")
     sock = machine.succeed(f"ls {RT}/sway-ipc.*.sock | head -1").strip()
     machine.succeed(f"runuser -u alice -- env XDG_RUNTIME_DIR={RT} SWAYSOCK={sock} swaymsg exec {D}/run.sh")
-    machine.wait_until_succeeds("pgrep -u alice -x agentos-shell-e2e || pgrep -u alice -f bin/agentos-shell-e2e", timeout=60)
-    pid = machine.succeed("pgrep -u alice -f bin/agentos-shell-e2e | head -1").strip()
-    machine.succeed(f"grep -q 'session-{sid}.scope' /proc/{pid}/cgroup")      # in the greetd login session
     seen, t0, text = 0, time.time(), ""
     try:
+        machine.wait_until_succeeds("pgrep -u alice -f bin/agentos-shell-e2e", timeout=60)
+        pid = machine.succeed("pgrep -u alice -f bin/agentos-shell-e2e | head -1").strip()
+        machine.succeed(f"grep -q 'session-{sid}.scope' /proc/{pid}/cgroup")  # still the real greetd login
         while time.time() - t0 < 5400:
             text = machine.succeed(f"cat {D}/out.log")
             for m in re.finditer(r"^E2E-ASK (\d+) (.*)$", text, re.M):
@@ -294,6 +294,11 @@ with subtest("agentos-shell-e2e as a real Wayland client in alice's Sway session
     finally:
         text = machine.succeed(f"cat {D}/out.log")
         print("\n".join(l for l in text.splitlines() if not l.startswith("E2E-ASK"))[-20000:])
+        if not re.search(r"^rc=0$", text, re.M):
+            try:
+                log_failure_screen(machine, "sway-e2e-failure")
+            except Exception as e:
+                print("failure screenshot unavailable:", e)
         machine.copy_from_vm(D, "")
     for l in text.splitlines():
         if l.startswith("E2E "):

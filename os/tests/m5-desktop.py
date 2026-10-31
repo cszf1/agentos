@@ -334,9 +334,26 @@ with subtest("lock from the Shell (Ctrl+Alt+L): swaylock confirms, logind Locked
     assert sid
     s_unlocked = scope("unlocked")
     machine.succeed("grep -qx tty1 /sys/class/tty/tty0/active")
-    machine.send_key("ctrl-alt-l")                                   # the Shell's shortcut → session agent → swaylock
-    machine.wait_until_succeeds("pgrep -u alice swaylock", timeout=60)
-    machine.wait_until_succeeds(f"loginctl show-session {sid} -p LockedHint | grep -q yes", timeout=60)
+    # We returned from tty3 and restarted the Shell earlier: explicitly focus its real surface before testing
+    # an application shortcut. Keep the compositor's before/after focus state as evidence, not a forced IPC lock.
+    tree = (f"runuser -u alice -- env XDG_RUNTIME_DIR=/run/user/{alice_uid} "
+            f"SWAYSOCK=$(ls /run/user/{alice_uid}/sway-ipc.*.sock | head -1) swaymsg -t get_tree")
+    print("F08 focus before", machine.succeed(tree))
+    frame = shell_frame("before-lock")
+    w, h, _ = frame
+    assert near(px(frame, w - 12, 12), TOPBAR), "focus click is not on the empty top bar"
+    click(w - 12, 12, w, h)
+    time.sleep(0.3)
+    print("F08 focus after", machine.succeed(tree))
+    machine.send_key("ctrl-alt-l", delay=0.15)                     # still Shell shortcut → session agent → swaylock
+    try:
+        machine.wait_until_succeeds("pgrep -u alice swaylock", timeout=60)
+        machine.wait_until_succeeds(f"loginctl show-session {sid} -p LockedHint | grep -q yes", timeout=60)
+    except Exception:
+        print(machine.execute("ps -eo pid,user,comm,args | grep -E 'agentos-shell|swaylock|session-agent'; "
+                              f"loginctl show-session {sid}; journalctl -b --no-pager -u greetd | tail -30")[1])
+        log_failure_screen(machine, "lock-failure")
+        raise
     lk = shot("locked")
     assert not near(px(lk, lk[0] - 4, 3), TOPBAR), "the Shell frame is still visible while locked"
     s_locked = scope("locked")

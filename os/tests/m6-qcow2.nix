@@ -34,34 +34,66 @@ pkgs.testers.runNixOSTest {
             raise
 
     import time as _t
+    def wait_console(m, pattern, timeout=900):
+        # The stock helper consumes one queued line per second; a boot/install backlog is not guest latency.
+        import re
+        end = _t.monotonic() + timeout
+        while _t.monotonic() < end:
+            log = m.get_console_log()
+            if re.search(pattern, log):
+                return log
+            if m.process is not None and m.process.poll() is not None:
+                raise Exception("the VM exited while waiting for " + pattern)
+            _t.sleep(0.2)
+        raise Exception(f"console never showed {pattern!r}")
+
     def feed(m, text, done, timeout=900):
         # Console prompts (systemd-ask-password) end without a newline, so the driver only sees them once a later
         # line arrives (m6-install waited 8.5 min on "assphrase"). Type the answer every 15 s until `done` shows.
+        import re
         end = _t.time() + timeout
         while _t.time() < end:
+            if re.search(done, m.get_console_log()):
+                return
             m.send_console(text + "\n")
             try:
-                m.wait_for_console_text(done, timeout=15)
+                wait_console(m, done, timeout=15)
                 return
             except Exception:
                 pass
         raise Exception(f"console never showed {done!r}")
 
     def unlock_existing(m, text, timeout=900):
-        # An ask-password completion log is not a boot protocol (clone 2 had already reached multi-user in
-        # 41217247103, yet that one log line never appeared). The instrumented image's root-shell socket becomes
-        # readable ONLY after the guest has unlocked and booted. Check it before typing so a ready OS never gets
-        # another passphrase as a shell command. connect() consumes the normal test-driver handshake.
-        import select
+        # Firmware also writes to this channel: readable != a guest-ready handshake (41224497581).
+        # Keep partial marker bytes, discard only the earlier firmware output, then let connect() consume the
+        # real, complete handshake. Answer only a new password request, never the UEFI menu or a ready shell.
+        import re, select, socket
         assert m.shell is not None, "the instrumented VM has no test-driver socket"
-        end = _t.time() + timeout
-        while _t.time() < end:
+        marker = b"Spawning backdoor root shell..."
+        end, seen = _t.monotonic() + timeout, 0
+        while _t.monotonic() < end:
             if m.connected:
                 return
-            if select.select([m.shell], [], [], 1)[0]:
-                m.connect()
-                return
-            m.send_console(text + "\n")
+            if select.select([m.shell], [], [], 0)[0]:
+                data = m.shell.recv(65536, socket.MSG_PEEK)
+                if not data:
+                    raise Exception("the guest-ready channel closed before its handshake")
+                pos = data.find(marker)
+                if pos >= 0:
+                    if pos:
+                        m.shell.recv(pos, socket.MSG_WAITALL)
+                    m.connect()
+                    return
+                discard = len(data) - len(marker) + 1
+                if discard > 0:
+                    m.shell.recv(discard, socket.MSG_WAITALL)
+            # The console reader appends complete lines independently of wait_for_console_text(). Do not drain
+            # one queued boot line per retry or wait for the optional password-query completion message.
+            console = m.get_console_log()
+            new, seen = console[seen:], len(console)
+            if re.search(r"Please enter passphrase|Starting password query on /dev/ttyS0", new):
+                m.send_console(text + "\n")
+            _t.sleep(0.2)
         raise Exception("the encrypted disk did not unlock and boot")
 
     assert open("${image}/system").read().strip() == TOP
@@ -108,7 +140,7 @@ pkgs.testers.runNixOSTest {
             m.start()
             # the template key opens the disk without a prompt; then the rekey service asks twice (the same answer is
             # typed until it reports success); machined must not be running before that
-            m.wait_for_console_text("template disk detected", timeout=900)
+            wait_console(m, "template disk detected", timeout=900)
             # review F01: read the template's volume key while the rekey service waits for the passphrase
             tvk = volume_key(m, "--key-file=/etc/agentos/template-disk.key")
             tvks.append(tvk)
@@ -118,7 +150,7 @@ pkgs.testers.runNixOSTest {
                 m.send_console("clone-pass-2\n")
                 for _ in range(40):
                     try:
-                        m.wait_for_console_text("re-encrypting the disk", timeout=15)
+                        wait_console(m, "re-encrypting the disk", timeout=15)
                         break
                     except Exception:
                         m.send_console("clone-pass-2\n")

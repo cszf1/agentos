@@ -42,16 +42,34 @@ def kill_on_fail():
     try:
         yield
     except BaseException:
-        for x in extra:
+        for i, x in enumerate(extra):
+            if x.process is not None and x.process.poll() is None:
+                try:
+                    log_failure_screen(x, f"iso-failure-{i}")
+                except Exception as e:
+                    print("failure screenshot unavailable:", e)
             if x.booted:
                 x.crash()
         raise
 
+def wait_console(m, pattern, timeout=900, start=0):
+    """Read the live log, not one queued line per one-second driver retry (a large install log took 3093 s)."""
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        log = m.get_console_log()
+        if re.search(pattern, log[start:]):
+            return log
+        if m.process is not None and m.process.poll() is not None:
+            raise AssertionError("the VM exited while waiting for console pattern " + pattern)
+        time.sleep(0.2)
+    raise AssertionError(f"console never showed {pattern!r}; tail: {m.get_console_log()[-2000:]}")
+
+
 def run(m, cmd, tag, timeout=900):
     """Run a root shell command on the ISO's serial console; returns (rc, console log)."""
+    start = len(m.get_console_log())
     m.send_console(f"{cmd}; echo __{tag}_RC=$?__\n")
-    m.wait_for_console_text(f"__{tag}_RC=[0-9]+__", timeout=timeout)
-    log = m.get_console_log()
+    log = wait_console(m, f"__{tag}_RC=[0-9]+__", timeout=timeout, start=start)
     return int(re.findall(f"__{tag}_RC=([0-9]+)__", log)[-1]), log
 
 def last_json(log, key):
@@ -63,10 +81,11 @@ def console_prompt(m, pattern, timeout):
     # The console reader delivers complete lines, but a shell prompt has no trailing newline (m19 41217257273).
     # Blank Enter is harmless on this autologin installer and flushes the prompt; do not wait 15 minutes for it.
     end = time.time() + timeout
+    start = len(m.get_console_log())
     while time.time() < end:
         m.send_console("\n")
         try:
-            m.wait_for_console_text(pattern, timeout=10)
+            wait_console(m, pattern, timeout=10, start=start)
             return
         except Exception:
             if m.process is not None and m.process.poll() is not None:
@@ -148,11 +167,27 @@ def click(m, x, y, w, h):
     time.sleep(0.15)
     qsend("input-send-event", {"events": [{"type": "btn", "data": {"down": False, "button": "left"}}]})
 
+def wait_screen(m, regex, timeout=900):
+    """Log actual OCR changes as they happen, preserving the driver's wall-clock deadline semantics."""
+    end, previous = time.monotonic() + timeout, None
+    while time.monotonic() < end:
+        variants = m.get_screen_text_variants()
+        if variants != previous:
+            print("OCR", regex, json.dumps(variants, ensure_ascii=False)[:6000], flush=True)
+            previous = variants
+        if any(re.search(regex, text) is not None for text in variants):
+            return
+        if m.process is not None and m.process.poll() is not None:
+            raise AssertionError("the VM exited while waiting for " + regex)
+        time.sleep(min(2, max(0, end - time.monotonic())))
+    raise AssertionError(f"screen did not show {regex!r}; last OCR: {previous!r}")
+
+
 def keyed(m, text):
-    """Type on the VM keyboard one key at a time (QEMU's fast injection can drop a key)."""
+    """Do not outpace QEMU's default 100-ms key hold, including consecutive identical keys."""
     names = {"-": "minus", " ": "spc", "\n": "ret"}
     for ch in text:
-        m.send_key(names.get(ch, ("shift-" + ch.lower()) if ch.isupper() else ch), delay=0.06)
+        m.send_key(names.get(ch, ("shift-" + ch.lower()) if ch.isupper() else ch), delay=0.15)
 
 def install_iso(cmd, name, serial):
     iso = create_machine(iso_command(cmd), name=name)
@@ -185,11 +220,11 @@ with subtest("install from the ISO alone: its own kernel/initrd/command line, of
 # direct SQLite write or service override exists on either installed system.
 def operator_login(m, user, pw):
     m.send_key("ctrl-alt-f2")
-    m.wait_for_text(r"login:", timeout=180)
+    wait_screen(m, r"login:", timeout=180)
     m.send_chars(user + "\n", delay=0.08)
-    m.wait_for_text(r"[Pp]assword:", timeout=120)
+    wait_screen(m, r"[Pp]assword:", timeout=120)
     keyed(m, pw + "\n")
-    m.wait_for_text(user + r"@", timeout=120)
+    wait_screen(m, user + r"@", timeout=120)
 
 def operator_phase(m, user, phase, marker, from_media=False, timeout=1200):
     script = f"/home/{user}/drill/drill.mjs"
@@ -198,39 +233,39 @@ def operator_phase(m, user, phase, marker, from_media=False, timeout=1200):
         mount = "udisksctl mount -b /dev/disk/by-label/AOS-CARRY --no-user-interaction && "
         script = f"/run/media/{user}/AOS-CARRY/drill.mjs"
     m.send_chars(f"{mount}{NODE} {script} {phase} {int(time.time() * 1000)}\n", delay=0.03)
-    m.wait_for_text(marker, timeout=timeout)
+    wait_screen(m, marker, timeout=timeout)
     shot(m, "operator-" + user + "-" + phase)
 
 def operator_reboot(m, user, pw):
     m.send_chars(f"{NODE} /home/{user}/drill/drill.mjs reboot\n", delay=0.03)
     m.wait_for_shutdown(timeout=180)
     m.start()
-    m.wait_for_text(r"(?i)passphrase", timeout=900)
+    wait_screen(m, r"(?i)passphrase", timeout=900)
     keyed(m, PASS + "\n")
-    m.wait_for_text("Login", timeout=600)  # do NOT log in graphically: the trial must fail the Wayland health gate
+    wait_screen(m, "Login", timeout=600)  # do NOT log in graphically: the trial must fail the Wayland health gate
     operator_login(m, user, pw)
 
 with subtest("the installed disk alone: first unlock, first-boot administrator on the console, ReGreet login, the Shell on the output and driven by clicks (U01, D01, review F11)"), kill_on_fail():
     target = create_machine(common + carry_options, name="installed")
     extra.append(target)
     target.start()
-    target.wait_for_text(r"(?i)passphrase", timeout=900)
+    wait_screen(target, r"(?i)passphrase", timeout=900)
     time.sleep(2)
     keyed(target, PASS + "\n")
-    target.wait_for_text(r"administrator login", timeout=900)
+    wait_screen(target, r"administrator login", timeout=900)
     shot(target, "first-setup")
     keyed(target, "alice\n")
-    target.wait_for_text(r"password:", timeout=120)
+    wait_screen(target, r"password:", timeout=120)
     keyed(target, "alice-pw-1\n")
-    target.wait_for_text(r"password again", timeout=120)
+    wait_screen(target, r"password again", timeout=120)
     keyed(target, "alice-pw-1\n")
-    target.wait_for_text(r"workspace name", timeout=120)
+    wait_screen(target, r"workspace name", timeout=120)
     keyed(target, "Home\n")
-    target.wait_for_text(r"Login", timeout=600)                 # ReGreet's button, alice preselected
+    wait_screen(target, r"Login", timeout=600)                 # ReGreet's button, alice preselected
     time.sleep(5)
     shot(target, "greeter")
     target.send_key("ret")
-    target.wait_for_text(r"Password", timeout=120)              # greetd's PAM prompt in ReGreet
+    wait_screen(target, r"Password", timeout=120)              # greetd's PAM prompt in ReGreet
     keyed(target, "alice-pw-1\n")
     img = shell_frame(target, "shell")
     w, h, _ = img
@@ -314,17 +349,17 @@ with subtest("O09 continuation: the SAME release ISO installs a second machine; 
     dest = create_machine(common2 + carry_options, name="destination")
     extra.append(dest)
     dest.start()
-    dest.wait_for_text(r"(?i)passphrase", timeout=900)
+    wait_screen(dest, r"(?i)passphrase", timeout=900)
     keyed(dest, PASS + "\n")
-    dest.wait_for_text("administrator login", timeout=900)
+    wait_screen(dest, "administrator login", timeout=900)
     keyed(dest, "bea\n")
-    dest.wait_for_text("password:", timeout=120)
+    wait_screen(dest, "password:", timeout=120)
     keyed(dest, "bea-pw-2\n")
-    dest.wait_for_text("password again", timeout=120)
+    wait_screen(dest, "password again", timeout=120)
     keyed(dest, "bea-pw-2\n")
-    dest.wait_for_text("workspace name", timeout=120)
+    wait_screen(dest, "workspace name", timeout=120)
     keyed(dest, "B\n")
-    dest.wait_for_text("Login", timeout=600)
+    wait_screen(dest, "Login", timeout=600)
     operator_login(dest, "bea", "bea-pw-2")
     operator_phase(dest, "bea", "restore", "AOS-O09-RESTORED", from_media=True)
     dest.send_monitor_command("system_powerdown")
