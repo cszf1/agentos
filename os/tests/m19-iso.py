@@ -3,20 +3,34 @@ import contextlib
 
 # ---- the clean UEFI VM: one blank 64 GiB virtio disk with a serial number, no network ----
 tmp = os.environ.get("TMPDIR", "/tmp")
-disk = os.path.join(tmp, "target.qcow2")
-subprocess.run([QEMU_IMG, "create", "-f", "qcow2", disk, "64G"], check=True)
-vars_ = os.path.join(tmp, "ovmf-vars.fd")
-shutil.copy(OVMF_VARS, vars_)
-os.chmod(vars_, 0o644)
 append = open(os.path.join(ISO_DIR, "append")).read().strip()
 print("ISO serial entry:", open(os.path.join(ISO_DIR, "kernel.path")).read().strip(), append)
-common = (f"{QEMU} -m 3072 -smp 2 -nic none "
-          f"-drive if=pflash,format=raw,unit=0,readonly=on,file={OVMF_CODE} -drive if=pflash,format=raw,unit=1,file={vars_} "
-          f"-drive file={disk},if=none,id=t,format=qcow2 -device virtio-blk-pci,drive=t,serial=AGENTOS-T1 "
-          "-vga none -device virtio-gpu-pci -device qemu-xhci,id=xhci -device usb-tablet,bus=xhci.0")
-# Use the ISO initrd's virtio-scsi optical path, not an implicit legacy IDE controller.
-iso_cmd = common + (f" -device virtio-scsi-pci,id=iso-scsi -drive file={ISO_DIR}/agentos.iso,if=none,id=cd,format=raw,media=cdrom,readonly=on "
-                    f"-device scsi-cd,drive=cd,bus=iso-scsi.0 -kernel {ISO_DIR}/bzImage -initrd {ISO_DIR}/initrd -append '{append}'")
+
+def clean_disk(name, serial):
+    disk = os.path.join(tmp, name + ".qcow2")
+    subprocess.run([QEMU_IMG, "create", "-f", "qcow2", disk, "64G"], check=True)
+    vars_ = os.path.join(tmp, name + "-vars.fd")
+    shutil.copy(OVMF_VARS, vars_)
+    os.chmod(vars_, 0o644)
+    return (f"{QEMU} -m 3072 -smp 2 -nic none -no-reboot "
+            f"-drive if=pflash,format=raw,unit=0,readonly=on,file={OVMF_CODE} -drive if=pflash,format=raw,unit=1,file={vars_} "
+            f"-drive file={disk},if=none,id=t,format=qcow2 -device virtio-blk-pci,drive=t,serial={serial} "
+            "-vga none -device virtio-gpu-pci -device qemu-xhci,id=xhci -device usb-tablet,bus=xhci.0")
+
+def iso_command(base):
+    # Use the ISO initrd's virtio-scsi optical path, not an implicit legacy IDE controller.
+    return base + (f" -device virtio-scsi-pci,id=iso-scsi -drive file={ISO_DIR}/agentos.iso,if=none,id=cd,format=raw,media=cdrom,readonly=on "
+                   f"-device scsi-cd,drive=cd,bus=iso-scsi.0 -kernel {ISO_DIR}/bzImage -initrd {ISO_DIR}/initrd -append '{append}'")
+
+common = clean_disk("source", "AGENTOS-T1")
+iso_cmd = iso_command(common)
+# A non-bootable removable data carrier: test backup, operator script and release metadata, NOT another OS.
+carry = os.path.join(tmp, "carry.img")
+with open(carry, "wb") as f:
+    f.truncate(128 * 1024**2)
+subprocess.run([MKFS_VFAT, "-n", "AOS-CARRY", carry], check=True)
+subprocess.run([MCOPY, "-i", carry, "-s", *[os.path.join(DRILL_INPUTS, x) for x in sorted(os.listdir(DRILL_INPUTS))], "::/"], check=True)
+carry_options = f" -drive file={carry},if=none,id=carry,format=raw -device usb-storage,drive=carry,bus=xhci.0,removable=on,serial=AOS-CARRY"
 PASS = "correct horse battery"
 TARGET = "/dev/disk/by-id/virtio-AGENTOS-T1"
 
@@ -123,8 +137,8 @@ def keyed(m, text):
     for ch in text:
         m.send_key(names.get(ch, ("shift-" + ch.lower()) if ch.isupper() else ch), delay=0.06)
 
-with subtest("install from the ISO alone: its own kernel/initrd/command line, offline, to a blank disk by serial (U01, review F11)"), kill_on_fail():
-    iso = create_machine(iso_cmd, name="iso")
+def install_iso(cmd, name, serial):
+    iso = create_machine(iso_command(cmd), name=name)
     extra.append(iso)
     iso.start()
     iso_root_shell(iso)
@@ -133,9 +147,9 @@ with subtest("install from the ISO alone: its own kernel/initrd/command line, of
     rc, log = run(iso, "agentos-install inspect | tail -n1 | sed 's/^/INSPECT:/'", "inspect")
     disks = {d["path"]: d for d in last_json(log, "INSPECT")["disks"]}
     print("inspect", json.dumps(disks)[:1500])
-    tgt = [d for d in disks.values() if d.get("serial") == "AGENTOS-T1"]
+    tgt = [d for d in disks.values() if d.get("serial") == serial]
     assert len(tgt) == 1 and not tgt[0]["problems"], disks
-    rc, log = run(iso, f"agentos-install plan --disk {TARGET} --timezone Asia/Taipei | tail -n1 | sed 's/^/PLAN:/'", "plan")
+    rc, log = run(iso, f"agentos-install plan --disk /dev/disk/by-id/virtio-{serial} --timezone Asia/Taipei | tail -n1 | sed 's/^/PLAN:/'", "plan")
     p = last_json(log, "PLAN")
     assert p["ok"], p
     rc, log = run(iso, f"agentos-install confirm --plan-hash {p['planHash']} --serial {p['plan']['confirmToken']} | tail -n1 | sed 's/^/CONFIRM:/'", "confirm")
@@ -147,8 +161,40 @@ with subtest("install from the ISO alone: its own kernel/initrd/command line, of
     iso.send_console("poweroff\n")
     assert powered_off(iso), "the ISO system did not power off"
 
+with subtest("install from the ISO alone: its own kernel/initrd/command line, offline, to a blank disk by serial (U01, review F11)"), kill_on_fail():
+    install_iso(common, "iso", "AGENTOS-T1")
+
+# Operator commands are typed only into a normal PAM-authenticated tty. No execute(), test agent, root shell,
+# direct SQLite write or service override exists on either installed system.
+def operator_login(m, user, pw):
+    m.send_key("ctrl-alt-f2")
+    m.wait_for_text(r"login:", timeout=180)
+    m.send_chars(user + "\n", delay=0.08)
+    m.wait_for_text(r"[Pp]assword:", timeout=120)
+    keyed(m, pw + "\n")
+    m.wait_for_text(user + r"@", timeout=120)
+
+def operator_phase(m, user, phase, marker, from_media=False, timeout=1200):
+    script = f"/home/{user}/drill/drill.mjs"
+    mount = ""
+    if from_media:
+        mount = "udisksctl mount -b /dev/disk/by-label/AOS-CARRY --no-user-interaction && "
+        script = f"/run/media/{user}/AOS-CARRY/drill.mjs"
+    m.send_chars(f"{mount}{NODE} {script} {phase}\n", delay=0.03)
+    m.wait_for_text(marker, timeout=timeout)
+    shot(m, "operator-" + user + "-" + phase)
+
+def operator_reboot(m, user, pw):
+    m.send_chars(f"{NODE} /home/{user}/drill/drill.mjs reboot\n", delay=0.03)
+    m.wait_for_shutdown(timeout=180)
+    m.start()
+    m.wait_for_text(r"(?i)passphrase", timeout=900)
+    keyed(m, PASS + "\n")
+    m.wait_for_text("Login", timeout=600)  # do NOT log in graphically: the trial must fail the Wayland health gate
+    operator_login(m, user, pw)
+
 with subtest("the installed disk alone: first unlock, first-boot administrator on the console, ReGreet login, the Shell on the output and driven by clicks (U01, D01, review F11)"), kill_on_fail():
-    target = create_machine(common, name="installed")
+    target = create_machine(common + carry_options, name="installed")
     extra.append(target)
     target.start()
     target.wait_for_text(r"(?i)passphrase", timeout=900)
@@ -183,6 +229,12 @@ with subtest("the installed disk alone: first unlock, first-boot administrator o
         time.sleep(3)
     assert done, [hexc(px(img2, 18, (x[0] + x[1]) // 2)) for x in b2]
     time.sleep(10)                                              # let the Shell's requests land in the journal
+    operator_login(target, "alice", "alice-pw-1")
+    operator_phase(target, "alice", "source", "AOS-TRIAL-ARMED", from_media=True, timeout=1800)
+    operator_reboot(target, "alice", "alice-pw-1")
+    operator_phase(target, "alice", "trial", "AOS-HEALTH-REFUSED")
+    operator_reboot(target, "alice", "alice-pw-1")
+    operator_phase(target, "alice", "export", "AOS-EXPORT-VERIFIED", from_media=True)
     target.send_monitor_command("system_powerdown")             # the power button: logind powers off
     if not powered_off(target, 300):
         print("no ACPI power-off within 300 s; cutting power")
@@ -195,6 +247,9 @@ with subtest("evidence from the installed disk, read by a second ISO boot: unloc
     iso_root_shell(iso2)
     rc, log = run(iso2, f"printf '%s' '{PASS}' | cryptsetup open --readonly /dev/disk/by-partlabel/agentos-luks agentos-root - && mkdir -p /ev && mount -o ro,subvol=@root /dev/mapper/agentos-root /ev && echo OPEN-OK", "open")
     assert rc == 0 and "OPEN-OK" in log, log[-2000:]
+    rc, log = run(iso2, "mount -o ro,subvol=@machine /dev/mapper/agentos-root /ev/var/lib/agentos-machine && "
+                  "mount -o ro,subvol=@home /dev/mapper/agentos-root /ev/home", "subvols")
+    assert rc == 0, log[-2000:]
     J = "journalctl -D /ev/var/log/journal --no-pager -o cat"
     checks = {
         "boots": "journalctl -D /ev/var/log/journal --list-boots --no-pager | grep -c .",
@@ -218,6 +273,50 @@ with subtest("evidence from the installed disk, read by a second ISO boot: unloc
     assert ev["hostStarted"] >= 1, ev
     assert ev["passwordInJournal"] == 0 and ev["luksKeyslots"] == 1, ev
     assert ev["rootLocked"] == 1, ev                            # the installed release: root locked (O09, decision 80)
-    run(iso2, "umount /ev; cryptsetup close agentos-root; true", "close")
+    # Read-only recovery-medium evidence AFTER the real operator's failed trial and rollback, not a driver-created
+    # update or a database mutation. @home and @machine are separate from @root on the installed Btrfs disk.
+    probe = ("import json,sqlite3; from pathlib import Path; "
+             "s=json.loads(Path('/ev/home/alice/drill/state.json').read_text()); "
+             "c=sqlite3.connect('file:/ev/var/lib/agentos-machine/machine.sqlite?mode=ro',uri=True); "
+             "j=c.execute('SELECT state FROM update_jobs WHERE update_id=?',(s['updateId'],)).fetchone(); "
+             "m=c.execute('SELECT current_release_id,known_good_release_id FROM machine_meta').fetchone(); "
+             "print('O09-SOURCE:'+json.dumps({'state':s,'job':j,'meta':m}))")
+    rc, log = run(iso2, f"{PYTHON} -c \"{probe}\"", "drill-source")
+    assert rc == 0, log[-2000:]
+    source_evidence = last_json(log, "O09-SOURCE")
+    assert source_evidence["job"] == ["rolled_back"], source_evidence
+    assert source_evidence["meta"] == [source_evidence["state"]["base"]] * 2, source_evidence
+    assert ev["boots"] >= 3, ev
+    run(iso2, "umount -R /ev; cryptsetup close agentos-root; true", "close")
     iso2.send_console("poweroff\n")
-    powered_off(iso2, 120)
+    assert powered_off(iso2, 120), "the evidence ISO did not power off"
+
+with subtest("O09 continuation: the SAME release ISO installs a second machine; its own administrator restores the carried encrypted set and reads the imported records through the real gateway/Host"), kill_on_fail():
+    common2 = clean_disk("destination", "AGENTOS-T2")
+    install_iso(common2, "destination-iso", "AGENTOS-T2")
+    dest = create_machine(common2 + carry_options, name="destination")
+    extra.append(dest)
+    dest.start()
+    dest.wait_for_text(r"(?i)passphrase", timeout=900)
+    keyed(dest, PASS + "\n")
+    dest.wait_for_text("administrator login", timeout=900)
+    keyed(dest, "bea\n")
+    dest.wait_for_text("password:", timeout=120)
+    keyed(dest, "bea-pw-2\n")
+    dest.wait_for_text("password again", timeout=120)
+    keyed(dest, "bea-pw-2\n")
+    dest.wait_for_text("workspace name", timeout=120)
+    keyed(dest, "B\n")
+    dest.wait_for_text("Login", timeout=600)
+    operator_login(dest, "bea", "bea-pw-2")
+    operator_phase(dest, "bea", "restore", "AOS-O09-RESTORED", from_media=True)
+    dest.send_monitor_command("system_powerdown")
+    assert powered_off(dest, 300), "the destination did not power off"
+    # The carrier is unmounted and both writers are off before the driver reads its final evidence.
+    receipt = os.path.join(tmp, "restored.json")
+    subprocess.run([MCOPY, "-i", carry, "::/restored.json", receipt], check=True)
+    restored = json.load(open(receipt))
+    assert restored["source"]["sourceMachine"] == source_evidence["state"]["sourceMachine"], restored
+    assert restored["destination"] != restored["source"]["sourceMachine"], restored
+    assert restored["records"] == source_evidence["state"]["records"] and len(restored["records"]) == 3, restored
+    print("O09 ISO -> v0.4 import -> unhealthy trial -> known-good rollback -> encrypted export -> second ISO install -> restore:", json.dumps(restored))

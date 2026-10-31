@@ -5,8 +5,15 @@
 # the Qt Shell checked in Sway's pixels and driven with tablet clicks. A second ISO boot opens the disk read-only to
 # read the installed system's journal and state as evidence. The installed system is the plain release toplevel:
 # no test backdoor, no serial console.
-{ pkgs, iso }:
+{ pkgs, iso, release }:
 let
+  drillInputs = pkgs.runCommand "agentos-o09-drill-inputs" { } ''
+    mkdir -p $out
+    cp ${./m19-drill.mjs} $out/drill.mjs
+    cp -r ${./fixtures/v04-backup} $out/v04
+    cp ${release}/manifest.json ${release}/sbom.json $out/
+    echo '${builtins.toJSON { images = "${pkgs.agentos-oci}/index.json"; }}' > $out/config.json
+  '';
   isoBoot = pkgs.runCommand "agentos-iso-serial-entry" { nativeBuildInputs = [ pkgs.xorriso pkgs.gawk ]; } ''
     set -euo pipefail
     img=$(echo ${iso}/iso/*.iso)
@@ -36,5 +43,10 @@ pkgs.testers.runNixOSTest {
     OVMF_CODE = "${pkgs.OVMF.firmware}"
     OVMF_VARS = "${pkgs.OVMF.variables}"
     PNGTOPNM = "${pkgs.netpbm}/bin/pngtopnm"
+    DRILL_INPUTS = "${drillInputs}"
+    MKFS_VFAT = "${pkgs.dosfstools}/bin/mkfs.vfat"
+    MCOPY = "${pkgs.mtools}/bin/mcopy"
+    NODE = "${pkgs.nodejs_24}/bin/node"
+    PYTHON = "${pkgs.python3}/bin/python3"
   '' + builtins.readFile ./pnm.py + builtins.readFile ./m19-iso.py;
 }
