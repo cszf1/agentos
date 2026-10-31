@@ -120,7 +120,7 @@ jobs:
             else
               out=$(nix eval --raw ".#$A.outPath")
               { [ -e "$out.check" ] && diff -r "$out" "$out.check" 2>&1 | head -60 | tee -a "$RUNNER_TEMP/build-repro.log"; } || true
-              if [ "$A" = agentos-qcow2 ] && [ -e "$out.check" ] && nix shell --inputs-from . nixpkgs#qemu-utils nixpkgs#cryptsetup nixpkgs#util-linux nixpkgs#python3 -c \
+              if [ "$A" = agentos-qcow2 ] && [ -e "$out.check" ] && nix shell --inputs-from . nixpkgs#qemu-utils nixpkgs#cryptsetup nixpkgs#util-linux nixpkgs#mtools nixpkgs#python3 -c \
                    python3 repro-explain-qcow2.py "$out/agentos.qcow2" "$out.check/agentos.qcow2" 2>&1 | tee -a "$RUNNER_TEMP/build-repro.log"; then
                 # the only difference is the LUKS2 partition (fresh volume key/salts/UUID per luksFormat, decision 11)
                 echo "REPRO $A DIFFERS-EXPLAINED" | tee -a "$RUNNER_TEMP/build-repro.log"
@@ -129,7 +129,7 @@ jobs:
               fi
             fi
             # the second copy and failed build trees are only needed for the comparison above
-            out=$(nix eval --raw ".#$A.outPath"); sudo rm -rf "$out.check" /tmp/nix-build-* 2>/dev/null || true
+            out=$(nix eval --raw ".#$A.outPath"); sudo rm -rf "$out.check" /tmp/nix-build-* /nix/var/nix/builds/* 2>/dev/null || true
             df -h / | tail -1 | tee -a "$RUNNER_TEMP/build-repro.log"
           done
           exit $rc

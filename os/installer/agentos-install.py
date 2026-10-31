@@ -185,6 +185,9 @@ def cmd_plan(args):
         # the template is one image for many machines and must build bit for bit the same from the same inputs
         # (V1-O09): every identifier the installer draws itself is derived from the release toplevel instead
         plan["installId"] = tpl_uuid("install")
+        # the build VM has no install medium, so medium_identity() fell back to the boot id: the plan hash in the ESP's
+        # install.json changed every build (build-repro 41145515019: "partition agentos-esp content DIFFERS")
+        plan["medium"] = "sha256:" + hashlib.sha256(f"agentos-template:{SYSTEM}:medium".encode()).hexdigest()
         # qcow2 template build only (os/packages/qcow2.nix): same layout and closure, LUKS opened by the public
         # template key that first boot replaces; no per-machine install record.
         if not os.environ.get("AGENTOS_INSTALL_TEMPLATE_BUILD"):

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """V1-O09: explain why two clean builds of agentos-qcow2 differ (os/packages/qcow2.nix, decision 11).
 
-Usage: repro-explain-qcow2.py <a.qcow2> <b.qcow2>   (needs qemu-img, sfdisk, cryptsetup on PATH)
+Usage: repro-explain-qcow2.py <a.qcow2> <b.qcow2>   (needs qemu-img, sfdisk, cryptsetup, mtools on PATH)
 Converts both images to sparse raw files, compares the GPT, then every partition. A difference is *expected* only
 inside the LUKS2 partition: luksFormat draws a fresh volume key, keyslot salts and UUID by design (the template key is
 public, the first boot replaces it), so every ciphertext byte differs. Anything else (GPT, ESP, gaps) is reported as
@@ -24,6 +24,29 @@ def digest(f, off, size):
             h.update(b)
             left -= len(b)
     return h.hexdigest()
+
+def fat_files(raw, off):
+    """{path: sha256} of every file in a FAT partition (mtools reads it at a byte offset; no mount needed)."""
+    import os, tempfile
+    d = tempfile.mkdtemp()
+    env = dict(os.environ, MTOOLS_SKIP_CHECK="1")
+    r = subprocess.run(["mcopy", "-s", "-n", "-i", f"{raw}@@{off}", "::/", d], capture_output=True, text=True, env=env)
+    if r.returncode != 0:
+        return None
+    out = {}
+    for root, _, files in os.walk(d):
+        for f in files:
+            p = os.path.join(root, f)
+            out[os.path.relpath(p, d)] = hashlib.sha256(open(p, "rb").read()).hexdigest()
+    return out
+
+def fat_diff(ra, rb, off):
+    """Which files differ inside a FAT partition, or (same files) that only FAT metadata differs."""
+    fa, fb = fat_files(ra, off), fat_files(rb, off)
+    if fa is None or fb is None:
+        return "files not readable (mtools missing or not FAT)"
+    diff = sorted(k for k in set(fa) | set(fb) if fa.get(k) != fb.get(k))
+    return f"files differing: {diff}" if diff else f"same {len(fa)} files; only FAT metadata (times, order, allocation) differs"
 
 a, b = sys.argv[1], sys.argv[2]
 for q, r in ((a, "/tmp/repro-a.raw"), (b, "/tmp/repro-b.raw")):
@@ -61,6 +84,7 @@ for pa, pb in zip(ta["partitions"], tb["partitions"]):
             unexplained.append("LUKS cipher")
     elif not same:
         unexplained.append(f"partition {pa.get('name')} content")
+        line += "; " + fat_diff(ra, rb, off)
     print(line)
 # bytes outside every partition (protective MBR, primary/backup GPT and gaps)
 parts = sorted((p["start"] * 512, (p["start"] + p["size"]) * 512) for p in ta["partitions"])
