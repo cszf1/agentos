@@ -197,17 +197,21 @@ def screen_text(m):
         raise RuntimeError(f"OCR command failed: {e.cmd}: {detail}") from e
 
 
-def wait_screen(m, regex, timeout=900, failure_regex=None):
+def wait_screen(m, regex, timeout=900, failure_regex=None, before_poll=None, stable_polls=1):
     """Log actual OCR changes as they happen, preserving the driver's wall-clock deadline semantics."""
-    end, previous = time.monotonic() + timeout, None
+    assert stable_polls >= 1
+    end, previous, matched = time.monotonic() + timeout, None, 0
     while time.monotonic() < end:
+        if callable(before_poll):
+            before_poll()
         variants = screen_text(m)
         if variants != previous:
             print("OCR", regex, json.dumps(variants, ensure_ascii=False)[:6000], flush=True)
             previous = variants
         if failure_regex and any(re.search(failure_regex, text) is not None for text in variants):
             raise AssertionError(f"operator failed while waiting for {regex!r}; OCR: {variants!r}")
-        if any(re.search(regex, text) is not None for text in variants):
+        matched = matched + 1 if any(re.search(regex, text) is not None for text in variants) else 0
+        if matched >= stable_polls:
             return
         if m.process is not None and m.process.poll() is not None:
             raise AssertionError("the VM exited while waiting for " + regex)
@@ -251,8 +255,9 @@ with subtest("install from the ISO alone: its own kernel/initrd/command line, of
 # Operator commands are typed only into a normal PAM-authenticated tty. No execute(), test agent, root shell,
 # direct SQLite write or service override exists on either installed system.
 def operator_login(m, user, pw):
-    m.send_key("ctrl-alt-f2")
-    wait_screen(m, r"login:", timeout=180)
+    # greetd may reclaim VT1 after its first frame. Reselect only until the actual getty is visible;
+    # no username or secret is typed while the greeter/transition still owns the output.
+    wait_screen(m, r"login:", timeout=180, before_poll=lambda: m.send_key("ctrl-alt-f2"), stable_polls=2)
     m.send_chars(user + "\n", delay=0.08)
     wait_screen(m, r"[Pp]assword:", timeout=120)
     keyed(m, pw + "\n")

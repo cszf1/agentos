@@ -359,8 +359,15 @@ void ShellController::onLocked() {
 }
 
 // ------------------------------------------------------------------ workspace scope
-void ShellController::loadWorkspaces() {
-  request(QStringLiteral("workspaces.list"), JValue::object(), [this](const RpcReply& r) {
+void ShellController::loadWorkspaces(bool reconcileWrites) {
+  const int gen = scopeGen_;
+  const quint64 memberGen = membershipGen_;
+  request(QStringLiteral("workspaces.list"), JValue::object(), [this, gen, memberGen, reconcileWrites](const RpcReply& r) {
+    if (gen != scopeGen_ || memberGen != membershipGen_) {
+      ++lateDropped_;
+      emit transportChanged();
+      return;
+    }
     if (!r.ok()) return;
     workspaces_->setItems(r.body.get(QStringLiteral("items")));
     bool stillMember = ws_.isEmpty();
@@ -368,6 +375,12 @@ void ShellController::loadWorkspaces() {
       if (w.get(QStringLiteral("workspaceId")).str() == ws_) {
         stillMember = true;
         wsName_ = w.get(QStringLiteral("displayName")).stringOr(ws_);
+        const QString role = w.get(QStringLiteral("role")).str();
+        if (reconcileWrites && writesStopped_ && (role == QLatin1String("owner") || role == QLatin1String("editor"))) {
+          writesStopped_ = false;  // fresh native directory evidence, never the event itself or a Host heartbeat
+          for (auto* v : views_) v->setDisabled(readOnly());
+          emit statusChanged();
+        }
       }
     if (!stillMember) {
       clearScopeState(QStringLiteral("revoked"));
@@ -453,8 +466,10 @@ void ShellController::attach(const QString& ws, bool resync) {
     rpc_->subscribe(ws, qint64(rep.body.get(QStringLiteral("cursor")).toNumber()), clientEpoch_, sessionEpoch_);
     loadLayout();
     loadAll();
-    for (auto* v : views_)
+    for (auto* v : views_) {
       if (v->mode() == QLatin1String("loading")) fetchDetail(v);
+      else if (resync) v->reload();  // a full re-read includes open app data, not just workspace metadata
+    }
   }, false);
 }
 
@@ -997,19 +1012,28 @@ void ShellController::onEvent(const RpcEvent& e) {
   }
   const QString t = e.type;
   if (t == QLatin1String("membership.revoking") || t == QLatin1String("membership.revoked")) {
-    const QString who = e.data.get(QStringLiteral("userId")).stringOr(userId_);
-    if (who == userId_) {
+    const JValue& subject = e.data.get(QStringLiteral("userId"));
+    const bool ambiguous = !subject.isString() || subject.str().isEmpty();
+    if (ambiguous || subject.str() == userId_) {
+      ++membershipGen_;
       writesStopped_ = true;
       for (auto* v : views_) v->setDisabled(true);
       emit statusChanged();
-      if (t == QLatin1String("membership.revoked")) loadWorkspaces();
+      if (ambiguous) loadWorkspaces(true);  // old event envelopes require fresh native authority, not a guessed self-id
+      else if (t == QLatin1String("membership.revoked")) loadWorkspaces();
     } else if (page_ == QLatin1String("workspaces")) {
       refreshPage();
     }
     return;
   }
   if (t == QLatin1String("workspace.state_changed")) {
-    loadWorkspaces();
+    const QString appId = e.data.get(QStringLiteral("appId")).stringOr(QString());
+    const QString source = e.data.get(QStringLiteral("source")).stringOr(QString());
+    if (!appId.isEmpty() && views_.contains(appId)) views_[appId]->reload();
+    if (!source.startsWith(QLatin1String("record."))) {
+      loadWorkspaces();
+      if (!appId.isEmpty()) request(QStringLiteral("state"), JValue::object(), [this](const RpcReply& r) { if (r.ok()) applyApps(r.body); });
+    }
     return;
   }
   if (t == QLatin1String("update.state_changed")) {

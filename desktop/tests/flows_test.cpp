@@ -772,6 +772,88 @@ class FlowsTest : public QObject {
     QCOMPARE(rec->recordState().value(QStringLiteral("q")).toString(), QStringLiteral("NEEDLE"));
   }
 
+  void eventGapAndNormalisedRecordHintsRefreshDataWithoutDiscardingDrafts() {
+    std::atomic<int> count{0};
+    Harness h;
+    h.gw->gw->setHandler([&](const JValue& r) {
+      if (r.get(QStringLiteral("body")).get(QStringLiteral("routeId")).str() == QLatin1String("apps.records.list")) {
+        const auto row = JValue::object({{QStringLiteral("id"), QStringLiteral("server-1")}, {QStringLiteral("recordVersion"), 1},
+                                        {QStringLiteral("data"), JValue::object({{QStringLiteral("title"), QStringLiteral("arrived")}})}});
+        const auto row2 = JValue::object({{QStringLiteral("id"), QStringLiteral("server-2")}, {QStringLiteral("recordVersion"), 1},
+                                         {QStringLiteral("data"), JValue::object({{QStringLiteral("title"), QStringLiteral("arrived later")}})}});
+        const int n = count.load();
+        const auto items = n == 0 ? JValue::array() : n == 1 ? JValue::array({row}) : JValue::array({row, row2});
+        return JValue::object({{QStringLiteral("items"), items}, {QStringLiteral("total"), n}});
+      }
+      return h.be.handle(r);
+    });
+    QVERIFY(h.up());
+    auto* v = qobject_cast<AppViewModel*>(h.shell->appView(QStringLiteral("rec-app")));
+    QVERIFY(v);
+    QTRY_COMPARE(v->mode(), QStringLiteral("records"));
+    QTRY_VERIFY(!v->recordState().value(QStringLiteral("loading")).toBool());
+    auto* model = qobject_cast<QAbstractItemModel*>(v->records());
+    QVERIFY(model);
+    QCOMPARE(model->rowCount(), 0);
+    v->openCreate();
+    v->setDraft(QStringLiteral("title"), QStringLiteral("keep my unsaved input"));
+    count = 1;
+    QMetaObject::invokeMethod(h.gw->gw, "sendEvent", Qt::BlockingQueuedConnection, Q_ARG(QString, WS_A), Q_ARG(qint64, 0),
+                              Q_ARG(QString, QStringLiteral("event.gap")), Q_ARG(agentos::JValue, JValue::object()));
+    QTRY_COMPARE(model->rowCount(), 1);
+    QCOMPARE(v->recordFormField(QStringLiteral("title")).value(QStringLiteral("value")).toString(), QStringLiteral("keep my unsaved input"));
+    count = 2;
+    const auto hint = JValue::object({{QStringLiteral("appId"), QStringLiteral("rec-app")}, {QStringLiteral("source"), QStringLiteral("record.created")}});
+    QMetaObject::invokeMethod(h.gw->gw, "sendEvent", Qt::BlockingQueuedConnection, Q_ARG(QString, WS_A), Q_ARG(qint64, 11),
+                              Q_ARG(QString, QStringLiteral("workspace.state_changed")), Q_ARG(agentos::JValue, hint));
+    QTRY_COMPARE(model->rowCount(), 2);
+    QVERIFY(v->recordState().value(QStringLiteral("formOpen")).toBool());
+    QCOMPARE(v->recordFormField(QStringLiteral("title")).value(QStringLiteral("value")).toString(), QStringLiteral("keep my unsaved input"));
+  }
+
+  void ambiguousMembershipEventFencesThenChecksTheCurrentOwner() {
+    bool received = false, fenced = false;
+    Harness h;
+    QVERIFY(h.up());
+    connect(h.shell->rpc(), &RpcClient::eventReceived, this, [&](const RpcEvent& e) {
+      if (e.type == QLatin1String("membership.revoking")) { received = true; fenced = !h.shell->canWrite(false); }
+    });
+    QMetaObject::invokeMethod(h.gw->gw, "sendEvent", Qt::BlockingQueuedConnection, Q_ARG(QString, WS_A), Q_ARG(qint64, 11),
+                              Q_ARG(QString, QStringLiteral("membership.revoking")), Q_ARG(agentos::JValue, JValue::object()));
+    QTRY_VERIFY(received);
+    QVERIFY(fenced);  // an old event without a subject must not be silently ignored
+    QTRY_VERIFY(h.shell->canWrite(false));  // only a fresh native membership result can restore this owner
+  }
+
+  void oldMembershipReplyCannotUndoANewerFenceOrGrantViewerWrites() {
+    Harness h;
+    QVERIFY(h.up());
+    QTest::qWait(100);
+    h.gw->gw->setHandler([&](const JValue& r) {
+      if (r.get(QStringLiteral("methodId")).str() == QLatin1String("workspaces.list")) return JValue::missing();
+      return h.be.handle(r);
+    });
+    const int before = h.sent(QStringLiteral("workspaces.list")).size();
+    QMetaObject::invokeMethod(h.gw->gw, "sendEvent", Qt::BlockingQueuedConnection, Q_ARG(QString, WS_A), Q_ARG(qint64, 11),
+                              Q_ARG(QString, QStringLiteral("workspace.state_changed")), Q_ARG(agentos::JValue, JValue::object()));
+    QTRY_VERIFY(h.sent(QStringLiteral("workspaces.list")).size() > before);
+    const QString oldId = h.sent(QStringLiteral("workspaces.list")).last().get(QStringLiteral("requestId")).str();
+    QMetaObject::invokeMethod(h.gw->gw, "sendEvent", Qt::BlockingQueuedConnection, Q_ARG(QString, WS_A), Q_ARG(qint64, 12),
+                              Q_ARG(QString, QStringLiteral("membership.revoking")), Q_ARG(agentos::JValue, JValue::object()));
+    QTRY_VERIFY(h.sent(QStringLiteral("workspaces.list")).size() > before + 1);
+    const QString freshId = h.sent(QStringLiteral("workspaces.list")).last().get(QStringLiteral("requestId")).str();
+    const int late = h.shell->transportStats().value(QStringLiteral("lateDropped")).toInt();
+    const auto owner = JValue::object({{QStringLiteral("items"), JValue::array({JValue::object({{QStringLiteral("workspaceId"), WS_A}, {QStringLiteral("role"), QStringLiteral("owner")}})})}});
+    QMetaObject::invokeMethod(h.gw->gw, "reply", Qt::BlockingQueuedConnection, Q_ARG(QString, oldId), Q_ARG(agentos::JValue, owner));
+    QTRY_VERIFY(h.shell->transportStats().value(QStringLiteral("lateDropped")).toInt() > late);
+    QVERIFY(!h.shell->canWrite(false));
+    const auto viewer = JValue::object({{QStringLiteral("items"), JValue::array({JValue::object({{QStringLiteral("workspaceId"), WS_A}, {QStringLiteral("role"), QStringLiteral("viewer")}})})}});
+    QMetaObject::invokeMethod(h.gw->gw, "reply", Qt::BlockingQueuedConnection, Q_ARG(QString, freshId), Q_ARG(agentos::JValue, viewer));
+    QTest::qWait(100);
+    QVERIFY(!h.shell->canWrite(false));
+    QCOMPARE(h.shell->workspaceId(), WS_A);
+  }
+
   void eventGapTriggersSnapshotThenResubscribe() {
     Harness h;
     QVERIFY(h.up());

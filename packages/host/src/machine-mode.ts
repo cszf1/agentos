@@ -404,11 +404,24 @@ export class MachineMode {
 
   /** Workspace event log → gateway, in seq order. Bodies carry ids and states only, never record content. */
   #pumpEvents(): void {
-    const rows = this.rt.core.store.all<{ seq: number; kind: string; app_id: string | null; run_id: string | null }>("SELECT seq, kind, app_id, run_id FROM events WHERE seq > ? ORDER BY seq LIMIT 200", this.#ringStoreSeq);
+    const rows = this.rt.core.store.all<{ seq: number; kind: string; app_id: string | null; run_id: string | null; payload_json: string }>("SELECT seq, kind, app_id, run_id, payload_json FROM events WHERE seq > ? ORDER BY seq LIMIT 200", this.#ringStoreSeq);
     for (const r of rows) {
       this.#ringStoreSeq = r.seq;
       const kind = r.kind.startsWith("run.") || r.kind.startsWith("deployment.") || r.kind.startsWith("system_action") ? "operation.state_changed" : r.kind.startsWith("membership") ? r.kind : "workspace.state_changed";
-      this.#emit(kind, { source: r.kind, appId: r.app_id, runId: r.run_id });
+      const data: Record<string, unknown> = { source: r.kind, appId: r.app_id, runId: r.run_id };
+      if (kind === "membership.revoking" || kind === "membership.revoked") {
+        // Preserve only the subject id. The stored reason, run list and arbitrary payload remain private.
+        try {
+          const p: unknown = JSON.parse(r.payload_json);
+          if (p && typeof p === "object" && Object.hasOwn(p, "userId")) {
+            const userId = (p as Record<string, unknown>).userId;
+            if (typeof userId === "string" && userId.length > 0) data.userId = userId;
+          }
+        } catch {
+          this.rt.log.warn("invalid membership event metadata; clients must recheck membership", { seq: r.seq });
+        }
+      }
+      this.#emit(kind, data);
     }
   }
   #ringStoreSeq = 0;

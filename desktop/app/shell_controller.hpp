@@ -210,6 +210,7 @@ class ShellController : public QObject, public RequestSink {
   QString ws_, wsName_, storeUUID_;
   qint64 clientEpoch_ = 1;
   int scopeGen_ = 0;
+  quint64 membershipGen_ = 0;
   int lateDropped_ = 0;
   int eventsSeen_ = 0;    // diagnostics: every event frame, and those for another workspace
   int eventsOther_ = 0;
@@ -244,7 +245,7 @@ class ShellController : public QObject, public RequestSink {
   void bind();
   void applySessionStatus(const JValue& s);
   void pollStatus();
-  void loadWorkspaces();
+  void loadWorkspaces(bool reconcileWrites = false);
   void attach(const QString& ws, bool resync);
   void loadAll();
   void fetchDetail(AppViewModel* v);

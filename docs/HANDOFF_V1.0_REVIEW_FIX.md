@@ -16,7 +16,7 @@
 
 - 仓库：https://github.com/cszf1/agentos ，分支 `v1.0`。实际 HEAD 看 Git，最新候选/修复看 PROGRESS，实际验收提交看 Actions 的完整 `headSha`。
 - 验收统计一致：**74 通过 / 15 部分 / 11 未通过**。I06、U05、R11、I08、U04 已恢复；D01/W08/U09 按完整 m5 41253718507 恢复，其他候选没有提前升项。
-- 两轮审查原文：`docs/review/REVIEW_V1.0_EXTERNAL_2026-10-31.md`；逐项状态在 `V1.0_REVIEW_FIXES.md`。PROGRESS/TSV 当前续至决定 106，后续编号按最新尾项递增。
+- 两轮审查原文：`docs/review/REVIEW_V1.0_EXTERNAL_2026-10-31.md`；逐项状态在 `V1.0_REVIEW_FIXES.md`。PROGRESS/TSV 当前续至决定 107，后续编号按最新尾项递增。
 - 第一轮全量 `41220513266@4b1d863` 终态 **23 成功 / 4 失败**：失败 m5、m6-qcow2、m19、m20；其余包括 m18、build-repro、m3/m7 都成功。这不是最终全绿。
 - e2159d6固定SHA的云端Node typecheck/contracts、184pass/4skip、Rust81pass/1ignored（27组/exit0）均通过；决定100候选同计数，另有Qt九套ctest/三种子fuzz/E2E编译通过、决定101另经Qt九套/E2E编译；决定105候选Qt九套/E2E编译及VM helper50项（5+3+7+6+16+2+4+3+4）通过。**不是最终KVM的27项通过**。
 
@@ -60,7 +60,14 @@
 - **候选验证**：缺UI/列表字段的回归先红后绿；Qt6.11.2九套ctest、三种子各2000轮fuzz、E2E编译通过；Rust81pass/1ignored、Node184pass/4skip、typecheck/contracts/slot-vectors通过；助手34项（5+3+7+6+13）、28个Python AST及drill语法/self-test/错误非零通过。不是完整Sway或最终全27通过。
 - **边界**：D07的owner策略不是管理员硬件/PAM图形输入验收，不声称音频等实机功能可用；m19管理员仍走普通用户PAM→gateway→ticket→固定root helper。两条完整KVM须在决定100提交后重跑，统计仍74/15/11。
 
-### 决定106（当前）
+### 决定107（当前）
+
+- 5083f3c的m20 `41308980957`（artifact13084283803）过Host降级/恢复与D09（338事件/gap1/撤权/跨域0/协议错0），止恢复后的CRUD。不是Host没回来：Bob撤权的目标userId在事件泵丢失，旧Shell默认自身，Alice错误进入writesStopped。Node白名单保留目标ID，不带私有payload；歧义事件先停写再用原生目录核权，仅新鲜owner/editor解封，viewer/未知/旧回复不解封。会员查询代次独立于数据作用域，避免丢弃已接受业务结果。
+- Gap只更新metadata还会留下旧记录；新Qt回归先实际得到0而非应有1，修resync和归一化record提示后真实数据重读且未提交草稿保持。会员2、数据1 Qt回归分别红后绿；UDS目标丢失旧1fail，6测试绿（含坏payload仍歧义且Host不崩溃）；Qt9/E2E及Node190/4skip绿。
+- 同SHA m19 `41308977956`（artifact13086396678）第一机/源盘最终取证过、第二机已首次设置，止CtrlAltF2后180s仍Greeter。107幂等重选VT2且连续两次独立OCR见login才发用户名，PAM口令提示后才发口令，180s总限不改；旧helper模拟同类可见症状红，2新增回归后helper52/AST32绿，不声称已专门复现内核抢VT时序。
+- 最新完整KVM/最终SQL postlude/all27仍待；旧8384完整m19不拼接为本提交成功，74/15/11不升项，独立操作者/真实模型/VMware仍另阶段。
+
+### 决定106（历史）
 
 - `41297711680@8384e0f` m19完整成功，artifact13081406268，1453.74s：同ISO两安装、导入、真实健康拒绝/known-good回退、加密导出、第二管理员恢复及最终根锁/启动只读取证。不是独立操作者或新代码代际下载证据。
 - 同SHA m20 `41297714218`（artifact13080447753）已过D09：完整302响应/300记录/撤权revoked、1033事件/gap1/revokeSeen、跨工作区0/协议错0；止649行Host降级判断。真实machine.status没有components，旧通用成功回调和缺省健康值把Host误标可用，非D09再次失败；最终SQL postlude未执行。

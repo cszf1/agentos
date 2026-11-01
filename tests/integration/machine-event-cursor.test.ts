@@ -9,12 +9,13 @@ import { MachineMode } from "../../packages/host/src/machine-mode.js";
 
 // Actual MachineMode UDS framing/replay with scripted HTTP and registry peers, NOT a Host authorization test.
 type Frame = Record<string, unknown>;
+type StoredEvent = { seq: number; kind: string; app_id: string | null; run_id: string | null; payload_json: string };
 const WS = "11111111-1111-4111-8111-111111111111";
 const STORE = "22222222-2222-4222-8222-222222222222";
 
 describe("machine gateway event watermarks", () => {
   let dir: string, gateway: Server, peer: Socket | undefined, mode: MachineMode | undefined;
-  let frames: Frame[], nextId: number, writes: number;
+  let frames: Frame[], nextId: number, writes: number, storedEvents: StoredEvent[];
   let readGate: Promise<void> | undefined, releaseRead: (() => void) | undefined, onRead: () => void;
 
   function send(method: string, body: Frame = {}): number {
@@ -40,7 +41,7 @@ describe("machine gateway event watermarks", () => {
 
   beforeEach(async () => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), "agentos-cursor-"));
-    frames = []; nextId = 1; writes = 0; peer = undefined; readGate = undefined; releaseRead = undefined; onRead = () => {};
+    frames = []; nextId = 1; writes = 0; storedEvents = []; peer = undefined; readGate = undefined; releaseRead = undefined; onRead = () => {};
     gateway = createServer((socket) => {
       peer = socket;
       let pending = Buffer.alloc(0);
@@ -59,7 +60,9 @@ describe("machine gateway event watermarks", () => {
     const rt = {
       core: { store: {
         get: () => ({ workspace_id: WS, store_uuid: STORE }),
-        tx: (fn: () => unknown) => fn(), run: () => {}, all: () => [],
+        tx: (fn: () => unknown) => fn(), run: () => {},
+        all: (sql: string, after: number) => sql.includes("FROM events") ? storedEvents.filter((e) => e.seq > after).map((e) =>
+          sql.includes("payload_json") ? e : { seq: e.seq, kind: e.kind, app_id: e.app_id, run_id: e.run_id }) : [],
         eventSeq: () => 9000, meta: () => ({ client_epoch: 2 }),
       }, budgets: {} },
       sys: { builds: {} }, log: { warn: () => {} },
@@ -110,6 +113,29 @@ describe("machine gateway event watermarks", () => {
     const begin = frames.length;
     await reply(send("EVENTS", { after: r.eventCursor }));
     expect(frames.slice(begin).filter((f) => f.t === "evt").map((f) => f.seq)).toEqual([2]);
+  });
+
+  it("preserves the revoked subject id without forwarding the stored private payload", async () => {
+    storedEvents.push({ seq: 9001, kind: "membership.revoking", app_id: null, run_id: null,
+      payload_json: JSON.stringify({ userId: "another-user", reason: "private reason", runs: ["private-run"], text: "do-not-forward" }) });
+    const event = await vi.waitFor(() => {
+      const e = frames.find((f) => f.t === "evt" && f.kind === "membership.revoking");
+      if (!e) throw new Error("membership event not pumped");
+      return e;
+    });
+    expect(event.data).toEqual({ source: "membership.revoking", appId: null, runId: null, userId: "another-user" });
+    expect(event.seq).toBe(1);
+  });
+
+  it("a malformed old membership payload stays ambiguous instead of crashing or inventing a subject", async () => {
+    storedEvents.push({ seq: 9001, kind: "membership.revoked", app_id: null, run_id: null, payload_json: "{broken" });
+    const event = await vi.waitFor(() => {
+      const e = frames.find((f) => f.t === "evt" && f.kind === "membership.revoked");
+      if (!e) throw new Error("legacy membership event not pumped");
+      return e;
+    });
+    expect(event.data).toEqual({ source: "membership.revoked", appId: null, runId: null });
+    expect((await reply(send("GET"))).status).toBe(200);
   });
 
   it("refuses a cursor from a previous Host whose wire sequence was higher", async () => {

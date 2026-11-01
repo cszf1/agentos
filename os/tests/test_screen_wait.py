@@ -40,6 +40,43 @@ def operator_function(waiter):
     return scope["operator_phase"]
 
 
+def login_function(clock):
+    source = Path(__file__).with_name("m19-iso.py")
+    fn = next(x for x in ast.parse(source.read_text()).body if isinstance(x, ast.FunctionDef) and x.name == "operator_login")
+    scope = {"wait_screen": helpers(clock)[0], "keyed": lambda m, value: m.submit_secret(value)}
+    exec(compile(ast.Module(body=[fn], type_ignores=[]), str(source), "exec"), scope)
+    return scope["operator_login"]
+
+
+class LoginConsole:
+    process = None
+
+    def __init__(self, never=False):
+        self.never, self.switches, self.state, self.last = never, 0, "greeter", ""
+        self.entered = []
+
+    def send_key(self, key):
+        assert key == "ctrl-alt-f2"
+        self.switches += 1
+
+    def get_screen_text_variants(self):
+        if self.state == "greeter":
+            self.last = "nixos login:" if self.switches >= 2 and not self.never else "Welcome back! User: bea Session: AgentOS"
+        else:
+            self.last = "Password:" if self.state == "password" else "bea@nixos:~$"
+        return [self.last]
+
+    def send_chars(self, value, delay):
+        assert "login:" in self.last, "username typed before a real tty prompt"
+        self.entered.append(value)
+        self.state = "password"
+
+    def submit_secret(self, value):
+        assert self.last == "Password:", "secret typed before a PAM password prompt"
+        self.entered.append(value)
+        self.state = "shell"
+
+
 def ocr_function(runner):
     source = Path(__file__).with_name("m19-iso.py")
     fn = next(x for x in ast.parse(source.read_text()).body if isinstance(x, ast.FunctionDef) and x.name == "screen_text")
@@ -87,6 +124,20 @@ class ScreenWaitTest(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()), self.assertRaisesRegex(AssertionError, "operator failed"):
             helpers(clock)[0](screen, "PASS-TRIAL-ARMED", timeout=5, failure_regex=r"(?m)^FAIL-DRILL-FAILED\s*$")
         self.assertEqual(screen.calls, 1)
+
+    def test_operator_reselects_the_console_if_greeter_activation_stole_the_first_switch(self):
+        clock, screen = Clock(), LoginConsole()
+        with contextlib.redirect_stdout(io.StringIO()):
+            login_function(clock)(screen, "bea", "test-pw")
+        self.assertEqual(screen.switches, 3)  # two separately observed tty frames after the stolen first switch
+        self.assertEqual(screen.entered, ["bea\n", "test-pw\n"])
+
+    def test_operator_never_types_credentials_without_observing_the_console(self):
+        clock, screen = Clock(), LoginConsole(never=True)
+        with contextlib.redirect_stdout(io.StringIO()), self.assertRaisesRegex(AssertionError, "did not show.*login:"):
+            login_function(clock)(screen, "bea", "test-pw")
+        self.assertEqual(screen.entered, [])
+        self.assertEqual(clock.now, 180)
 
     def test_operator_accepts_the_exact_new_success_line(self):
         clock = Clock()
