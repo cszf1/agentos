@@ -179,16 +179,19 @@ def screen_text(m):
                              capture_output=True, timeout=20).stdout
         w, h, rgb = pnm_rgb(raw)
         if rgb == rgb[:3] * (w * h):  # a uniform boot frame contains no text; -trim can warn/fail on it
-            return ["", ""]
+            return [""] * 6
         with tempfile.TemporaryDirectory(prefix="agentos-ocr-") as d:
             zoom = os.path.join(d, "zoom.pgm")
+            neg = os.path.join(d, "neg.pgm")
             subprocess.run([magick, "pnm:-", "-bordercolor", "black", "-border", "1", "-trim", "+repage",
                             "-sample", "300%", "-border", "8", "-depth", "8", zoom], input=raw,
                            check=True, capture_output=True, timeout=20)
-            return [subprocess.run(["tesseract", zoom, "stdout", "--oem", "3", "--psm", str(mode),
+            subprocess.run([magick, zoom, "-negate", neg], check=True, capture_output=True, timeout=20)
+            env = {**os.environ, "OMP_THREAD_LIMIT": "1"}
+            return [subprocess.run(["tesseract", pgm, "stdout", "--oem", "3", "--psm", str(mode),
                                     "-c", "debug_file=/dev/null"], check=True, capture_output=True,
-                                   encoding="utf-8", timeout=20, env={**os.environ, "OMP_THREAD_LIMIT": "1"}).stdout
-                    for mode in (6, 11)]
+                                   encoding="utf-8", timeout=20, env=env).stdout
+                    for pgm in (zoom, neg) for mode in (6, 11, 3)]
     except subprocess.CalledProcessError as e:
         detail = e.stderr.decode("utf-8", errors="replace") if isinstance(e.stderr, bytes) else e.stderr
         raise RuntimeError(f"OCR command failed: {e.cmd}: {detail}") from e

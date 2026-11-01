@@ -120,7 +120,7 @@ class OcrPipelineTest(unittest.TestCase):
             calls.append(cmd)
             return SimpleNamespace(stdout=b"P6\n2 1\n255\n" + bytes([17, 23, 29]) * 2)
         with mock.patch("shutil.which", return_value="magick"):
-            self.assertEqual(ocr_function(run)(self.machine), ["", ""])
+            self.assertEqual(ocr_function(run)(self.machine), [""] * 6)
         self.assertEqual([c[0] for c in calls], ["pngtopnm"])
 
     def test_minimal_magick_only_reads_pnm_and_writes_8bit_pgm(self):
@@ -131,18 +131,21 @@ class OcrPipelineTest(unittest.TestCase):
             if cmd[0] == "pngtopnm":
                 return SimpleNamespace(stdout=raw)
             if cmd[0] == "magick":
-                self.assertIn("pnm:-", cmd)
-                self.assertIn("-sample", cmd)
-                self.assertIn("300%", cmd)
-                self.assertEqual(cmd[-3:-1], ["-depth", "8"])
-                self.assertTrue(cmd[-1].endswith("zoom.pgm"))
-                self.assertEqual(kwargs["input"], raw)
+                if "-negate" in cmd:
+                    self.assertIn("neg.pgm", cmd[-1])
+                else:
+                    self.assertIn("pnm:-", cmd)
+                    self.assertIn("-sample", cmd)
+                    self.assertIn("300%", cmd)
+                    self.assertEqual(cmd[-3:-1], ["-depth", "8"])
+                    self.assertTrue(cmd[-1].endswith("zoom.pgm"))
+                    self.assertEqual(kwargs["input"], raw)
                 return SimpleNamespace(stdout=b"")
             self.assertEqual(cmd[0], "tesseract")
             return SimpleNamespace(stdout="administrator login:")
         with mock.patch("shutil.which", return_value="magick"):
-            self.assertEqual(ocr_function(run)(self.machine), ["administrator login:"] * 2)
-        self.assertEqual(len(calls), 4)
+            self.assertEqual(ocr_function(run)(self.machine), ["administrator login:"] * 6)
+        self.assertEqual(len(calls), 9)
 
     def test_conversion_failure_keeps_stderr_and_is_not_readiness(self):
         def run(cmd, **kwargs):

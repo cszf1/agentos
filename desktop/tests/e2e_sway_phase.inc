@@ -250,17 +250,16 @@ void E2E::sway() {
 
   // ---- D02: modify the app (priority + filter), hidden field after switching back, data kept ----
   const double epoch1 = r.appById(todo).get(QStringLiteral("appEpoch")).toVariant().toDouble();
+  const QSet<QString> runs1 = r.runIds();
   QVERIFY(page(QStringLiteral("home")));
   QVERIFY(typeInto(byName(QStringLiteral("intentInput")), QStringLiteral("add priority")));
   QVERIFY2(choose(byLabel(QStringLiteral("目标应用")), todoTitle), "target app not chosen");
   auto targetValue = [&]() { auto* t = byLabel(QStringLiteral("目标应用")); return t ? t->property("value").toString() : QStringLiteral("<missing>"); };
   QCOMPARE(targetValue(), todo);
-  const QSet<QString> runs1 = r.runIds();
   // A real, read-only state refresh must not reset the chosen app to 新应用.
   QSignalSpy appRefresh(r.shell->apps(), SIGNAL(modelReset()));
   r.shell->refreshPage();
   QTRY_VERIFY_WITH_TIMEOUT(!appRefresh.isEmpty(), 20000);
-  QVERIFY(page(QStringLiteral("home")));
   QCOMPARE(targetValue(), todo);
   QCOMPARE(byLabel(QStringLiteral("目标应用")) ? byLabel(QStringLiteral("目标应用"))->property("displayText").toString() : QString(), todoTitle);
   QCOMPARE(click(byName(QStringLiteral("intentSubmit"))), 1);

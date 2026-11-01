@@ -31,12 +31,19 @@
 
 该组终态：m5 成功，其他三项失败。后续 m20 41256274306@c7e4051 仍失败；后续 m6 41258546486@85c9575 已完整成功；最新两项候选见决定96，不把局部进展当最终 all 通过。
 
-### 最近失败、已做的候选修复
+### fbafdc2d1fbc58e3afeba434a3e961293337027d 的最新两项运行取证（决定96）
 
+| 测试 | run | 候选 | 终态 |
+|---|---|---|---|
+| m19-iso | 41262196844 | fbafdc2 | 失败：提取 FAILED-SCREEN iso-failure-1 确认已到 password:，Tesseract 4.1.3 对黑底白字稀疏行字符方块噪声将该行误识为 U I B TR |
+| m20-sway | 41262199646 | fbafdc2 | 失败：257 行 targetValue() == todo 证实选择成功；但刷新前 r.runIds() 调用了 go("tasks")，导致 Loader 销毁 Home 页面，切回后重建表单变回初始空值 |
+
+### 最新失败、已做的决定97候选修复
+
+- **m20 最新 `41262199646@fbafdc2`**：257 行已证明目标应用选择成功；但刷新前调用的 `r.runIds()` 内部直接切到了 tasks 页面，导致 ShellRoot 的 Loader 卸载了 HomePage，切回后表单重建变成了初始空值。决定 97 将 `r.runIds()` 移至选择前作为基线，消除非必要卸载，验证在同一页面内执行只读 `refreshPage()` 并等待 `apps()->modelReset()` 后 `targetValue()` 和 `displayText` 保持；跨工作区及锁屏清空断言保持不变。
+- **m19 最新 `41262196844@fbafdc2`**：ImageMagick codec 修复已越过；提取真实失败屏幕证实虚拟机已完整进入管理员设置并显示 `password:`。固定 nixpkgs 的 Tesseract 4.1.3 在黑底白字和终端字符方块下产生噪声，PSM 6/11 将该行读成 U I B TR。决定 97 在 `zoom.pgm` 基础上增加 `-negate` 反相生成白底黑字 `neg.pgm`，覆盖 PSM 6/11/3（6 个变体），经云端实测对真实失败截图能同时严格检出 `administrator login` 与 `password:`，不放宽等待正则。云端 30 项测试全数通过。
 - **m6 `41258546486@85c9575` 完整成功**：两个同模板克隆、独立新卷钥、模板旧钥拒绝、克隆2持久化重加密中的断电续作、正常重启身份保持均已走完。不得回退完整握手/持久化切电条件，最终 all 再回归。
-- **m19 最新 `41258548913@85c9575`**：固定 driver 使用 imagemagick_light，nixpkgs 明确 libpngSupport=false，故新 OCR 读取 PNG 失败；候选走现有 pngtopnm→PNM→8-bit PGM，保留严格正则、空白帧等待与 stderr。云端实际函数处理管理员原失败图两模式严格成功，新启动未激活图亦正常；助手30项通过。完整链路仍待。
-- **m5 `41253718507@b7c16fb` 完整成功**：真实鼠标聚焦后的 Shell 快捷键、锁/解锁、注销/再登录、四时刻权限/执行主体、diagnostics-only 等健康负面均通过。D01/W08/U09 已恢复；只在最终固定 SHA 全量再回归，不继续猜 PATH 根因或重复调试已解决项。
-- **m20 最新 `41258551440@85c9575`**：全 CRUD 已过，milk done=true、删后total=1；随后发现真实 HomePage 忽略 ASelect.chosen，提交value为空且刷新重置目标。候选只补 HomePage 消费与 scopeCleared 清空，新增实际 value、真实只读列表刷新保持、跨工作区及锁/解锁后目标清空检查；完整剩余旅程仍待。
+- **m5 `41253718507@b7c16fb` 完整成功**：真实鼠标聚焦后的 Shell 快捷键、锁/解锁、注销/再登录、四时刻权限/执行主体、diagnostics-only 等健康负面均通过。D01/W08/U09 已恢复；只在最终固定 SHA 全量再回归。
 
 ### 已有有效证据与边界
 
