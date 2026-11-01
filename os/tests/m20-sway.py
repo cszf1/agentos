@@ -1,8 +1,16 @@
 # m20-sway (see m20-sway.nix). The driver answers the e2e's E2E-ASK requests with real QMP input and reads back what
 # Sway scanned out and what the Host stored. Everything the e2e asserts is also printed as "E2E <step> <json>".
-import os, re, subprocess
+import os, re, shlex, subprocess, tempfile
 machine.start()
 machine.wait_for_unit("agentos-session-gateway.service")
+
+def copy_text_to_guest(path, text):
+    # copy_from_host uses the shared directory, not one bash -c argument containing all the base64 data.
+    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8") as src:
+        src.write(text)
+        src.flush()
+        machine.copy_from_host(src.name, path)
+    machine.succeed(f"chmod 0644 {shlex.quote(path)}")
 
 def shot(name):
     machine.screenshot(name)
@@ -242,7 +250,7 @@ def handle(n, a):
             rid = str(uuid.uuid4())
             reqs.append({"methodId": "members.revoke", "workspaceId": ws, "idempotencyKey": rid, "body": {"userId": bob}})
             body = json.dumps(reqs, ensure_ascii=False)
-            machine.succeed(f"echo {base64.b64encode(body.encode()).decode()} | base64 -d > {D}/burst.json && chmod 0644 {D}/burst.json")
+            copy_text_to_guest(f"{D}/burst.json", body)
             burst.update(rid=rid, n=len(reqs), recs0=int(hsql(f"SELECT COUNT(*) FROM records WHERE app_id='{app}'")), app=app)
             return {"file": f"{D}/burst.json"}
         if w == "burst-wait":
