@@ -265,8 +265,11 @@ def operator_phase(m, user, phase, marker, from_media=False, timeout=1200):
         mount = "udisksctl mount -b /dev/disk/by-label/AOS-CARRY --no-user-interaction && "
         script = f"/run/media/{user}/AOS-CARRY/drill.mjs"
     m.send_chars(f"{mount}{NODE} {script} {phase} {int(time.time() * 1000)}\n", delay=0.03)
-    # Dictionary-word sentinels avoid the acronym AOS being consistently OCR-read as ADS. Require the whole line.
-    wait_screen(m, rf"(?m)^{re.escape(marker)}\s*$", timeout=timeout, failure_regex=r"(?m)^FAIL-DRILL-FAILED\s*$")
+    # OCR may segment VERIFIED as VERIF IED. Match the same ASCII characters on one whole line:
+    # horizontal layout whitespace is allowed, but not changed/missing characters, prefixes or line joining.
+    def line_pattern(value):
+        return r"(?m)^[ \t]*" + r"[ \t]*".join(re.escape(ch) for ch in value) + r"[ \t]*$"
+    wait_screen(m, line_pattern(marker), timeout=timeout, failure_regex=line_pattern("FAIL-DRILL-FAILED"))
     shot(m, "operator-" + user + "-" + phase)
 
 def operator_reboot(m, user, pw):

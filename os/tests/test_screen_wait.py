@@ -97,6 +97,30 @@ class ScreenWaitTest(unittest.TestCase):
         self.assertIn("source", screen.command)
         self.assertNotIn("PASS-TRIAL-ARMED", screen.command)  # echoed argv cannot masquerade as a completion line
 
+    def test_operator_accepts_only_horizontal_ocr_segmentation_of_the_same_characters(self):
+        for output in ["PASS-EXPORT-VERIF IED", "  P A S S - E X P O R T - V E R I F I E D\t", "PASS-EXPORT-VERIF\tIED"]:
+            with self.subTest(output=output):
+                clock = Clock()
+                screen = Screen(clock, [output])
+                with contextlib.redirect_stdout(io.StringIO()):
+                    operator_function(helpers(clock)[0])(screen, "alice", "export", "PASS-EXPORT-VERIFIED", timeout=3)
+                self.assertEqual(screen.calls, 1)
+                self.assertNotIn("PASS-EXPORT", screen.command)
+
+    def test_segmented_failure_is_still_prioritised_over_segmented_success(self):
+        clock = Clock()
+        screen = Screen(clock, ["PASS-EXPORT-VERIF IED", "FAIL-DRILL-FAI LED"])
+        with contextlib.redirect_stdout(io.StringIO()), self.assertRaisesRegex(AssertionError, "operator failed"):
+            operator_function(helpers(clock)[0])(screen, "alice", "export", "PASS-EXPORT-VERIFIED", timeout=3)
+
+    def test_segmentation_does_not_allow_changed_characters_cross_line_or_extra_text(self):
+        for output in ["PASS-EXPORT-VERIF1ED", "PASS-EXPORT-VERIFIED-NOT-DONE", "echo P A S S - E X P O R T - V E R I F I E D",
+                       "PASS-EXPORT-\nVERIFIED", "PASS-EXPORT-VERI\nFIED", "PASS-EXPORTED", "PASS-EXPORT-VERIFIED extra"]:
+            with self.subTest(output=output):
+                clock = Clock()
+                with contextlib.redirect_stdout(io.StringIO()), self.assertRaisesRegex(AssertionError, "did not show"):
+                    operator_function(helpers(clock)[0])(Screen(clock, [output]), "alice", "export", "PASS-EXPORT-VERIFIED", timeout=3)
+
     def test_operator_rejects_old_misread_prefix_wrong_phase_and_marker_substrings(self):
         for output in ["ADS-TRIAL-ARMED", "AOS-TRIAL-ARMED", "PASS-HEALTH-REFUSED", "echo PASS-TRIAL-ARMED", "PASS-TRIAL-ARMED-NOT-DONE"]:
             with self.subTest(output=output):

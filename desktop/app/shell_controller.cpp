@@ -277,16 +277,25 @@ void ShellController::bind() {
       emit statusChanged();
       return;
     }
+    const QString user = r.body.get(QStringLiteral("userId")).stringOr(QString());
+    const qint64 e = qint64(r.body.get(QStringLiteral("sessionEpoch")).toNumber());
+    const bool nowLocked = r.body.get(QStringLiteral("locked")).toBool();
+    if ((!userId_.isEmpty() && user != userId_) || (e > 0 && e != sessionEpoch_) || (nowLocked && !locked_)) {
+      ++scopeGen_;  // old-auth replies must not repopulate cleared sensitive state
+      onLocked();
+    }
     sessionBound_ = true;
-    userId_ = r.body.get(QStringLiteral("userId")).stringOr(QString());
+    userId_ = user;
     userName_ = r.body.get(QStringLiteral("userName")).stringOr(userId_);
     role_ = r.body.get(QStringLiteral("role")).stringOr(QString());
-    const qint64 e = qint64(r.body.get(QStringLiteral("sessionEpoch")).toNumber());
     if (e > 0) sessionEpoch_ = e;
-    locked_ = r.body.get(QStringLiteral("locked")).toBool();
+    locked_ = nowLocked;
     emit statusChanged();
     loadMachine();
     loadWorkspaces();
+    // Automatic transport resubscriptions precede this connection\'s bind and can be refused. A still-visible
+    // current workspace does not pass through switchWorkspace(), so explicitly reacquire its snapshot/stream.
+    if (!locked_ && !ws_.isEmpty()) attach(ws_, true);
   }, false);
 }
 

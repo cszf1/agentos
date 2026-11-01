@@ -362,6 +362,70 @@ class FlowsTest : public QObject {
     QCOMPARE(h.sent(QStringLiteral("machine.actions.plan")).size(), plansBefore + 1);
   }
 
+  void sameWorkspaceRebindRestoresAnAuthenticatedEventSubscription() {
+    std::atomic<int> bound{0}, subscribed{0};
+    Harness h;
+    h.gw->gw->setHandler([&](const JValue& r) {
+      const int conn = h.gw->gw->connections();
+      const QString method = r.get(QStringLiteral("methodId")).str();
+      if (method == QLatin1String("session.bind")) bound = conn;
+      else if (bound != conn) return Backend::err(QStringLiteral("SESSION_REQUIRED"));
+      if (method == QLatin1String("events.subscribe")) subscribed = conn;
+      return h.be.handle(r);
+    });
+    QVERIFY(h.up());
+    QTRY_COMPARE(subscribed.load(), 1);
+    h.shell->setIntentDraft(QStringLiteral("keep the same-session draft"));
+    QGuiApplication::clipboard()->setText(QStringLiteral("same session"));
+    QSignalSpy events(h.shell->rpc(), &RpcClient::eventReceived);
+    QMetaObject::invokeMethod(h.gw->gw, "dropConnection", Qt::BlockingQueuedConnection);
+    QTRY_VERIFY_WITH_TIMEOUT(subscribed.load() >= 2, 5000);
+    QCOMPARE(h.shell->workspaceId(), WS_A);
+    QCOMPARE(h.shell->intentDraft(), QStringLiteral("keep the same-session draft"));
+    QCOMPARE(QGuiApplication::clipboard()->text(), QStringLiteral("same session"));
+    QMetaObject::invokeMethod(h.gw->gw, "sendEvent", Qt::BlockingQueuedConnection, Q_ARG(QString, WS_A), Q_ARG(qint64, 11),
+                              Q_ARG(QString, QStringLiteral("workspace.state_changed")), Q_ARG(agentos::JValue, JValue::object()));
+    QTRY_VERIFY(!events.isEmpty());
+  }
+
+  void rebindObservesALockThatHappenedWhileDisconnected() {
+    Harness h;
+    QVERIFY(h.up());
+    h.gw->gw->setHandler([&](const JValue& r) {
+      if (r.get(QStringLiteral("methodId")).str() == QLatin1String("session.status")) return JValue::missing();
+      return h.be.handle(r);  // isolate bind metadata from the periodic status poll
+    });
+    h.shell->setIntentDraft(QStringLiteral("must disappear on remote lock"));
+    QGuiApplication::clipboard()->setText(QStringLiteral("private clipboard"));
+    bool rejected = false;
+    h.shell->askAppConfirm(QStringLiteral("old plan"), QStringLiteral("not across a lock"), [&](bool yes) { rejected = !yes; });
+    h.be.sessionEpoch = 2;
+    h.be.locked = true;
+    QMetaObject::invokeMethod(h.gw->gw, "dropConnection", Qt::BlockingQueuedConnection);
+    QTRY_VERIFY_WITH_TIMEOUT(h.shell->locked() && h.shell->sessionEpoch() == 2, 5000);
+    QVERIFY(h.shell->intentDraft().isEmpty());
+    QVERIFY(QGuiApplication::clipboard()->text().isEmpty());
+    QVERIFY(rejected);
+    QVERIFY(!h.shell->confirm().value(QStringLiteral("visible")).toBool());
+  }
+
+  void rebindObservesALockUnlockEpochWhileDisconnected() {
+    Harness h;
+    QVERIFY(h.up());
+    h.gw->gw->setHandler([&](const JValue& r) {
+      if (r.get(QStringLiteral("methodId")).str() == QLatin1String("session.status")) return JValue::missing();
+      return h.be.handle(r);
+    });
+    h.shell->setIntentDraft(QStringLiteral("old-epoch draft"));
+    QGuiApplication::clipboard()->setText(QStringLiteral("old-epoch clipboard"));
+    h.be.sessionEpoch = 2;
+    QMetaObject::invokeMethod(h.gw->gw, "dropConnection", Qt::BlockingQueuedConnection);
+    QTRY_VERIFY_WITH_TIMEOUT(h.shell->sessionEpoch() == 2, 5000);
+    QVERIFY(!h.shell->locked());
+    QVERIFY(h.shell->intentDraft().isEmpty());
+    QVERIFY(QGuiApplication::clipboard()->text().isEmpty());
+  }
+
   void backgroundPolicyUsesTheRealOwnerActionAndTrustedLayer() {
     Harness h;
     QVERIFY(h.up());
