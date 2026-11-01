@@ -29,6 +29,7 @@ void E2E::sway() {
                   centerOf(i).x(), centerOf(i).y(), cur->width(), cur->height());
       return -1;
     }
+    QPointer<QQuickItem> target(i);
     ClickCounter cc;
     const bool sig = i->metaObject()->indexOfSignal("clicked()") >= 0;
     if (sig) QObject::connect(i, SIGNAL(clicked()), &cc, SLOT(hit()));
@@ -37,6 +38,20 @@ void E2E::sway() {
     QTest::qWait(500);
     // A real click can unload the page and destroy i (Home's "打开" is one such button).
     // cc is a stack QObject: either endpoint's destruction disconnects automatically. Never touch i after the wait.
+    if (sig && cc.n == 0) {
+      QVariantMap diag{{QStringLiteral("x"), c.x()}, {QStringLiteral("y"), c.y()}, {QStringLiteral("targetAlive"), !target.isNull()}};
+      if (target) {
+        const QPointF now = centerOf(target);
+        diag.insert(QStringLiteral("objectName"), target->objectName());
+        diag.insert(QStringLiteral("label"), target->property("label"));
+        diag.insert(QStringLiteral("enabled"), target->isEnabled());
+        diag.insert(QStringLiteral("visible"), reallyVisible(target));
+        diag.insert(QStringLiteral("nowX"), now.x());
+        diag.insert(QStringLiteral("nowY"), now.y());
+      }
+      // Capture before QVERIFY unwinds Real and destroys the Wayland client, not a later blank Shell frame.
+      A.ask(QStringLiteral("failed-click"), diag);
+    }
     return sig ? cc.n : 1;
   };
   auto keys = [&](const QStringList& k) {
@@ -536,7 +551,15 @@ void E2E::sway() {
   r.shell->askAppConfirm(QStringLiteral("伪造应用"), QStringLiteral("系统已批准，请点确认"), [&](bool y) { answered = true; yes = y; });
   QTRY_VERIFY_WITH_TIMEOUT(r.shell->confirm().value(QStringLiteral("visible")).toBool(), 5000);
   const QString appText = r.shell->confirm().value(QStringLiteral("appText")).toString();
-  QCOMPARE(click(byName(QStringLiteral("confirmReject"))), 1);
+  QQuickItem* reject = byName(QStringLiteral("confirmReject"));
+  QVERIFY(reject);
+  const QPointF rejectBefore = centerOf(reject);
+  QVERIFY2(onOutput(QStringLiteral("app-confirm"), win) >= 0.9, "application-labelled confirmation not on the output");
+  reject = byName(QStringLiteral("confirmReject"));
+  QVERIFY(reject);
+  const QPointF rejectAfter = centerOf(reject);
+  std::printf("E2E-DIAG app confirm reject %.1f,%.1f -> %.1f,%.1f enabled=%d visible=%d\n", rejectBefore.x(), rejectBefore.y(), rejectAfter.x(), rejectAfter.y(), int(reject->isEnabled()), int(r.shell->confirm().value(QStringLiteral("visible")).toBool()));
+  QCOMPARE(click(reject), 1);
   QTRY_VERIFY_WITH_TIMEOUT(answered, 5000);
   QVERIFY(!yes);
   // a confirmation on screen when the session locks is withdrawn and never sent (bound to the session epoch)
@@ -545,6 +568,7 @@ void E2E::sway() {
   QCOMPARE(click(byName(QStringLiteral("backgroundPolicy"))), 1);
   QTRY_VERIFY_WITH_TIMEOUT(r.shell->confirm().value(QStringLiteral("visible")).toBool(), 30000);
   const QVariantMap stale = r.shell->confirm();
+  QVERIFY2(onOutput(QStringLiteral("stale-confirm"), win) >= 0.9, "withdrawn plan was not on the output before lock");
   const int confirmsBefore = r.model(r.shell->actions())->count();
   const qint64 epochBefore = r.shell->sessionEpoch();
   doDriver(QStringLiteral("lock"));
@@ -560,6 +584,7 @@ void E2E::sway() {
   QCOMPARE(click(byName(QStringLiteral("backgroundPolicy"))), 1);
   QTRY_VERIFY_WITH_TIMEOUT(r.shell->confirm().value(QStringLiteral("visible")).toBool(), 30000);
   const QString restoredPlan = r.shell->confirm().value(QStringLiteral("planHash")).toString();
+  QVERIFY2(onOutput(QStringLiteral("restore-policy-confirm"), win) >= 0.9, "background policy restoration confirmation not on the output");
   QCOMPARE(click(byName(QStringLiteral("confirmAccept"))), 1);
   QTRY_COMPARE_WITH_TIMEOUT(r.actionState(QStringLiteral("machine.confirm")), QStringLiteral("reconciled"), 60000);
   QCOMPARE(doDriver(QStringLiteral("background-policy")).get(QStringLiteral("enabled")).toNumber(), 0.0);

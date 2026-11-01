@@ -207,6 +207,10 @@ def handle(n, a):
         for _ in range(int(a.get("n", 1))):
             button(b, True); button(b, False); time.sleep(0.03)
         return {}
+    if k == "failed-click":
+        print("E2E-DIAG failed-click", json.dumps(a, ensure_ascii=False))
+        log_failure_screen(machine, "sway-live-failed-click")
+        return {}
     if k == "shot":
         img = shot(f"e2e-{n:03d}-{a.get('name', 'shot')}")
         return {"w": img[0], "h": img[1], "px": [list(px(img, x, y)) for x, y in a["points"]]}
