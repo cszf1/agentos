@@ -43,6 +43,36 @@ def pnm_rgb(raw: bytes) -> tuple[int, int, bytes]:
     return w, h, data
 
 
+def greeter_login_button(img):
+    """The frozen GTK theme's primary Login control; never guess among missing/ambiguous controls."""
+    w, h, rgb = img
+    assert len(rgb) == w * h * 3
+    blue = set()
+    for y in range(h):
+        for x in range(w):
+            k = (y * w + x) * 3
+            if abs(rgb[k] - 53) <= 18 and abs(rgb[k + 1] - 132) <= 18 and abs(rgb[k + 2] - 228) <= 18:
+                blue.add((x, y))
+    candidates = []
+    while blue:
+        start = blue.pop()
+        todo = [start]
+        xs, ys, count = [start[0]], [start[1]], 0
+        while todo:
+            x, y = todo.pop()
+            xs.append(x); ys.append(y); count += 1
+            for p in ((x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)):
+                if p in blue:
+                    blue.remove(p)
+                    todo.append(p)
+        x0, x1, y0, y1 = min(xs), max(xs), min(ys), max(ys)
+        bw, bh = x1 - x0 + 1, y1 - y0 + 1
+        if 50 <= bw <= 220 and 24 <= bh <= 64 and count >= bw * bh * 0.45 and h * 0.2 < y0 < y1 < h * 0.9:
+            candidates.append(((x0 + x1) // 2, (y0 + y1) // 2))
+    assert len(candidates) == 1, f"expected one rendered Login button, found {candidates}"
+    return candidates[0]
+
+
 def log_failure_screen(m, tag):
     """Keep the actual scanout in failure logs even when Nix discards a failed derivation's PNG files."""
     import base64

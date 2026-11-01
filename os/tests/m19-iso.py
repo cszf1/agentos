@@ -298,8 +298,9 @@ with subtest("the installed disk alone: first unlock, first-boot administrator o
     keyed(target, "Home\n")
     wait_screen(target, r"(?i)(Welcome back|Login)", timeout=600)                 # ReGreet's prompt, alice preselected
     time.sleep(5)
-    shot(target, "greeter")
-    target.send_key("ret")
+    greeter = shot(target, "greeter")
+    login_x, login_y = greeter_login_button(greeter)
+    click(target, login_x, login_y, greeter[0], greeter[1])       # real rendered Login control, independent of GTK focus
     wait_screen(target, r"Password", timeout=120)              # greetd's PAM prompt in ReGreet
     keyed(target, "alice-pw-1\n")
     img = shell_frame(target, "shell")

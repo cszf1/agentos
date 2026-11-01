@@ -16,9 +16,9 @@
 
 - 仓库：https://github.com/cszf1/agentos ，分支 `v1.0`。实际 HEAD 看 Git，最新候选/修复看 PROGRESS，实际验收提交看 Actions 的完整 `headSha`。
 - 验收统计一致：**74 通过 / 15 部分 / 11 未通过**。I06、U05、R11、I08、U04 已恢复；D01/W08/U09 按完整 m5 41253718507 恢复，其他候选没有提前升项。
-- 两轮审查原文：`docs/review/REVIEW_V1.0_EXTERNAL_2026-10-31.md`；逐项状态在 `V1.0_REVIEW_FIXES.md`。PROGRESS/TSV 当前续至决定 103，后续编号按最新尾项递增。
+- 两轮审查原文：`docs/review/REVIEW_V1.0_EXTERNAL_2026-10-31.md`；逐项状态在 `V1.0_REVIEW_FIXES.md`。PROGRESS/TSV 当前续至决定 104，后续编号按最新尾项递增。
 - 第一轮全量 `41220513266@4b1d863` 终态 **23 成功 / 4 失败**：失败 m5、m6-qcow2、m19、m20；其余包括 m18、build-repro、m3/m7 都成功。这不是最终全绿。
-- e2159d6固定SHA的云端Node typecheck/contracts、184pass/4skip、Rust81pass/1ignored（27组/exit0）均通过；决定100候选同计数，另有Qt九套ctest/三种子fuzz/E2E编译通过、决定101另经Qt九套/E2E编译及VM helper43项（5+3+7+6+13+2+4+3）。**不是最终KVM的27项通过**。
+- e2159d6固定SHA的云端Node typecheck/contracts、184pass/4skip、Rust81pass/1ignored（27组/exit0）均通过；决定100候选同计数，另有Qt九套ctest/三种子fuzz/E2E编译通过、决定101另经Qt九套/E2E编译及VM helper47项（5+3+7+6+13+2+4+3+4）。**不是最终KVM的27项通过**。
 
 ### b7c16fb 的最近四项调试基线
 
@@ -60,7 +60,13 @@
 - **候选验证**：缺UI/列表字段的回归先红后绿；Qt6.11.2九套ctest、三种子各2000轮fuzz、E2E编译通过；Rust81pass/1ignored、Node184pass/4skip、typecheck/contracts/slot-vectors通过；助手34项（5+3+7+6+13）、28个Python AST及drill语法/self-test/错误非零通过。不是完整Sway或最终全27通过。
 - **边界**：D07的owner策略不是管理员硬件/PAM图形输入验收，不声称音频等实机功能可用；m19管理员仍走普通用户PAM→gateway→ticket→固定root helper。两条完整KVM须在决定100提交后重跑，统计仍74/15/11。
 
-### 决定103（当前）
+### 决定104（当前）
+
+- m19 `41285496688@c55086c` 首次ReGreet按Enter后仍停账号/会话选择页；真实Login按钮存在，未到密码页也未检验有界关机修复。改按实际PNG的冻结GTK主色定位唯一按钮并QMP点击（真实失败帧中心967,487），零/多候选失败，仍等Password才输口令。新增4项纯像素回归和实际帧验证，helper47/Python32 AST通过，待新m19完整KVM。
+- m20 `41286508130@d49768d` 已完整文件传输和302请求/300记录/撤权revoked，止D09零新增事件。只读已核实新连接先自动订阅后绑定，被SESSION_REQUIRED拒绝；绑定后现工作区不为空故未reattach，订阅没有恢复。下一步补严格绑定前置的真实socket回归再修；不降低压力或伪造事件。
+- 两项均失败，不把子段或未运行的最终SQL postlude当整项通过；最终同SHA全27仍待。
+
+### 决定103（历史）
 
 - m20 `41284124280@4731cc4` 三个确认框scanout均108/108；取消中心从449.9,522.5移到449.9,552.5，实际Wayland证实旧几何会过早取点。取消、锁屏UI撤回、恢复后台默认值已越过；首笔根收据可见，但最终postlude的stale/restore逐hash根收据未执行，不能算D07整项通过。
 - 当前止D09的burst-prepare，300 CRUD+bind+revoke共302请求在单个bash-c参数中超过Linux上限，真实exit126。决定103通过NamedTemporaryFile+驱动copy_from_host共享目录传完整UTF8，chmod0644，不减少压力；实际旧源码bash E2BIG红后，3项字节/数量/短参数/模式/错误清理回归转绿，CI接入，helper43/Python31 AST全过。实际VM共享复制及完整慢读者仍待新KVM。

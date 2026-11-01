@@ -100,6 +100,7 @@ jobs:
           python3 -B os/tests/test_failed_click.py
           python3 -B os/tests/test_operator_reboot.py
           python3 -B os/tests/test_burst_transfer.py
+          python3 -B os/tests/test_greeter_input.py
 
       - name: Build test driver
         if: ${{ !startsWith(matrix.test, 'build-') }}
