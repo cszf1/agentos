@@ -60,7 +60,14 @@
 - **候选验证**：缺UI/列表字段的回归先红后绿；Qt6.11.2九套ctest、三种子各2000轮fuzz、E2E编译通过；Rust81pass/1ignored、Node184pass/4skip、typecheck/contracts/slot-vectors通过；助手34项（5+3+7+6+13）、28个Python AST及drill语法/self-test/错误非零通过。不是完整Sway或最终全27通过。
 - **边界**：D07的owner策略不是管理员硬件/PAM图形输入验收，不声称音频等实机功能可用；m19管理员仍走普通用户PAM→gateway→ticket→固定root helper。两条完整KVM须在决定100提交后重跑，统计仍74/15/11。
 
-### 决定107（当前）
+### 决定108（当前）
+
+- 6a3b16f的m20 `41314773240`止e2e_sway_phase.inc 674行：90秒内Shell未显示Broker不可用。根因在测试驱动：只停agentos-broker.service，agentos-broker.path（PathExists=machine.secret）0.43s后即把服务拉回，断线从未持续。m20改为与m3相同先停path+service，断言服务非active且broker.sock消失；恢复时启service+path并wait_for_unit。
+- test_broker_fault.py以AST提取m20实际命令在假systemctl模型（编码该run所见行为，不是真实systemd）上运行：旧代码2/3 fail，新代码3/3绿，已接入CI helper列表。
+- 产品侧实测真实BrokerLink：broker被杀5ms后连接断开，缓存brokerReady保持到下一次ensure，下一次ensure 1.1ms得BROKER_UNAVAILABLE；Host周期30s、Shell每15s读state，最坏约45s<90s，恢复<120s，不改Host/Shell及任何超时。
+- 云端helper55/AST33、v1doc mismatch[]通过；Node/Qt/Rust未改，基线Node190/4skip、Qt9/E2E、Rust85/1ignored有效。m20 KVM须在本提交重跑，最终同SHA全27仍待，74/15/11不升项。
+
+### 决定107（历史）
 
 - 5083f3c的m20 `41308980957`（artifact13084283803）过Host降级/恢复与D09（338事件/gap1/撤权/跨域0/协议错0），止恢复后的CRUD。不是Host没回来：Bob撤权的目标userId在事件泵丢失，旧Shell默认自身，Alice错误进入writesStopped。Node白名单保留目标ID，不带私有payload；歧义事件先停写再用原生目录核权，仅新鲜owner/editor解封，viewer/未知/旧回复不解封。会员查询代次独立于数据作用域，避免丢弃已接受业务结果。
 - Gap只更新metadata还会留下旧记录；新Qt回归先实际得到0而非应有1，修resync和归一化record提示后真实数据重读且未提交草稿保持。会员2、数据1 Qt回归分别红后绿；UDS目标丢失旧1fail，6测试绿（含坏payload仍歧义且Host不崩溃）；Qt9/E2E及Node190/4skip绿。

@@ -265,9 +265,13 @@ def handle(n, a):
         if w == "model-on":
             machine.succeed("echo AGENTOS_MODEL_MODE=faux > /run/agentos-test/model.env"); return {}
         if w == "broker-stop":
-            machine.succeed("systemctl stop agentos-broker.service"); return {}
+            # agentos-broker.path re-starts the service the moment it stops (m20 41314773240@6a3b16f: back within 0.43s), so the
+            # outage the Shell must show only exists while the path unit is held too.
+            machine.succeed("systemctl stop agentos-broker.path agentos-broker.service")
+            machine.succeed("sleep 2; ! systemctl is-active --quiet agentos-broker.service && test ! -S /run/agentos-broker/broker.sock")
+            return {}
         if w == "broker-start":
-            machine.succeed("systemctl start agentos-broker.service")
+            machine.succeed("systemctl start agentos-broker.service agentos-broker.path")
             machine.wait_for_unit("agentos-broker.service")
             return {}
         if w == "clipboard":
