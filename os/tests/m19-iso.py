@@ -272,7 +272,7 @@ def operator_reboot(m, user, pw):
     m.start()
     wait_screen(m, r"(?i)passphrase", timeout=900)
     keyed(m, PASS + "\n")
-    wait_screen(m, "Login", timeout=600)  # do NOT log in graphically: the trial must fail the Wayland health gate
+    wait_screen(m, r"(?i)(Welcome back|Login)", timeout=600)  # do NOT log in graphically: the trial must fail the Wayland health gate
     operator_login(m, user, pw)
 
 with subtest("the installed disk alone: first unlock, first-boot administrator on the console, ReGreet login, the Shell on the output and driven by clicks (U01, D01, review F11)"), kill_on_fail():
@@ -291,7 +291,7 @@ with subtest("the installed disk alone: first unlock, first-boot administrator o
     keyed(target, "alice-pw-1\n")
     wait_screen(target, r"workspace name", timeout=120)
     keyed(target, "Home\n")
-    wait_screen(target, r"Login", timeout=600)                 # ReGreet's button, alice preselected
+    wait_screen(target, r"(?i)(Welcome back|Login)", timeout=600)                 # ReGreet's prompt, alice preselected
     time.sleep(5)
     shot(target, "greeter")
     target.send_key("ret")
@@ -389,7 +389,7 @@ with subtest("O09 continuation: the SAME release ISO installs a second machine; 
     keyed(dest, "bea-pw-2\n")
     wait_screen(dest, "workspace name", timeout=120)
     keyed(dest, "B\n")
-    wait_screen(dest, "Login", timeout=600)
+    wait_screen(dest, r"(?i)(Welcome back|Login)", timeout=600)
     operator_login(dest, "bea", "bea-pw-2")
     operator_phase(dest, "bea", "restore", "AOS-O09-RESTORED", from_media=True)
     dest.send_monitor_command("system_powerdown")

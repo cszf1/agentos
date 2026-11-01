@@ -21,9 +21,28 @@ void E2E::sway() {
     const QPointF c = centerOf(i);
     return c.x() >= 1 && c.y() >= 1 && c.x() < w->width() - 1 && c.y() < w->height() - 1;
   };
+  auto ensureVisible = [&](QQuickItem* item) {
+    if (!item) return;
+    for (QQuickItem* p = item->parentItem(); p; p = p->parentItem()) {
+      if (p->inherits("QQuickFlickable")) {
+        const double itemBottom = p->mapFromItem(item, QPointF(0, item->height())).y();
+        const double itemTop = p->mapFromItem(item, QPointF(0, 0)).y();
+        const double viewH = p->height();
+        const double cy = p->property("contentY").toDouble();
+        if (itemBottom > viewH - 20) {
+          p->setProperty("contentY", cy + (itemBottom - viewH + 40));
+          QTest::qWait(200);
+        } else if (itemTop < 20) {
+          p->setProperty("contentY", std::max(0.0, cy + itemTop - 20));
+          QTest::qWait(200);
+        }
+      }
+    }
+  };
   QQuickWindow* cur = win;  // the window the next click lands in (fixture windows replace the Shell for a while)
   auto click = [&](QQuickItem* i, bool dbl = false) -> int {
     if (!i) return -1;
+    ensureVisible(i);
     if (!inWindow(i, cur)) {
       std::printf("E2E-DIAG click target %s '%s' at %.0f,%.0f is outside the %dx%d window\n", i->metaObject()->className(), qPrintable(i->property("label").toString()),
                   centerOf(i).x(), centerOf(i).y(), cur->width(), cur->height());
