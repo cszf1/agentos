@@ -27,7 +27,7 @@ static void captureQml(QtMsgType t, const QMessageLogContext& c, const QString& 
 struct Backend {
   std::atomic<int> sessionEpoch{1};
   std::atomic<bool> locked{false};
-  std::atomic<bool> backgroundEnabled{false}, workspaceOwner{true};
+  std::atomic<bool> backgroundEnabled{false}, workspaceOwner{true}, nativeStatusShape{false};
   bool plannedBackground = false;
   std::atomic<bool> hostDown{false}, modelDown{false}, brokerDown{false}, planStale{false}, holdQueries{false}, holdRecordLists{false};
   JValue kanban = loadFixture(QStringLiteral("v1.0/slot-vectors/scenario-v2-kanban.json"));
@@ -71,10 +71,12 @@ struct Backend {
       return JValue::object({{QStringLiteral("workspaceId"), p.get(QStringLiteral("workspaceId"))}, {QStringLiteral("clientEpoch"), 2}, {QStringLiteral("storeUUID"), QStringLiteral("store-") + p.get(QStringLiteral("workspaceId")).str().left(4)}, {QStringLiteral("cursor"), 10}});
     if (m == QLatin1String("events.subscribe")) return JValue::object({{QStringLiteral("cursor"), b.get(QStringLiteral("cursor"))}});
     if (m == QLatin1String("events.ack") || m == QLatin1String("members.list") || m == QLatin1String("backups.list")) return JValue::object({{QStringLiteral("items"), JValue::array()}});
-    if (m == QLatin1String("machine.status"))
+    if (m == QLatin1String("machine.status")) {
+      if (nativeStatusShape) return JValue::object({{QStringLiteral("meta"), JValue::object({{QStringLiteral("currentReleaseId"), QStringLiteral("1.0.0")}})}});
       return JValue::object({{QStringLiteral("release"), JValue::object({{QStringLiteral("releaseId"), QStringLiteral("1.0.0")}})},
                              {QStringLiteral("components"), JValue::object({{QStringLiteral("host"), hostDown ? QStringLiteral("down") : QStringLiteral("ok")}, {QStringLiteral("model"), modelDown ? QStringLiteral("down") : QStringLiteral("ok")}, {QStringLiteral("broker"), brokerDown ? QStringLiteral("down") : QStringLiteral("ok")}})},
                              {QStringLiteral("setup"), JValue::object({{QStringLiteral("state"), QStringLiteral("done")}, {QStringLiteral("steps"), JValue::array()}})}});
+    }
     if (m == QLatin1String("machine.capabilities"))
       return JValue::object({{QStringLiteral("hardware"), JValue::object({
                                  {QStringLiteral("audio"), JValue::object({{QStringLiteral("available"), true}, {QStringLiteral("volume"), 40}, {QStringLiteral("muted"), false}, {QStringLiteral("outputs"), JValue::array({QStringLiteral("speaker")})}, {QStringLiteral("output"), QStringLiteral("speaker")}})},
@@ -109,7 +111,7 @@ struct Backend {
     const JValue& fp = b.get(QStringLiteral("params"));
     if (hostDown) return err(QStringLiteral("HOST_UNAVAILABLE"));
     if (route == QLatin1String("state.list"))
-      return JValue::object({{QStringLiteral("apps"), JValue::array({
+      return JValue::object({{QStringLiteral("modelAvailable"), !modelDown}, {QStringLiteral("brokerReady"), !brokerDown}, {QStringLiteral("apps"), JValue::array({
                                  JValue::object({{QStringLiteral("appId"), kanban.get(QStringLiteral("app")).get(QStringLiteral("appId"))}, {QStringLiteral("title"), QString::fromUtf8("待办看板")}, {QStringLiteral("appEpoch"), 3}}),
                                  JValue::object({{QStringLiteral("appId"), console.get(QStringLiteral("app")).get(QStringLiteral("appId"))}, {QStringLiteral("title"), QString::fromUtf8("系统控制台")}, {QStringLiteral("appEpoch"), 3}}),
                                  JValue::object({{QStringLiteral("appId"), QStringLiteral("rec-app")}, {QStringLiteral("title"), QString::fromUtf8("记录")}, {QStringLiteral("appEpoch"), 3}})})}});
@@ -625,6 +627,78 @@ class FlowsTest : public QObject {
     auto* vm = qobject_cast<AppViewModel*>(h.shell->appView(kan));
     QVERIFY(vm);
     QTRY_COMPARE_WITH_TIMEOUT(vm->mode(), QStringLiteral("slot"), 5000);
+  }
+
+  void missingNativeHealthFieldsDoNotRecoverAStoppedWorkspaceHost() {
+    Harness h;
+    h.be.nativeStatusShape = true;
+    QVERIFY(h.up());
+    h.shell->setCurrentPage(QStringLiteral("hardware"));
+    QTest::qWait(100);  // let the explicit page refresh finish before observing background probes
+    QSignalSpy resets(qobject_cast<QAbstractItemModel*>(h.shell->canvas()), &QAbstractItemModel::modelReset);
+    QVERIFY(resets.isValid());
+    const int probes = h.sent(QStringLiteral("state.list")).size();
+    QTRY_VERIFY_WITH_TIMEOUT(h.sent(QStringLiteral("state.list")).size() > probes, 20000);
+    QTest::qWait(100);
+    QCOMPARE(resets.count(), 0);  // background health probes must not rebuild focused app delegates
+    h.be.hostDown = true;
+    // No user refresh and no fictional components.host field: periodic probes must observe the real Host.
+    QTRY_VERIFY_WITH_TIMEOUT(!h.shell->hostAvailable(), 20000);  // existing 5-second status timer probes every third tick
+    h.gw->gw->setHandler([&](const JValue& r) {
+      if (r.get(QStringLiteral("methodId")).str() == QLatin1String("workspace.forward")) return JValue::missing();
+      return h.be.handle(r);
+    });
+    const QString cached = h.shell->cachedAt();
+    QVERIFY(!h.shell->act(QStringLiteral("workspaces.list")).isEmpty());
+    QTRY_COMPARE(h.actionState(QStringLiteral("workspaces.list")), QStringLiteral("reconciled"));
+    QTest::qWait(100);
+    QCOMPARE(h.shell->cachedAt(), cached);  // machine replies cannot make stale workspace data look freshly read
+    QVERIFY(!h.shell->hostAvailable());  // neither native replies nor action receipts prove the Host recovered
+    QVERIFY(h.shell->readOnly());
+    h.gw->gw->setHandler([&](const JValue& r) { return h.be.handle(r); });
+    h.be.hostDown = false;
+    h.shell->refreshPage();
+    QTRY_VERIFY_WITH_TIMEOUT(h.shell->hostAvailable(), 5000);
+  }
+
+  void nativeWorkspaceStateReportsBrokerAndModelIndependently() {
+    Harness h;
+    h.be.nativeStatusShape = true;
+    QVERIFY(h.up());
+    h.be.brokerDown = true;
+    h.shell->setCurrentPage(QStringLiteral("hardware"));
+    QTRY_VERIFY_WITH_TIMEOUT(!h.shell->brokerAvailable(), 5000);
+    QVERIFY(h.shell->hostAvailable());
+    QVERIFY(h.shell->canWrite(false));
+    QVERIFY(!h.shell->canWrite(true));
+    h.be.brokerDown = false;
+    h.shell->refreshPage();
+    QTRY_VERIFY_WITH_TIMEOUT(h.shell->brokerAvailable(), 5000);
+    h.be.modelDown = true;
+    h.shell->refreshPage();
+    QTRY_VERIFY_WITH_TIMEOUT(!h.shell->modelAvailable(), 5000);
+    QVERIFY(h.shell->canWrite(false));
+  }
+
+  void aLatePrivateNotificationCannotRefillStateAfterLock() {
+    Harness h;
+    QVERIFY(h.up());
+    h.gw->gw->setHandler([&](const JValue& r) {
+      if (r.get(QStringLiteral("body")).get(QStringLiteral("routeId")).str() == QLatin1String("notifications.list")) return JValue::missing();
+      return h.be.handle(r);
+    });
+    const int before = h.sent(QStringLiteral("notifications.list")).size();
+    h.shell->refreshPage();
+    QTRY_VERIFY(h.sent(QStringLiteral("notifications.list")).size() > before);
+    const QString pending = h.sent(QStringLiteral("notifications.list")).last().get(QStringLiteral("requestId")).str();
+    h.be.sessionEpoch = 2;
+    h.be.locked = true;
+    QTRY_VERIFY_WITH_TIMEOUT(h.shell->locked(), 10000);  // metadata is observed on the existing 5-second status timer
+    const int late = h.shell->transportStats().value(QStringLiteral("lateDropped")).toInt();
+    const auto old = JValue::object({{QStringLiteral("items"), JValue::array({JValue::object({{QStringLiteral("id"), QStringLiteral("old")}, {QStringLiteral("text"), QStringLiteral("private before lock")}})})}});
+    QMetaObject::invokeMethod(h.gw->gw, "reply", Qt::BlockingQueuedConnection, Q_ARG(QString, pending), Q_ARG(agentos::JValue, old));
+    QTRY_VERIFY(h.shell->transportStats().value(QStringLiteral("lateDropped")).toInt() > late);
+    QCOMPARE(h.shell->notifications()->property("count").toInt(), 0);
   }
 
   void degradedModes() {

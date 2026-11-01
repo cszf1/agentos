@@ -169,6 +169,7 @@ pub struct HostLink {
 pub struct Subscriber {
     pub conn_id: u64,
     pub user_id: String,
+    pub session_epoch: i64,
     pub tx: ConnTx,
 }
 
@@ -618,7 +619,7 @@ pub fn route(gw: &Gw, conn: u64, uid: u32, pid: u32, dbus: &zbus::blocking::Conn
         "workspaces.start" => gw.machine("workspaces.start", a(json!({ "workspaceId": ws, "restoreArchived": true }))).map(|v| (202, redact_ws(v))),
         "workspaces.stop" => gw.machine("workspaces.stop", a(json!({ "workspaceId": ws }))).map(|v| (200, redact_ws(v))),
         "workspaces.archive" => gw.machine("workspaces.archive", a(json!({ "workspaceId": ws }))).map(|v| (200, redact_ws(v))),
-        "workspaces.attach" => attach(gw, conn, &user, e, tx, &p),
+        "workspaces.attach" => attach(gw, conn, &user, &sess_id, e, tx, &p),
         "members.list" => gw.machine("members.list", a(json!({ "workspaceId": ws }))).map(|v| (200, v)),
         "members.setRole" => gw.machine("members.setRole", a(json!({ "workspaceId": ws, "userId": s(&e.body, "userId")?, "role": s(&e.body, "role")?, "expectedMemberVersion": e.body.get("expectedMemberVersion") }))).map(|v| (200, v)),
         "members.revoke" => gw.machine("members.revoke", a(json!({ "workspaceId": ws, "userId": s(&e.body, "userId")?, "revocationId": idem_uuid(e)? }))).map(|v| (202, v)),
@@ -858,7 +859,26 @@ fn forward(gw: &Gw, user: &str, sess_id: &str, epoch: i64, e: &Envelope) -> Resu
     Ok((status, resp["body"].clone()))
 }
 
-fn attach(gw: &Gw, conn: u64, user: &str, e: &Envelope, tx: ConnTx, p: &Value) -> Result<(u16, Value), Value> {
+fn host_event_cursor(v: &Value) -> Result<i64, Value> {
+    v.as_i64().filter(|c| *c >= 0).ok_or_else(|| err("STORE_UNAVAILABLE", "workspace Host did not return a valid event watermark"))
+}
+
+fn attach_snapshot(resp: &Value, epoch: i64) -> Result<(i64, Value), Value> {
+    if resp["status"] != 200 {
+        let error = &resp["body"]["error"];
+        return Err(if error["code"].is_string() { error.clone() } else { err("STORE_UNAVAILABLE", "workspace snapshot failed") });
+    }
+    let state = &resp["body"]["data"];
+    if !state.is_object() {
+        return Err(err("STORE_UNAVAILABLE", "workspace snapshot is missing"));
+    }
+    if resp["clientEpoch"].as_i64() != Some(epoch) || state["clientEpoch"].as_i64() != Some(epoch) {
+        return Err(err("CLIENT_EPOCH_STALE", "workspace changed during its snapshot; reload"));
+    }
+    Ok((host_event_cursor(&resp["eventCursor"])?, state.clone()))
+}
+
+fn attach(gw: &Gw, conn: u64, user: &str, sess_id: &str, e: &Envelope, tx: ConnTx, p: &Value) -> Result<(u16, Value), Value> {
     let ws = &e.workspace_id;
     let row = gw.machine("workspaces.get", json!({ "principal": p, "workspaceId": ws }))?;
     if row["state"] != "running" {
@@ -871,32 +891,47 @@ fn attach(gw: &Gw, conn: u64, user: &str, e: &Envelope, tx: ConnTx, p: &Value) -
             return Err(err("CLIENT_EPOCH_STALE", "workspace state changed; reload"));
         }
     }
-    let cursor = subscribe_inner(gw, conn, user, ws, tx);
-    Ok((200, json!({ "workspaceId": ws, "storeUUID": h.store_uuid, "clientEpoch": ce, "role": row["role"], "memberVersion": row["memberVersion"], "eventCursor": cursor, "displayName": row["displayName"],
+    // Read under the same validated member/session principal as workspace.forward. The Host captures its wire
+    // watermark BEFORE that read; replay after it therefore cannot skip a concurrent committed change.
+    let (pe, _) = principal_envelope(gw, user, sess_id, e.session_epoch, ws, false)?;
+    let resp = host_call(&h, json!({ "requestId": e.request_id, "method": "GET", "path": "/api/state", "clientEpoch": ce, "principal": pe }))?;
+    let (cursor, snapshot) = attach_snapshot(&resp, ce)?;
+    subscribe_inner(gw, conn, user, ws, tx)?;
+    Ok((200, json!({ "workspaceId": ws, "storeUUID": h.store_uuid, "clientEpoch": ce, "role": row["role"], "memberVersion": row["memberVersion"], "eventCursor": cursor, "cursor": cursor, "state": snapshot, "displayName": row["displayName"],
         "capabilities": { "rendererCapabilities": ["slot-tree-v1", "slot-tree-v2", "records-v1"], "formatVersions": [1, 2, 3], "abi": [1, 2] } })))
 }
 
 fn subscribe(gw: &Gw, conn: u64, user: &str, e: &Envelope, tx: ConnTx) -> Result<(u16, Value), Value> {
     gw.machine("members.check", json!({ "userId": user, "workspaceId": e.workspace_id }))?;
     let h = host_for(gw, &e.workspace_id, Duration::from_secs(2)).ok_or_else(|| err("STORE_UNAVAILABLE", "workspace is not running"))?;
-    let from = e.body.get("cursor").and_then(|x| x.as_i64());
-    let cursor = subscribe_inner(gw, conn, user, &e.workspace_id, tx);
-    if let Some(c) = from {
-        // Ask the Host to replay from the client's last confirmed cursor; a gap answers EVENT_GAP.
-        let r = host_call(&h, json!({ "method": "EVENTS", "path": "/replay", "body": { "after": c }, "principal": { "kind": "gateway" } }))?;
-        if r["status"] == 410 {
-            return Err(err("EVENT_GAP", "events before the cursor are gone; load a full snapshot first"));
-        }
+    let from = e.body.get("cursor").and_then(|x| x.as_i64()).unwrap_or(0);
+    subscribe_inner(gw, conn, user, &e.workspace_id, tx)?;
+    // Replayed events travel through the Host connection before this acknowledgement.
+    let r = host_call(&h, json!({ "method": "EVENTS", "path": "/replay", "body": { "after": from }, "principal": { "kind": "gateway" } }))?;
+    if r["status"] == 410 {
+        return Err(err("EVENT_GAP", "event cursor is outside this Host history; load a full snapshot first"));
     }
-    Ok((200, json!({ "cursor": cursor })))
+    if r["status"] != 200 {
+        return Err(err("STORE_UNAVAILABLE", "workspace event replay failed"));
+    }
+    Ok((200, json!({ "cursor": host_event_cursor(&r["body"]["cursor"])? })))
 }
 
-fn subscribe_inner(gw: &Gw, conn: u64, user: &str, ws: &str, tx: ConnTx) -> i64 {
+fn subscribe_inner(gw: &Gw, conn: u64, user: &str, ws: &str, tx: ConnTx) -> Result<(), Value> {
+    let epoch = {
+        let sessions = gw.sessions.lock().unwrap();
+        let s = sessions.get(&conn).ok_or_else(|| err("SESSION_REQUIRED", "bind before subscribing"))?;
+        if s.user_id != user || s.bound_at.elapsed() > SESSION_MAX || s.boot_id != agentos_machine::util::boot_id()
+            || !matches!(gw.current_epoch(&s.logind_path), Some(e) if !e.retired && e.epoch == s.epoch) {
+            return Err(err("SESSION_STALE", "subscription session changed; bind again"));
+        }
+        s.epoch
+    }; // release sessions/lsess before taking subs (fanout checks them while holding subs)
     let mut subs = gw.subs.lock().unwrap();
     let list = subs.entry(ws.to_string()).or_default();
     list.retain(|s| s.conn_id != conn);
-    list.push(Subscriber { conn_id: conn, user_id: user.into(), tx });
-    0
+    list.push(Subscriber { conn_id: conn, user_id: user.into(), session_epoch: epoch, tx });
+    Ok(())
 }
 
 /// Registry messages for the gateway: a revocation drops every event subscription of that user at once and acks.
@@ -990,6 +1025,10 @@ pub fn handle_host(gw: Arc<Gw>, stream: UnixStream) {
     });
     gw.hosts.lock().unwrap().insert(ws.clone(), link.clone());
     gw.host_cv.notify_all();
+    // Host wire sequences restart with its process, even when persistent clientEpoch/storeUUID are unchanged.
+    // Existing subscribers must take a fresh snapshot before accepting that new history.
+    let host_epoch = *link.client_epoch.lock().unwrap();
+    fanout(&gw, &ws, &link.store_uuid, &json!({ "seq": 0, "kind": "event.gap", "clientEpoch": host_epoch, "data": {} }));
     loop {
         let v = match read_frame(&mut r).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok()) {
             Some(v) => v,
@@ -1022,9 +1061,14 @@ fn fanout(gw: &Gw, ws: &str, store: &str, v: &Value) {
     let buf = frame(&serde_json::to_vec(&ev).unwrap_or_default());
     let mut subs = gw.subs.lock().unwrap();
     if let Some(list) = subs.get_mut(ws) {
+        if list.is_empty() { return; }
+        let dbus = zbus::blocking::Connection::system().ok();
         let mut keep = vec![];
         for s in list.drain(..) {
-            let ok = gw.machine("members.check", json!({ "userId": s.user_id, "workspaceId": ws })).is_ok();
+            let bound = gw.sessions.lock().unwrap().get(&s.conn_id).map(|x| x.user_id == s.user_id && x.epoch == s.session_epoch).unwrap_or(false);
+            // Membership alone is not a session grant: lock, inactivity, expiry and a new bind invalidate it.
+            let active = bound && dbus.as_ref().and_then(|b| live(gw, s.conn_id, b).ok()) == Some((false, s.session_epoch));
+            let ok = active && gw.machine("members.check", json!({ "userId": s.user_id, "workspaceId": ws })).is_ok();
             if ok && s.tx.send_buf(buf.clone()) {
                 keep.push(s);
             } else if ok {
@@ -1058,6 +1102,59 @@ pub fn serve(gw: Arc<Gw>, client: UnixListener, host: UnixListener) -> ! {
 #[cfg(test)]
 mod o07_tests {
     use super::*;
+
+    #[test]
+    fn d09_subscription_captures_only_a_current_bound_principal_epoch() {
+        let gw = Gw::new("/nonexistent/agentos-subscription.sock");
+        let (tx, _rx) = mpsc::sync_channel(8);
+        let tx = ConnTx { tx, pending: Arc::new(AtomicU64::new(0)) };
+        assert_eq!(subscribe_inner(&gw, 7, "u1", "w1", tx.clone()).unwrap_err()["code"], "SESSION_REQUIRED");
+        gw.sessions.lock().unwrap().insert(7, Session { session_id: "test-session".into(), epoch: 17, user_id: "u1".into(), login_uid: 1000,
+            admin: false, logind_path: "/test/session".into(), bound_at: Instant::now(), boot_id: agentos_machine::util::boot_id() });
+        gw.lsess.lock().unwrap().insert("/test/session".into(), LEpoch { epoch: 17, retired: false });
+        subscribe_inner(&gw, 7, "u1", "w1", tx.clone()).unwrap();
+        assert_eq!(gw.subs.lock().unwrap()["w1"][0].session_epoch, 17);
+        assert_eq!(subscribe_inner(&gw, 7, "u2", "w1", tx.clone()).unwrap_err()["code"], "SESSION_STALE");
+        gw.sessions.lock().unwrap().get_mut(&7).unwrap().bound_at = Instant::now() - SESSION_MAX - Duration::from_secs(1);
+        assert_eq!(subscribe_inner(&gw, 7, "u1", "w1", tx.clone()).unwrap_err()["code"], "SESSION_STALE");
+        gw.sessions.lock().unwrap().get_mut(&7).unwrap().bound_at = Instant::now();
+        gw.sessions.lock().unwrap().get_mut(&7).unwrap().boot_id = "previous-boot".into();
+        assert_eq!(subscribe_inner(&gw, 7, "u1", "w1", tx.clone()).unwrap_err()["code"], "SESSION_STALE");
+        gw.sessions.lock().unwrap().get_mut(&7).unwrap().boot_id = agentos_machine::util::boot_id();
+        gw.retire("/test/session");
+        assert_eq!(subscribe_inner(&gw, 7, "u1", "w1", tx.clone()).unwrap_err()["code"], "SESSION_STALE");
+        gw.sessions.lock().unwrap().remove(&7);
+        assert_eq!(subscribe_inner(&gw, 7, "u1", "w1", tx).unwrap_err()["code"], "SESSION_REQUIRED");
+    }
+
+    #[test]
+    fn d09_snapshot_uses_wire_watermark_not_store_sequence() {
+        for cursor in [0, 17] {
+            let state = json!({ "clientEpoch": 2, "eventSeq": 9000, "apps": [] });
+            let (got, snapshot) = attach_snapshot(&json!({ "status": 200, "clientEpoch": 2, "eventCursor": cursor, "body": { "data": state } }), 2).unwrap();
+            assert_eq!(got, cursor);
+            assert_eq!(snapshot, state);
+        }
+    }
+
+    #[test]
+    fn d09_snapshot_missing_invalid_or_denied_is_not_a_zero_cursor_success() {
+        for cursor in [Value::Null, json!(-1), json!(1.5), json!("17")] {
+            let r = json!({ "status": 200, "clientEpoch": 2, "eventCursor": cursor, "body": { "data": { "clientEpoch": 2 } } });
+            assert_eq!(attach_snapshot(&r, 2).unwrap_err()["code"], "STORE_UNAVAILABLE");
+        }
+        let denied = json!({ "status": 403, "body": { "error": { "code": "NOT_FOUND_OR_FORBIDDEN", "message": "not found" } } });
+        assert_eq!(attach_snapshot(&denied, 2).unwrap_err()["code"], "NOT_FOUND_OR_FORBIDDEN");
+        assert!(attach_snapshot(&json!({ "status": 200, "clientEpoch": 2, "eventCursor": 0 }), 2).is_err());
+    }
+
+    #[test]
+    fn d09_snapshot_rejects_epoch_movement_on_either_side_of_the_read() {
+        for (header, state) in [(3, 2), (2, 3)] {
+            let r = json!({ "status": 200, "clientEpoch": header, "eventCursor": 17, "body": { "data": { "clientEpoch": state } } });
+            assert_eq!(attach_snapshot(&r, 2).unwrap_err()["code"], "CLIENT_EPOCH_STALE");
+        }
+    }
 
     #[test]
     fn o09_gateway_release_public_key_plan_preserves_secret_rejection() {

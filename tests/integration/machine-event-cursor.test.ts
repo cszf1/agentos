@@ -1,0 +1,144 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createServer, type Server, type Socket } from "node:net";
+import { once } from "node:events";
+import { randomUUID } from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { MachineMode } from "../../packages/host/src/machine-mode.js";
+
+// Actual MachineMode UDS framing/replay with scripted HTTP and registry peers, NOT a Host authorization test.
+type Frame = Record<string, unknown>;
+const WS = "11111111-1111-4111-8111-111111111111";
+const STORE = "22222222-2222-4222-8222-222222222222";
+
+describe("machine gateway event watermarks", () => {
+  let dir: string, gateway: Server, peer: Socket | undefined, mode: MachineMode | undefined;
+  let frames: Frame[], nextId: number, writes: number;
+  let readGate: Promise<void> | undefined, releaseRead: (() => void) | undefined, onRead: () => void;
+
+  function send(method: string, body: Frame = {}): number {
+    const id = nextId++;
+    const payload = Buffer.from(JSON.stringify({
+      t: "req", id, method, path: method === "EVENTS" ? "/replay" : method === "GET" ? "/api/state" : "/api/runs",
+      requestId: randomUUID(), clientEpoch: 2, body,
+      principal: { userId: "test-user", workspaceId: WS, storeUUID: STORE, memberVersion: 1, role: "owner", sessionId: "test-session", sessionEpoch: 1, workspaceIncarnation: 1 },
+    }));
+    const header = Buffer.alloc(4);
+    header.writeUInt32BE(payload.length);
+    if (!peer) throw new Error("gateway fixture is not connected");
+    peer.write(Buffer.concat([header, payload]));
+    return id;
+  }
+  async function reply(id: number): Promise<Frame> {
+    return vi.waitFor(() => {
+      const frame = frames.find((f) => f.t === "res" && f.id === id);
+      if (!frame) throw new Error(`no reply for ${id}`);
+      return frame;
+    }, { timeout: 5000 });
+  }
+
+  beforeEach(async () => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "agentos-cursor-"));
+    frames = []; nextId = 1; writes = 0; peer = undefined; readGate = undefined; releaseRead = undefined; onRead = () => {};
+    gateway = createServer((socket) => {
+      peer = socket;
+      let pending = Buffer.alloc(0);
+      socket.on("data", (data) => {
+        pending = Buffer.concat([pending, data]);
+        while (pending.length >= 4 && pending.length >= 4 + pending.readUInt32BE(0)) {
+          const n = pending.readUInt32BE(0);
+          frames.push(JSON.parse(pending.subarray(4, 4 + n).toString()) as Frame);
+          pending = pending.subarray(4 + n);
+        }
+      });
+    });
+    const socket = path.join(dir, "gateway.sock");
+    gateway.listen(socket);
+    await once(gateway, "listening");
+    const rt = {
+      core: { store: {
+        get: () => ({ workspace_id: WS, store_uuid: STORE }),
+        tx: (fn: () => unknown) => fn(), run: () => {}, all: () => [],
+        eventSeq: () => 9000, meta: () => ({ client_epoch: 2 }),
+      }, budgets: {} },
+      sys: { builds: {} }, log: { warn: () => {} },
+    } as unknown as ConstructorParameters<typeof MachineMode>[1];
+    const http = { inject: async (q: { method: string }) => {
+      if (q.method === "GET") {
+        const body = JSON.stringify({ data: { clientEpoch: 2, eventSeq: 9000, writes } });
+        onRead();
+        await readGate;
+        return { statusCode: 200, body };
+      }
+      writes++;
+      return { statusCode: 201, body: JSON.stringify({ data: { writes } }) };
+    } } as unknown as ConstructorParameters<typeof MachineMode>[2];
+    mode = new MachineMode({ workspaceId: WS, storeUUID: STORE, machineSocket: path.join(dir, "unused.sock"), gatewaySocket: socket }, rt, http);
+    mode.link.call = (async (op: string) => {
+      if (op === "workspace.self") return { workspaceId: WS, storeUUID: STORE };
+      if (op === "host.hello") return { membership: { members: [] } };
+      if (op === "registry.pull") return { messages: [] };
+      if (op === "host.bye") return {};
+      throw new Error(`unexpected fixture registry call: ${op}`);
+    }) as typeof mode.link.call;
+    await mode.start();
+    await vi.waitFor(() => expect(frames.some((f) => f.t === "hello")).toBe(true));
+  });
+
+  afterEach(async () => {
+    releaseRead?.();
+    await mode?.stop();
+    peer?.destroy();
+    if (gateway?.listening) await new Promise<void>((resolve) => gateway.close(() => resolve()));
+    if (dir) fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("captures the wire watermark before an asynchronous snapshot, not the later cursor or Store eventSeq", async () => {
+    await reply(send("POST"));
+    await vi.waitFor(() => expect(frames.some((f) => f.t === "evt" && f.seq === 1)).toBe(true));
+    readGate = new Promise<void>((resolve) => { releaseRead = resolve; });
+    const started = new Promise<void>((resolve) => { onRead = resolve; });
+    const snapshot = send("GET");
+    await started;
+    await reply(send("POST"));
+    await vi.waitFor(() => expect(frames.some((f) => f.t === "evt" && f.seq === 2)).toBe(true));
+    releaseRead!();
+    const r = await reply(snapshot);
+    expect(r.body).toEqual({ data: { clientEpoch: 2, eventSeq: 9000, writes: 1 } });
+    expect(r.eventCursor).toBe(1);
+    const begin = frames.length;
+    await reply(send("EVENTS", { after: r.eventCursor }));
+    expect(frames.slice(begin).filter((f) => f.t === "evt").map((f) => f.seq)).toEqual([2]);
+  });
+
+  it("refuses a cursor from a previous Host whose wire sequence was higher", async () => {
+    const r = await reply(send("EVENTS", { after: 99 }));
+    expect(r.status).toBe(410);
+    expect(r.body).toEqual({ gap: true, cursor: 0 });
+  });
+
+  it("a full snapshot leaves an overflowed history without replaying the old burst again", async () => {
+    let last = 0;
+    for (let i = 0; i < 1001; i++) last = send("POST");
+    await reply(last);
+    await vi.waitFor(() => expect(frames.some((f) => f.t === "evt" && f.seq === 1001)).toBe(true));
+    expect((await reply(send("EVENTS", { after: 0 }))).status).toBe(410);
+    const snapshot = await reply(send("GET"));
+    expect(snapshot.eventCursor).toBe(1001);
+    const begin = frames.length;
+    const resumed = await reply(send("EVENTS", { after: snapshot.eventCursor }));
+    expect(resumed.body).toEqual({ gap: false, cursor: 1001 });
+    expect(frames.slice(begin).filter((f) => f.t === "evt")).toHaveLength(0);
+  });
+
+  it("replays from the requested cursor in order and reports the actual wire watermark", async () => {
+    for (let i = 0; i < 3; i++) await reply(send("POST"));
+    await vi.waitFor(() => expect(frames.filter((f) => f.t === "evt")).toHaveLength(3));
+    const begin = frames.length;
+    const r = await reply(send("EVENTS", { after: 1 }));
+    expect(frames.slice(begin).filter((f) => f.t === "evt").map((f) => f.seq)).toEqual([2, 3]);
+    expect(r.status).toBe(200);
+    expect(r.body).toEqual({ gap: false, cursor: 3 });
+  });
+});

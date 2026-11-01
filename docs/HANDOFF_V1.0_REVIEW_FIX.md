@@ -16,7 +16,7 @@
 
 - 仓库：https://github.com/cszf1/agentos ，分支 `v1.0`。实际 HEAD 看 Git，最新候选/修复看 PROGRESS，实际验收提交看 Actions 的完整 `headSha`。
 - 验收统计一致：**74 通过 / 15 部分 / 11 未通过**。I06、U05、R11、I08、U04 已恢复；D01/W08/U09 按完整 m5 41253718507 恢复，其他候选没有提前升项。
-- 两轮审查原文：`docs/review/REVIEW_V1.0_EXTERNAL_2026-10-31.md`；逐项状态在 `V1.0_REVIEW_FIXES.md`。PROGRESS/TSV 当前续至决定 105，后续编号按最新尾项递增。
+- 两轮审查原文：`docs/review/REVIEW_V1.0_EXTERNAL_2026-10-31.md`；逐项状态在 `V1.0_REVIEW_FIXES.md`。PROGRESS/TSV 当前续至决定 106，后续编号按最新尾项递增。
 - 第一轮全量 `41220513266@4b1d863` 终态 **23 成功 / 4 失败**：失败 m5、m6-qcow2、m19、m20；其余包括 m18、build-repro、m3/m7 都成功。这不是最终全绿。
 - e2159d6固定SHA的云端Node typecheck/contracts、184pass/4skip、Rust81pass/1ignored（27组/exit0）均通过；决定100候选同计数，另有Qt九套ctest/三种子fuzz/E2E编译通过、决定101另经Qt九套/E2E编译；决定105候选Qt九套/E2E编译及VM helper50项（5+3+7+6+16+2+4+3+4）通过。**不是最终KVM的27项通过**。
 
@@ -60,7 +60,15 @@
 - **候选验证**：缺UI/列表字段的回归先红后绿；Qt6.11.2九套ctest、三种子各2000轮fuzz、E2E编译通过；Rust81pass/1ignored、Node184pass/4skip、typecheck/contracts/slot-vectors通过；助手34项（5+3+7+6+13）、28个Python AST及drill语法/self-test/错误非零通过。不是完整Sway或最终全27通过。
 - **边界**：D07的owner策略不是管理员硬件/PAM图形输入验收，不声称音频等实机功能可用；m19管理员仍走普通用户PAM→gateway→ticket→固定root helper。两条完整KVM须在决定100提交后重跑，统计仍74/15/11。
 
-### 决定105（当前）
+### 决定106（当前）
+
+- `41297711680@8384e0f` m19完整成功，artifact13081406268，1453.74s：同ISO两安装、导入、真实健康拒绝/known-good回退、加密导出、第二管理员恢复及最终根锁/启动只读取证。不是独立操作者或新代码代际下载证据。
+- 同SHA m20 `41297714218`（artifact13080447753）已过D09：完整302响应/300记录/撤权revoked、1033事件/gap1/revokeSeen、跨工作区0/协议错0；止649行Host降级判断。真实machine.status没有components，旧通用成功回调和缺省健康值把Host误标可用，非D09再次失败；最终SQL postlude未执行。
+- 3项真实形状Qt回归旧源码3fail：Host/Broker健康误判、锁后旧通知重新填充。只允许实际workspace.forward成功标Host恢复，定期读当前Host的state（原5秒timer每3tick）且只更新可用性、不reset画布；Broker取真实brokerReady。onLocked统一推进scopeGen。测试预算对应已有轮询周期，生产/KVM超时与安全断言未改。
+- 独立UDS bridge单元（脚本化HTTP/registry，不是真实Host鉴权）旧3fail：缺wire水位、未来游标错误成功、重放缺水位；新4项含1001事件溢出与快照后无旧burst重放全部绿。Native快照通过已有主体授权读取，校验水位/epoch，cursor/eventCursor一致，不默认0；Host新连接发gap。订阅绑定主体/epoch/boot/期限，实际投递重用live检查logind与成员，新增4项Native回归。
+- 候选Qt9/E2E编译、Node188pass/4skip、Rust85pass/1ignored通过；helpers50/AST32不变。真实logind正向投递与开销必须KVM再验；新闭包m19/m20和最终同SHA全27仍待，74/15/11不升项。
+
+### 决定105（历史）
 
 - m19 `41289530427@6da488c` 已真实完成Login、两次有界关机、候选健康拒绝、known-good启动/记录核对与加密导出verified，止OCR的VERIF IED分词；第二机恢复及最终postlude未执行。固定协议消息允许字符间ASCII水平空白，但仍整行、同字符顺序，拒绝跨行/错字/前后缀，失败优先。3项回归旧源码4个subcase失败，helper50/AST32绿，真实日志6/6变体通过。
 - m20严格连接先bind及断线期间锁/epoch的3项Qt回归，在旧产品代码实际3fail。绑定成功先清主体/epoch/锁变化的敏感状态并失效旧回调；解锁后显式reattach当前工作区，恢复快照和事件流；同认证重连保留草稿/剪贴板。3项绿、完整9套ctest与E2E编译绿，不等于实际Wayland/KVM绿。

@@ -174,13 +174,14 @@ void ShellController::sendNative(const ShellRequest& r, const QString& key, std:
   c.body = r.nativeBody();
   c.idempotencyKey = r.write ? (key.isEmpty() ? uuid() : key) : QString();
   const Scope s = scope();
-  rpc_->call(c, [this, s, scoped, done = std::move(done)](const RpcReply& rep) {
+  const bool fromHost = r.methodId == QLatin1String("workspace.forward");
+  rpc_->call(c, [this, s, scoped, fromHost, done = std::move(done)](const RpcReply& rep) {
     if (scoped && !inScope(s)) {
       lateDropped_++;  // a reply for a workspace/epoch/store we have left: never applied
       emit transportChanged();
       return;
     }
-    if (rep.ok() && !rep.local) {
+    if (fromHost && rep.ok() && !rep.local) {
       cachedAt_ = QDateTime::currentDateTime();
     }
     if (done) done(rep);
@@ -195,8 +196,9 @@ void ShellController::request(const QString& name, const JValue& args, std::func
     setNotice(QString::fromUtf8(e.what()));
     return;
   }
-  sendNative(r, QString(), [this, done](const RpcReply& rep) {
-    if (rep.ok() && !hostAvailable_) markHostDown(false);
+  const bool needsHost = r.methodId == QLatin1String("workspace.forward");
+  sendNative(r, QString(), [this, done, needsHost](const RpcReply& rep) {
+    if (needsHost && rep.ok() && !rep.local && !hostAvailable_) markHostDown(false);
     if (!rep.ok()) reportError(rep.errorCode);
     if (done) done(rep);
   }, scoped);
@@ -211,7 +213,7 @@ void ShellController::sendForward(const ForwardRequest& f, std::function<void(co
   r.write = true;
   sendNative(r, f.idempotencyKey.startsWith(QLatin1String("q:")) || f.idempotencyKey == QLatin1String("read") ? QStringLiteral("read:") + uuid() : f.idempotencyKey,
              [this, done](const RpcReply& rep) {
-               if (rep.ok() && !hostAvailable_) markHostDown(false);
+               if (rep.ok() && !rep.local && !hostAvailable_) markHostDown(false);
                if (done) done(rep);
              });
 }
@@ -281,7 +283,6 @@ void ShellController::bind() {
     const qint64 e = qint64(r.body.get(QStringLiteral("sessionEpoch")).toNumber());
     const bool nowLocked = r.body.get(QStringLiteral("locked")).toBool();
     if ((!userId_.isEmpty() && user != userId_) || (e > 0 && e != sessionEpoch_) || (nowLocked && !locked_)) {
-      ++scopeGen_;  // old-auth replies must not repopulate cleared sensitive state
       onLocked();
     }
     sessionBound_ = true;
@@ -327,6 +328,7 @@ void ShellController::applySessionStatus(const JValue& s) {
 }
 
 void ShellController::onLocked() {
+  ++scopeGen_;  // pending workspace reads from before this lock must not refill private UI state
   locked_ = true;
   // Lock clears notification text, task prompts, the clipboard and every unsubmitted (sensitive) input.
   notifications_->clear();
@@ -472,14 +474,15 @@ void ShellController::loadMachine() {
       return v.isMissing() || v.str() == QLatin1String("ok") || v.str() == QLatin1String("ready");
     };
     // a missing model component says nothing: the Host's state view decides (applyApps)
-    const bool h = up("host"), b = up("broker");
+    const bool b = c.get(QStringLiteral("broker")).isMissing() ? brokerAvailable_ : up("broker");
     const bool m = c.get(QStringLiteral("model")).isMissing() ? modelAvailable_ : up("model");
     if (m != modelAvailable_ || b != brokerAvailable_) {
       modelAvailable_ = m;
       brokerAvailable_ = b;
       emit statusChanged();
     }
-    markHostDown(!h);
+    // The native machine status has no Host-health field; absence is not proof of recovery.
+    if (!c.get(QStringLiteral("host")).isMissing()) markHostDown(!up("host"));
     emit machineChanged();
   }, false);
   request(QStringLiteral("machine.capabilities"), JValue::object(), [this](const RpcReply& r) {
@@ -487,10 +490,13 @@ void ShellController::loadMachine() {
     capabilities_ = r.body;
     emit machineChanged();
   }, false);
+  if (connected_ && sessionBound_ && !locked_ && !ws_.isEmpty()) {
+    // Probe the selected workspace, without attach/start side effects or requiring a user refresh.
+    request(QStringLiteral("state"), JValue::object(), [this](const RpcReply& r) { if (r.ok()) applyAvailability(r.body); });
+  }
 }
 
-void ShellController::applyApps(const JValue& state) {
-  apps_->setItems(state.get(QStringLiteral("apps")));
+void ShellController::applyAvailability(const JValue& state) {
   // The workspace Host's state view says whether generation is possible (its own model configuration). machine.status
   // has no model component, so without this the Shell kept "available" after the Host restarted without a model
   // (m13 O03 run 41143307884: Host logged modelAvailable=false, the submit button stayed enabled).
@@ -499,6 +505,16 @@ void ShellController::applyApps(const JValue& state) {
     modelAvailable_ = ma.toBool();
     emit statusChanged();
   }
+  const JValue& br = state.get(QStringLiteral("brokerReady"));
+  if (br.isBool() && br.toBool() != brokerAvailable_) {
+    brokerAvailable_ = br.toBool();
+    emit statusChanged();
+  }
+}
+
+void ShellController::applyApps(const JValue& state) {
+  apps_->setItems(state.get(QStringLiteral("apps")));
+  applyAvailability(state);
   // An open app view older than the list (a new version activated, the event missed or not carrying the appId) is
   // re-read: its appEpoch guards every write from it, so a stale one turns the next action into APP_EPOCH_STALE
   // (m13 run 41131676224: the version switch after a modify answered 409).
@@ -701,7 +717,7 @@ void ShellController::trackReply(const QString& id, const RpcReply& rep) {
     actions_->setState(id, rep.errorCode == QLatin1String("EFFECT_UNKNOWN") ? QStringLiteral("unknown") : QStringLiteral("failed"), describeError(rep.errorCode, rep.errorMessage));
     return;
   }
-  if (!hostAvailable_) markHostDown(false);
+  if (actionReqs_.value(id).methodId == QLatin1String("workspace.forward") && !rep.local && !hostAvailable_) markHostDown(false);
   JValue b = rep.body;
   if (b.get(QStringLiteral("state")).isNullish() && b.get(QStringLiteral("phase")).isNullish() && b.get(QStringLiteral("status")).isString()) b.set(QStringLiteral("state"), b.get(QStringLiteral("status")));
   QString st = displayState(b);

@@ -76,6 +76,30 @@ class EventsTest : public QObject {
     QTRY_COMPARE(gaps.size(), 2);
   }
 
+  void hostIncarnationGapBypassesOldSequenceDeduplication() {
+    GatewayThread g(sock());
+    g.gw->setHandler([](const JValue& r) {
+      return JValue::object({{QStringLiteral("cursor"), r.get(QStringLiteral("body")).get(QStringLiteral("cursor"))}});
+    });
+    RpcClient c(sock());
+    int gaps = 0;
+    QVector<qint64> seen;
+    connect(&c, &RpcClient::gap, this, [&](const QString&, const QString&) { gaps++; });
+    connect(&c, &RpcClient::eventReceived, this, [&](const RpcEvent& e) { seen << e.eventSeq; });
+    c.start();
+    QTRY_VERIFY(c.connected());
+    c.subscribe(kWs, 100, 2, 1);
+    QTRY_COMPARE(subscribes(g), 1);
+    const auto nativeGap = JValue::object({{QStringLiteral("type"), QStringLiteral("event")}, {QStringLiteral("kind"), QStringLiteral("event.gap")},
+                                         {QStringLiteral("workspaceId"), kWs}, {QStringLiteral("clientEpoch"), 2}, {QStringLiteral("eventSeq"), 0}});
+    QMetaObject::invokeMethod(g.gw, "sendPayload", Qt::BlockingQueuedConnection, Q_ARG(QByteArray, nativeGap.toJsonUtf8()));
+    QTRY_COMPARE(gaps, 1);  // sequence zero is control data, not a duplicate of old cursor 100
+    c.subscribe(kWs, 0, 2, 1);  // the new Host snapshot can have the same persistent epoch, but a fresh wire cursor
+    QTRY_COMPARE(subscribes(g), 2);
+    ev(g, 1);
+    QTRY_COMPARE(seen, (QVector<qint64>{1}));
+  }
+
   void subscribeEventGapError() {
     GatewayThread g(sock());
     g.gw->setHandler([](const JValue& r) {

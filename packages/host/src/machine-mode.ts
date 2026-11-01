@@ -337,9 +337,9 @@ export class MachineMode {
     if (v.method === "EVENTS") {
       const after = Number((v.body as { after?: number } | null)?.after ?? 0);
       const oldest = this.#ring[0]?.seq ?? this.#lastEventSeq + 1;
-      const gap = after + 1 < oldest && after < this.#lastEventSeq;
+      const gap = after > this.#lastEventSeq || (after + 1 < oldest && after < this.#lastEventSeq);
       if (!gap) for (const e of this.#ring) if (e.seq > after) c.send(e.frame);
-      c.send({ t: "res", id, status: gap ? 410 : 200, body: { gap }, clientEpoch });
+      c.send({ t: "res", id, status: gap ? 410 : 200, body: { gap, cursor: this.#lastEventSeq }, clientEpoch });
       return;
     }
     const p = v.principal as Record<string, unknown>;
@@ -377,6 +377,9 @@ export class MachineMode {
       url += `?${q.toString()}`;
     }
     const method = String(v.method) as "GET" | "POST" | "PATCH" | "DELETE";
+    // A watermark AFTER the asynchronous read could skip a concurrent write absent from that snapshot.
+    // This is the gateway wire sequence, deliberately not Store.eventSeq().
+    const eventCursor = this.#lastEventSeq;
     const res = await identityContext.run(ident, () =>
       this.server.inject({ method, url, headers: method === "GET" ? headers : { ...headers, "content-type": "application/json" }, payload: method === "GET" ? undefined : JSON.stringify(v.body ?? {}) }),
     );
@@ -386,7 +389,8 @@ export class MachineMode {
     } catch {
       body = null;
     }
-    c.send({ t: "res", id, status: res.statusCode, body, clientEpoch: this.rt.core.store.meta().client_epoch });
+    c.send({ t: "res", id, status: res.statusCode, body, clientEpoch: this.rt.core.store.meta().client_epoch,
+      ...(method === "GET" && String(v.path) === "/api/state" ? { eventCursor } : {}) });
     if (method !== "GET" && res.statusCode < 400) this.#emit("request.accepted", { requestId: ident.requestId, status: res.statusCode });
   }
 
