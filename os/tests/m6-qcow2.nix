@@ -154,6 +154,11 @@ pkgs.testers.runNixOSTest {
                         break
                     except Exception:
                         m.send_console("clone-pass-2\n")
+                else:
+                    raise Exception("the re-encryption phase never started")
+                # The announcement precedes cryptsetup metadata initialization. A fast console observer can cut
+                # too early (41253713306): wait for the same persisted flag the real recovery branch tests.
+                m.wait_until_succeeds(f"cryptsetup luksDump {LUKS} | grep -q online-reencrypt", timeout=120)
                 m.crash()
                 m.start()
                 feed(m, "clone-pass-2", "resuming the interrupted disk re-encryption")

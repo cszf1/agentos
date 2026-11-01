@@ -167,11 +167,28 @@ def click(m, x, y, w, h):
     time.sleep(0.15)
     qsend("input-send-event", {"events": [{"type": "btn", "data": {"down": False, "button": "left"}}]})
 
+def screen_text(m):
+    """Preserve the console bitmap font: stock resample/blur loses exact prompt letters (41253715864)."""
+    import shutil, tempfile
+    m.screenshot("ocr")
+    magick = shutil.which("magick") or shutil.which("convert")
+    assert magick, "ImageMagick is unavailable"
+    with tempfile.TemporaryDirectory(prefix="agentos-ocr-") as d:
+        zoom = os.path.join(d, "zoom.png")
+        subprocess.run([magick, os.path.join(m.out_dir, "ocr.png"), "-bordercolor", "black", "-border", "1",
+                        "-trim", "+repage", "-sample", "300%", "-border", "8", zoom],
+                       check=True, capture_output=True, timeout=20)
+        return [subprocess.run(["tesseract", zoom, "stdout", "--oem", "3", "--psm", str(mode),
+                                "-c", "debug_file=/dev/null"], check=True, capture_output=True,
+                               encoding="utf-8", timeout=20, env={**os.environ, "OMP_THREAD_LIMIT": "1"}).stdout
+                for mode in (6, 11)]
+
+
 def wait_screen(m, regex, timeout=900):
     """Log actual OCR changes as they happen, preserving the driver's wall-clock deadline semantics."""
     end, previous = time.monotonic() + timeout, None
     while time.monotonic() < end:
-        variants = m.get_screen_text_variants()
+        variants = screen_text(m)
         if variants != previous:
             print("OCR", regex, json.dumps(variants, ensure_ascii=False)[:6000], flush=True)
             previous = variants

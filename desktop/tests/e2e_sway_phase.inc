@@ -219,7 +219,7 @@ void E2E::sway() {
   QVERIFY(typeInto(byLabel(QStringLiteral("搜索")), QStringLiteral("dup-2")));
   QTRY_VERIFY_WITH_TIMEOUT(rows(v) == 1, 20000);
   QVERIFY(textShown(QStringLiteral("dup-2"), true) && !textShown(QStringLiteral("milk-1"), true));
-  keys({QStringLiteral("ctrl-a"), QStringLiteral("backspace")});
+  QVERIFY(typeInto(byLabel(QStringLiteral("搜索")), QString()));
   QTRY_VERIFY_WITH_TIMEOUT(rows(v) == std::min(total(v), 20), 20000);
   // edit milk-1: mark done with a real click on the checkbox
   QVERIFY(typeInto(byLabel(QStringLiteral("搜索")), QStringLiteral("milk-1")));
@@ -240,7 +240,8 @@ void E2E::sway() {
   QTRY_VERIFY_WITH_TIMEOUT(st("hasDelete").toBool(), 5000);
   QCOMPARE(click(byLabel(QStringLiteral("确认删除"))), 1);
   QTRY_VERIFY_WITH_TIMEOUT(rows(v) == 0, 20000);
-  keys({QStringLiteral("ctrl-a"), QStringLiteral("backspace")});
+  // The confirmation button took focus; Ctrl+A/Backspace alone would leave the search at dup-2.
+  QVERIFY(typeInto(byLabel(QStringLiteral("搜索")), QString()));
   QTRY_COMPARE_WITH_TIMEOUT(total(v), n0 + 1, 20000);
   const JValue dupAfter = doDriver(QStringLiteral("count"), {{QStringLiteral("appId"), todo}, {QStringLiteral("text"), QStringLiteral("dup-2")}});
   QCOMPARE(int(dupAfter.get(QStringLiteral("count")).toNumber()), 0);
@@ -278,13 +279,16 @@ void E2E::sway() {
   QVERIFY2(choose(byLabel(QStringLiteral("优先级")), QStringLiteral("high")), "priority not chosen");
   QCOMPARE(click(byLabel(QStringLiteral("保存"))), 1);
   QTRY_VERIFY_WITH_TIMEOUT(!st("formOpen").toBool(), 20000);
-  keys({QStringLiteral("ctrl-a"), QStringLiteral("backspace")});
-  QTRY_VERIFY_WITH_TIMEOUT(rows(v) >= 3, 20000);
+  QVERIFY(typeInto(byLabel(QStringLiteral("搜索")), QString()));
+  // dup-2 was deleted: the two surviving additions are milk-1 and prio-3, not three records.
+  QTRY_COMPARE_WITH_TIMEOUT(total(v), n0 + 2, 20000);
+  QTRY_COMPARE_WITH_TIMEOUT(rows(v), std::min(n0 + 2, 20), 20000);
   // filter by priority = high (real combo box) shows prio-3 only
   QVERIFY2(choose(byLabel(QStringLiteral("筛选优先级")), QStringLiteral("high")), "filter not chosen");
   QTRY_VERIFY_WITH_TIMEOUT(rows(v) == 1 && textShown(QStringLiteral("prio-3"), true), 20000);
   QVERIFY(choose(byLabel(QStringLiteral("筛选优先级")), QStringLiteral("优先级：全部")));
-  QTRY_VERIFY_WITH_TIMEOUT(rows(v) >= 3, 20000);
+  QTRY_COMPARE_WITH_TIMEOUT(total(v), n0 + 2, 20000);
+  QTRY_COMPARE_WITH_TIMEOUT(rows(v), std::min(n0 + 2, 20), 20000);
   const int totalV2 = total(v);
   // back to the first version from the app detail page: priority becomes a hidden field, records stay
   r.go(QStringLiteral("app"));
@@ -323,7 +327,7 @@ void E2E::sway() {
   QCOMPARE(richText, 0);
   QCOMPARE(r.view->guard->blocked - blocked0, 0);
   QVERIFY(win->isVisible());
-  keys({QStringLiteral("ctrl-a"), QStringLiteral("backspace")});
+  QVERIFY(typeInto(byLabel(QStringLiteral("搜索")), QString()));
 
   // ---- D06: paging with the real 下一页 button (records added as setup data) ----
   QTRY_VERIFY_WITH_TIMEOUT(rows(v) >= 3, 20000);

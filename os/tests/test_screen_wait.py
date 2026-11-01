@@ -22,7 +22,7 @@ def helpers(clock):
     source = Path(__file__).with_name("m19-iso.py")
     tree = ast.parse(source.read_text())
     functions = [x for x in tree.body if isinstance(x, ast.FunctionDef) and x.name in ("wait_screen", "keyed", "wait_console")]
-    scope = {"time": clock, "re": re, "json": json}
+    scope = {"time": clock, "re": re, "json": json, "screen_text": lambda m: m.get_screen_text_variants()}
     exec(compile(ast.Module(body=functions, type_ignores=[]), str(source), "exec"), scope)
     return scope["wait_screen"], scope["keyed"], scope["wait_console"]
 
