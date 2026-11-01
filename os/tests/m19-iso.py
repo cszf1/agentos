@@ -173,15 +173,25 @@ def screen_text(m):
     m.screenshot("ocr")
     magick = shutil.which("magick") or shutil.which("convert")
     assert magick, "ImageMagick is unavailable"
-    with tempfile.TemporaryDirectory(prefix="agentos-ocr-") as d:
-        zoom = os.path.join(d, "zoom.png")
-        subprocess.run([magick, os.path.join(m.out_dir, "ocr.png"), "-bordercolor", "black", "-border", "1",
-                        "-trim", "+repage", "-sample", "300%", "-border", "8", zoom],
-                       check=True, capture_output=True, timeout=20)
-        return [subprocess.run(["tesseract", zoom, "stdout", "--oem", "3", "--psm", str(mode),
-                                "-c", "debug_file=/dev/null"], check=True, capture_output=True,
-                               encoding="utf-8", timeout=20, env={**os.environ, "OMP_THREAD_LIMIT": "1"}).stdout
-                for mode in (6, 11)]
+    try:
+        # The pinned driver has a minimal ImageMagick: use its supported PNM path, not optional PNG codecs.
+        raw = subprocess.run([PNGTOPNM, os.path.join(m.out_dir, "ocr.png")], check=True,
+                             capture_output=True, timeout=20).stdout
+        w, h, rgb = pnm_rgb(raw)
+        if rgb == rgb[:3] * (w * h):  # a uniform boot frame contains no text; -trim can warn/fail on it
+            return ["", ""]
+        with tempfile.TemporaryDirectory(prefix="agentos-ocr-") as d:
+            zoom = os.path.join(d, "zoom.pgm")
+            subprocess.run([magick, "pnm:-", "-bordercolor", "black", "-border", "1", "-trim", "+repage",
+                            "-sample", "300%", "-border", "8", "-depth", "8", zoom], input=raw,
+                           check=True, capture_output=True, timeout=20)
+            return [subprocess.run(["tesseract", zoom, "stdout", "--oem", "3", "--psm", str(mode),
+                                    "-c", "debug_file=/dev/null"], check=True, capture_output=True,
+                                   encoding="utf-8", timeout=20, env={**os.environ, "OMP_THREAD_LIMIT": "1"}).stdout
+                    for mode in (6, 11)]
+    except subprocess.CalledProcessError as e:
+        detail = e.stderr.decode("utf-8", errors="replace") if isinstance(e.stderr, bytes) else e.stderr
+        raise RuntimeError(f"OCR command failed: {e.cmd}: {detail}") from e
 
 
 def wait_screen(m, regex, timeout=900):

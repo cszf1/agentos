@@ -253,8 +253,15 @@ void E2E::sway() {
   QVERIFY(page(QStringLiteral("home")));
   QVERIFY(typeInto(byName(QStringLiteral("intentInput")), QStringLiteral("add priority")));
   QVERIFY2(choose(byLabel(QStringLiteral("目标应用")), todoTitle), "target app not chosen");
+  auto targetValue = [&]() { auto* t = byLabel(QStringLiteral("目标应用")); return t ? t->property("value").toString() : QStringLiteral("<missing>"); };
+  QCOMPARE(targetValue(), todo);
   const QSet<QString> runs1 = r.runIds();
+  // A real, read-only state refresh must not reset the chosen app to 新应用.
+  QSignalSpy appRefresh(r.shell->apps(), SIGNAL(modelReset()));
+  r.shell->refreshPage();
+  QTRY_VERIFY_WITH_TIMEOUT(!appRefresh.isEmpty(), 20000);
   QVERIFY(page(QStringLiteral("home")));
+  QCOMPARE(targetValue(), todo);
   QCOMPARE(byLabel(QStringLiteral("目标应用")) ? byLabel(QStringLiteral("目标应用"))->property("displayText").toString() : QString(), todoTitle);
   QCOMPARE(click(byName(QStringLiteral("intentSubmit"))), 1);
   QString run2;
@@ -652,6 +659,8 @@ void E2E::sway() {
     keys({QStringLiteral("ctrl-a"), QStringLiteral("ctrl-c")});
     return QTest::qWaitFor([&] { return QGuiApplication::clipboard()->text() == marker; }, 5000);
   };
+  QVERIFY(choose(byLabel(QStringLiteral("目标应用")), r.appById(todo).get(QStringLiteral("title")).stringOr(todoTitle)));
+  QCOMPARE(targetValue(), todo);
   QVERIFY2(draftAndCopy(), "draft/clipboard not set by real keys");
   const QString wsB = envOr("AGENTOS_E2E_WS_B", QString());
   QString wsBName;
@@ -661,6 +670,7 @@ void E2E::sway() {
   QVERIFY2(choose(byName(QStringLiteral("workspaceSwitcher")), wsBName), "workspace B not chosen by real clicks");
   QTRY_VERIFY_WITH_TIMEOUT(r.shell->workspaceId() == wsB && r.shell->hostAvailable(), 90000);
   QTest::qWait(1500);
+  QCOMPARE(targetValue(), QString());
   const QString clipAfterSwitch = QGuiApplication::clipboard()->text();
   const JValue clipDriver1 = doDriver(QStringLiteral("clipboard"));
   const bool draftAfterSwitch = textShown(marker) || r.shell->intentDraft().contains(marker);
@@ -674,6 +684,8 @@ void E2E::sway() {
                                                                    : r.model(r.shell->workspaces())->at(0).get(QStringLiteral("displayName")).str()));
   QTRY_VERIFY_WITH_TIMEOUT(r.shell->workspaceId() == ws && r.shell->hostAvailable(), 90000);
   QVERIFY(page(QStringLiteral("home")));
+  QVERIFY(choose(byLabel(QStringLiteral("目标应用")), r.appById(todo).get(QStringLiteral("title")).stringOr(todoTitle)));
+  QCOMPARE(targetValue(), todo);
   QVERIFY(draftAndCopy());
   doDriver(QStringLiteral("lock"));
   QTRY_VERIFY_WITH_TIMEOUT(r.shell->locked(), 60000);
@@ -684,6 +696,7 @@ void E2E::sway() {
   doDriver(QStringLiteral("unlock"));
   QTRY_VERIFY_WITH_TIMEOUT(!r.shell->locked() && r.shell->sessionBound(), 90000);
   QTest::qWait(1500);
+  QCOMPARE(targetValue(), QString());
   const JValue clipDriver2 = doDriver(QStringLiteral("clipboard"));
   const bool draftAfterUnlock = textShown(marker);
   report(QStringLiteral("privacy"), {{QStringLiteral("layoutTop"), topKeys}, {QStringLiteral("layoutCardKeys"), cardKeys}, {QStringLiteral("layoutHasText"), layoutHasText}, {QStringLiteral("layoutFile"), r.shell->layoutFile()},

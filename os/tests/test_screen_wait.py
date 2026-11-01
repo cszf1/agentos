@@ -3,9 +3,14 @@ import ast
 import contextlib
 import io
 import json
+import os
 from pathlib import Path
 import re
+import subprocess
+from types import SimpleNamespace
 import unittest
+from unittest import mock
+from pnm import pnm_rgb
 
 
 class Clock:
@@ -25,6 +30,15 @@ def helpers(clock):
     scope = {"time": clock, "re": re, "json": json, "screen_text": lambda m: m.get_screen_text_variants()}
     exec(compile(ast.Module(body=functions, type_ignores=[]), str(source), "exec"), scope)
     return scope["wait_screen"], scope["keyed"], scope["wait_console"]
+
+
+def ocr_function(runner):
+    source = Path(__file__).with_name("m19-iso.py")
+    fn = next(x for x in ast.parse(source.read_text()).body if isinstance(x, ast.FunctionDef) and x.name == "screen_text")
+    scope = {"os": os, "subprocess": SimpleNamespace(run=runner, CalledProcessError=subprocess.CalledProcessError),
+             "PNGTOPNM": "pngtopnm", "pnm_rgb": pnm_rgb}
+    exec(compile(ast.Module(body=[fn], type_ignores=[]), str(source), "exec"), scope)
+    return scope["screen_text"]
 
 
 class Screen:
@@ -95,6 +109,46 @@ class ScreenWaitTest(unittest.TestCase):
         helpers(Clock())[1](keyboard, "battery A-\n")
         self.assertEqual([key for key, _ in keyboard.sent], ["b", "a", "t", "t", "e", "r", "y", "spc", "shift-a", "minus", "ret"])
         self.assertTrue(all(delay > 0.1 for _, delay in keyboard.sent))
+
+
+class OcrPipelineTest(unittest.TestCase):
+    machine = SimpleNamespace(out_dir="/unused", screenshot=lambda _: None)
+
+    def test_uniform_boot_frame_is_not_ready_and_does_not_trim(self):
+        calls = []
+        def run(cmd, **kwargs):
+            calls.append(cmd)
+            return SimpleNamespace(stdout=b"P6\n2 1\n255\n" + bytes([17, 23, 29]) * 2)
+        with mock.patch("shutil.which", return_value="magick"):
+            self.assertEqual(ocr_function(run)(self.machine), ["", ""])
+        self.assertEqual([c[0] for c in calls], ["pngtopnm"])
+
+    def test_minimal_magick_only_reads_pnm_and_writes_8bit_pgm(self):
+        calls = []
+        raw = b"P5\n2 1\n255\n\x00\xff"
+        def run(cmd, **kwargs):
+            calls.append(cmd)
+            if cmd[0] == "pngtopnm":
+                return SimpleNamespace(stdout=raw)
+            if cmd[0] == "magick":
+                self.assertIn("pnm:-", cmd)
+                self.assertIn("-sample", cmd)
+                self.assertIn("300%", cmd)
+                self.assertEqual(cmd[-3:-1], ["-depth", "8"])
+                self.assertTrue(cmd[-1].endswith("zoom.pgm"))
+                self.assertEqual(kwargs["input"], raw)
+                return SimpleNamespace(stdout=b"")
+            self.assertEqual(cmd[0], "tesseract")
+            return SimpleNamespace(stdout="administrator login:")
+        with mock.patch("shutil.which", return_value="magick"):
+            self.assertEqual(ocr_function(run)(self.machine), ["administrator login:"] * 2)
+        self.assertEqual(len(calls), 4)
+
+    def test_conversion_failure_keeps_stderr_and_is_not_readiness(self):
+        def run(cmd, **kwargs):
+            raise subprocess.CalledProcessError(1, cmd, stderr=b"codec unavailable")
+        with mock.patch("shutil.which", return_value="magick"), self.assertRaisesRegex(RuntimeError, "OCR command failed:.*codec unavailable"):
+            ocr_function(run)(self.machine)
 
 
 if __name__ == "__main__":

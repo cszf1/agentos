@@ -7,10 +7,12 @@ PageFrame {
     Row { spacing: 8; width: parent.width
         AField { id: intent; objectName: "intentInput"; width: Math.min(560 * shell.uiScale, parent.width - 260); label: "意图输入"; placeholderText: shell.modelAvailable ? "想做什么？例如：做一个记账应用" : "模型不可用：暂不能生成或修改应用"
                  boundValue: shell.intentDraft; enabled: shell.modelAvailable && !shell.readOnly; onTextEdited: shell.intentDraft = text
-                 onAccepted: shell.submitIntent(text, target.value) }
-        ASelect { id: target; label: "目标应用"; value: ""; options: { var o = [{ value: "", label: "新应用" }]; for (var i = 0; i < shell.apps.count; ++i) { var a = shell.apps.get(i); o.push({ value: a.appId, label: a.title || a.appId }) } return o } }
-        AButton { objectName: "intentSubmit"; label: "提交"; variant: "primary"; enabled: shell.modelAvailable && !shell.readOnly; onClicked: shell.submitIntent(intent.text, target.value) }
+                 onAccepted: shell.submitIntent(text, intentTarget.value) }
+        ASelect { id: intentTarget; label: "目标应用"; value: ""; onChosen: function(v) { intentTarget.value = v }
+                  options: { var o = [{ value: "", label: "新应用" }]; for (var i = 0; i < shell.apps.count; ++i) { var a = shell.apps.get(i); o.push({ value: a.appId, label: a.title || a.appId }) } return o } }
+        AButton { objectName: "intentSubmit"; label: "提交"; variant: "primary"; enabled: shell.modelAvailable && !shell.readOnly; onClicked: shell.submitIntent(intent.text, intentTarget.value) }
     }
+    Connections { target: shell; function onScopeCleared(reason) { intentTarget.value = "" } }
     // system + task status
     Row { spacing: 24
         Column { spacing: 2

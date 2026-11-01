@@ -17,6 +17,7 @@
 #include "gui_support.hpp"
 #include "json_list_model.hpp"
 #include "e2e_sway.hpp"
+#include <QtTest/QSignalSpy>
 #include "slot_models.hpp"
 
 #include <QDateTime>
