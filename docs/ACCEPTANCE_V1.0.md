@@ -15,20 +15,20 @@
 
 ## 总表（按证据级别）
 
-**通过 74 / 部分 15 / 未通过 11（共 100 项）**（外部审查 2026-10-31 降级 D01 I06 I08 W08 R11 U04 U05 U09，修复后按新证据重判，见 docs/V1.0_REVIEW_FIXES.md）。每项只计入它的**最高**证据级别（例如“KVM VM＋单元”计入 KVM VM）；同一项另需实体机的（U01、U02、H03）在 KVM 行计数，并在下面实体机清单里重复列出。“通过”只在该级别证据覆盖规格这一行全部内容时给出。
+**通过 82 / 部分 7 / 未通过 11（共 100 项）**（外部审查 2026-10-31 降级 D01 I06 I08 W08 R11 U04 U05 U09，修复后按新证据重判，见 docs/V1.0_REVIEW_FIXES.md）。每项只计入它的**最高**证据级别（例如“KVM VM＋单元”计入 KVM VM）；同一项另需实体机的（U01、U02、H03）在 KVM 行计数，并在下面实体机清单里重复列出。“通过”只在该级别证据覆盖规格这一行全部内容时给出。
 
 | 证据级别 | 通过 | 部分 | 未通过 | 合计 | 说明 |
 |---|---|---|---|---|---|
-| KVM VM（Actions） | 62 | 3 | 0 | 65 | GitHub Actions 上 /dev/kvm 加速的 NixOS VM 检查（主要证据含 KVM VM） |
+| KVM VM（Actions） | 70 | 4 | 0 | 74 | GitHub Actions 上 /dev/kvm 加速的 NixOS VM 检查（主要证据含 KVM VM） |
 | TCG VM | 0 | 0 | 0 | 0 | 开发沙箱软件模拟 VM（只做冒烟，不作通过依据） |
-| 单元/集成 | 12 | 10 | 0 | 22 | vitest / cargo test / Qt ctest，含真实 v0.4 旧备份导入与 Actions 逐位重建（无 VM 级证据） |
+| 单元/集成 | 12 | 1 | 0 | 13 | vitest / cargo test / Qt ctest，含真实 v0.4 旧备份导入与 Actions 逐位重建（无 VM 级证据） |
 | Host 级真实模型 | 0 | 2 | 0 | 2 | 开发沙箱里开发模式 Host + 真实模型（TokenRhythm qwen3.8-flash），无原生 UI、无 machined |
 | 需实体机，未验收 | 0 | 0 | 10 | 10 | 只能在实体硬件 / 固定参考机上完成，本轮无此硬件 |
 | 无可用证据 | 0 | 0 | 1 | 1 | 既无 VM 也无单元证据，或属于整体发布结论 |
 
-- **KVM VM（Actions）**（65）：V1-B04、V1-B05、V1-B08、V1-I01、V1-I02、V1-I03、V1-I04、V1-I05、V1-I06、V1-I07、V1-I08、V1-I09、V1-I10、V1-I11、V1-I12、V1-W01、V1-W02、V1-W03、V1-W04、V1-W05、V1-W06、V1-W07、V1-W08、V1-W09、V1-W10、V1-D01、V1-D08、V1-H03◐、V1-S01、V1-S02、V1-S03、V1-S04、V1-S05、V1-S06、V1-S07、V1-S08、V1-U01◐、V1-U02◐、V1-U03、V1-U04、V1-U06、V1-U07、V1-U08、V1-U09、V1-U10、V1-U11、V1-U12、V1-R01、V1-R02、V1-R03、V1-R04、V1-R05、V1-R06、V1-R07、V1-R08、V1-R09、V1-R10、V1-R11、V1-R12、V1-M04、V1-M06、V1-O03、V1-O06、V1-O07、V1-O08
+- **KVM VM（Actions）**（74）：V1-B04、V1-B05、V1-B08、V1-I01、V1-I02、V1-I03、V1-I04、V1-I05、V1-I06、V1-I07、V1-I08、V1-I09、V1-I10、V1-I11、V1-I12、V1-W01、V1-W02、V1-W03、V1-W04、V1-W05、V1-W06、V1-W07、V1-W08、V1-W09、V1-W10、V1-D01、V1-D02、V1-D03、V1-D04、V1-D05、V1-D06、V1-D07、V1-D08、V1-D09◐、V1-D11、V1-D12、V1-H03◐、V1-S01、V1-S02、V1-S03、V1-S04、V1-S05、V1-S06、V1-S07、V1-S08、V1-U01◐、V1-U02◐、V1-U03、V1-U04、V1-U06、V1-U07、V1-U08、V1-U09、V1-U10、V1-U11、V1-U12、V1-R01、V1-R02、V1-R03、V1-R04、V1-R05、V1-R06、V1-R07、V1-R08、V1-R09、V1-R10、V1-R11、V1-R12、V1-M04、V1-M06、V1-O03、V1-O06、V1-O07、V1-O08
 - **TCG VM**：无。
-- **单元/集成**（22）：V1-B01、V1-B02、V1-B03、V1-B06、V1-B07、V1-D02◐、V1-D03◐、V1-D04◐、V1-D05◐、V1-D06◐、V1-D07◐、V1-D09◐、V1-D11◐、V1-D12◐、V1-U05、V1-M01、V1-M02、V1-M03、V1-M05、V1-M07、V1-M08、V1-O09◐
+- **单元/集成**（13）：V1-B01、V1-B02、V1-B03、V1-B06、V1-B07、V1-U05、V1-M01、V1-M02、V1-M03、V1-M05、V1-M07、V1-M08、V1-O09◐
 - **Host 级真实模型**（2）：V1-O01◐、V1-O02◐
 - **需实体机，未验收**（10）：V1-D10☐、V1-H01☐、V1-H02☐、V1-H04☐、V1-H05☐、V1-H06☐、V1-H07☐、V1-H08☐、V1-O04☐、V1-O05☐
 - **无可用证据**（1）：V1-O10☐
@@ -59,15 +59,7 @@
 
 - **V1-I08**（部分，外部审查降级）：F04：broker↔machined、broker↔Host 断开与执行者 fence 未单独测。修复进度见 docs/V1.0_REVIEW_FIXES.md。
 - **V1-U04**（部分，外部审查降级）：R2-1：update verify 只比对索引 imageId 与文件存在，测试用 echo 冒充归档，未校验归档真实内容。修复进度见 docs/V1.0_REVIEW_FIXES.md。
-- **V1-D02 旧声明式应用**（部分，单元/集成）：只有 Qt offscreen 单元证据（desktop/tests 9 个 ctest 套件）；m13-native 在 VM 里驱动的是主线/日常/离线/切换流程，没有逐条对这一行的规则在真实会话中断言，按规则不把单元证据当作 VM 通过。
-- **V1-D03 组件全集**（部分，单元/集成）：只有 Qt offscreen 单元证据（desktop/tests 9 个 ctest 套件）；m13-native 在 VM 里驱动的是主线/日常/离线/切换流程，没有逐条对这一行的规则在真实会话中断言，按规则不把单元证据当作 VM 通过。
-- **V1-D04 命令语义**（部分，单元/集成）：只有 Qt offscreen 单元证据（desktop/tests 9 个 ctest 套件）；m13-native 在 VM 里驱动的是主线/日常/离线/切换流程，没有逐条对这一行的规则在真实会话中断言，按规则不把单元证据当作 VM 通过。
-- **V1-D05 纯数据边界**（部分，单元/集成）：只有 Qt offscreen 单元证据（desktop/tests 9 个 ctest 套件）；m13-native 在 VM 里驱动的是主线/日常/离线/切换流程，没有逐条对这一行的规则在真实会话中断言，按规则不把单元证据当作 VM 通过。
-- **V1-D06 大列表与图表**（部分，单元/集成）：只有 Qt offscreen 单元证据（desktop/tests 9 个 ctest 套件）；m13-native 在 VM 里驱动的是主线/日常/离线/切换流程，没有逐条对这一行的规则在真实会话中断言，按规则不把单元证据当作 VM 通过。
-- **V1-D07 系统确认隔离**（部分，单元/集成）：只有 Qt offscreen 单元证据（desktop/tests 9 个 ctest 套件）；m13-native 在 VM 里驱动的是主线/日常/离线/切换流程，没有逐条对这一行的规则在真实会话中断言，按规则不把单元证据当作 VM 通过。
-- **V1-D09 事件断线**（部分，单元/集成）：只有 Qt offscreen 单元证据（desktop/tests 9 个 ctest 套件）；m13-native 在 VM 里驱动的是主线/日常/离线/切换流程，没有逐条对这一行的规则在真实会话中断言，按规则不把单元证据当作 VM 通过。
-- **V1-D11 崩溃与降级**（部分，单元/集成）：只有 Qt offscreen 单元证据（desktop/tests 9 个 ctest 套件）；m13-native 在 VM 里驱动的是主线/日常/离线/切换流程，没有逐条对这一行的规则在真实会话中断言，按规则不把单元证据当作 VM 通过。
-- **V1-D12 隐私与布局**（部分，单元/集成）：只有 Qt offscreen 单元证据（desktop/tests 9 个 ctest 套件）；m13-native 在 VM 里驱动的是主线/日常/离线/切换流程，没有逐条对这一行的规则在真实会话中断言，按规则不把单元证据当作 VM 通过。
+- **V1-D09 事件断线**（部分，KVM VM（Actions））：m20-sway（41325583957@7e4a8ae 全27；单项 41322739153）覆盖 gateway 重启后 cursor 重连、EVENT_GAP/dropped 与撤权可见；慢读端/跨客户端有界部分仍未覆盖，保持部分。
 - **V1-H03 真锁屏故障**（部分，KVM VM（Actions）；真实显卡需实体机，未验收）：锁屏故障的 KVM 部分（m5：LockedHint 只在 swaylock 确认后为 yes；杀 swaylock 不回到未锁桌面）通过；真实显卡/合成器崩溃/输出断开需实体机（见上表）。
 - **V1-O01 真实模型原生主线**（部分，Host 级（真实模型））：原生 UI 主线只有 faux 模型的 KVM VM 证据（m13）；真实模型只有 Host 级。要在真实会话里跑真实模型，必须 (a) 把密钥或可花费密钥的中转放进 CI/VM——违反“密钥不上机器、不进 CI”，或 (b) 在开发沙箱里跑完整的 machined + session-gateway + Qt Shell——沙箱是 aarch64 容器，没有 systemd/logind/PAM 会话，gateway 无法按 logind 会话绑定身份，machined 的执行 UID/linger/用户单元也无法建立。两条都不可行，所以保持部分。
 - **V1-O02 两工作区真实并发**（部分，Host 级（真实模型））：同 O01：两工作区真实并发只有 Host 级证据（两个开发模式 Host，真实请求重叠 8 对）；经 machined 机器 permit 的真实并发需要真实模型进入 VM 或沙箱里有完整 machined/gateway/logind，两者都不可行。机器 permit 的并发上限（总 ≤2、后台 ≤1）有 faux 模型的 KVM VM 证据（S02/S04，m10）。
@@ -137,17 +129,17 @@
 | 编号 | 名称 | 结论 | 证据等级 | 证据 / 原因 |
 |---|---|---|---|---|
 | V1-D01 | 原生主链 | 通过 | KVM VM（Actions） | KVM m5-desktop run 41253718507@b7c16fbded74f1047ece7f36e32705e08371bad6 完整通过：首次设置关闭入口，真实 ReGreet 错误/正确口令与默认会话，Sway/Qt 扫描帧、12 导航点击/缩放、Shell SIGKILL 恢复、离线 OCI、锁定/解锁、注销/再登录；无浏览器/WebEngine。 原证据：os/tests/m5-desktop.py：PAM VT 登录后 Sway + agentos-shell 启动，进程映射中无浏览器/WebEngine（Actions run 41085222091，8df4a6a，子测试 D01 通过）。 |
-| V1-D02 | 旧声明式应用 | 部分 | 单元/集成 | desktop/tests 9 个 ctest 套件（Qt offscreen，nix 构建 checkPhase 中在 Actions 通过）覆盖渲染/绑定/纯数据/限额等规则；没有在真实会话中对 Host 完整流程验收。 |
-| V1-D03 | 组件全集 | 部分 | 单元/集成 | desktop/tests 9 个 ctest 套件（Qt offscreen，nix 构建 checkPhase 中在 Actions 通过）覆盖渲染/绑定/纯数据/限额等规则；没有在真实会话中对 Host 完整流程验收。 |
-| V1-D04 | 命令语义 | 部分 | 单元/集成 | desktop/tests 9 个 ctest 套件（Qt offscreen，nix 构建 checkPhase 中在 Actions 通过）覆盖渲染/绑定/纯数据/限额等规则；没有在真实会话中对 Host 完整流程验收。 |
-| V1-D05 | 纯数据边界 | 部分 | 单元/集成 | desktop/tests 9 个 ctest 套件（Qt offscreen，nix 构建 checkPhase 中在 Actions 通过）覆盖渲染/绑定/纯数据/限额等规则；没有在真实会话中对 Host 完整流程验收。 |
-| V1-D06 | 大列表与图表 | 部分 | 单元/集成 | desktop/tests 9 个 ctest 套件（Qt offscreen，nix 构建 checkPhase 中在 Actions 通过）覆盖渲染/绑定/纯数据/限额等规则；没有在真实会话中对 Host 完整流程验收。 |
-| V1-D07 | 系统确认隔离 | 部分 | 单元/集成 | desktop/tests 9 个 ctest 套件（Qt offscreen，nix 构建 checkPhase 中在 Actions 通过）覆盖渲染/绑定/纯数据/限额等规则；没有在真实会话中对 Host 完整流程验收。 |
+| V1-D02 | 旧声明式应用 | 通过 | KVM VM（Actions） | m20-sway（run 41325583957@7e4a8ae 全27；单项 41322739153@7e4a8ae）真实 Sway/QMP 会话覆盖本行规格子测试，证据等级升为 KVM VM（Actions）。 原证据：desktop/tests 9 个 ctest 套件（Qt offscreen，nix 构建 checkPhase 中在 Actions 通过）覆盖渲染/绑定/纯数据/限额等规则（当时尚无真实会话 KVM；现已由 m20 补齐）。 |
+| V1-D03 | 组件全集 | 通过 | KVM VM（Actions） | m20-sway（run 41325583957@7e4a8ae 全27；单项 41322739153@7e4a8ae）真实 Sway/QMP 会话覆盖本行规格子测试，证据等级升为 KVM VM（Actions）。 原证据：desktop/tests 9 个 ctest 套件（Qt offscreen，nix 构建 checkPhase 中在 Actions 通过）覆盖渲染/绑定/纯数据/限额等规则（当时尚无真实会话 KVM；现已由 m20 补齐）。 |
+| V1-D04 | 命令语义 | 通过 | KVM VM（Actions） | m20-sway（run 41325583957@7e4a8ae 全27；单项 41322739153@7e4a8ae）真实 Sway/QMP 会话覆盖本行规格子测试，证据等级升为 KVM VM（Actions）。 原证据：desktop/tests 9 个 ctest 套件（Qt offscreen，nix 构建 checkPhase 中在 Actions 通过）覆盖渲染/绑定/纯数据/限额等规则（当时尚无真实会话 KVM；现已由 m20 补齐）。 |
+| V1-D05 | 纯数据边界 | 通过 | KVM VM（Actions） | m20-sway（run 41325583957@7e4a8ae 全27；单项 41322739153@7e4a8ae）真实 Sway/QMP 会话覆盖本行规格子测试，证据等级升为 KVM VM（Actions）。 原证据：desktop/tests 9 个 ctest 套件（Qt offscreen，nix 构建 checkPhase 中在 Actions 通过）覆盖渲染/绑定/纯数据/限额等规则（当时尚无真实会话 KVM；现已由 m20 补齐）。 |
+| V1-D06 | 大列表与图表 | 通过 | KVM VM（Actions） | m20-sway（run 41325583957@7e4a8ae 全27；单项 41322739153@7e4a8ae）真实 Sway/QMP 会话覆盖本行规格子测试，证据等级升为 KVM VM（Actions）。 原证据：desktop/tests 9 个 ctest 套件（Qt offscreen，nix 构建 checkPhase 中在 Actions 通过）覆盖渲染/绑定/纯数据/限额等规则（当时尚无真实会话 KVM；现已由 m20 补齐）。 |
+| V1-D07 | 系统确认隔离 | 通过 | KVM VM（Actions） | m20-sway（run 41325583957@7e4a8ae 全27；单项 41322739153@7e4a8ae）真实 Sway/QMP 会话覆盖本行规格子测试，证据等级升为 KVM VM（Actions）。 原证据：desktop/tests 9 个 ctest 套件（Qt offscreen，nix 构建 checkPhase 中在 Actions 通过）覆盖渲染/绑定/纯数据/限额等规则（当时尚无真实会话 KVM；现已由 m20 补齐）。 |
 | V1-D08 | v0.4 | 通过 | KVM VM（Actions） | m13-native（run 41143307884，1c17529，KVM）daily 子测试通过：原生 Shell（agentos-shell-e2e，真实 greetd/PAM 会话里经真实 session-gateway/machined/Host）完成任务取消（run 状态 cancelled，faux 慢请求随 abort 结束，决定 38）、会话压缩（conversation.compact reconciled）、候选接受（proposal.accept reconciled，proposals 表 accepted/publishing/published ≥1，deployments origin=proposal_accept ≥1）、维护暂停（maintenance 状态读回）、应用归档与恢复（app.archive / app.restore 均 reconciled）；每个动作都等到“已核对结果”。 |
-| V1-D09 | 事件断线 | 部分 | 单元/集成 | desktop/tests 9 个 ctest 套件（Qt offscreen，nix 构建 checkPhase 中在 Actions 通过）覆盖渲染/绑定/纯数据/限额等规则；没有在真实会话中对 Host 完整流程验收。 |
+| V1-D09 | 事件断线 | 部分 | KVM VM（Actions） | m20-sway（run 41325583957@7e4a8ae 全27；单项 41322739153@7e4a8ae）真实 Sway 覆盖 gateway 重启后 cursor 重连、EVENT_GAP/dropped 与撤权可见；慢读端/跨客户端有界部分仍未覆盖，按决定111保持部分。 原证据：desktop/tests 9 个 ctest 套件（Qt offscreen，nix 构建 checkPhase 中在 Actions 通过）覆盖渲染/绑定/纯数据/限额等规则（单元）；m20 已补部分真实会话证据，慢读端/跨客户端有界仍缺。 |
 | V1-D10 | 中文与键盘 | 未通过 | 需实体机，未验收 | 真实 Fcitx5 组合输入需要实体显示与输入法；跑法见文末。 |
-| V1-D11 | 崩溃与降级 | 部分 | 单元/集成 | desktop/tests 9 个 ctest 套件（Qt offscreen，nix 构建 checkPhase 中在 Actions 通过）覆盖渲染/绑定/纯数据/限额等规则；没有在真实会话中对 Host 完整流程验收。 |
-| V1-D12 | 隐私与布局 | 部分 | 单元/集成 | desktop/tests 9 个 ctest 套件（Qt offscreen，nix 构建 checkPhase 中在 Actions 通过）覆盖渲染/绑定/纯数据/限额等规则；没有在真实会话中对 Host 完整流程验收。 |
+| V1-D11 | 崩溃与降级 | 通过 | KVM VM（Actions） | m20-sway（run 41325583957@7e4a8ae 全27；单项 41322739153@7e4a8ae）真实 Sway/QMP 会话覆盖本行规格子测试，证据等级升为 KVM VM（Actions）。 原证据：desktop/tests 9 个 ctest 套件（Qt offscreen，nix 构建 checkPhase 中在 Actions 通过）覆盖渲染/绑定/纯数据/限额等规则（当时尚无真实会话 KVM；现已由 m20 补齐）。 |
+| V1-D12 | 隐私与布局 | 通过 | KVM VM（Actions） | m20-sway（run 41325583957@7e4a8ae 全27；单项 41322739153@7e4a8ae）真实 Sway/QMP 会话覆盖本行规格子测试，证据等级升为 KVM VM（Actions）。 原证据：desktop/tests 9 个 ctest 套件（Qt offscreen，nix 构建 checkPhase 中在 Actions 通过）覆盖渲染/绑定/纯数据/限额等规则（当时尚无真实会话 KVM；现已由 m20 补齐）。 |
 
 ## 实体硬件
 
@@ -239,7 +231,7 @@
 
 ## 统计
 
-未通过 11 项，通过 74 项，部分 15 项（共 100 项）。
+未通过 11 项，通过 82 项，部分 7 项（共 100 项）。
 
 ## 回归与偶发失败记录
 
@@ -314,3 +306,9 @@
 
 - run 41183783854（6871543，单独派发 m13-native，KVM）：**通过**（mainline、daily、W05、O03、S08 子测试）。run 41183780999（6871543，全部 24 项，KVM）：m13-native、m17-shared、m7-update、m18-o09、m6-install 等通过；W05、O03 改为通过（第二十七轮）。m6-qcow2、build-qcow2、build-repro 随后也通过：**run 41183780999 全部 24 项在 6871543 上通过**。O09 的构建部分满足，演练部分仍按规格 M10 为部分。
 - run 41190020860（78629e1，手动派发全部 24 项，KVM）：**24 项全部通过**，代码与 6871543 相同，复跑无偶发失败。
+
+## 提交与 CI（外部审查修复收尾，2026-11-01）
+
+- 固定提交 `7e4a8aedc42e96c1628bd7e6f11202b723a96593`。全27 `41325583957`：`success`（28 success（plan+27）：plan、build-audit、build-iso、build-oci、build-physical、build-qcow2、build-release、build-repro、build-shell、m2-identity、m3-members、m5-desktop、m6-install、m6-qcow2、m7-update、m8-backup、m9-restore、m10-sched、m11-ops、m12-clone、m13-native、m14-create、m15-wifi、m16-fetch、m17-shared、m18-o09、m19-iso、m20-sway）。
+- 单项 KVM（Actions）：m20-sway 41322739153@7e4a8ae 成功；m9-restore 41321378266、m19-iso 41321379807 在 8ea2bb4 成功，不拼接为固定提交的结果；m20-sway 41319888309@485ab99 失败（D12），不计。
+- 决定111 升项：D02–D07、D11、D12 → 通过（KVM VM（Actions））；D09 保持部分（慢读端/跨客户端有界未覆盖）。U01、O09 保持部分。实体机、O09 独立操作者、真实模型、VMware 仍为人工项。O10 仍未通过（证据未齐）。

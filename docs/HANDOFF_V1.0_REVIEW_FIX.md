@@ -1,4 +1,4 @@
-# AgentOS v1.0 外部审查修复交接（2026-11-01，进行中）
+# AgentOS v1.0 外部审查修复交接（2026-11-01，收尾定稿：固定 SHA 7e4a8ae，全27 41325583957 success）
 
 先读本文件、`V1.0_REVIEW_FIXES.md`、`V1.0_PROGRESS.md`、`HANDOFF_V1.0.md`、`V1.0_VM_TESTS.md`、`RELEASE_V1.0.md`。规格唯一基准是 `docs/AGENTOS_MVP_V1.0.md`。历史决定和旧 run 以 PROGRESS 为准，不要照抄旧交接中的过时待办。
 
@@ -15,8 +15,8 @@
 ## 1. 现状与证据
 
 - 仓库：https://github.com/cszf1/agentos ，分支 `v1.0`。实际 HEAD 看 Git，最新候选/修复看 PROGRESS，实际验收提交看 Actions 的完整 `headSha`。
-- 验收统计一致：**74 通过 / 15 部分 / 11 未通过**。I06、U05、R11、I08、U04 已恢复；D01/W08/U09 按完整 m5 41253718507 恢复，其他候选没有提前升项。
-- 两轮审查原文：`docs/review/REVIEW_V1.0_EXTERNAL_2026-10-31.md`；逐项状态在 `V1.0_REVIEW_FIXES.md`。PROGRESS/TSV 当前续至决定 110，后续编号按最新尾项递增。
+- 验收统计以 ACCEPTANCE/v1doc stats 为准（决定111 升项后重算）。I06、U05、R11、I08、U04 已恢复；D01/W08/U09 按完整 m5 41253718507 恢复；D02–D07/D11/D12 按全27升项。
+- 两轮审查原文：`docs/review/REVIEW_V1.0_EXTERNAL_2026-10-31.md`；逐项状态在 `V1.0_REVIEW_FIXES.md`。PROGRESS/TSV 当前续至决定 111（收尾定稿，全27 41325583957 success），后续编号按最新尾项递增。
 - 第一轮全量 `41220513266@4b1d863` 终态 **23 成功 / 4 失败**：失败 m5、m6-qcow2、m19、m20；其余包括 m18、build-repro、m3/m7 都成功。这不是最终全绿。
 - e2159d6固定SHA的云端Node typecheck/contracts、184pass/4skip、Rust81pass/1ignored（27组/exit0）均通过；决定100候选同计数，另有Qt九套ctest/三种子fuzz/E2E编译通过、决定101另经Qt九套/E2E编译；决定105候选Qt九套/E2E编译及VM helper50项（5+3+7+6+16+2+4+3+4）通过。**不是最终KVM的27项通过**。
 
@@ -60,7 +60,23 @@
 - **候选验证**：缺UI/列表字段的回归先红后绿；Qt6.11.2九套ctest、三种子各2000轮fuzz、E2E编译通过；Rust81pass/1ignored、Node184pass/4skip、typecheck/contracts/slot-vectors通过；助手34项（5+3+7+6+13）、28个Python AST及drill语法/self-test/错误非零通过。不是完整Sway或最终全27通过。
 - **边界**：D07的owner策略不是管理员硬件/PAM图形输入验收，不声称音频等实机功能可用；m19管理员仍走普通用户PAM→gateway→ticket→固定root helper。两条完整KVM须在决定100提交后重跑，统计仍74/15/11。
 
-### 决定110（当前）
+### 收尾（决定111，固定 SHA `7e4a8aedc42e96c1628bd7e6f11202b723a96593`，定稿）
+
+证据按等级分开，互不替代。全27已终态。
+
+| 等级 | 内容 |
+|---|---|
+| KVM（Actions），固定 SHA | 全27 `41325583957@7e4a8ae`：`success`（28 success（plan+27）：plan、build-audit、build-iso、build-oci、build-physical、build-qcow2、build-release、build-repro、build-shell、m2-identity、m3-members、m5-desktop、m6-install、m6-qcow2、m7-update、m8-backup、m9-restore、m10-sched、m11-ops、m12-clone、m13-native、m14-create、m15-wifi、m16-fetch、m17-shared、m18-o09、m19-iso、m20-sway）。m20 单项 `41322739153@7e4a8ae` 亦完整成功（脚本475.34s）：D11 Shell 1.3s 重新可见；D12 root 扫描 /home/alice、/var/lib/agentos、/run/user/10000 并跳过 /run/user/10000/doc，alice 扫描该挂载，两边 rc=1、found 与 errors 均为空 |
+| KVM（Actions），前一提交 | m9 `41321378266@8ea2bb4`、m19 `41321379807@8ea2bb4` 单项完整成功（决定109修复后）。8ea2bb4..7e4a8ae 只改 m20 驱动、test_m20_disk_scan.py、workflow helper 列表一行和文档。不拼接为 7e4a8ae 的结果；全27 中同名 job 已在固定 SHA 成功 |
+| KVM（Actions），失败不计 | m20 `41319888309@485ab99` 越过 Broker 降级/恢复与 D11，止 D12（grep rc=2），整项失败 |
+| 云端 helper/单元/Qt | 决定106–110 记载的 Node/Rust/Qt 与 helper 结果，v1doc `checklist mismatch: []`。不是 KVM 证据 |
+| 模型（非真实系统） | test_broker_fault、test_m9_broker_hold、test_m19_evidence、test_m20_disk_scan 以假 systemctl/journalctl/runuser 驱动 AST 片段，只证明驱动逻辑 |
+| 待定/人工 | 实体机、真实输入法与实盘；O09 独立操作者；O01/O02 原生真实模型路径；VMware 适配；O10 发布完成条件 |
+
+- 决定111 升项：D02–D07、D11、D12 → 通过（KVM VM（Actions），cite 41325583957@7e4a8ae 与 41322739153）；D09 保持部分（m20 覆盖 cursor 重连/EVENT_GAP/撤权，慢读端/跨客户端有界未覆盖）。U01、O09 仍为部分。
+- 全27 jobs：28 success（plan+27）：plan、build-audit、build-iso、build-oci、build-physical、build-qcow2、build-release、build-repro、build-shell、m2-identity、m3-members、m5-desktop、m6-install、m6-qcow2、m7-update、m8-backup、m9-restore、m10-sched、m11-ops、m12-clone、m13-native、m14-create、m15-wifi、m16-fetch、m17-shared、m18-o09、m19-iso、m20-sway。
+
+### 决定110（历史）
 
 - 485ab99的m20 41319888309在KVM越过Broker降级/恢复与D11（Shell 1.2s重新可见），止D12 `the draft marker is on disk (grep rc=2)`。旧命令`grep -rq ... 2>/dev/null`把出错（rc2）报成标记在盘，stderr丢弃。日志证实再登录后alice的文档门户于457.849重新启动；grep时FUSE是否已挂上、哪条路径出错未证实。云端容器模型复现root grep -r对未设allow_other的FUSE挂载报EACCES，find -xdev/-prune同样会stat挂载点。
 - D12改为驱动内Python扫描器：root扫三处全部路径并按mountinfo跳过FUSE挂载（不stat），alice扫这些FUSE挂载；rc、报告、stderr全部打印。找到即on disk并列文件；出错或有stderr即scan failed；两边完整干净才通过，并断言跳过与读入一一对应。范围不缩、断言不放宽、产品代码未改。
@@ -136,13 +152,13 @@
 | F04 / I08 | m3 `41208150103@6be1e0b` 通过，4b1d863 全量中的 m3 job 也成功，账本已恢复 |
 | F05 | m6-install VM 已通过；真实盘断电部分仍需实体机 |
 | F06 | 云端模型 relay policy 4 项通过；VM 不使用真实 key |
-| F07 / R11 | m9 KVM 已通过；最终矩阵再确认 |
+| F07 / R11 | m9 KVM 已通过；决定109后 m9 `41321378266@8ea2bb4` 完整成功；同 SHA 全27 `41325583957` `success` |
 | F09 | `41208175425@6be1e0b` 及 4b1d863 的 build-repro 成功：六输出逐位一致；qcow2 解密树/闭包/NixDB 逻辑比较通过，不能写 qcow2 字节相同 |
 | F10 | m2 KVM 已通过；最终矩阵再确认沙箱未回归 |
-| F11 | m19 完整两机连贯演练仍待通过，不能仅凭安装子项升 U01 |
-| F12 | m20 正在真实 Sway/QMP 路径迭代，不能拿 offscreen 代替 |
+| F11 | m19 `41297711680@8384e0f`、`41321379807@8ea2bb4` 完整成功；同 SHA 全27 `41325583957` `success`。U01 实盘与 O09 独立操作者仍人工，不升项 |
+| F12 | m20 `41322739153@7e4a8ae` 与全27 `41325583957` 中 m20 完整成功；已升 D02–D07/D11/D12；D09 慢读端/跨客户端有界部分保留 |
 | F13 | 云端 versions 2、HTTP 7、model-relay-policy 4 项核实；productVersion=1.0.0，hostVersion=0.4.0 为兼容层 |
-| F14 | workflow 覆盖已补；最终固定完整 SHA 的 all=27 尚未完成 |
+| F14 | workflow 覆盖已补；固定 SHA 7e4a8ae 全27 `41325583957`：`success`（矩阵要求满足；O10 仍未通过） |
 | F15 / F16 | build-physical/build-audit 已成功；不等于实体机验收，测试 UUID 误报豁免不等于放过凭据 |
 | R2-1 / U04 | m7 `41208171776@6be1e0b` 及 4b1d863 对应 job 成功，账本已恢复 |
 | R2-2 / U09 | 单元、m7 与完整 m5 41253718507 已过，U09 已恢复；最终 all 再回归 |
@@ -151,12 +167,12 @@
 
 ## 2. 接下来按顺序做
 
-1. 读 PROGRESS 与 Actions 最新运行；m5 已完整通过，不重复取旧失败作为现状。m6 后续已完整通过，剩余 m19/m20 按决定96继续修复重跑，不放宽安全、健康或 UI 断言。
+1. 读 PROGRESS 与 Actions 最新运行；m5 已完整通过，不重复取旧失败作为现状。m6 后续已完整通过；m19（8ea2bb4）与 m20（7e4a8ae）已在决定109/110后单项完整成功，不放宽安全、健康或 UI 断言。
 2. m19 必须走完同一 ISO 安装两台、v0.4 导入、不健康试启动拒绝、known-good 回退、加密导出和新身份恢复。介质由活动本地会话用上游 udisks 策略挂载，材料复制到家目录；不扩大 root helper 路径白名单。
 3. 离线可信时间必须显式核对：host/guest 差在规定边界内，再传 `--trusted-time`；不改到期字段、不关闭签名、NAR、序号或支持期检查。同一既有闭包的更高 sequence 不能冒称新代际下载证据。
 4. m5/m20 完整成功后，逐项按覆盖更新 D01、W08、U09 和 D02–D07、D09、D11、D12；D09 未覆盖的慢读端/跨客户端有界部分明确保留，O09 的独立操作者保留。
-5. 文档和修复定稿后，固定最终 SHA 手动 `test=all`；全部 27 项成功才满足本轮矩阵要求。若失败，修复后在新最终提交再跑全量。
-6. 同步 ACCEPTANCE/CHECKLIST/HANDOFF/PROGRESS/REVIEW_FIXES/VM_TESTS/RELEASE，云端统计无 mismatch；最后清理临时测试资源，不合并 main、不发 ISO、不建 Release。
+5. 固定 SHA 7e4a8ae 全27 `41325583957`：`success`（28 success（plan+27）：plan、build-audit、build-iso、build-oci、build-physical、build-qcow2、build-release、build-repro、build-shell、m2-identity、m3-members、m5-desktop、m6-install、m6-qcow2、m7-update、m8-backup、m9-restore、m10-sched、m11-ops、m12-clone、m13-native、m14-create、m15-wifi、m16-fetch、m17-shared、m18-o09、m19-iso、m20-sway）。矩阵要求已满足。
+6. 同步 ACCEPTANCE/CHECKLIST/HANDOFF/PROGRESS/REVIEW_FIXES/VM_TESTS/RELEASE，云端 v1doc stats 无 mismatch；清理临时测试资源，不合并 main、不发 ISO、不建 Release。
 
 ## 3. 运行方式与安全同步
 

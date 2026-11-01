@@ -5,6 +5,8 @@ issue. docs/ACCEPTANCE_V1.0.md lists the items that are still partial or not pas
 physical machine). This file is the material that must ship with a release; it is kept current so that the release
 can be cut once the remaining evidence exists. Nothing here claims an untested piece of hardware works.
 
+Review-fix closeout (decision 111): fixed SHA `7e4a8aedc42e96c1628bd7e6f11202b723a96593`, all-27 KVM/build run `41325583957`: `success` (28 success（plan+27）：plan、build-audit、build-iso、build-oci、build-physical、build-qcow2、build-release、build-repro、build-shell、m2-identity、m3-members、m5-desktop、m6-install、m6-qcow2、m7-update、m8-backup、m9-restore、m10-sched、m11-ops、m12-clone、m13-native、m14-create、m15-wifi、m16-fetch、m17-shared、m18-o09、m19-iso、m20-sway). VM matrix closed on this SHA. It does not close V1-O10.
+
 ## What a release consists of
 
 | Artifact | Built by | Notes |
