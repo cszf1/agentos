@@ -72,6 +72,26 @@ def run(m, cmd, tag, timeout=900):
     log = wait_console(m, f"__{tag}_RC=[0-9]+__", timeout=timeout, start=start)
     return int(re.findall(f"__{tag}_RC=([0-9]+)__", log)[-1]), log
 
+# Installed-disk evidence reads (m19 41314769878 printed "EV-shellStarted=0 0": `|| echo 0` turned a failure into a 0).
+# grep -c exits 1 with "0" on no match; that is the only way to read 0. Any other failing pipeline stage, a missing or
+# non-numeric value, or a second value fails the drill.
+def evidence_cmd(k, c):
+    return f"res=$({c}; printf ' PS=%s' \"${{PIPESTATUS[*]}}\"); echo EV-{k}=$res END"
+
+def evidence_value(k, log):
+    hits = re.findall(f"EV-{k}=(\\S*) PS=([0-9 ]+) END", log)
+    assert len(hits) == 1, (k, hits, log[-2000:])
+    value, ps = hits[0]
+    status = [int(x) for x in ps.split()]
+    assert value.isdigit(), (k, "no count read", value, status, log[-2000:])
+    assert all(x == 0 for x in status[:-1]) and (status[-1] == 0 or (status[-1] == 1 and value == "0")), (k, "command failed", value, status, log[-2000:])
+    return int(value)
+
+# The Shell, Sway and the session agent write nothing to the journal (their output goes to greetd's tty; m20 41314773240
+# journals none for alice's session), so no journal pattern can show the Shell ran. Alice records the live process
+# count herself, on her console while the Shell is on the output; the evidence boot reads it back from the disk.
+SHELL_PROBE = 'logger -t agentos-m19-probe "agentos-shell processes for alice: $(pgrep -c -u alice -f bin/agentos-shell)"'
+
 def last_json(log, key):
     hits = re.findall(key + r":(\{.*\})", log)
     assert hits, f"no {key} line on the console"
@@ -326,6 +346,7 @@ with subtest("the installed disk alone: first unlock, first-boot administrator o
     assert done, [hexc(px(img2, 18, (x[0] + x[1]) // 2)) for x in b2]
     time.sleep(10)                                              # let the Shell's requests land in the journal
     operator_login(target, "alice", "alice-pw-1")
+    target.send_chars(SHELL_PROBE + "\n", delay=0.03)
     operator_phase(target, "alice", "source", "PASS-TRIAL-ARMED", from_media=True, timeout=1800)
     operator_reboot(target, "alice", "alice-pw-1")
     operator_phase(target, "alice", "trial", "PASS-HEALTH-REFUSED")
@@ -354,19 +375,20 @@ with subtest("evidence from the installed disk, read by a second ISO boot: unloc
         "regreetLast": "grep -c '^last_user = \"alice\"' /ev/var/lib/regreet/state.toml",
         "regreetSession": "grep -c '^alice = \"AgentOS\"' /ev/var/lib/regreet/state.toml",
         "hostStarted": f"{J} | grep -c 'Started AgentOS Host for workspace'",
-        "shellStarted": f"{J} | grep -cE 'agentos-session-agent|agentos-shell'",
+        "shellStarted": f"{J} -t agentos-m19-probe | grep -cE '^agentos-shell processes for alice: [1-9][0-9]*$'",
         "passwordInJournal": f"{J} | grep -c 'alice-pw-1'",
         "rootLocked": "awk -F: '$1==\"root\" && substr($2,1,1)==\"!\"' /ev/etc/shadow | grep -c .",
         "luksKeyslots": "cryptsetup luksDump /dev/disk/by-partlabel/agentos-luks | grep -cE '^ +[0-9]+: luks2'",
     }
     ev = {}
     for k, c in checks.items():
-        rc, log = run(iso2, f"echo EV-{k}=$({c} 2>/dev/null || echo 0)", "ev" + k)
-        ev[k] = int(re.findall(f"EV-{k}=([0-9]+)", log)[-1])
+        rc, log = run(iso2, evidence_cmd(k, c), "ev" + k)
+        ev[k] = evidence_value(k, log)
     print("installed-disk evidence", ev)
     assert ev["boots"] >= 1 and ev["firstSetup"] >= 1 and ev["greetdSession"] >= 1, ev
     assert ev["regreetLast"] == 1 and ev["regreetSession"] == 1, ev
     assert ev["hostStarted"] >= 1, ev
+    assert ev["shellStarted"] == 1, ev                          # alice's one probe saw the Shell running
     assert ev["passwordInJournal"] == 0 and ev["luksKeyslots"] == 1, ev
     assert ev["rootLocked"] == 1, ev                            # the installed release: root locked (O09, decision 80)
     # Read-only recovery-medium evidence AFTER the real operator's failed trial and rollback, not a driver-created

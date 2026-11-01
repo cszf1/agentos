@@ -206,7 +206,11 @@ with subtest("broker log lost: diagnostics only, never an empty log (R11)"):
     machine.wait_for_unit("agentos-broker.service")
 
 with subtest("machine directory lost: recovery mode, then an explicit new identity; old state kept as evidence (R11)"):
-    machine.succeed("systemctl stop agentos-session-gateway.service agentos-broker.service agentos-machine.service")
+    # agentos-broker.path re-starts a lone broker stop (m9 41220513266@4b1d863: "Starting AgentOS privileged broker..."
+    # 12 ms after "Stopped", still activating while machine.sqlite went away), so the path unit is held down too.
+    # ActiveState, not is-active: a re-triggered broker that waits for machined sits in "activating", which is not active.
+    machine.succeed("systemctl stop agentos-session-gateway.service agentos-broker.path agentos-broker.service agentos-machine.service")
+    machine.succeed("sleep 2; test \"$(systemctl show -p ActiveState --value agentos-broker.service)\" = inactive && test ! -S /run/agentos-broker/broker.sock")
     machine.succeed("rm -f /var/lib/agentos-machine/machine.sqlite /var/lib/agentos-machine/machine.sqlite-wal /var/lib/agentos-machine/machine.sqlite-shm")
     machine.succeed("systemctl start agentos-machine.service")
     machine.wait_for_unit("agentos-machine.service")
@@ -225,9 +229,11 @@ with subtest("machine directory lost: recovery mode, then an explicit new identi
     assert rc != 0 and "not installed" in o, o
     machine.succeed("ls -d /var/lib/agentos-machine/lost-*/ && test -f /var/lib/agentos-machine/lost-*/machine.secret && test -f /var/lib/agentos-machine/lost-*/broker/broker.sqlite")
     machine.succeed(f"test -d /var/lib/agentos/workspaces/{ws_a}/data")       # old workspace data kept, not registered
-    # the broker belongs to the new identity: skipped until it exists, then a fresh log for the new install
+    # the broker belongs to the new identity: skipped until it exists, then a fresh log for the new install. Re-arm the
+    # path unit held above (recover --new-identity only restarts machined): it must wait for the new machine.secret.
+    machine.succeed("systemctl start agentos-broker.path")
     machine.succeed("systemctl restart agentos-broker.service || true")
-    machine.succeed("test \"$(systemctl show -p ActiveState --value agentos-broker.service)\" != active")
+    machine.succeed("sleep 2; test \"$(systemctl show -p ActiveState --value agentos-broker.service)\" = inactive")
     t_fb = machine.succeed("date +%s").strip()                                 # only broker lines after this count
     machine.execute("printf 'eve-pw-1' | agentosctl firstboot --admin eve --workspace E")
     st = ctl("status")

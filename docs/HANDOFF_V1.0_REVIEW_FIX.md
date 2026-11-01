@@ -16,7 +16,7 @@
 
 - 仓库：https://github.com/cszf1/agentos ，分支 `v1.0`。实际 HEAD 看 Git，最新候选/修复看 PROGRESS，实际验收提交看 Actions 的完整 `headSha`。
 - 验收统计一致：**74 通过 / 15 部分 / 11 未通过**。I06、U05、R11、I08、U04 已恢复；D01/W08/U09 按完整 m5 41253718507 恢复，其他候选没有提前升项。
-- 两轮审查原文：`docs/review/REVIEW_V1.0_EXTERNAL_2026-10-31.md`；逐项状态在 `V1.0_REVIEW_FIXES.md`。PROGRESS/TSV 当前续至决定 107，后续编号按最新尾项递增。
+- 两轮审查原文：`docs/review/REVIEW_V1.0_EXTERNAL_2026-10-31.md`；逐项状态在 `V1.0_REVIEW_FIXES.md`。PROGRESS/TSV 当前续至决定 109，后续编号按最新尾项递增。
 - 第一轮全量 `41220513266@4b1d863` 终态 **23 成功 / 4 失败**：失败 m5、m6-qcow2、m19、m20；其余包括 m18、build-repro、m3/m7 都成功。这不是最终全绿。
 - e2159d6固定SHA的云端Node typecheck/contracts、184pass/4skip、Rust81pass/1ignored（27组/exit0）均通过；决定100候选同计数，另有Qt九套ctest/三种子fuzz/E2E编译通过、决定101另经Qt九套/E2E编译；决定105候选Qt九套/E2E编译及VM helper50项（5+3+7+6+16+2+4+3+4）通过。**不是最终KVM的27项通过**。
 
@@ -60,7 +60,14 @@
 - **候选验证**：缺UI/列表字段的回归先红后绿；Qt6.11.2九套ctest、三种子各2000轮fuzz、E2E编译通过；Rust81pass/1ignored、Node184pass/4skip、typecheck/contracts/slot-vectors通过；助手34项（5+3+7+6+13）、28个Python AST及drill语法/self-test/错误非零通过。不是完整Sway或最终全27通过。
 - **边界**：D07的owner策略不是管理员硬件/PAM图形输入验收，不声称音频等实机功能可用；m19管理员仍走普通用户PAM→gateway→ticket→固定root helper。两条完整KVM须在决定100提交后重跑，统计仍74/15/11。
 
-### 决定108（当前）
+### 决定109（当前）
+
+- m9 41220513266@4b1d863机器目录丢失分支只停broker.service，path在12ms后把它拉回（job日志4081-4086行），broker停在activating期间删了machine.sqlite；该run通过只靠broker未就绪的时序和`!= active`对activating也成立。现同停path+service，断言ActiveState=inactive且broker.sock消失后才删目录，recover后重新启path，restart||true后断言=inactive，firstboot后由path拉起并wait_for_unit。
+- m19 41314769878@6a3b16f取证4146行`EV-shellStarted=0 0`：`|| echo 0`把命令错误记成0。现以PIPESTATUS回传，只有grep -c无匹配可读成0，非0上游、无值或多值均失败。Shell/Sway/session agent启动不写journal（m20 41314773240控制台journal可证），旧样式永远为0；改由alice在Shell在屏时于tty2用logger记录pgrep bin/agentos-shell计数，取证盘读回并断言shellStarted==1。
+- test_m9_broker_hold.py（假systemctl模型，非真实systemd）旧驱动4/4 fail、新4/4绿；test_m19_evidence.py（假journalctl/logger/pgrep并模拟串口回显）旧3/5红、新5/5绿；已接入CI helper列表，m9-restore加入helper作业。
+- 云端helper 12文件64项、AST35、v1doc mismatch[]、git diff --check通过；只改测试驱动，产品代码未改。这些不是KVM证据，m9与m19 KVM须在本提交重跑（m20按决定108重跑），最终同SHA全27仍待，74/15/11不升项。
+
+### 决定108（历史）
 
 - 6a3b16f的m20 `41314773240`止e2e_sway_phase.inc 674行：90秒内Shell未显示Broker不可用。根因在测试驱动：只停agentos-broker.service，agentos-broker.path（PathExists=machine.secret）0.43s后即把服务拉回，断线从未持续。m20改为与m3相同先停path+service，断言服务非active且broker.sock消失；恢复时启service+path并wait_for_unit。
 - test_broker_fault.py以AST提取m20实际命令在假systemctl模型（编码该run所见行为，不是真实systemd）上运行：旧代码2/3 fail，新代码3/3绿，已接入CI helper列表。
