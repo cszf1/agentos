@@ -220,5 +220,10 @@ if (phase === "--self-test") {
   assert.equal(digest({}).length, 32);
   console.log("m19 drill canonical/digest self-test passed");
 } else {
-  await main();
+  try {
+    await main();
+  } catch (error) {
+    console.error("AOS-DRILL-FAILED");
+    throw error;
+  }
 }

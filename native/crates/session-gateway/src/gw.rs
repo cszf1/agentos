@@ -691,7 +691,7 @@ fn plan(gw: &Gw, e: &Envelope, principal: Value) -> Result<(u16, Value), Value> 
     if !params.is_object() {
         return Err(err("INVALID_REQUEST", "params must be an object"));
     }
-    if let Some(k) = params.as_object().unwrap().keys().find(|k| agentos_machine::ops::secret_param(k)) {
+    if let Some(k) = params.as_object().unwrap().keys().find(|k| agentos_machine::ops::action_secret_param(&kind, &params, k)) {
         return Err(err("INVALID_REQUEST", &format!("{k}: a secret never travels in params; use the secret field")));
     }
     if let Some(sec) = e.body.get("secret") {
@@ -1058,6 +1058,28 @@ pub fn serve(gw: Arc<Gw>, client: UnixListener, host: UnixListener) -> ! {
 #[cfg(test)]
 mod o07_tests {
     use super::*;
+
+    #[test]
+    fn o09_gateway_release_public_key_plan_preserves_secret_rejection() {
+        let gw = Gw::new("/nonexistent/agentos-o09-public-key.sock");
+        let mut e = parse_envelope(&json!({
+            "requestId": "11111111-1111-4111-8111-111111111111", "workspaceId": MACHINE_SCOPE,
+            "clientEpoch": 1, "sessionEpoch": 1, "methodId": "machine.actions.plan", "idempotencyKey": "test-plan",
+            "body": { "actionKind": "admin.update", "params": { "step": "trust-key", "keyId": "o09-public", "publicKey": "ab".repeat(32) } }
+        })).unwrap();
+        let public = e.body["params"].clone();
+        let error = plan(&gw, &e, json!({})).unwrap_err();
+        assert!(machine_unreachable(&error), "public metadata must reach machined, not be mistaken for a secret: {error}");
+        for field in ["privateKey", "apiKey", "password", "passphrase", "token", "publicKeyPassword", "keyIdSecret", "PublicKey", "keyID"] {
+            e.body["params"] = public.clone();
+            e.body["params"][field] = json!("must-never-be-stored");
+            let error = plan(&gw, &e, json!({})).unwrap_err();
+            assert_eq!(error["code"], "INVALID_REQUEST", "{field}");
+        }
+        e.body["params"] = public;
+        e.body["secret"] = json!("not-a-provider-key-action");
+        assert_eq!(plan(&gw, &e, json!({})).unwrap_err()["code"], "INVALID_REQUEST");
+    }
 
     #[test]
     fn s08_cached_membership_serves_reads_and_briefly_writes_while_machined_is_unreachable() {

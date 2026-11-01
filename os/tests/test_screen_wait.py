@@ -62,6 +62,21 @@ class ScreenWaitTest(unittest.TestCase):
             helpers(clock)[0](screen, "administrator login", timeout=5)
         self.assertEqual(screen.calls, 1)
 
+    def test_operator_error_fails_immediately_instead_of_waiting_twenty_minutes(self):
+        clock = Clock()
+        screen = Screen(clock, ["AssertionError\nAOS-DRILL-FAILED\nstack trace"], cost=4)
+        with contextlib.redirect_stdout(io.StringIO()), self.assertRaisesRegex(AssertionError, "operator failed.*AOS-TRIAL-ARMED"):
+            helpers(clock)[0](screen, "AOS-TRIAL-ARMED", timeout=1200, failure_regex=r"(?m)^AOS-DRILL-FAILED\s*$")
+        self.assertEqual(screen.calls, 1)
+        self.assertEqual(clock.now, 4)
+
+    def test_operator_error_beats_a_success_match_in_another_ocr_variant(self):
+        clock = Clock()
+        screen = Screen(clock, ["AOS-TRIAL-ARMED", "AOS-DRILL-FAILED"])
+        with contextlib.redirect_stdout(io.StringIO()), self.assertRaisesRegex(AssertionError, "operator failed"):
+            helpers(clock)[0](screen, "AOS-TRIAL-ARMED", timeout=5, failure_regex=r"(?m)^AOS-DRILL-FAILED\s*$")
+        self.assertEqual(screen.calls, 1)
+
     def test_expensive_ocr_counts_against_the_deadline(self):
         clock = Clock()
         screen = Screen(clock, ["Please enter passphrase"], cost=4)

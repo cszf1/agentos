@@ -4,7 +4,7 @@
 
 ## 0. 铁律
 
-1. 本轮继续完成所有可由 VM/KVM 验证的项目：失败取证、修复、重跑；**最终固定完整 SHA 上全部 27 项成功**。不能只交半成品，不能拼接不同提交的绿灯宣称最终全量通过。
+1. 本轮继续完成所有可由 VM/KVM 验证的项目（用户已确认先继续VM，实机与64GB精简后续再做）：失败取证、修复、重跑；**最终固定完整 SHA 上全部 27 项成功**。不能只交半成品，不能拼接不同提交的绿灯宣称最终全量通过。
 2. **规格 `docs/AGENTOS_MVP_V*.md` 不许修改。** 实体机和 WSL 不在本轮范围；独立操作者等人工要求不能自动替代。
 3. **本地只编辑/Git；所有编译、运行、单元/集成及回归测试也在云端。** KVM 用 GitHub Actions；普通云端编译机无 KVM 的结果不算 KVM。
 4. 只推 `cszf1/agentos` 的 `v1.0`；`main` 仍是 `2aaa004273a9548f45215c8faed7a395883c820b`，不得合并，除非完成后另获同意。
@@ -16,9 +16,9 @@
 
 - 仓库：https://github.com/cszf1/agentos ，分支 `v1.0`。实际 HEAD 看 Git，最新候选/修复看 PROGRESS，实际验收提交看 Actions 的完整 `headSha`。
 - 验收统计一致：**74 通过 / 15 部分 / 11 未通过**。I06、U05、R11、I08、U04 已恢复；D01/W08/U09 按完整 m5 41253718507 恢复，其他候选没有提前升项。
-- 两轮审查原文：`docs/review/REVIEW_V1.0_EXTERNAL_2026-10-31.md`；逐项状态在 `V1.0_REVIEW_FIXES.md`。PROGRESS/TSV 当前续至决定 93，后续编号按最新尾项递增。
+- 两轮审查原文：`docs/review/REVIEW_V1.0_EXTERNAL_2026-10-31.md`；逐项状态在 `V1.0_REVIEW_FIXES.md`。PROGRESS/TSV 当前续至决定 99，后续编号按最新尾项递增。
 - 第一轮全量 `41220513266@4b1d863` 终态 **23 成功 / 4 失败**：失败 m5、m6-qcow2、m19、m20；其余包括 m18、build-repro、m3/m7 都成功。这不是最终全绿。
-- 云端 Node 基线：typecheck/contracts:check、184 passed、4 skipped；Rust 基线：79 passed、1 ignored。最新云端 VM helper 单测 5+3+7+6+6 通过，**不是最终 KVM 的 27 项通过**。
+- 云端 Node 基线：typecheck/contracts:check、184 passed、4 skipped；85c9575 的 Rust 基线79 passed/1 ignored，决定99候选完整 Rust81 passed/1 ignored（27组、exit0）。最新云端 VM helper32项通过（5+3+7+6+11），**不是最终 KVM 的27项通过**。
 
 ### b7c16fb 的最近四项调试基线
 
@@ -45,10 +45,11 @@
 | m19-iso | 41266847934 | 65a8c39 | 失败：多变体 OCR 完整通过控制台首次设置并进入 ReGreet 图形界面；等待正则设为 Login，但 ReGreet 界面大字标题实际为 Welcome back!，导致超时 |
 | m20-sway | 41266853527 | 65a8c39 | 失败：CRUD全部、目标选择、优先级、版本切换及代码注入全部通过；在分页测试步骤，下一页按钮因20条记录表格垂直展开位于 y=1122 处于 800 高度窗口外，click 被拦截 |
 
-### 最新失败、已做的决定98候选修复
+### 最新失败与决定99候选（6852b1c 的两项均已失败，不再标进行中）
 
-- **m20 最新 `41266853527@65a8c39`**：目标选择、只读刷新保持、版本切换（E2E version total=2）、代码注入拦截（E2E injection richText=0）全部通过。停在分页测试：待办清单包含20条记录时，表单展开使得“下一页”按钮纵坐标达到 y=1122，超出了 1280x800 窗口视口。决定 98 在 `click()` 中加入 `ensureVisible()` 助手，当目标控件位于 `QQuickFlickable` 内部且超出视口时，自动调整 `contentY` 将其滚入视口，使物理 QMP 指针能精准命中。
-- **m19 最新 `41266847934@65a8c39`**：多变体反相 OCR 成功越过密码输入瓶颈，完整通过首次管理员账号、密码、再次密码和默认工作区设置，顺利退出并进入图形 ReGreet 界面（日志实际输出 `Sun 03:29 Welcome back! User: agentos-user ... Session: AgentOS`）。原测试误以为预选用户按钮带有文字 Login，导致 `wait_screen` 超时。决定 98 将等待正则改为实际渲染的问候文本 `r"(?i)(Welcome back|Login)"`。云端 30 项测试全数通过。
+- **m19 `41272160495@6852b1c396f4b5b7e3a032072e7ea4b540f00c02`**：ISO/首次设置/ReGreet/Shell/正常管理员tty/v0.4导入均已越过；停在 `admin update trust-key`，gateway和machined的秘密字段过滤误拒绝公开的keyId/publicKey。新回归在两层旧代码上分别复现同一INVALID_REQUEST。候选共享精确的 `admin.update + step=trust-key + keyId/publicKey` 例外，固定argv的格式验证和PAM/ticket/角色/锁屏防线不变；私钥、provider key、大小写/后缀变体、错误动作/步骤仍拒绝。完整Rust81pass/1ignored，助手32pass；完整KVM尚待。
+- **m20 `41272167100@6852b1c`**：275行choose目标应用失败，是全局ensureVisible引入的新回归；它会修改弹窗ListView的contentY且未钳位上限。候选移除通用滚动，恢复此前点击行为，只在20行分页步骤通过真实QMP wheel将按钮完整滚入输出，再检查真实点击与页/行数变化，不放宽原断言。完整KVM尚待。
+- **m19快速失败取证**：操作者脚本遇错输出 `AOS-DRILL-FAILED` 后继续抛出原错，屏幕等待优先判失败，避免静态错误后空等1200秒；新增2项真实helper测试覆盖立即失败及失败优先于其他OCR变体的成功。
 - **m6 `41258546486@85c9575` 完整成功**：两个同模板克隆、独立新卷钥、模板旧钥拒绝、克隆2持久化重加密中的断电续作、正常重启身份保持均已走完。不得回退完整握手/持久化切电条件，最终 all 再回归。
 - **m5 `41253718507@b7c16fb` 完整成功**：真实鼠标聚焦后的 Shell 快捷键、锁/解锁、注销/再登录、四时刻权限/执行主体、diagnostics-only 等健康负面均通过。D01/W08/U09 已恢复；只在最终固定 SHA 全量再回归。
 

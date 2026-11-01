@@ -54,6 +54,14 @@ pub fn secret_param(k: &str) -> bool {
     ["psk", "password", "passphrase", "secret", "key", "apikey", "api_key", "token"].iter().any(|w| k == *w || (k.contains(w) && k != "secretref"))
 }
 
+/// Only the two exact public verification fields of the fixed trust-key action are not secrets. The action's
+/// argv validator still checks their types, key-id alphabet and 32-byte hex public key before a plan is persisted.
+/// Do not exempt names containing "publicKey" globally: provider/private keys still use the one-time secret store.
+pub fn action_secret_param(kind: &str, params: &Value, k: &str) -> bool {
+    let public_release_field = kind == "admin.update" && params["step"] == "trust-key" && matches!(k, "keyId" | "publicKey");
+    secret_param(k) && !public_release_field
+}
+
 pub fn kind_admin(kind: &str) -> R<bool> {
     KINDS.iter().find(|(k, _)| *k == kind).map(|(_, a)| *a).ok_or_else(|| MErr::new("INVALID_REQUEST", "unknown machine action kind"))
 }
@@ -133,7 +141,7 @@ impl Machine {
             }
         }
         if let Some(o) = params_v.as_object() {
-            if let Some(k) = o.keys().find(|k| secret_param(k)) {
+            if let Some(k) = o.keys().find(|k| action_secret_param(kind, params_v, k)) {
                 return Err(MErr::new("INVALID_REQUEST", format!("{k}: a secret never travels in params")));
             }
         }

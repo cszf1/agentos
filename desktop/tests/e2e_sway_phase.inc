@@ -21,28 +21,9 @@ void E2E::sway() {
     const QPointF c = centerOf(i);
     return c.x() >= 1 && c.y() >= 1 && c.x() < w->width() - 1 && c.y() < w->height() - 1;
   };
-  auto ensureVisible = [&](QQuickItem* item) {
-    if (!item) return;
-    for (QQuickItem* p = item->parentItem(); p; p = p->parentItem()) {
-      if (p->inherits("QQuickFlickable")) {
-        const double itemBottom = p->mapFromItem(item, QPointF(0, item->height())).y();
-        const double itemTop = p->mapFromItem(item, QPointF(0, 0)).y();
-        const double viewH = p->height();
-        const double cy = p->property("contentY").toDouble();
-        if (itemBottom > viewH - 20) {
-          p->setProperty("contentY", cy + (itemBottom - viewH + 40));
-          QTest::qWait(200);
-        } else if (itemTop < 20) {
-          p->setProperty("contentY", std::max(0.0, cy + itemTop - 20));
-          QTest::qWait(200);
-        }
-      }
-    }
-  };
   QQuickWindow* cur = win;  // the window the next click lands in (fixture windows replace the Shell for a while)
   auto click = [&](QQuickItem* i, bool dbl = false) -> int {
     if (!i) return -1;
-    ensureVisible(i);
     if (!inWindow(i, cur)) {
       std::printf("E2E-DIAG click target %s '%s' at %.0f,%.0f is outside the %dx%d window\n", i->metaObject()->className(), qPrintable(i->property("label").toString()),
                   centerOf(i).x(), centerOf(i).y(), cur->width(), cur->height());
@@ -366,10 +347,26 @@ void E2E::sway() {
   QVERIFY(total(v) >= 26);
   QTRY_VERIFY_WITH_TIMEOUT(rows(v) == 20, 20000);
   const QString page1 = st("pageText").toString();
-  QCOMPARE(click(byLabel(QStringLiteral("下一页"))), 1);
+  // The 20-row table extends below the output. Scroll the actual page with QMP wheel input, not by writing
+  // Flickable.contentY in every click (that also scrolled ComboBox popups beyond their content bounds).
+  auto pagingButton = [&](const QString& label) -> QQuickItem* {
+    for (int attempt = 0; attempt < 24; ++attempt) {
+      QQuickItem* item = byLabel(label);
+      if (!item) return nullptr;
+      const QRectF rect = item->mapRectToScene(item->boundingRect());
+      if (QRectF(1, 1, cur->width() - 2, cur->height() - 2).contains(rect)) return item;
+      if (rect.left() < 1 || rect.right() >= cur->width() - 1) return nullptr;
+      A.ask(QStringLiteral("wheel"), {{QStringLiteral("x"), cur->width() - 100}, {QStringLiteral("y"), cur->height() / 2},
+                                    {QStringLiteral("down"), rect.top() >= 1}, {QStringLiteral("n"), 3}});
+      QTest::qWait(300);
+    }
+    std::printf("E2E-DIAG paging button '%s' did not enter the viewport after real wheel input\n", qPrintable(label));
+    return nullptr;
+  };
+  QCOMPARE(click(pagingButton(QStringLiteral("下一页"))), 1);
   QTRY_VERIFY_WITH_TIMEOUT(st("pageText").toString() != page1 && rows(v) == total(v) - 20, 20000);
   QVERIFY(byLabel(QStringLiteral("上一页")) != nullptr);
-  QCOMPARE(click(byLabel(QStringLiteral("上一页"))), 1);
+  QCOMPARE(click(pagingButton(QStringLiteral("上一页"))), 1);
   QTRY_VERIFY_WITH_TIMEOUT(rows(v) == 20, 20000);
   report(QStringLiteral("paging"), {{QStringLiteral("total"), total(v)}, {QStringLiteral("page1"), page1}});
 

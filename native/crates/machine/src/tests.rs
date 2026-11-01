@@ -929,6 +929,48 @@ fn r2_4_staging_needs_the_target_releases_own_closure() {
 }
 
 #[test]
+fn o09_release_public_key_plan_keeps_secret_and_admin_guards() {
+    use crate::ops::{Executor, Principal};
+    use serde_json::{json, Value};
+    struct ProbeOnly;
+    impl Executor for ProbeOnly {
+        fn probe(&mut self, _: &str, _: &Value) -> R<(String, i64, Value)> { Ok(("release-keys".into(), 1, json!({}))) }
+        fn dispatch(&mut self, _: &mut Machine, _: &Value) -> R<Value> { panic!("planning must not dispatch") }
+        fn reconcile(&mut self, _: &str, _: &Value, _: &Value) -> Option<bool> { panic!("planning must not reconcile") }
+    }
+    let (mut t, _) = setup();
+    let user = t.m.provision_user(&uuid(), "admin", "admin").unwrap();
+    let mut p = Principal { user_id: user["userId"].as_str().unwrap().into(), session_epoch: 1, admin: true, locked: false };
+    let params = json!({ "step": "trust-key", "keyId": "o09-public", "publicKey": "ab".repeat(32) });
+    let plan = t.m.plan_operation(&mut ProbeOnly, &p, &uuid(), "admin.update", &params).unwrap();
+    assert_eq!(plan["state"], "planned");
+    assert_eq!(plan["params"], params);
+    // Public verification metadata is not a credential. No other secret spelling or action is exempt.
+    for field in ["key", "privateKey", "apiKey", "password", "passphrase", "token", "publicKeyPassword", "keyIdSecret", "PublicKey", "keyID"] {
+        let mut bad = params.clone();
+        bad[field] = json!("must-never-be-stored");
+        assert_eq!(t.m.plan_operation(&mut ProbeOnly, &p, &uuid(), "admin.update", &bad).unwrap_err().code, "INVALID_REQUEST", "{field}");
+    }
+    for (kind, step) in [("network.wifi.connect", "trust-key"), ("admin.update", "activate")] {
+        let mut bad = params.clone();
+        bad["step"] = json!(step);
+        assert_eq!(t.m.plan_operation(&mut ProbeOnly, &p, &uuid(), kind, &bad).unwrap_err().code, "INVALID_REQUEST");
+    }
+    for (field, value) in [("keyId", "../escape"), ("publicKey", "not-hex"), ("publicKey", "")] {
+        let mut bad = params.clone();
+        bad[field] = json!(value);
+        assert_eq!(t.m.plan_operation(&mut ProbeOnly, &p, &uuid(), "admin.update", &bad).unwrap_err().code, "INVALID_REQUEST");
+    }
+    p.admin = false;
+    assert_eq!(t.m.plan_operation(&mut ProbeOnly, &p, &uuid(), "admin.update", &params).unwrap_err().code, "NOT_FOUND_OR_FORBIDDEN");
+    p.admin = true;
+    p.locked = true;
+    assert_eq!(t.m.plan_operation(&mut ProbeOnly, &p, &uuid(), "admin.update", &params).unwrap_err().code, "SESSION_LOCKED");
+    let plans: i64 = t.m.c.query_row("SELECT COUNT(*) FROM machine_operations", [], |r| r.get(0)).unwrap();
+    assert_eq!(plans, 1, "no rejected request is persisted");
+}
+
+#[test]
 fn o09_admin_actions_take_only_confined_validated_params() {
     use crate::admin::argv;
     use serde_json::json;

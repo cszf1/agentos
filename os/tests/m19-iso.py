@@ -197,7 +197,7 @@ def screen_text(m):
         raise RuntimeError(f"OCR command failed: {e.cmd}: {detail}") from e
 
 
-def wait_screen(m, regex, timeout=900):
+def wait_screen(m, regex, timeout=900, failure_regex=None):
     """Log actual OCR changes as they happen, preserving the driver's wall-clock deadline semantics."""
     end, previous = time.monotonic() + timeout, None
     while time.monotonic() < end:
@@ -205,6 +205,8 @@ def wait_screen(m, regex, timeout=900):
         if variants != previous:
             print("OCR", regex, json.dumps(variants, ensure_ascii=False)[:6000], flush=True)
             previous = variants
+        if failure_regex and any(re.search(failure_regex, text) is not None for text in variants):
+            raise AssertionError(f"operator failed while waiting for {regex!r}; OCR: {variants!r}")
         if any(re.search(regex, text) is not None for text in variants):
             return
         if m.process is not None and m.process.poll() is not None:
@@ -263,7 +265,7 @@ def operator_phase(m, user, phase, marker, from_media=False, timeout=1200):
         mount = "udisksctl mount -b /dev/disk/by-label/AOS-CARRY --no-user-interaction && "
         script = f"/run/media/{user}/AOS-CARRY/drill.mjs"
     m.send_chars(f"{mount}{NODE} {script} {phase} {int(time.time() * 1000)}\n", delay=0.03)
-    wait_screen(m, marker, timeout=timeout)
+    wait_screen(m, marker, timeout=timeout, failure_regex=r"(?m)^AOS-DRILL-FAILED\s*$")
     shot(m, "operator-" + user + "-" + phase)
 
 def operator_reboot(m, user, pw):
