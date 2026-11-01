@@ -35,7 +35,8 @@ void E2E::sway() {
     const QPointF c = centerOf(i);
     A.ask(dbl ? QStringLiteral("dblclick") : QStringLiteral("click"), {{QStringLiteral("x"), qRound(c.x())}, {QStringLiteral("y"), qRound(c.y())}});
     QTest::qWait(500);
-    if (sig) QObject::disconnect(i, SIGNAL(clicked()), &cc, SLOT(hit()));
+    // A real click can unload the page and destroy i (Home's "打开" is one such button).
+    // cc is a stack QObject: either endpoint's destruction disconnects automatically. Never touch i after the wait.
     return sig ? cc.n : 1;
   };
   auto keys = [&](const QStringList& k) {
