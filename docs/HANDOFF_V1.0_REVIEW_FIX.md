@@ -16,7 +16,7 @@
 
 - 仓库：https://github.com/cszf1/agentos ，分支 `v1.0`。实际 HEAD 看 Git，最新候选/修复看 PROGRESS，实际验收提交看 Actions 的完整 `headSha`。
 - 验收统计一致：**74 通过 / 15 部分 / 11 未通过**。I06、U05、R11、I08、U04 已恢复；D01/W08/U09 按完整 m5 41253718507 恢复，其他候选没有提前升项。
-- 两轮审查原文：`docs/review/REVIEW_V1.0_EXTERNAL_2026-10-31.md`；逐项状态在 `V1.0_REVIEW_FIXES.md`。PROGRESS/TSV 当前续至决定 109，后续编号按最新尾项递增。
+- 两轮审查原文：`docs/review/REVIEW_V1.0_EXTERNAL_2026-10-31.md`；逐项状态在 `V1.0_REVIEW_FIXES.md`。PROGRESS/TSV 当前续至决定 110，后续编号按最新尾项递增。
 - 第一轮全量 `41220513266@4b1d863` 终态 **23 成功 / 4 失败**：失败 m5、m6-qcow2、m19、m20；其余包括 m18、build-repro、m3/m7 都成功。这不是最终全绿。
 - e2159d6固定SHA的云端Node typecheck/contracts、184pass/4skip、Rust81pass/1ignored（27组/exit0）均通过；决定100候选同计数，另有Qt九套ctest/三种子fuzz/E2E编译通过、决定101另经Qt九套/E2E编译；决定105候选Qt九套/E2E编译及VM helper50项（5+3+7+6+16+2+4+3+4）通过。**不是最终KVM的27项通过**。
 
@@ -60,7 +60,13 @@
 - **候选验证**：缺UI/列表字段的回归先红后绿；Qt6.11.2九套ctest、三种子各2000轮fuzz、E2E编译通过；Rust81pass/1ignored、Node184pass/4skip、typecheck/contracts/slot-vectors通过；助手34项（5+3+7+6+13）、28个Python AST及drill语法/self-test/错误非零通过。不是完整Sway或最终全27通过。
 - **边界**：D07的owner策略不是管理员硬件/PAM图形输入验收，不声称音频等实机功能可用；m19管理员仍走普通用户PAM→gateway→ticket→固定root helper。两条完整KVM须在决定100提交后重跑，统计仍74/15/11。
 
-### 决定109（当前）
+### 决定110（当前）
+
+- 485ab99的m20 41319888309在KVM越过Broker降级/恢复与D11（Shell 1.2s重新可见），止D12 `the draft marker is on disk (grep rc=2)`。旧命令`grep -rq ... 2>/dev/null`把出错（rc2）报成标记在盘，stderr丢弃。日志证实再登录后alice的文档门户于457.849重新启动；grep时FUSE是否已挂上、哪条路径出错未证实。云端容器模型复现root grep -r对未设allow_other的FUSE挂载报EACCES，find -xdev/-prune同样会stat挂载点。
+- D12改为驱动内Python扫描器：root扫三处全部路径并按mountinfo跳过FUSE挂载（不stat），alice扫这些FUSE挂载；rc、报告、stderr全部打印。找到即on disk并列文件；出错或有stderr即scan failed；两边完整干净才通过，并断言跳过与读入一一对应。范围不缩、断言不放宽、产品代码未改。
+- test_m20_disk_scan.py（AST取D12尾段，0000目录+假runuser模拟门户，非真实FUSE）旧驱动8/8红、新驱动8/8绿，已接入CI helper列表；云端helper 13文件72项、AST36、v1doc mismatch[]、git diff --check通过。不是KVM证据：m20须在本提交重跑，m9/m19按决定109重跑，最终同SHA全27仍待，74/15/11不升项。
+
+### 决定109（历史）
 
 - m9 41220513266@4b1d863机器目录丢失分支只停broker.service，path在12ms后把它拉回（job日志4081-4086行），broker停在activating期间删了machine.sqlite；该run通过只靠broker未就绪的时序和`!= active`对activating也成立。现同停path+service，断言ActiveState=inactive且broker.sock消失后才删目录，recover后重新启path，restart||true后断言=inactive，firstboot后由path拉起并wait_for_unit。
 - m19 41314769878@6a3b16f取证4146行`EV-shellStarted=0 0`：`|| echo 0`把命令错误记成0。现以PIPESTATUS回传，只有grep -c无匹配可读成0，非0上游、无值或多值均失败。Shell/Sway/session agent启动不写journal（m20 41314773240控制台journal可证），旧样式永远为0；改由alice在Shell在屏时于tty2用logger记录pgrep bin/agentos-shell计数，取证盘读回并断言shellStarted==1。

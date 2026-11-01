@@ -178,6 +178,79 @@ def as_alice(cmd):
     way = machine.succeed(f"ls {RT} | grep -E '^wayland-[0-9]+$' | head -1").strip()
     return f"runuser -u alice -- env XDG_RUNTIME_DIR={RT} WAYLAND_DISPLAY={way} {cmd}"
 
+# D12's disk scan. grep -r as root fails on FUSE mounts it may not stat (the document portal at $RT/doc after a login
+# gives EACCES, and find -xdev or -prune stats the mountpoint first), and alice cannot read all of $RT (systemd's
+# mode-0000 inaccessible nodes). So root walks every path except the FUSE mounts, naming entries without stat()ing
+# them, and alice walks those mounts. The report says what was found, what failed and what was skipped.
+DISK_SCAN = r"""
+import json, os, sys
+spec = json.loads(sys.argv[1])
+marker, skip = spec["marker"].encode(), set(spec["skip"])
+rep = {"found": [], "errors": [], "skipped": [], "dirs": 0, "files": 0}
+def has_marker(path):
+    keep, tail = len(marker) - 1, b""
+    with open(path, "rb") as f:
+        while chunk := f.read(1 << 20):
+            if marker in tail + chunk:
+                return True
+            tail = (tail + chunk)[-keep:] if keep else b""
+    return False
+todo = list(reversed(spec["roots"]))
+while todo:
+    d = todo.pop()
+    if d in skip:
+        rep["skipped"].append(d); continue
+    try:
+        entries = sorted(os.scandir(d), key=lambda e: e.name)
+    except OSError as x:
+        rep["errors"].append(f"{d}: {x.strerror or x}"); continue
+    rep["dirs"] += 1
+    for e in entries:
+        try:
+            if e.path in skip:
+                rep["skipped"].append(e.path)
+            elif e.is_dir(follow_symlinks=False):
+                todo.append(e.path)
+            elif e.is_file(follow_symlinks=False):
+                rep["files"] += 1
+                if has_marker(e.path):
+                    rep["found"].append(e.path)
+        except OSError as x:
+            rep["errors"].append(f"{e.path}: {x.strerror or x}")
+print(json.dumps(rep))
+sys.exit(0 if rep["found"] else 2 if rep["errors"] else 1)
+"""
+SCAN = "/tmp/agentos-d12-scan"
+
+def fuse_mounts(mountinfo, roots):
+    found = set()
+    for line in mountinfo.splitlines():
+        f = line.split()
+        fstype = f[f.index("-") + 1]
+        target = re.sub(r"\\([0-7]{3})", lambda m: chr(int(m.group(1), 8)), f[4])
+        if (fstype == "fuse" or fstype.startswith("fuse.")) and any(target == r or target.startswith(r + "/") for r in roots):
+            found.add(target)
+    return sorted(found)
+
+def disk_scan(user, roots, skip, marker):
+    """('found' | 'clean' | 'error', report or reason). Only a well-formed report with nothing found, no error and an
+    empty stderr is clean."""
+    cmd = f"python3 {SCAN}.py {shlex.quote(json.dumps({'marker': marker, 'roots': roots, 'skip': skip}))}"
+    if user != "root":
+        cmd = f"runuser -u {user} -- {cmd}"
+    rc, out = machine.execute(f"{cmd} 2>{SCAN}.{user}.err")
+    err = machine.succeed(f"cat {SCAN}.{user}.err")
+    print(f"D12 {user} scan of {roots} (skip {skip}): rc={rc} report={out.strip()} stderr={err.strip()!r}")
+    try:
+        rep = json.loads(out)
+    except ValueError:
+        return "error", f"{user}: no report (rc={rc}, stderr={err.strip()!r})"
+    if rep["found"]:
+        return "found", rep
+    if rc != 1 or rep["errors"] or err.strip():
+        return "error", f"{user}: rc={rc} errors={rep['errors']} stderr={err.strip()!r}"
+    return "clean", rep
+
 def lock():
     machine.succeed(f"loginctl lock-session {sid}")
     machine.wait_until_succeeds(f"loginctl show-session {sid} -p LockedHint | grep -q yes", timeout=60)
@@ -374,5 +447,17 @@ with subtest("the real Shell after the e2e: SIGKILL → visible again within 5 s
     shell_frame("relogin")
     rc, clip = machine.execute(as_alice("wl-paste -n") + " 2>/dev/null")
     assert marker not in clip, clip
-    rc = machine.execute(f"grep -rqaF -D skip '{marker}' /home/alice /var/lib/agentos /run/user/{alice_uid} 2>/dev/null")[0]
-    assert rc == 1, f"the draft marker is on disk (grep rc={rc})"
+    copy_text_to_guest(f"{SCAN}.py", DISK_SCAN)
+    roots = ["/home/alice", "/var/lib/agentos", f"/run/user/{alice_uid}"]
+    fuse = fuse_mounts(machine.succeed("cat /proc/self/mountinfo"), roots)
+    print("D12 FUSE mounts scanned as alice, not root:", fuse)
+    scans = {"root": disk_scan("root", roots, fuse, marker)}
+    if fuse:
+        scans["alice"] = disk_scan("alice", fuse, [], marker)
+    found = {u: r["found"] for u, (v, r) in scans.items() if v == "found"}
+    assert not found, f"the draft marker is on disk: {found}"
+    errors = {u: r for u, (v, r) in scans.items() if v == "error"}
+    assert not errors, f"D12 disk scan failed, so it proves nothing: {errors}"
+    assert all(scans["root"][1]["skipped"].count(m) == 1 for m in fuse), scans["root"]
+    if fuse:
+        assert scans["alice"][1]["dirs"] >= len(fuse), scans["alice"]

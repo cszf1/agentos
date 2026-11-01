@@ -104,6 +104,7 @@ jobs:
           python3 -B os/tests/test_broker_fault.py
           python3 -B os/tests/test_m9_broker_hold.py
           python3 -B os/tests/test_m19_evidence.py
+          python3 -B os/tests/test_m20_disk_scan.py
 
       - name: Build test driver
         if: ${{ !startsWith(matrix.test, 'build-') }}
