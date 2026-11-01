@@ -158,7 +158,7 @@ async function main() {
     admin(["update", "activate", "--update-id", updateId]);
     write(path.join(work, "state.json"), { sourceMachine: before.meta.machineInstallId, workspaceId: imported.workspaceId,
       storeUUID: STORE, records: ids, base: base.releaseId, candidate: candidate.releaseId, updateId, fetched });
-    console.log("AOS-TRIAL-ARMED");
+    console.log("PASS-TRIAL-ARMED");
   } else if (phase === "trial") {
     const state = read(path.join(work, "state.json"));
     assert(fs.readFileSync("/proc/cmdline", "utf8").includes(`agentos.release=${state.candidate}`), "not the candidate boot");
@@ -168,7 +168,7 @@ async function main() {
     assert.notEqual(r.status, 0, "an unhealthy trial was committed");
     assert.match(r.stdout + r.stderr, /health gate failed; default unchanged/);
     write(path.join(work, "trial-refusal.json"), { status: r.status, output: r.stdout, error: r.stderr });
-    console.log("AOS-HEALTH-REFUSED");
+    console.log("PASS-HEALTH-REFUSED");
   } else if (phase === "export") {
     const state = read(path.join(work, "state.json"));
     assert(fs.existsSync(path.join(work, "trial-refusal.json")), "trial was not exercised");
@@ -188,7 +188,7 @@ async function main() {
     fs.copyFileSync(key, path.join(carry, "test-identity.key"));
     fs.cpSync(carry, path.join(media(), "carry"), { recursive: true });
     checked("sync", []);
-    console.log("AOS-EXPORT-VERIFIED");
+    console.log("PASS-EXPORT-VERIFIED");
   } else if (phase === "restore") {
     assert.equal(user, "bea");
     fs.mkdirSync(work, { recursive: true, mode: 0o700 });
@@ -203,7 +203,7 @@ async function main() {
     const ids = await records(w.workspaceId); assert.deepEqual(ids, src.records);
     write(path.join(media(), "restored.json"), { source: src, destination: dest.meta.machineInstallId, workspace: w, records: ids });
     checked("sync", []);
-    console.log("AOS-O09-RESTORED");
+    console.log("PASS-RESTORED");
   } else if (phase === "reboot") {
     admin(["reboot"]);
   } else {
@@ -223,7 +223,7 @@ if (phase === "--self-test") {
   try {
     await main();
   } catch (error) {
-    console.error("AOS-DRILL-FAILED");
+    console.error("FAIL-DRILL-FAILED");
     throw error;
   }
 }

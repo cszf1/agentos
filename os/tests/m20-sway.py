@@ -216,6 +216,8 @@ def handle(n, a):
             return {"count": int(hsql(f"SELECT COUNT(*) FROM records WHERE app_id='{a['appId']}' AND instr(data_json, '{a['text']}') > 0"))}
         if w == "record":
             return {"rows": hsql(f"SELECT data_json FROM records WHERE app_id='{a['appId']}' AND instr(data_json, '{a['text']}') > 0").splitlines()}
+        if w == "background-policy":
+            return {"enabled": int(msql(f"SELECT run_when_logged_out FROM workspaces WHERE workspace_id='{ws}'"))}
         if w == "plan":
             ph = a["planHash"]
             return {"rows": msql(f"SELECT kind || '|' || state || '|' || effect_certainty || '|' || ticket_used FROM machine_operations WHERE plan_hash='{ph}'").splitlines()}
@@ -322,7 +324,10 @@ with subtest("Host database agrees with what the e2e saw (D02, D04, D05, D07, D0
     titles = [json.loads(x)["title"] for x in hsql(f"SELECT data_json FROM records WHERE app_id='{todo}' AND instr(data_json, 'x.example') > 0").splitlines()]
     assert titles == [evil], titles
     print("D07 plan", steps["trusted"]["op"])
-    assert steps["trusted"]["op"]["rows"] and all(r.split("|")[1] != "planned" for r in steps["trusted"]["op"]["rows"]), steps["trusted"]
+    assert steps["trusted"]["op"]["rows"] == ["workspaces.runWhenLoggedOut|succeeded|applied|1"], steps["trusted"]
+    restored = steps["trusted"]["restoredPlan"]
+    assert msql(f"SELECT kind || '|' || state || '|' || effect_certainty || '|' || ticket_used FROM machine_operations WHERE plan_hash='{restored}'") == "workspaces.runWhenLoggedOut|succeeded|applied|1"
+    assert msql(f"SELECT run_when_logged_out FROM workspaces WHERE workspace_id='{ws}'") == "0"
     # the withdrawn (locked) plan was never confirmed: it stays planned or expires, never runs
     stale = steps["trusted"]["stalePlan"]
     st = msql(f"SELECT state || '|' || ticket_used FROM machine_operations WHERE plan_hash='{stale}'")

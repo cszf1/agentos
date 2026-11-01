@@ -16,9 +16,9 @@
 
 - 仓库：https://github.com/cszf1/agentos ，分支 `v1.0`。实际 HEAD 看 Git，最新候选/修复看 PROGRESS，实际验收提交看 Actions 的完整 `headSha`。
 - 验收统计一致：**74 通过 / 15 部分 / 11 未通过**。I06、U05、R11、I08、U04 已恢复；D01/W08/U09 按完整 m5 41253718507 恢复，其他候选没有提前升项。
-- 两轮审查原文：`docs/review/REVIEW_V1.0_EXTERNAL_2026-10-31.md`；逐项状态在 `V1.0_REVIEW_FIXES.md`。PROGRESS/TSV 当前续至决定 99，后续编号按最新尾项递增。
+- 两轮审查原文：`docs/review/REVIEW_V1.0_EXTERNAL_2026-10-31.md`；逐项状态在 `V1.0_REVIEW_FIXES.md`。PROGRESS/TSV 当前续至决定 100，后续编号按最新尾项递增。
 - 第一轮全量 `41220513266@4b1d863` 终态 **23 成功 / 4 失败**：失败 m5、m6-qcow2、m19、m20；其余包括 m18、build-repro、m3/m7 都成功。这不是最终全绿。
-- 云端 Node 基线：typecheck/contracts:check、184 passed、4 skipped；85c9575 的 Rust 基线79 passed/1 ignored，决定99候选完整 Rust81 passed/1 ignored（27组、exit0）。最新云端 VM helper32项通过（5+3+7+6+11），**不是最终 KVM 的27项通过**。
+- e2159d6固定SHA的云端Node typecheck/contracts、184pass/4skip、Rust81pass/1ignored（27组/exit0）均通过；决定100候选同计数，另有Qt九套ctest/三种子fuzz/E2E编译通过、VM helper34项（5+3+7+6+13）。**不是最终KVM的27项通过**。
 
 ### b7c16fb 的最近四项调试基线
 
@@ -45,13 +45,20 @@
 | m19-iso | 41266847934 | 65a8c39 | 失败：多变体 OCR 完整通过控制台首次设置并进入 ReGreet 图形界面；等待正则设为 Login，但 ReGreet 界面大字标题实际为 Welcome back!，导致超时 |
 | m20-sway | 41266853527 | 65a8c39 | 失败：CRUD全部、目标选择、优先级、版本切换及代码注入全部通过；在分页测试步骤，下一页按钮因20条记录表格垂直展开位于 y=1122 处于 800 高度窗口外，click 被拦截 |
 
-### 最新失败与决定99候选（6852b1c 的两项均已失败，不再标进行中）
+### 6852b1c 失败与决定99（历史，已推e2159d6）
 
 - **m19 `41272160495@6852b1c396f4b5b7e3a032072e7ea4b540f00c02`**：ISO/首次设置/ReGreet/Shell/正常管理员tty/v0.4导入均已越过；停在 `admin update trust-key`，gateway和machined的秘密字段过滤误拒绝公开的keyId/publicKey。新回归在两层旧代码上分别复现同一INVALID_REQUEST。候选共享精确的 `admin.update + step=trust-key + keyId/publicKey` 例外，固定argv的格式验证和PAM/ticket/角色/锁屏防线不变；私钥、provider key、大小写/后缀变体、错误动作/步骤仍拒绝。完整Rust81pass/1ignored，助手32pass；完整KVM尚待。
 - **m20 `41272167100@6852b1c`**：275行choose目标应用失败，是全局ensureVisible引入的新回归；它会修改弹窗ListView的contentY且未钳位上限。候选移除通用滚动，恢复此前点击行为，只在20行分页步骤通过真实QMP wheel将按钮完整滚入输出，再检查真实点击与页/行数变化，不放宽原断言。完整KVM尚待。
 - **m19快速失败取证**：操作者脚本遇错输出 `AOS-DRILL-FAILED` 后继续抛出原错，屏幕等待优先判失败，避免静态错误后空等1200秒；新增2项真实helper测试覆盖立即失败及失败优先于其他OCR变体的成功。
 - **m6 `41258546486@85c9575` 完整成功**：两个同模板克隆、独立新卷钥、模板旧钥拒绝、克隆2持久化重加密中的断电续作、正常重启身份保持均已走完。不得回退完整握手/持久化切电条件，最终 all 再回归。
 - **m5 `41253718507@b7c16fb` 完整成功**：真实鼠标聚焦后的 Shell 快捷键、锁/解锁、注销/再登录、四时刻权限/执行主体、diagnostics-only 等健康负面均通过。D01/W08/U09 已恢复；只在最终固定 SHA 全量再回归。
+
+### 最新 e2159d6891b486e8c75d947e79cebbba8930fbe7 终态与决定100候选
+
+- **m19 `41277703466` 失败**：公钥登记、adopt-base、候选verify/fetch/activate全部完成；真实失败PNG显示 `AOS-TRIAL-ARMED`，六种OCR却一致读成 `ADS-TRIAL-ARMED`。尚未进行候选重启/健康拒绝/回退。现同步更换发送端和等待端为固定 `PASS-…` 消息（失败为 `FAIL-DRILL-FAILED`），转义后整行匹配；不接受旧误读、错误阶段或子串/后缀，不降低操作断言。
+- **m20 `41277705633` 失败**：目标选择、刷新保持、版本/注入、真实滚轮分页26条、组件与非法树拒绝、列表滚动/预算均已通过，停在509行查找不存在的“静音”。真实machined不公布音频能力，UI不可模拟成功。决定100新增已有owner-only后台策略的正式工作区按钮与只读策略字段，同步TS/C++固定目录/93动作向量、真实plan.kind标题；D07改用该固定机器动作，必须成功收据/applied/ticket消费、锁屏撤回不消费，再确认恢复默认false。
+- **候选验证**：缺UI/列表字段的回归先红后绿；Qt6.11.2九套ctest、三种子各2000轮fuzz、E2E编译通过；Rust81pass/1ignored、Node184pass/4skip、typecheck/contracts/slot-vectors通过；助手34项（5+3+7+6+13）、28个Python AST及drill语法/self-test/错误非零通过。不是完整Sway或最终全27通过。
+- **边界**：D07的owner策略不是管理员硬件/PAM图形输入验收，不声称音频等实机功能可用；m19管理员仍走普通用户PAM→gateway→ticket→固定root helper。两条完整KVM须在决定100提交后重跑，统计仍74/15/11。
 
 ### 已有有效证据与边界
 

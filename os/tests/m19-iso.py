@@ -265,7 +265,8 @@ def operator_phase(m, user, phase, marker, from_media=False, timeout=1200):
         mount = "udisksctl mount -b /dev/disk/by-label/AOS-CARRY --no-user-interaction && "
         script = f"/run/media/{user}/AOS-CARRY/drill.mjs"
     m.send_chars(f"{mount}{NODE} {script} {phase} {int(time.time() * 1000)}\n", delay=0.03)
-    wait_screen(m, marker, timeout=timeout, failure_regex=r"(?m)^AOS-DRILL-FAILED\s*$")
+    # Dictionary-word sentinels avoid the acronym AOS being consistently OCR-read as ADS. Require the whole line.
+    wait_screen(m, rf"(?m)^{re.escape(marker)}\s*$", timeout=timeout, failure_regex=r"(?m)^FAIL-DRILL-FAILED\s*$")
     shot(m, "operator-" + user + "-" + phase)
 
 def operator_reboot(m, user, pw):
@@ -314,11 +315,11 @@ with subtest("the installed disk alone: first unlock, first-boot administrator o
     assert done, [hexc(px(img2, 18, (x[0] + x[1]) // 2)) for x in b2]
     time.sleep(10)                                              # let the Shell's requests land in the journal
     operator_login(target, "alice", "alice-pw-1")
-    operator_phase(target, "alice", "source", "AOS-TRIAL-ARMED", from_media=True, timeout=1800)
+    operator_phase(target, "alice", "source", "PASS-TRIAL-ARMED", from_media=True, timeout=1800)
     operator_reboot(target, "alice", "alice-pw-1")
-    operator_phase(target, "alice", "trial", "AOS-HEALTH-REFUSED")
+    operator_phase(target, "alice", "trial", "PASS-HEALTH-REFUSED")
     operator_reboot(target, "alice", "alice-pw-1")
-    operator_phase(target, "alice", "export", "AOS-EXPORT-VERIFIED", from_media=True)
+    operator_phase(target, "alice", "export", "PASS-EXPORT-VERIFIED", from_media=True)
     target.send_monitor_command("system_powerdown")             # the power button: logind powers off
     if not powered_off(target, 300):
         print("no ACPI power-off within 300 s; cutting power")
@@ -393,7 +394,7 @@ with subtest("O09 continuation: the SAME release ISO installs a second machine; 
     keyed(dest, "B\n")
     wait_screen(dest, r"(?i)(Welcome back|Login)", timeout=600)
     operator_login(dest, "bea", "bea-pw-2")
-    operator_phase(dest, "bea", "restore", "AOS-O09-RESTORED", from_media=True)
+    operator_phase(dest, "bea", "restore", "PASS-RESTORED", from_media=True)
     dest.send_monitor_command("system_powerdown")
     assert powered_off(dest, 300), "the destination did not power off"
     # The carrier is unmounted and both writers are off before the driver reads its final evidence.

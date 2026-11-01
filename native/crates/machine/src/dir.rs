@@ -663,12 +663,12 @@ impl Machine {
 
     pub fn list_visible(&self, user_id: &str) -> R<Vec<Value>> {
         let mut st = self.c.prepare(
-            "SELECT w.workspace_id, w.display_name, w.state, m.role, m.member_version, w.store_uuid FROM workspaces w JOIN workspace_members m ON m.workspace_id = w.workspace_id JOIN users u ON u.user_id = m.user_id WHERE m.user_id = ?1 AND m.state = 'active' AND u.state = 'active' AND w.state NOT IN ('creating','deleted') ORDER BY w.created_at",
+            "SELECT w.workspace_id, w.display_name, w.state, m.role, m.member_version, w.store_uuid, w.run_when_logged_out FROM workspaces w JOIN workspace_members m ON m.workspace_id = w.workspace_id JOIN users u ON u.user_id = m.user_id WHERE m.user_id = ?1 AND m.state = 'active' AND u.state = 'active' AND w.state NOT IN ('creating','deleted') ORDER BY w.created_at",
         )?;
         let v = st
             .query_map([user_id], |r| {
                 Ok(json!({ "workspaceId": r.get::<_, String>(0)?, "displayName": r.get::<_, String>(1)?, "state": r.get::<_, String>(2)?,
-                    "role": r.get::<_, String>(3)?, "memberVersion": r.get::<_, i64>(4)?, "storeUUID": r.get::<_, String>(5)? }))
+                    "role": r.get::<_, String>(3)?, "memberVersion": r.get::<_, i64>(4)?, "storeUUID": r.get::<_, String>(5)?, "runWhenLoggedOut": r.get::<_, i64>(6)? == 1 }))
             })?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(v)

@@ -32,6 +32,14 @@ def helpers(clock):
     return scope["wait_screen"], scope["keyed"], scope["wait_console"]
 
 
+def operator_function(waiter):
+    source = Path(__file__).with_name("m19-iso.py")
+    fn = next(x for x in ast.parse(source.read_text()).body if isinstance(x, ast.FunctionDef) and x.name == "operator_phase")
+    scope = {"NODE": "node", "time": SimpleNamespace(time=lambda: 1), "wait_screen": waiter, "re": re, "shot": lambda *_: None}
+    exec(compile(ast.Module(body=[fn], type_ignores=[]), str(source), "exec"), scope)
+    return scope["operator_phase"]
+
+
 def ocr_function(runner):
     source = Path(__file__).with_name("m19-iso.py")
     fn = next(x for x in ast.parse(source.read_text()).body if isinstance(x, ast.FunctionDef) and x.name == "screen_text")
@@ -47,6 +55,9 @@ class Screen:
     def __init__(self, clock, variants, cost=0):
         self.clock, self.variants, self.cost = clock, variants, cost
         self.calls = 0
+
+    def send_chars(self, text, delay):
+        self.command = text
 
     def get_screen_text_variants(self):
         self.calls += 1
@@ -64,18 +75,35 @@ class ScreenWaitTest(unittest.TestCase):
 
     def test_operator_error_fails_immediately_instead_of_waiting_twenty_minutes(self):
         clock = Clock()
-        screen = Screen(clock, ["AssertionError\nAOS-DRILL-FAILED\nstack trace"], cost=4)
-        with contextlib.redirect_stdout(io.StringIO()), self.assertRaisesRegex(AssertionError, "operator failed.*AOS-TRIAL-ARMED"):
-            helpers(clock)[0](screen, "AOS-TRIAL-ARMED", timeout=1200, failure_regex=r"(?m)^AOS-DRILL-FAILED\s*$")
+        screen = Screen(clock, ["AssertionError\nFAIL-DRILL-FAILED\nstack trace"], cost=4)
+        with contextlib.redirect_stdout(io.StringIO()), self.assertRaisesRegex(AssertionError, "operator failed.*PASS-TRIAL-ARMED"):
+            helpers(clock)[0](screen, "PASS-TRIAL-ARMED", timeout=1200, failure_regex=r"(?m)^FAIL-DRILL-FAILED\s*$")
         self.assertEqual(screen.calls, 1)
         self.assertEqual(clock.now, 4)
 
     def test_operator_error_beats_a_success_match_in_another_ocr_variant(self):
         clock = Clock()
-        screen = Screen(clock, ["AOS-TRIAL-ARMED", "AOS-DRILL-FAILED"])
+        screen = Screen(clock, ["PASS-TRIAL-ARMED", "FAIL-DRILL-FAILED"])
         with contextlib.redirect_stdout(io.StringIO()), self.assertRaisesRegex(AssertionError, "operator failed"):
-            helpers(clock)[0](screen, "AOS-TRIAL-ARMED", timeout=5, failure_regex=r"(?m)^AOS-DRILL-FAILED\s*$")
+            helpers(clock)[0](screen, "PASS-TRIAL-ARMED", timeout=5, failure_regex=r"(?m)^FAIL-DRILL-FAILED\s*$")
         self.assertEqual(screen.calls, 1)
+
+    def test_operator_accepts_the_exact_new_success_line(self):
+        clock = Clock()
+        screen = Screen(clock, ["console output\nPASS-TRIAL-ARMED\n"])
+        with contextlib.redirect_stdout(io.StringIO()):
+            operator_function(helpers(clock)[0])(screen, "alice", "source", "PASS-TRIAL-ARMED", timeout=3)
+        self.assertEqual(screen.calls, 1)
+        self.assertIn("source", screen.command)
+        self.assertNotIn("PASS-TRIAL-ARMED", screen.command)  # echoed argv cannot masquerade as a completion line
+
+    def test_operator_rejects_old_misread_prefix_wrong_phase_and_marker_substrings(self):
+        for output in ["ADS-TRIAL-ARMED", "AOS-TRIAL-ARMED", "PASS-HEALTH-REFUSED", "echo PASS-TRIAL-ARMED", "PASS-TRIAL-ARMED-NOT-DONE"]:
+            with self.subTest(output=output):
+                clock = Clock()
+                with contextlib.redirect_stdout(io.StringIO()), self.assertRaisesRegex(AssertionError, "did not show"):
+                    operator_function(helpers(clock)[0])(Screen(clock, [output]), "alice", "source", "PASS-TRIAL-ARMED", timeout=3)
+                self.assertEqual(clock.now, 3)
 
     def test_expensive_ocr_counts_against_the_deadline(self):
         clock = Clock()

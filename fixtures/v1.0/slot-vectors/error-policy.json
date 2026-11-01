@@ -458,7 +458,8 @@
   "session.lock",
   "session.logout",
   "power.reboot",
-  "power.shutdown"
+  "power.shutdown",
+  "workspaces.runWhenLoggedOut"
  ],
  "displayRevertSeconds": 15,
  "finalStates": [

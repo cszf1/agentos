@@ -23,7 +23,7 @@ const native = (methodId: NativeRouteId, params: Record<string, unknown> = {}, b
   return { methodId, params, body, write: WRITE_ROUTES.has(methodId) };
 };
 
-/** Hardware/session controls (spec §12.1); each goes through machine.actions.plan, never a direct D-Bus call. */
+/** Hardware/session and owner policy controls (§12.1/§9.3); fixed machine plans, never direct D-Bus calls. */
 export const HARDWARE_ACTIONS = [
   "network.wifi.connect",
   "network.wifi.disconnect",
@@ -39,6 +39,7 @@ export const HARDWARE_ACTIONS = [
   "session.logout",
   "power.reboot",
   "power.shutdown",
+  "workspaces.runWhenLoggedOut",
 ] as const;
 export const DISPLAY_REVERT_SECONDS = 15;
 

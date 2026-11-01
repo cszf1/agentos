@@ -27,6 +27,8 @@ static void captureQml(QtMsgType t, const QMessageLogContext& c, const QString& 
 struct Backend {
   std::atomic<int> sessionEpoch{1};
   std::atomic<bool> locked{false};
+  std::atomic<bool> backgroundEnabled{false}, workspaceOwner{true};
+  bool plannedBackground = false;
   std::atomic<bool> hostDown{false}, modelDown{false}, brokerDown{false}, planStale{false}, holdQueries{false}, holdRecordLists{false};
   JValue kanban = loadFixture(QStringLiteral("v1.0/slot-vectors/scenario-v2-kanban.json"));
   JValue console = loadFixture(QStringLiteral("v1.0/slot-vectors/scenario-v3-system-console.json"));
@@ -63,7 +65,7 @@ struct Backend {
     if (m == QLatin1String("session.bind") || m == QLatin1String("session.status"))
       return JValue::object({{QStringLiteral("userId"), QStringLiteral("u-alice")}, {QStringLiteral("userName"), QStringLiteral("alice")}, {QStringLiteral("role"), QStringLiteral("owner")}, {QStringLiteral("sessionEpoch"), double(sessionEpoch.load())}, {QStringLiteral("locked"), locked.load()}});
     if (m == QLatin1String("workspaces.list"))
-      return JValue::object({{QStringLiteral("items"), JValue::array({JValue::object({{QStringLiteral("workspaceId"), WS_A}, {QStringLiteral("displayName"), QString::fromUtf8("家庭")}, {QStringLiteral("state"), QStringLiteral("running")}}),
+      return JValue::object({{QStringLiteral("items"), JValue::array({JValue::object({{QStringLiteral("workspaceId"), WS_A}, {QStringLiteral("displayName"), QString::fromUtf8("家庭")}, {QStringLiteral("state"), QStringLiteral("running")}, {QStringLiteral("role"), workspaceOwner ? QStringLiteral("owner") : QStringLiteral("editor")}, {QStringLiteral("runWhenLoggedOut"), backgroundEnabled.load()}}),
                                                                       JValue::object({{QStringLiteral("workspaceId"), WS_B}, {QStringLiteral("displayName"), QString::fromUtf8("工作")}, {QStringLiteral("state"), QStringLiteral("running")}})})}});
     if (m == QLatin1String("workspaces.attach"))
       return JValue::object({{QStringLiteral("workspaceId"), p.get(QStringLiteral("workspaceId"))}, {QStringLiteral("clientEpoch"), 2}, {QStringLiteral("storeUUID"), QStringLiteral("store-") + p.get(QStringLiteral("workspaceId")).str().left(4)}, {QStringLiteral("cursor"), 10}});
@@ -83,10 +85,21 @@ struct Backend {
                                  {QStringLiteral("time"), JValue::object({{QStringLiteral("available"), false}})},
                                  {QStringLiteral("power"), JValue::object({{QStringLiteral("available"), true}})},
                                  {QStringLiteral("session"), JValue::object({{QStringLiteral("available"), true}})}})}});
-    if (m == QLatin1String("machine.actions.plan"))
+    if (m == QLatin1String("machine.actions.plan")) {
+      plannedBackground = b.get(QStringLiteral("params")).get(QStringLiteral("enabled")).toBool();
+      if (lastKind == QLatin1String("workspaces.runWhenLoggedOut"))
+        return JValue::object({{QStringLiteral("operationId"), QStringLiteral("op-1")}, {QStringLiteral("planHash"), QStringLiteral("sha256:") + QString(64, QLatin1Char('2'))},
+                               {QStringLiteral("state"), QStringLiteral("planned")}, {QStringLiteral("kind"), lastKind}, {QStringLiteral("admin"), false},
+                               {QStringLiteral("resourceId"), QStringLiteral("workspace:") + WS_A + QStringLiteral(":runWhenLoggedOut")}, {QStringLiteral("resourceGeneration"), 1},
+                               {QStringLiteral("impact"), b.get(QStringLiteral("params"))}});
       return JValue::object({{QStringLiteral("operationId"), QStringLiteral("op-1")}, {QStringLiteral("planHash"), QStringLiteral("sha256:") + QString(64, QLatin1Char('2'))}, {QStringLiteral("state"), QStringLiteral("planned")}, {QStringLiteral("ticket"), QStringLiteral("ticket-1")},
                              {QStringLiteral("actionKind"), b.get(QStringLiteral("actionKind"))}, {QStringLiteral("summary"), JValue::object({{QStringLiteral("resource"), b.get(QStringLiteral("actionKind"))}, {QStringLiteral("version"), QStringLiteral("generation 7")}, {QStringLiteral("effect"), b.get(QStringLiteral("params")).stringify()}})}});
-    if (m == QLatin1String("machine.actions.confirm")) return planStale ? err(QStringLiteral("PLAN_STALE")) : JValue::object({{QStringLiteral("operationId"), QStringLiteral("op-1")}, {QStringLiteral("state"), QStringLiteral("dispatching")}});
+    }
+    if (m == QLatin1String("machine.actions.confirm")) {
+      if (planStale) return err(QStringLiteral("PLAN_STALE"));
+      if (lastKind == QLatin1String("workspaces.runWhenLoggedOut")) backgroundEnabled = plannedBackground;
+      return JValue::object({{QStringLiteral("operationId"), QStringLiteral("op-1")}, {QStringLiteral("state"), QStringLiteral("dispatching")}});
+    }
     if (m == QLatin1String("machine.actions.get"))
       return JValue::object({{QStringLiteral("operationId"), QStringLiteral("op-1")}, {QStringLiteral("state"), QStringLiteral("succeeded")}, {QStringLiteral("actionKind"), lastKind}, {QStringLiteral("previous"), JValue::object({{QStringLiteral("output"), QStringLiteral("Virtual-1")}, {QStringLiteral("mode"), QStringLiteral("1280x800")}, {QStringLiteral("scale"), 1}})}});
     if (m == QLatin1String("machine.actions.cancel")) return JValue::object({{QStringLiteral("state"), QStringLiteral("cancelled")}});
@@ -347,6 +360,45 @@ class FlowsTest : public QObject {
     QTRY_COMPARE(h.actionState(QStringLiteral("machine.confirm")), QStringLiteral("failed"));
     QTest::qWait(300);
     QCOMPARE(h.sent(QStringLiteral("machine.actions.plan")).size(), plansBefore + 1);
+  }
+
+  void backgroundPolicyUsesTheRealOwnerActionAndTrustedLayer() {
+    Harness h;
+    QVERIFY(h.up());
+    h.click(QStringLiteral("nav:workspaces"));
+    QTRY_VERIFY(h.find(QStringLiteral("backgroundPolicy")));
+    QQuickItem* policy = h.find(QStringLiteral("backgroundPolicy"));
+    QVERIFY(reallyVisible(policy));
+    QVERIFY(policy->isEnabled());
+    QCOMPARE(policy->property("label").toString(), QStringLiteral("允许注销后运行"));
+    h.click(QStringLiteral("backgroundPolicy"));
+    QTRY_VERIFY(h.shell->confirm().value(QStringLiteral("visible")).toBool());
+    QCOMPARE(h.shell->confirm().value(QStringLiteral("title")).toString(), QStringLiteral("workspaces.runWhenLoggedOut"));
+    QCOMPARE(h.shell->confirm().value(QStringLiteral("version")).toString(), QStringLiteral("1"));
+    const JValue sent = h.sent(QStringLiteral("machine.actions.plan")).last().get(QStringLiteral("body"));
+    QCOMPARE(sent.get(QStringLiteral("actionKind")).str(), QStringLiteral("workspaces.runWhenLoggedOut"));
+    QCOMPARE(sent.get(QStringLiteral("params")).get(QStringLiteral("workspaceId")).str(), WS_A);
+    QVERIFY(sent.get(QStringLiteral("params")).get(QStringLiteral("enabled")).toBool());
+    QVERIFY(!h.be.backgroundEnabled);
+    h.click(QStringLiteral("confirmAccept"));
+    QTRY_COMPARE(h.actionState(QStringLiteral("machine.confirm")), QStringLiteral("reconciled"));
+    QTRY_VERIFY(h.find(QStringLiteral("backgroundPolicy")) && h.find(QStringLiteral("backgroundPolicy"))->property("label").toString() == QStringLiteral("停用后台运行"));
+    QVERIFY(h.be.backgroundEnabled);
+    h.be.workspaceOwner = false;
+    h.shell->refreshPage();
+    QTRY_VERIFY(h.find(QStringLiteral("backgroundPolicy")) && !h.find(QStringLiteral("backgroundPolicy"))->isEnabled());
+    h.be.workspaceOwner = true;
+    h.shell->refreshPage();
+    QTRY_VERIFY(h.find(QStringLiteral("backgroundPolicy")) && h.find(QStringLiteral("backgroundPolicy"))->isEnabled());
+    h.click(QStringLiteral("backgroundPolicy"));
+    QTRY_VERIFY(h.shell->confirm().value(QStringLiteral("visible")).toBool());
+    const int n = h.sent(QStringLiteral("machine.actions.confirm")).size();
+    h.shell->onLocked();
+    QVERIFY(!h.shell->confirm().value(QStringLiteral("visible")).toBool());
+    h.shell->confirmAccept();
+    QTest::qWait(200);
+    QCOMPARE(h.sent(QStringLiteral("machine.actions.confirm")).size(), n);
+    QVERIFY(h.be.backgroundEnabled);
   }
 
   void wifiKeyTravelsOnlyInTheSecretFieldOfOnePlan() {

@@ -884,7 +884,7 @@ void ShellController::showPlan(const QString& kind, const JValue& plan, std::fun
   QString perm = pick({"permissionChange", "grantChange", "permissions"});
   confirm_ = {{QStringLiteral("visible"), true},
               {QStringLiteral("kind"), kind},
-              {QStringLiteral("title"), pick({"title", "label", "actionKind", "handlerId"})},
+              {QStringLiteral("title"), pick({"title", "label", "actionKind", "kind", "handlerId"})},
               {QStringLiteral("user"), userName_ + QStringLiteral("（") + role_ + QStringLiteral("）")},
               {QStringLiteral("workspace"), wsName_.isEmpty() ? S("机器") : wsName_},
               {QStringLiteral("resource"), pick({"resource", "resourceId", "resourceIds", "target"})},

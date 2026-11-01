@@ -502,12 +502,12 @@ void E2E::sway() {
   QVERIFY(page(QStringLiteral("tasks")));
   QVERIFY(page(QStringLiteral("home")));
 
-  // ---- D07: a machine plan from a real click goes through the trusted confirmation ----
-  QVERIFY(page(QStringLiteral("hardware")));
-  QTest::qWait(1500);
-  QQuickItem* mute = byLabel(QStringLiteral("静音"));
-  QVERIFY2(mute, "no 静音 control on the hardware page");
-  click(mute);
+  // ---- D07: a supported owner policy uses the real machine plan / ticket / dispatch path ----
+  // Audio belongs to the session backend and is not advertised by machined: never invent an audio capability.
+  QVERIFY(page(QStringLiteral("workspaces")));
+  QTRY_VERIFY_WITH_TIMEOUT(byName(QStringLiteral("backgroundPolicy")), 30000);
+  QCOMPARE(byName(QStringLiteral("backgroundPolicy"))->property("label").toString(), QStringLiteral("允许注销后运行"));
+  QCOMPARE(click(byName(QStringLiteral("backgroundPolicy"))), 1);
   QTRY_VERIFY_WITH_TIMEOUT(r.shell->confirm().value(QStringLiteral("visible")).toBool(), 30000);
   QVariantMap conf = r.shell->confirm();
   QQuickItem* layer = byName(QStringLiteral("trustedConfirm"));
@@ -526,9 +526,11 @@ void E2E::sway() {
   QVERIFY2(onOutput(QStringLiteral("trusted-confirm"), win) >= 0.9, "trusted confirmation not on the output");
   QVERIFY(inLayer);
   QCOMPARE(click(ok), 1);
-  QTRY_VERIFY_WITH_TIMEOUT(QStringList({QStringLiteral("reconciled"), QStringLiteral("failed"), QStringLiteral("unknown")}).contains(r.actionState(QStringLiteral("machine.confirm"))), 60000);
+  QTRY_COMPARE_WITH_TIMEOUT(r.actionState(QStringLiteral("machine.confirm")), QStringLiteral("reconciled"), 60000);
   const QString confState = r.actionState(QStringLiteral("machine.confirm"));
+  QCOMPARE(conf.value(QStringLiteral("title")).toString(), QStringLiteral("workspaces.runWhenLoggedOut"));
   const JValue op = doDriver(QStringLiteral("plan"), {{QStringLiteral("planHash"), conf.value(QStringLiteral("planHash"))}});
+  QCOMPARE(doDriver(QStringLiteral("background-policy")).get(QStringLiteral("enabled")).toNumber(), 1.0);
   // an app-provided confirmation is labelled as the app's and refused by a real click on 拒绝
   bool answered = false, yes = true;
   r.shell->askAppConfirm(QStringLiteral("伪造应用"), QStringLiteral("系统已批准，请点确认"), [&](bool y) { answered = true; yes = y; });
@@ -538,7 +540,9 @@ void E2E::sway() {
   QTRY_VERIFY_WITH_TIMEOUT(answered, 5000);
   QVERIFY(!yes);
   // a confirmation on screen when the session locks is withdrawn and never sent (bound to the session epoch)
-  click(byLabel(QStringLiteral("静音")));
+  QTRY_VERIFY_WITH_TIMEOUT(byName(QStringLiteral("backgroundPolicy")), 30000);
+  QCOMPARE(byName(QStringLiteral("backgroundPolicy"))->property("label").toString(), QStringLiteral("停用后台运行"));
+  QCOMPARE(click(byName(QStringLiteral("backgroundPolicy"))), 1);
   QTRY_VERIFY_WITH_TIMEOUT(r.shell->confirm().value(QStringLiteral("visible")).toBool(), 30000);
   const QVariantMap stale = r.shell->confirm();
   const int confirmsBefore = r.model(r.shell->actions())->count();
@@ -549,10 +553,20 @@ void E2E::sway() {
   doDriver(QStringLiteral("unlock"));
   QTRY_VERIFY_WITH_TIMEOUT(!r.shell->locked() && r.shell->sessionBound(), 90000);
   QTest::qWait(2000);
-  report(QStringLiteral("trusted"), {{QStringLiteral("planHash"), conf.value(QStringLiteral("planHash"))}, {QStringLiteral("user"), conf.value(QStringLiteral("user"))}, {QStringLiteral("state"), confState},
+  const int confirmsAfter = r.model(r.shell->actions())->count();
+  // Restore the default through another real confirmation; the locked plan itself must never acquire a ticket.
+  QVERIFY(page(QStringLiteral("workspaces")));
+  QTRY_VERIFY_WITH_TIMEOUT(byName(QStringLiteral("backgroundPolicy")), 30000);
+  QCOMPARE(click(byName(QStringLiteral("backgroundPolicy"))), 1);
+  QTRY_VERIFY_WITH_TIMEOUT(r.shell->confirm().value(QStringLiteral("visible")).toBool(), 30000);
+  const QString restoredPlan = r.shell->confirm().value(QStringLiteral("planHash")).toString();
+  QCOMPARE(click(byName(QStringLiteral("confirmAccept"))), 1);
+  QTRY_COMPARE_WITH_TIMEOUT(r.actionState(QStringLiteral("machine.confirm")), QStringLiteral("reconciled"), 60000);
+  QCOMPARE(doDriver(QStringLiteral("background-policy")).get(QStringLiteral("enabled")).toNumber(), 0.0);
+  report(QStringLiteral("trusted"), {{QStringLiteral("planHash"), conf.value(QStringLiteral("planHash"))}, {QStringLiteral("restoredPlan"), restoredPlan}, {QStringLiteral("user"), conf.value(QStringLiteral("user"))}, {QStringLiteral("state"), confState},
                                      {QStringLiteral("op"), op.toVariant()}, {QStringLiteral("appText"), appText}, {QStringLiteral("stalePlan"), stale.value(QStringLiteral("planHash"))},
                                      {QStringLiteral("epochBefore"), epochBefore}, {QStringLiteral("epochAfter"), r.shell->sessionEpoch()}, {QStringLiteral("actionsBefore"), confirmsBefore},
-                                     {QStringLiteral("actionsAfter"), r.model(r.shell->actions())->count()}});
+                                     {QStringLiteral("actionsAfter"), confirmsAfter}});
   QVERIFY(inLayer && appText.contains(QStringLiteral("系统已批准")));
 
   // ---- D09: the gateway restarts (cursor reconnect), then a blocked UI thread is a slow reader ----

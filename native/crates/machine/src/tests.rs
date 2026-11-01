@@ -277,9 +277,11 @@ fn w08_run_when_logged_out_default_off_owner_only_and_machine_quota() {
     let (mut t, w) = setup();
     let (a, b) = (&w[0], &w[1]);
     assert_eq!(t.m.ws_row(&a.0).unwrap()["runWhenLoggedOut"], serde_json::json!(false));
+    assert_eq!(t.m.list_visible(&a.1).unwrap()[0]["runWhenLoggedOut"], serde_json::json!(false));
     // a non-member (and so any non-owner) cannot turn it on; the answer does not reveal the workspace
     assert!(t.m.set_run_when_logged_out(&b.1, &a.0, true).is_err());
     t.m.set_run_when_logged_out(&a.1, &a.0, true).unwrap();
+    assert_eq!(t.m.list_visible(&a.1).unwrap()[0]["runWhenLoggedOut"], serde_json::json!(true));
     t.m.set_run_when_logged_out(&b.1, &b.0, true).unwrap();
     let c = t.m.create_workspace(&uuid(), &a.1, "third", None, "created").unwrap();
     let c = c["workspaceId"].as_str().unwrap().to_string();

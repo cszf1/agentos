@@ -4859,6 +4859,22 @@
     },
     "write": true
    }
+  },
+  {
+   "name": "machine.plan",
+   "args": {
+    "actionKind": "workspaces.runWhenLoggedOut",
+    "params": {}
+   },
+   "request": {
+    "methodId": "machine.actions.plan",
+    "params": {},
+    "body": {
+     "actionKind": "workspaces.runWhenLoggedOut",
+     "params": {}
+    },
+    "write": true
+   }
   }
  ],
  "rejected": {

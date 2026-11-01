@@ -4,6 +4,12 @@ PageFrame {
     Row { spacing: 8
         AField { id: wsName; label: "新工作区名称"; placeholderText: "新工作区名称"; width: 220 * shell.uiScale }
         AButton { label: "创建工作区"; enabled: wsName.text !== ""; onClicked: shell.act("workspaces.create", { displayName: wsName.text }, "创建工作区 " + wsName.text) } }
+    // Owner-only background policy: a real machine plan, never a model action or a simulated hardware control.
+    Repeater { model: shell.workspaces
+        delegate: Row { visible: row.workspaceId === shell.workspaceId; spacing: 8
+            PText { text: row.runWhenLoggedOut ? "当前工作区：注销后可继续已有授权任务" : "当前工作区：注销后暂停（默认）" }
+            AButton { objectName: "backgroundPolicy"; label: row.runWhenLoggedOut ? "停用后台运行" : "允许注销后运行"; enabled: row.role === "owner"
+                      onClicked: shell.hardware("workspaces.runWhenLoggedOut", { workspaceId: row.workspaceId, enabled: !row.runWhenLoggedOut }) } } }
     Repeater { model: shell.workspaces
         delegate: Row { spacing: 8
             PText { width: 220 * shell.uiScale; text: (row.displayName || row.workspaceId) + (row.workspaceId === shell.workspaceId ? "（当前）" : ""); elide: Text.ElideRight; maximumLineCount: 1 }
