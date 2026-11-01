@@ -98,6 +98,7 @@ jobs:
           python3 -B os/tests/test_scope_counter.py
           python3 -B os/tests/test_screen_wait.py
           python3 -B os/tests/test_failed_click.py
+          python3 -B os/tests/test_operator_reboot.py
 
       - name: Build test driver
         if: ${{ !startsWith(matrix.test, 'build-') }}

@@ -16,9 +16,9 @@
 
 - 仓库：https://github.com/cszf1/agentos ，分支 `v1.0`。实际 HEAD 看 Git，最新候选/修复看 PROGRESS，实际验收提交看 Actions 的完整 `headSha`。
 - 验收统计一致：**74 通过 / 15 部分 / 11 未通过**。I06、U05、R11、I08、U04 已恢复；D01/W08/U09 按完整 m5 41253718507 恢复，其他候选没有提前升项。
-- 两轮审查原文：`docs/review/REVIEW_V1.0_EXTERNAL_2026-10-31.md`；逐项状态在 `V1.0_REVIEW_FIXES.md`。PROGRESS/TSV 当前续至决定 101，后续编号按最新尾项递增。
+- 两轮审查原文：`docs/review/REVIEW_V1.0_EXTERNAL_2026-10-31.md`；逐项状态在 `V1.0_REVIEW_FIXES.md`。PROGRESS/TSV 当前续至决定 102，后续编号按最新尾项递增。
 - 第一轮全量 `41220513266@4b1d863` 终态 **23 成功 / 4 失败**：失败 m5、m6-qcow2、m19、m20；其余包括 m18、build-repro、m3/m7 都成功。这不是最终全绿。
-- e2159d6固定SHA的云端Node typecheck/contracts、184pass/4skip、Rust81pass/1ignored（27组/exit0）均通过；决定100候选同计数，另有Qt九套ctest/三种子fuzz/E2E编译通过、决定101另经Qt九套/E2E编译及VM helper36项（5+3+7+6+13+2）。**不是最终KVM的27项通过**。
+- e2159d6固定SHA的云端Node typecheck/contracts、184pass/4skip、Rust81pass/1ignored（27组/exit0）均通过；决定100候选同计数，另有Qt九套ctest/三种子fuzz/E2E编译通过、决定101另经Qt九套/E2E编译及VM helper40项（5+3+7+6+13+2+4）。**不是最终KVM的27项通过**。
 
 ### b7c16fb 的最近四项调试基线
 
@@ -60,9 +60,15 @@
 - **候选验证**：缺UI/列表字段的回归先红后绿；Qt6.11.2九套ctest、三种子各2000轮fuzz、E2E编译通过；Rust81pass/1ignored、Node184pass/4skip、typecheck/contracts/slot-vectors通过；助手34项（5+3+7+6+13）、28个Python AST及drill语法/self-test/错误非零通过。不是完整Sway或最终全27通过。
 - **边界**：D07的owner策略不是管理员硬件/PAM图形输入验收，不声称音频等实机功能可用；m19管理员仍走普通用户PAM→gateway→ticket→固定root helper。两条完整KVM须在决定100提交后重跑，统计仍74/15/11。
 
-### 3476f0e 后续与决定101（当前）
+### 决定102（当前）
 
-- m19 `41282001484` 仍在完整KVM中，须取终态；不取消它，也不把运行中计通过。
+- m19 `41282001484@3476f0e` 已通过新PASS消息和候选激活；在关机等待被驱动API的非法timeout关键字中断。固定驱动原方法无timeout且内部无界wait；候选以Popen.wait(timeout=180)先有界等待、exit0后再用原零参数API清理状态并start，不强制断电、不跳管理员PAM/解锁/健康门槛。
+- 四项真实子进程回归在旧helper均复现TypeError，修后正常退出/超时/非零退出/无进程全过；CI接入，helper40及Python30 AST通过。完整m19仍待重跑，健康拒绝/回退/第二机恢复未计通过。
+- m20 `41284124280@4731cc4` 仍待终态；它是决定101的扫描/活窗取证候选，不预判根因或成功。最终仍须同固定SHA全27。
+
+### 3476f0e 后续与决定101（历史）
+
+- 当时m19 `41282001484` 仍在完整KVM中；终态及后续见决定102，不把当时的运行中计通过。
 - m20 `41282003990` 已通过真实owner后台策略首笔确认（reconciled、数据库后台值1），在应用说明的取消按钮539行clicked=0。离屏Qt真实mouseClick探针未复现位移，不能宣称已证实布局问题。
 - 决定101补每个确认框的实际扫描对照、取消前后坐标、零次clicked的QPointer存活状态和窗口尚存时的真实PNG；不放宽点击/权限/数据断言。Qt九套、E2E编译、helper36和29个Python AST已过，实际Sway根因及完整旅程待新KVM。先取m19终态并重跑m20，最终仍同固定SHA全27。
 

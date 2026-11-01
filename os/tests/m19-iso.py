@@ -271,7 +271,9 @@ def operator_phase(m, user, phase, marker, from_media=False, timeout=1200):
 
 def operator_reboot(m, user, pw):
     m.send_chars(f"{NODE} /home/{user}/drill/drill.mjs reboot\n", delay=0.03)
-    m.wait_for_shutdown(timeout=180)
+    assert m.process is not None, "operator reboot has no QEMU process"
+    assert m.process.wait(timeout=180) == 0, "operator reboot QEMU exited unsuccessfully"
+    m.wait_for_shutdown()  # pinned driver has no timeout argument; finalize only after the bounded wait
     m.start()
     wait_screen(m, r"(?i)passphrase", timeout=900)
     keyed(m, PASS + "\n")
