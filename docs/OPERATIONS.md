@@ -11,8 +11,12 @@ and no untested hardware or hypervisor is claimed supported.
 | Artifact | Built by | Notes |
 |---|---|---|
 | ReleaseManifest (`manifest.json`), SBOM (`sbom.json`, with the firmware list), firmware list (`firmware.json`: every file of the system firmware path, its store package and sha256), `SHA256SUMS` | `nix build .#agentos-release` | unsigned in this tree; signed only in the release environment (§20.1). `releaseSequence` monotonic, `expiresAt`/`supportUntil` = publish time + 365 days, `hardwareProfiles = ["qemu-virtio"]`. |
-| Installer ISO | `nix build .#agentos-iso` | carries the whole release closure and the OCI archive: offline install. |
+| Installer ISO | `nix build .#agentos-iso` | carries the whole release closure and the OCI archive: offline install. Carries the same disk, input and GPU drivers as the installed system (`os/hardware/vm-drivers.nix`). Boots in UEFI mode on every hypervisor below. |
 | VM template | `nix build .#agentos-qcow2` | same toplevel, same installer and layout (GPT, ESP, LUKS2, Btrfs). GPT/partition UUIDs and the ESP are byte-identical across builds; the LUKS2 volume key, salts and UUID are fresh per build. The template's LUKS2 partition is 16 GiB. On first boot `agentos-disk-rekey` asks for the operator's passphrase, destroys every other key slot (the public template key included), re-encrypts the partition online with a fresh volume key (resumable after a power cut) and grows it to the whole disk, all before machined starts: clones never share a volume key. |
+| VirtualBox disk | `nix build .#agentos-vdi` | `agentos.vdi` (dynamic) and `SHA256SUMS`: the `agentos-qcow2` template converted with `qemu-img`, same content, so first boot runs `agentos-disk-rekey` exactly as for the qcow2. Nominal size 64 GiB; the file holds only written blocks. |
+| VMware disk | `nix build .#agentos-vmdk` | `agentos.vmdk` (streamOptimized) and `SHA256SUMS`, converted the same way. |
+| Hyper-V disk | `nix build .#agentos-vhdx` | `agentos.vhdx` (dynamic) and `SHA256SUMS`, converted the same way. |
+| Checked image set | `nix build .#agentos-vm-images` | the three images, one `SHA256SUMS` and `report.txt`. Builds only if each image has its format and the qcow2's nominal size (at least 64 GiB), passes `qemu-img check` and converts back to a raw disk byte-identical to the qcow2's. CI: `build-vm-images`. |
 | Approved OCI images | `nix build .#agentos-oci` | built offline from fixed inputs; image IDs must equal the manifest's `ociDigests`. |
 
 Verification on the target: `agentosctl update verify` (signature against a trusted key, every field, sequence,
@@ -22,10 +26,55 @@ expiry, closure NAR hashes, OCI image IDs, files present); Nix `require-sigs = t
 
 | Profile | State |
 |---|---|
-| `qemu-virtio` (x86_64 UEFI, virtio-blk, virtio-gpu, QEMU/KVM) | exercised by the existing checks in `os/tests` |
+| `qemu-virtio` (x86_64 UEFI, virtio-blk, virtio-gpu, QEMU/KVM) | verified in the existing KVM checks in `os/tests` |
+| VirtualBox 7 (UEFI, AHCI, VMSVGA) | drivers, guest tools and the `.vdi` image added; **not boot-verified in CI, needs manual verification** |
+| VMware Workstation, Player, ESXi (UEFI, NVMe/SATA/PVSCSI, SVGA) | drivers, guest tools and the `.vmdk` image added; **not boot-verified in CI, needs manual verification** |
+| Hyper-V Generation 2 (UEFI, storvsc, hyperv_drm) | drivers, guest tools and the `.vhdx` image added; **not boot-verified in CI, needs manual verification** |
 | Intel/AMD GPU on bare metal, real displays, Wi-Fi, audio/backlight, suspend, physical disks, serial devices | **not tested — not supported in this tree** (V1-H01…H08, D10, U01/U02 on real disks, V3-E04) |
 
 Minimum disk for an install: 64 GiB (the installer refuses smaller disks and system disks).
+
+### Virtual machine settings
+
+One system (`os/hardware/vm.nix`) serves every hypervisor. It boots only through UEFI (systemd-boot; no BIOS, no GRUB
+on the installed disk) and always renders in software (`agentos.softwareRendering`): leave 3D acceleration off.
+Neither the ISO nor the images are signed, so Secure Boot must be off.
+
+Size, from the existing QEMU checks in `os/tests`: 2 vCPUs in every check; memory 3072 MiB for the ISO install through
+to the desktop (`m19-iso`), 4096 MiB for `m5-desktop` and 6144 MiB for `m20-sway`. Give at least 2 vCPUs and
+3072 MiB; 6144 MiB matches the largest desktop check. Disk: at least 64 GiB.
+
+| Hypervisor | Firmware | Disk controller | Display | Network |
+|---|---|---|---|---|
+| QEMU/KVM | OVMF (UEFI) | virtio-blk | virtio-gpu | virtio-net |
+| VirtualBox 7 | System, tick **Enable EFI** | SATA (AHCI) | Graphics Controller **VMSVGA**, 3D off | Intel PRO/1000 or virtio-net |
+| VMware | Firmware type **UEFI**, Secure Boot off | NVMe or SATA (see below) | 3D graphics off | vmxnet3 or e1000e |
+| Hyper-V | **Generation 2**, Security: untick **Enable Secure Boot** | SCSI (the only Gen2 controller) | default (hyperv_drm) | network adapter (netvsc) |
+
+The installer names its target by `/dev/disk/by-id/…`. VirtualBox SATA, VMware NVMe or SATA and Hyper-V SCSI disks
+have such a name; a VMware SCSI (LSI or PVSCSI) disk has one only with `disk.EnableUUID = "TRUE"` in the `.vmx`.
+
+Guest tools start only on their own hypervisor (systemd `ConditionVirtualization=` or the hypervisor's own device):
+VBoxService and VBoxDRMClient on VirtualBox, vmtoolsd (headless build) on VMware, the Hyper-V KVP and VSS daemons on
+Hyper-V. Each gives time sync, a clean shutdown from the host and, on VirtualBox and VMware, a screen size that follows
+the window. X11-only parts (VBoxClient clipboard, seamless and drag and drop; vmware-user) and host-to-guest command or
+file channels (VirtualBox guest control, VMware guest operations and customization, Hyper-V file copy) are off.
+
+### Importing a disk image
+
+Each image is the qcow2 template: the first boot asks for a disk passphrase, replaces the public template key,
+re-encrypts and grows the disk to its full size before the first-boot administrator is created. Check the file against
+`SHA256SUMS` first. Grow the virtual disk before the first boot if it should be larger than 64 GiB.
+
+- VirtualBox: create a VM (Linux, Other Linux 64-bit) with the settings above, then attach `agentos.vdi` to the SATA
+  controller (copy it first; every copy of one file has the same VirtualBox medium UUID, so use
+  `VBoxManage clonemedium` for a second VM).
+- VMware: streamOptimized is an import format. ESXi: upload it and run
+  `vmkfstools -i agentos.vmdk -d thin agentos-esxi.vmdk`, then attach the result. Workstation or Player:
+  `vmware-vdiskmanager -r agentos.vmdk -t 0 agentos-ws.vmdk`, then attach the result as an existing disk. Use the
+  settings above.
+- Hyper-V: New Virtual Machine, Generation 2, "Use an existing virtual hard disk": `agentos.vhdx`; then in Settings,
+  Security, untick Enable Secure Boot.
 
 ## Support period and limits
 
