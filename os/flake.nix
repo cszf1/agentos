@@ -56,6 +56,9 @@
       ];
       # qcow2: the SAME release toplevel installed by the SAME installer onto a blank template disk (spec §19.1).
       qcow2 = pkgs.callPackage ./packages/qcow2.nix { system = toplevel; installer = installerPkg; qemu = pkgs.qemu-utils; };
+      # the same template disk for VirtualBox (.vdi), VMware (.vmdk) and Hyper-V (.vhdx), converted from the qcow2
+      vmImage = format: pkgs.callPackage ./packages/vm-image.nix { inherit qcow2 format; qemu = pkgs.qemu-utils; };
+      vmImages = { vdi = vmImage "vdi"; vmdk = vmImage "vmdk"; vhdx = vmImage "vhdx"; };
       # V1-U11: an earlier v1.0 commit (32ea4db: same machine/workspace/broker schemas and lockfiles as the head, before
       # the W09/O03 code fixes) whose AgentOS programs the m7 older generation boots. Fetched by fixed revision.
       olderAgentos = pkgs.agentos-older (builtins.fetchGit {
@@ -73,6 +76,10 @@
         agentos-installer = installerPkg;
         agentos-iso = installerSystem.config.system.build.isoImage;
         agentos-qcow2 = qcow2;
+        agentos-vdi = vmImages.vdi;
+        agentos-vmdk = vmImages.vmdk;
+        agentos-vhdx = vmImages.vhdx;
+        agentos-vm-images = pkgs.callPackage ./packages/vm-images.nix { inherit qcow2; images = vmImages; qemu = pkgs.qemu-utils; };
         # V1-B08: file-level audit of the formal release closure (report.json; the build fails on any finding)
         agentos-audit = pkgs.runCommand "agentos-release-audit" { nativeBuildInputs = [ pkgs.python3 ]; } ''
           mkdir -p $out
