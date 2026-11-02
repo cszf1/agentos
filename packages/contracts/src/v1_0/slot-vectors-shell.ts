@@ -36,6 +36,8 @@ export const HARDWARE_ACTIONS = [
   "power.reboot",
   "power.poweroff",
   "workspaces.runWhenLoggedOut",
+  // administrator update step (update page: activate), confirmed with the administrator's password
+  "admin.update",
 ] as const;
 export const DISPLAY_REVERT_SECONDS = 15;
 

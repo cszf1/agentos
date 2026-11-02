@@ -453,7 +453,8 @@
   "session.logout",
   "power.reboot",
   "power.poweroff",
-  "workspaces.runWhenLoggedOut"
+  "workspaces.runWhenLoggedOut",
+  "admin.update"
  ],
  "displayRevertSeconds": 15,
  "finalStates": [

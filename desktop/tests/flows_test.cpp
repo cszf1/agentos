@@ -133,6 +133,8 @@ struct Backend {
   JValue console = loadFixture(QStringLiteral("v1.0/slot-vectors/scenario-v3-system-console.json"));
   JValue records = loadFixture(QStringLiteral("todo-v2.json"));
   QString maint = QStringLiteral("running");
+  // updates.status in the gateway's shape (machined updates.get, or no open job)
+  JValue update = JValue::object({{QStringLiteral("updateId"), JValue::null()}, {QStringLiteral("state"), QStringLiteral("none")}});
 
   JValue appDetail(const QString& appId) const {
     for (const JValue* sc : {&kanban, &console}) {
@@ -184,6 +186,11 @@ struct Backend {
                                  {QStringLiteral("power"), JValue::object({{QStringLiteral("reboot"), QStringLiteral("yes")}, {QStringLiteral("poweroff"), QStringLiteral("yes")}, {QStringLiteral("suspend"), QStringLiteral("yes")}, {QStringLiteral("hibernate"), QStringLiteral("unsupported")}})}})}});
     if (m == QLatin1String("machine.actions.plan")) {
       plannedBackground = b.get(QStringLiteral("params")).get(QStringLiteral("enabled")).toBool();
+      if (lastKind == QLatin1String("admin.update"))  // admin kind: the plan shows the root helper command
+        return JValue::object({{QStringLiteral("operationId"), QStringLiteral("op-up")}, {QStringLiteral("planHash"), QStringLiteral("sha256:") + QString(64, QLatin1Char('6'))},
+                               {QStringLiteral("state"), QStringLiteral("planned")}, {QStringLiteral("kind"), lastKind}, {QStringLiteral("admin"), true},
+                               {QStringLiteral("resourceId"), QStringLiteral("admin.update")}, {QStringLiteral("resourceGeneration"), 1},
+                               {QStringLiteral("impact"), JValue::object({{QStringLiteral("command"), QStringLiteral("agentosctl update activate --update-id ") + update.get(QStringLiteral("updateId")).stringOr(QString())}, {QStringLiteral("runsAs"), QStringLiteral("root helper")}})}});
       if (lastKind == QLatin1String("time.timezone.set"))  // the shape machined's ops.plan returns for an admin kind
         return JValue::object({{QStringLiteral("operationId"), QStringLiteral("op-tz")}, {QStringLiteral("planHash"), QStringLiteral("sha256:") + QString(64, QLatin1Char('3'))},
                                {QStringLiteral("state"), QStringLiteral("planned")}, {QStringLiteral("kind"), lastKind}, {QStringLiteral("admin"), true},
@@ -208,7 +215,7 @@ struct Backend {
     if (m == QLatin1String("machine.actions.get"))
       return JValue::object({{QStringLiteral("operationId"), QStringLiteral("op-1")}, {QStringLiteral("state"), QStringLiteral("succeeded")}, {QStringLiteral("actionKind"), lastKind}, {QStringLiteral("previous"), JValue::object({{QStringLiteral("output"), QStringLiteral("Virtual-1")}, {QStringLiteral("mode"), QStringLiteral("1280x800")}, {QStringLiteral("scale"), 1}})}});
     if (m == QLatin1String("machine.actions.cancel")) return JValue::object({{QStringLiteral("state"), QStringLiteral("cancelled")}});
-    if (m == QLatin1String("updates.status")) return JValue::object({{QStringLiteral("current"), QStringLiteral("1.0.0")}, {QStringLiteral("state"), QStringLiteral("idle")}});
+    if (m == QLatin1String("updates.status")) return update;
     if (m != QLatin1String("workspace.forward")) return JValue::object();
     const QString route = b.get(QStringLiteral("routeId")).str();
     const JValue& fp = b.get(QStringLiteral("params"));
@@ -660,6 +667,37 @@ class FlowsTest : public QObject {
     }
     if (oldRt.isNull()) qunsetenv("XDG_RUNTIME_DIR");
     else qputenv("XDG_RUNTIME_DIR", oldRt);
+  }
+
+  void updateActivationUsesTheBackendStatesAndAnAdminPlan() {
+    Harness h;
+    const QString uid = QStringLiteral("77777777-7777-4777-8777-777777777777");
+    h.be.update = JValue::object({{QStringLiteral("updateId"), uid}, {QStringLiteral("state"), QStringLiteral("downloading")}, {QStringLiteral("fromReleaseId"), QStringLiteral("1.0.0")},
+                                  {QStringLiteral("toReleaseId"), QStringLiteral("1.0.1")}, {QStringLiteral("target"), JValue::object({{QStringLiteral("releaseId"), QStringLiteral("1.0.1")}, {QStringLiteral("manifestHash"), QStringLiteral("sha256:") + QString(64, QLatin1Char('8'))}})}});
+    QVERIFY(h.up());
+    h.click(QStringLiteral("nav:update"));
+    QTRY_VERIFY(h.find(QStringLiteral("updateSummary")) && h.find(QStringLiteral("updateSummary"))->property("text").toString().contains(QStringLiteral("1.0.1")));
+    QVERIFY(h.find(QStringLiteral("updateSummary"))->property("text").toString().contains(QString::fromUtf8("下载中")));
+    QVERIFY(!h.find(QStringLiteral("updateActivate"))->isEnabled());  // still downloading
+    // staged (the backend's name for a prepared update): activation is offered
+    h.be.update.set(QStringLiteral("state"), QStringLiteral("staged"));
+    h.shell->refreshPage();
+    QTRY_VERIFY(h.find(QStringLiteral("updateActivate"))->isEnabled());
+    QVERIFY(h.find(QStringLiteral("updateSummary"))->property("text").toString().contains(QString::fromUtf8("可以激活")));
+    h.click(QStringLiteral("updateActivate"));
+    QTRY_VERIFY(reallyVisible(h.find(QStringLiteral("dangerSure"))));
+    h.click(QStringLiteral("dangerSureAccept"));
+    QTRY_VERIFY(h.shell->confirm().value(QStringLiteral("visible")).toBool());
+    const JValue plan = h.sent(QStringLiteral("machine.actions.plan")).last().get(QStringLiteral("body"));
+    QCOMPARE(plan.get(QStringLiteral("actionKind")).str(), QStringLiteral("admin.update"));
+    QCOMPARE(plan.get(QStringLiteral("params")).get(QStringLiteral("step")).str(), QStringLiteral("activate"));
+    QCOMPARE(plan.get(QStringLiteral("params")).get(QStringLiteral("updateId")).str(), uid);
+    QVERIFY(h.shell->confirm().value(QStringLiteral("admin")).toBool());
+    QVERIFY(reallyVisible(h.find(QStringLiteral("confirmAdminPassword"))));
+    QVERIFY(h.shell->confirm().value(QStringLiteral("effect")).toString().contains(QStringLiteral("agentosctl update activate")));
+    h.shell->confirmReject();
+    QTest::qWait(100);
+    QCOMPARE(h.sent(QStringLiteral("machine.actions.confirm")).size(), 0);
   }
 
   void adminPlanShowsDetailsAndSendsThePasswordOnlyInTheConfirm() {

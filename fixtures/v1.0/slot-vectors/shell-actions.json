@@ -4617,6 +4617,28 @@
     },
     "write": true
    }
+  },
+  {
+   "name": "machine.plan",
+   "args": {
+    "actionKind": "admin.update",
+    "params": {
+     "step": "activate",
+     "updateId": "66666666-6666-4666-8666-666666666666"
+    }
+   },
+   "request": {
+    "methodId": "machine.actions.plan",
+    "params": {},
+    "body": {
+     "actionKind": "admin.update",
+     "params": {
+      "step": "activate",
+      "updateId": "66666666-6666-4666-8666-666666666666"
+     }
+    },
+    "write": true
+   }
   }
  ],
  "rejected": {

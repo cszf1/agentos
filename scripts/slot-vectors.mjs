@@ -484,7 +484,7 @@ for (const name of Object.keys(sh.SHELL_ACTIONS)) {
   act(name, args);
 }
 act("runs.submit", { intent: "改成按周显示", targetAppId: appId, expectedAppEpoch: 4 });
-for (const kind of sh.HARDWARE_ACTIONS) act("machine.plan", { actionKind: kind, params: kind === "time.timezone.set" ? { zone: "Asia/Shanghai" } : {} });
+for (const kind of sh.HARDWARE_ACTIONS) act("machine.plan", { actionKind: kind, params: kind === "time.timezone.set" ? { zone: "Asia/Shanghai" } : kind === "admin.update" ? { step: "activate", updateId: "66666666-6666-4666-8666-666666666666" } : {} });
 let bad = null;
 try {
   sh.shellAction("machine.plan", { actionKind: "dbus.call", params: {} });
