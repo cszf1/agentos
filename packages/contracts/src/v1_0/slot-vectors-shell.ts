@@ -66,8 +66,9 @@ export const SHELL_ACTIONS: Record<string, (a: A) => ShellRequest> = {
   "machine.confirm": (a) => native("machine.actions.confirm", { operationId: a.operationId }, { planHash: a.planHash, ticket: a.ticket }),
   "machine.get": (a) => native("machine.actions.get", { operationId: a.operationId }),
   "machine.cancel": (a) => native("machine.actions.cancel", { operationId: a.operationId }),
-  "machine.users.create": (a) => native("machine.users.create", {}, { userName: a.userName, displayName: a.displayName }),
-  "machine.users.disable": (a) => native("machine.users.disable", { userId: a.userId }),
+  // the gateway's fields (session-gateway gw.rs): the new user's password is added by the Shell to the one request only
+  "machine.users.create": (a) => native("machine.users.create", {}, { loginName: a.loginName, role: a.role ?? "user" }),
+  "machine.users.disable": (a) => native("machine.users.disable", {}, { userId: a.userId }),
   "updates.check": () => native("updates.check"),
   "updates.prepare": (a) => native("updates.prepare", {}, { releaseId: a.releaseId, manifestHash: a.manifestHash }),
   "updates.activate": (a) => native("updates.activate", {}, { releaseId: a.releaseId }),

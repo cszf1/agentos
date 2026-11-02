@@ -687,14 +687,15 @@ QString ShellController::act(const QString& name, const QVariantMap& argsV, cons
   actionKeys_[id] = key;
   actionReqs_[id] = r;
   actionNames_[id] = name;
-  if (name == QLatin1String("machine.plan") && !pendingSecret_.isEmpty()) {
+  if ((name == QLatin1String("machine.plan") || name == QLatin1String("machine.users.create")) && !pendingSecret_.isEmpty()) {
     // the secret rides only in this request; actionReqs_ (retry) and the action list never see it
+    const QString field = name == QLatin1String("machine.plan") ? QStringLiteral("secret") : QStringLiteral("password");
     ShellRequest withSecret = r;
     JValue b = r.body.isObject() ? r.body : JValue::object();
-    b.set(QStringLiteral("secret"), pendingSecret_);
+    b.set(field, pendingSecret_);
     withSecret.body = b;
     JValue shown = b;
-    shown.set(QStringLiteral("secret"), QStringLiteral("<secret>"));
+    shown.set(field, QStringLiteral("<secret>"));
     lastPlanSent_ = shown.stringify();
     sendNative(withSecret, key, [this, id](const RpcReply& rep) { trackReply(id, rep); });
     return id;
@@ -738,15 +739,17 @@ void ShellController::trackReply(const QString& id, const RpcReply& rep) {
   if (st == QLatin1String("needs_confirmation")) {
     actions_->setState(id, st, S("等待你在可信确认层确认"));
     const JValue plan = b;
-    showPlan(name, plan, [this, id, name, plan](bool yes) {
+    // machine.users.create/disable answer with a machine operation plan, confirmed like any machine plan
+    const bool machinePlan = name == QLatin1String("machine.plan") || name.startsWith(QLatin1String("machine.users."));
+    showPlan(name, plan, [this, id, name, plan, machinePlan](bool yes) {
       if (!yes) {
         actions_->setState(id, QStringLiteral("reconciled"), S("你取消了，未执行"));
-        if (name == QLatin1String("machine.plan")) act(QStringLiteral("machine.cancel"), {{QStringLiteral("operationId"), plan.get(QStringLiteral("operationId")).toVariant()}});
+        if (machinePlan) act(QStringLiteral("machine.cancel"), {{QStringLiteral("operationId"), plan.get(QStringLiteral("operationId")).toVariant()}});
         return;
       }
       QString cname;
       QVariantMap args;
-      if (name == QLatin1String("machine.plan")) {
+      if (machinePlan) {
         cname = QStringLiteral("machine.confirm");
         args = {{QStringLiteral("operationId"), plan.get(QStringLiteral("operationId")).toVariant()},
                 {QStringLiteral("planHash"), plan.get(QStringLiteral("planHash")).toVariant()},
@@ -887,6 +890,17 @@ QString ShellController::sessionAgent(const QString& op, const QJsonObject& args
     return QString();
   }
   return r.value(QStringLiteral("error")).toObject().value(QStringLiteral("message")).toString(S("会话代理拒绝了请求"));
+}
+
+void ShellController::createUser(const QString& loginName, const QString& role, const QString& initialPassword) {
+  if (initialPassword.isEmpty()) {
+    setNotice(S("新用户需要一个初始密码"));
+    return;
+  }
+  pendingSecret_ = initialPassword;
+  act(QStringLiteral("machine.users.create"), {{QStringLiteral("loginName"), loginName}, {QStringLiteral("role"), role}}, S("创建用户 ") + loginName);
+  pendingSecret_.fill(QLatin1Char('\0'));
+  pendingSecret_.clear();
 }
 
 void ShellController::hardwareSecret(const QString& kind, const QVariantMap& params, const QString& secret) {

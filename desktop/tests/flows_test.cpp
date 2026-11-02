@@ -186,6 +186,14 @@ struct Backend {
                                  {QStringLiteral("battery"), JValue::object({{QStringLiteral("available"), true}, {QStringLiteral("batteryPresent"), true}, {QStringLiteral("percentage"), 81.6}, {QStringLiteral("onBattery"), true}})},
                                  {QStringLiteral("time"), JValue::object({{QStringLiteral("timezone"), QStringLiteral("UTC")}})},
                                  {QStringLiteral("power"), JValue::object({{QStringLiteral("reboot"), QStringLiteral("yes")}, {QStringLiteral("poweroff"), QStringLiteral("yes")}, {QStringLiteral("suspend"), QStringLiteral("yes")}, {QStringLiteral("hibernate"), QStringLiteral("unsupported")}})}})}});
+    if (m == QLatin1String("machine.users.create") || m == QLatin1String("machine.users.disable")) {  // gw.rs: an ops.plan for users.*
+      const bool create = m == QLatin1String("machine.users.create");
+      if (create && !b.get(QStringLiteral("password")).isString()) return err(QStringLiteral("INVALID_REQUEST"));
+      return JValue::object({{QStringLiteral("operationId"), QStringLiteral("op-user")}, {QStringLiteral("planHash"), QStringLiteral("sha256:") + QString(64, QLatin1Char('7'))},
+                             {QStringLiteral("state"), QStringLiteral("planned")}, {QStringLiteral("kind"), create ? QStringLiteral("users.create") : QStringLiteral("users.disable")}, {QStringLiteral("admin"), true},
+                             {QStringLiteral("resourceId"), create ? QStringLiteral("user:") + b.get(QStringLiteral("loginName")).str() : QStringLiteral("user:") + b.get(QStringLiteral("userId")).str()},
+                             {QStringLiteral("resourceGeneration"), 1}});
+    }
     if (m == QLatin1String("machine.actions.plan")) {
       plannedBackground = b.get(QStringLiteral("params")).get(QStringLiteral("enabled")).toBool();
       if (lastKind == QLatin1String("admin.update"))  // admin kind: the plan shows the root helper command
@@ -673,6 +681,47 @@ class FlowsTest : public QObject {
     }
     if (oldRt.isNull()) qunsetenv("XDG_RUNTIME_DIR");
     else qputenv("XDG_RUNTIME_DIR", oldRt);
+  }
+
+  void adminCreatesAndDisablesUsersThroughTheTrustedLayer() {
+    Harness h;
+    QVERIFY(h.up());
+    h.click(QStringLiteral("nav:workspaces"));
+    QTRY_VERIFY(h.find(QStringLiteral("createUser")));
+    const QString initial = QStringLiteral("bea-initial-pw"), admin = QStringLiteral("admin-pw-2");
+    h.find(QStringLiteral("newUserLogin"))->setProperty("text", QStringLiteral("bea"));
+    h.find(QStringLiteral("newUserPassword"))->setProperty("text", initial);
+    h.click(QStringLiteral("createUser"));
+    QTRY_COMPARE(h.sent(QStringLiteral("machine.users.create")).size(), 1);
+    const JValue req = h.sent(QStringLiteral("machine.users.create")).first().get(QStringLiteral("body"));
+    QCOMPARE(req.get(QStringLiteral("loginName")).str(), QStringLiteral("bea"));    // the gateway's field names
+    QCOMPARE(req.get(QStringLiteral("role")).str(), QStringLiteral("user"));
+    QCOMPARE(req.get(QStringLiteral("password")).str(), initial);
+    QVERIFY(h.find(QStringLiteral("newUserPassword"))->property("text").toString().isEmpty());
+    // the plan is an admin plan on the trusted layer
+    QTRY_VERIFY(h.shell->confirm().value(QStringLiteral("visible")).toBool());
+    QCOMPARE(h.shell->confirm().value(QStringLiteral("what")).toString(), QString::fromUtf8("创建用户"));
+    QVERIFY(h.shell->confirm().value(QStringLiteral("admin")).toBool());
+    for (const auto& v : h.shell->confirm()) QVERIFY(!v.toString().contains(initial));
+    h.shell->confirmAccept(admin);
+    QTRY_COMPARE(h.sent(QStringLiteral("machine.actions.confirm")).size(), 1);
+    const JValue conf = h.sent(QStringLiteral("machine.actions.confirm")).first();
+    QCOMPARE(conf.get(QStringLiteral("params")).get(QStringLiteral("operationId")).str(), QStringLiteral("op-user"));
+    QCOMPARE(conf.get(QStringLiteral("body")).get(QStringLiteral("password")).str(), admin);
+    QVERIFY(!conf.stringify().contains(initial));
+    auto* a = static_cast<ActionTracker*>(h.shell->actions());
+    for (int i = 0; i < a->count(); ++i) QVERIFY(!a->at(i).stringify().contains(initial) && !a->at(i).stringify().contains(admin));
+    // disabling is red: the danger dialog, then the same admin plan path with the id in the body
+    h.find(QStringLiteral("disableUserId"))->setProperty("text", QStringLiteral("u-bea"));
+    h.click(QStringLiteral("disableUser"));
+    QTRY_VERIFY(reallyVisible(h.find(QStringLiteral("dangerSure"))));
+    h.click(QStringLiteral("dangerSureAccept"));
+    QTRY_COMPARE(h.sent(QStringLiteral("machine.users.disable")).size(), 1);
+    QCOMPARE(h.sent(QStringLiteral("machine.users.disable")).first().get(QStringLiteral("body")).get(QStringLiteral("userId")).str(), QStringLiteral("u-bea"));
+    QTRY_VERIFY(h.shell->confirm().value(QStringLiteral("visible")).toBool());
+    QCOMPARE(h.shell->confirm().value(QStringLiteral("what")).toString(), QString::fromUtf8("停用用户"));
+    h.shell->confirmReject();
+    QTRY_COMPARE(h.sent(QStringLiteral("machine.actions.cancel")).size(), 1);
   }
 
   void homeShowsHostNotificationsInTheirOwnShape() {

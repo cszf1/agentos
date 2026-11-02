@@ -27,5 +27,19 @@ PageFrame {
                       onChosen: function(v) { shell.act("members.setRole", { userId: row.userId, role: v, expectedMemberVersion: row.memberVersion }, "设置角色") } }
             AButton { label: "撤销成员"; variant: "danger"; onConfirmed: shell.act("members.revoke", { userId: row.userId, expectedMemberVersion: row.memberVersion }, "撤销成员") }
             AButton { label: "转让所有权"; onClicked: shell.act("members.transferOwner", { userId: row.userId, expectedMemberVersion: row.memberVersion, confirm: true }, "转让所有权") } } }
+    // Machine users (administrators only; the gateway refuses anyone else). Both are machine plans confirmed on the
+    // trusted layer with the administrator's own password; the new user's initial password goes only into the create
+    // request (machined's one-time secret store).
+    PText { text: "机器用户（管理员操作）"; font.bold: true }
+    Row { spacing: 8
+        AField { id: newLogin; objectName: "newUserLogin"; label: "新用户登录名"; width: 160 * shell.uiScale; placeholderText: "小写字母开头，如 bea" }
+        AField { id: newPw; objectName: "newUserPassword"; label: "新用户初始密码"; echoMode: TextInput.Password; sensitive: true; width: 160 * shell.uiScale; placeholderText: "初始密码" }
+        ASelect { id: newRole; label: "新用户角色"; value: "user"; options: [{ value: "user", label: "普通用户" }, { value: "admin", label: "管理员" }] }
+        AButton { objectName: "createUser"; label: "创建用户"; enabled: newLogin.text !== "" && newPw.text !== ""
+                  onClicked: { shell.createUser(newLogin.text, newRole.currentValue, newPw.text); newPw.text = "" } } }
+    Row { spacing: 8
+        AField { id: disableId; objectName: "disableUserId"; label: "要停用的用户 ID"; width: 280 * shell.uiScale; placeholderText: "用户 ID" }
+        AButton { objectName: "disableUser"; label: "停用用户"; variant: "danger"; enabled: disableId.text !== ""
+                  onConfirmed: shell.act("machine.users.disable", { userId: disableId.text }, "停用用户") } }
     ActionsList { prefix: "" }
 }

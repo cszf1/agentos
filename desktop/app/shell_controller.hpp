@@ -168,6 +168,10 @@ class ShellController : public QObject, public RequestSink {
   /** Like hardware(), with a secret (Wi-Fi key) that travels only in this one local request's `secret` field —
    *  never in params, never kept for retry or display (spec §12.1, V1-I11). */
   Q_INVOKABLE void hardwareSecret(const QString& actionKind, const QVariantMap& params, const QString& secret);
+  /** Administrator: create a machine user. The new user's initial password travels only in this one local request's
+   *  `password` field (the gateway puts it in machined's one-time secret store); the plan is confirmed on the trusted
+   *  layer with the administrator's own password. */
+  Q_INVOKABLE void createUser(const QString& loginName, const QString& role, const QString& initialPassword);
   /** The body actually sent for the last machine plan, with any secret replaced (tests only). */
   QString lastPlanSentForTest() const { return lastPlanSent_; }
   Q_INVOKABLE void keepDisplay();
