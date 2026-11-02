@@ -102,9 +102,8 @@ ShellController::ShellController(QString socketPath, QObject* parent)
     if (--displayRevertLeft_ <= 0) {
       displayRevert_.stop();
       displayRevertLeft_ = 0;
-      // 15 s without "keep": restore the previous display configuration (spec §12.1).
-      if (displayPrevious_.isObject()) hardware(QStringLiteral("display.revert"), displayPrevious_.toVariant().toMap());
-      displayPrevious_ = JValue();
+      // 15 s without "keep": the session agent restores the previous mode itself (spec §12.1); re-read it after that
+      QTimer::singleShot(1500, this, [this] { loadSession(); });
     }
     emit displayRevertChanged();
   });
@@ -590,6 +589,7 @@ void ShellController::refreshPage() {
     request(QStringLiteral("apps.revisions"), JValue::object({{QStringLiteral("appId"), currentApp_->appId()}}), list(revisions_));
   }
   if (p == QLatin1String("hardware") || p == QLatin1String("login")) loadMachine();
+  if (p == QLatin1String("hardware")) loadSession();
 }
 
 // ------------------------------------------------------------------ apps
@@ -798,7 +798,6 @@ void ShellController::pollAction(const QString& id, const QString& getName, cons
         actions_->setState(id, st, asText(r.body.get(QStringLiteral("state")).isMissing() ? r.body.get(QStringLiteral("phase")) : r.body.get(QStringLiteral("state"))));
         refreshPage();
         const QString name = actionNames_.value(id);
-        if (name == QLatin1String("machine.confirm") && r.body.get(QStringLiteral("actionKind")).str() == QLatin1String("display.mode.set")) startDisplayRevert(r.body.get(QStringLiteral("previous")));
         if (getName == QLatin1String("updates.status")) {
           updateStatus_ = r.body;
           emit machineChanged();
@@ -853,26 +852,25 @@ void ShellController::hardware(const QString& kind, const QVariantMap& params) {
     if (!err.isEmpty()) setNotice((logout ? S("注销失败：") : S("锁定失败：")) + err);
     return;
   }
-  QVariantMap p = params;
-  if (kind == QLatin1String("display.mode.set")) {
-    p[QStringLiteral("revertAfterSeconds")] = displayRevertSeconds();
-    // remember the current mode to restore it if the user does not keep the new one
-    const JValue outs = capabilities_.get(QStringLiteral("hardware")).get(QStringLiteral("display")).get(QStringLiteral("outputs"));
-    for (const auto& o : outs.items())
-      if (o.get(QStringLiteral("name")).str() == params.value(QStringLiteral("output")).toString())
-        displayPrevious_ = JValue::object({{QStringLiteral("output"), o.get(QStringLiteral("name"))}, {QStringLiteral("mode"), o.get(QStringLiteral("current"))}, {QStringLiteral("scale"), o.get(QStringLiteral("scale"))}});
+  // The user's own session settings belong to the login session agent (wpctl / swaymsg as this user), not to machined:
+  // no machine plan and no trusted confirmation, like lock/logout.
+  if (kind == QLatin1String("audio.volume.set") || kind == QLatin1String("audio.mute.set") || kind == QLatin1String("display.mode.set")) {
+    sessionSetting(kind, params);
+    return;
   }
-  act(QStringLiteral("machine.plan"), {{QStringLiteral("actionKind"), kind}, {QStringLiteral("params"), p}}, kind);
+  act(QStringLiteral("machine.plan"), {{QStringLiteral("actionKind"), kind}, {QStringLiteral("params"), params}}, kind);
 }
 
-QString ShellController::sessionAgent(const QString& op) {
+QString ShellController::sessionAgent(const QString& op, const QJsonObject& args, QJsonObject* data) {
   // $XDG_RUNTIME_DIR/agentos-session.sock: 4-byte big-endian length + JSON {"op": ...}; the agent checks SO_PEERCRED.
   const QString rt = qEnvironmentVariable("XDG_RUNTIME_DIR");
   if (rt.isEmpty()) return S("没有登录会话运行目录");
   QLocalSocket sock;
   sock.connectToServer(rt + QStringLiteral("/agentos-session.sock"));
   if (!sock.waitForConnected(2000)) return S("会话代理不可用");
-  const QByteArray body = QJsonDocument(QJsonObject{{QStringLiteral("op"), op}}).toJson(QJsonDocument::Compact);
+  QJsonObject req = args;
+  req.insert(QStringLiteral("op"), op);
+  const QByteArray body = QJsonDocument(req).toJson(QJsonDocument::Compact);
   QByteArray frame(4, '\0');
   qToBigEndian<quint32>(quint32(body.size()), frame.data());
   frame += body;
@@ -884,7 +882,10 @@ QString ShellController::sessionAgent(const QString& op) {
   const quint32 n = qFromBigEndian<quint32>(in.constData());
   while (quint32(in.size()) < 4 + n && sock.waitForReadyRead(2000)) in += sock.readAll();
   const QJsonObject r = QJsonDocument::fromJson(in.mid(4, int(n))).object();
-  if (r.value(QStringLiteral("ok")).toBool()) return QString();
+  if (r.value(QStringLiteral("ok")).toBool()) {
+    if (data) *data = r.value(QStringLiteral("data")).toObject();
+    return QString();
+  }
   return r.value(QStringLiteral("error")).toObject().value(QStringLiteral("message")).toString(S("会话代理拒绝了请求"));
 }
 
@@ -895,9 +896,44 @@ void ShellController::hardwareSecret(const QString& kind, const QVariantMap& par
   pendingSecret_.clear();
 }
 
-void ShellController::startDisplayRevert(const JValue& previous) {
-  if (previous.isObject()) displayPrevious_ = previous;
-  displayRevertLeft_ = displayRevertSeconds();
+void ShellController::sessionSetting(const QString& kind, const QVariantMap& params) {
+  if (locked_) {
+    setNotice(S("会话已锁定：不能更改设置"));
+    return;
+  }
+  QString op;
+  QJsonObject a;
+  if (kind == QLatin1String("audio.volume.set")) {
+    op = QStringLiteral("audio.setVolume");
+    a.insert(QStringLiteral("percent"), qBound(0, params.value(QStringLiteral("percent")).toInt(), 100));
+  } else if (kind == QLatin1String("audio.mute.set")) {
+    op = QStringLiteral("audio.setMute");
+    a.insert(QStringLiteral("muted"), params.value(QStringLiteral("muted")).toBool());
+  } else {
+    // "1920x1080" from the page, or explicit width/height; the agent accepts only a mode its output offers
+    const QStringList wh = params.value(QStringLiteral("mode")).toString().split(QLatin1Char('x'));
+    op = QStringLiteral("display.set");
+    a.insert(QStringLiteral("name"), params.value(QStringLiteral("output")).toString());
+    a.insert(QStringLiteral("width"), params.contains(QStringLiteral("width")) ? params.value(QStringLiteral("width")).toInt() : wh.value(0).toInt());
+    a.insert(QStringLiteral("height"), params.contains(QStringLiteral("height")) ? params.value(QStringLiteral("height")).toInt() : wh.value(1).toInt());
+    a.insert(QStringLiteral("scale"), params.value(QStringLiteral("scale"), 1).toDouble());
+  }
+  QJsonObject data;
+  const QString err = sessionAgent(op, a, &data);
+  if (!err.isEmpty()) setNotice(S("设置失败：") + err);
+  else if (op == QLatin1String("display.set")) startDisplayRevert(data.value(QStringLiteral("revertInSeconds")).toInt(displayRevertSeconds()));
+  loadSession();
+}
+
+void ShellController::loadSession() {
+  QJsonObject data;
+  const QString err = sessionAgent(QStringLiteral("status"), {}, &data);
+  session_ = err.isEmpty() ? JValue::fromVariant(data.toVariantMap()) : JValue::object({{QStringLiteral("available"), false}, {QStringLiteral("reason"), err}});
+  emit machineChanged();
+}
+
+void ShellController::startDisplayRevert(int seconds) {
+  displayRevertLeft_ = seconds > 0 ? seconds : displayRevertSeconds();
   displayRevert_.start();
   emit displayRevertChanged();
 }
@@ -905,8 +941,9 @@ void ShellController::startDisplayRevert(const JValue& previous) {
 void ShellController::keepDisplay() {
   displayRevert_.stop();
   displayRevertLeft_ = 0;
-  displayPrevious_ = JValue();
   emit displayRevertChanged();
+  const QString err = sessionAgent(QStringLiteral("display.keep"));
+  if (!err.isEmpty()) setNotice(S("保留显示设置失败：") + err);
 }
 
 // ------------------------------------------------------------------ trusted confirmation layer

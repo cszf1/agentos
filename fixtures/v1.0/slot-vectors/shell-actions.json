@@ -45,10 +45,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "session.bind",
@@ -102,10 +100,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "session.status",
@@ -159,10 +155,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "session.end",
@@ -216,10 +210,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "workspaces.list",
@@ -273,10 +265,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "workspaces.get",
@@ -332,10 +322,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "workspaces.create",
@@ -391,10 +379,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "workspaces.start",
@@ -450,10 +436,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "workspaces.stop",
@@ -509,10 +493,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "workspaces.archive",
@@ -568,10 +550,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "workspaces.attach",
@@ -629,10 +609,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "members.list",
@@ -688,10 +666,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "members.setRole",
@@ -751,10 +727,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "members.revoke",
@@ -813,10 +787,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "members.transferOwner",
@@ -876,10 +848,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "events.subscribe",
@@ -937,10 +907,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "events.ack",
@@ -998,10 +966,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "machine.status",
@@ -1055,10 +1021,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "machine.capabilities",
@@ -1112,19 +1076,15 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "machine.actions.plan",
     "params": {},
     "body": {
-     "actionKind": "audio.volume.set",
-     "params": {
-      "percent": 40
-     }
+     "actionKind": "power.reboot",
+     "params": {}
     },
     "write": true
    }
@@ -1174,10 +1134,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "machine.actions.confirm",
@@ -1236,10 +1194,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "machine.actions.get",
@@ -1295,10 +1251,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "machine.actions.cancel",
@@ -1354,10 +1308,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "machine.users.create",
@@ -1414,10 +1366,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "machine.users.disable",
@@ -1473,10 +1423,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "updates.check",
@@ -1530,10 +1478,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "updates.prepare",
@@ -1590,10 +1536,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "updates.activate",
@@ -1649,10 +1593,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "updates.status",
@@ -1706,10 +1648,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "updates.cancel",
@@ -1765,10 +1705,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "backups.create",
@@ -1826,10 +1764,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "backups.list",
@@ -1885,10 +1821,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "backups.export",
@@ -1946,10 +1880,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "backups.inspect",
@@ -2005,10 +1937,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "restores.plan",
@@ -2065,10 +1995,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "restores.confirm",
@@ -2126,10 +2054,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "restores.status",
@@ -2185,10 +2111,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "diagnostics.collect",
@@ -2245,10 +2169,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "workspace.forward",
@@ -2305,10 +2227,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "workspace.forward",
@@ -2365,10 +2285,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "workspace.forward",
@@ -2425,10 +2343,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "workspace.forward",
@@ -2487,10 +2403,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "workspace.forward",
@@ -2547,10 +2461,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "workspace.forward",
@@ -2610,10 +2522,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "workspace.forward",
@@ -2670,10 +2580,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "workspace.forward",
@@ -2732,10 +2640,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "workspace.forward",
@@ -2790,10 +2696,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "workspace.forward",
@@ -2848,10 +2752,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "workspace.forward",
@@ -2908,10 +2810,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "workspace.forward",
@@ -2968,10 +2868,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "workspace.forward",
@@ -3029,10 +2927,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "workspace.forward",
@@ -3089,10 +2985,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "workspace.forward",
@@ -3149,10 +3043,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "workspace.forward",
@@ -3209,10 +3101,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "workspace.forward",
@@ -3269,10 +3159,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "workspace.forward",
@@ -3327,10 +3215,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "workspace.forward",
@@ -3385,10 +3271,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "workspace.forward",
@@ -3445,10 +3329,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "workspace.forward",
@@ -3505,10 +3387,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "workspace.forward",
@@ -3565,10 +3445,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "workspace.forward",
@@ -3628,10 +3506,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "workspace.forward",
@@ -3688,10 +3564,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "workspace.forward",
@@ -3748,10 +3622,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "workspace.forward",
@@ -3809,10 +3681,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "workspace.forward",
@@ -3869,10 +3739,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "workspace.forward",
@@ -3927,10 +3795,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "workspace.forward",
@@ -3987,10 +3853,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "workspace.forward",
@@ -4045,10 +3909,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "workspace.forward",
@@ -4108,10 +3970,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "workspace.forward",
@@ -4168,10 +4028,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "workspace.forward",
@@ -4228,10 +4086,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "workspace.forward",
@@ -4290,10 +4146,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "workspace.forward",
@@ -4352,10 +4206,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "workspace.forward",
@@ -4416,10 +4268,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "workspace.forward",
@@ -4476,10 +4326,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "workspace.forward",
@@ -4534,10 +4382,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "workspace.forward",
@@ -4592,10 +4438,8 @@
     "targetAppId": null,
     "displayName": "家庭",
     "userName": "alice",
-    "actionKind": "audio.volume.set",
-    "params": {
-     "percent": 40
-    }
+    "actionKind": "power.reboot",
+    "params": {}
    },
    "request": {
     "methodId": "workspace.forward",
@@ -4661,88 +4505,18 @@
   {
    "name": "machine.plan",
    "args": {
-    "actionKind": "audio.volume.set",
-    "params": {}
-   },
-   "request": {
-    "methodId": "machine.actions.plan",
-    "params": {},
-    "body": {
-     "actionKind": "audio.volume.set",
-     "params": {}
-    },
-    "write": true
-   }
-  },
-  {
-   "name": "machine.plan",
-   "args": {
-    "actionKind": "audio.mute.set",
-    "params": {}
-   },
-   "request": {
-    "methodId": "machine.actions.plan",
-    "params": {},
-    "body": {
-     "actionKind": "audio.mute.set",
-     "params": {}
-    },
-    "write": true
-   }
-  },
-  {
-   "name": "machine.plan",
-   "args": {
-    "actionKind": "audio.output.select",
-    "params": {}
-   },
-   "request": {
-    "methodId": "machine.actions.plan",
-    "params": {},
-    "body": {
-     "actionKind": "audio.output.select",
-     "params": {}
-    },
-    "write": true
-   }
-  },
-  {
-   "name": "machine.plan",
-   "args": {
-    "actionKind": "display.brightness.set",
-    "params": {}
-   },
-   "request": {
-    "methodId": "machine.actions.plan",
-    "params": {},
-    "body": {
-     "actionKind": "display.brightness.set",
-     "params": {}
-    },
-    "write": true
-   }
-  },
-  {
-   "name": "machine.plan",
-   "args": {
-    "actionKind": "display.mode.set",
+    "actionKind": "time.timezone.set",
     "params": {
-     "output": "Virtual-1",
-     "mode": "1920x1080@60",
-     "scale": 1,
-     "revertAfterSeconds": 15
+     "zone": "Asia/Shanghai"
     }
    },
    "request": {
     "methodId": "machine.actions.plan",
     "params": {},
     "body": {
-     "actionKind": "display.mode.set",
+     "actionKind": "time.timezone.set",
      "params": {
-      "output": "Virtual-1",
-      "mode": "1920x1080@60",
-      "scale": 1,
-      "revertAfterSeconds": 15
+      "zone": "Asia/Shanghai"
      }
     },
     "write": true
@@ -4751,46 +4525,14 @@
   {
    "name": "machine.plan",
    "args": {
-    "actionKind": "display.revert",
+    "actionKind": "time.ntp.enable",
     "params": {}
    },
    "request": {
     "methodId": "machine.actions.plan",
     "params": {},
     "body": {
-     "actionKind": "display.revert",
-     "params": {}
-    },
-    "write": true
-   }
-  },
-  {
-   "name": "machine.plan",
-   "args": {
-    "actionKind": "time.timezone.set",
-    "params": {}
-   },
-   "request": {
-    "methodId": "machine.actions.plan",
-    "params": {},
-    "body": {
-     "actionKind": "time.timezone.set",
-     "params": {}
-    },
-    "write": true
-   }
-  },
-  {
-   "name": "machine.plan",
-   "args": {
-    "actionKind": "time.ntp.set",
-    "params": {}
-   },
-   "request": {
-    "methodId": "machine.actions.plan",
-    "params": {},
-    "body": {
-     "actionKind": "time.ntp.set",
+     "actionKind": "time.ntp.enable",
      "params": {}
     },
     "write": true
@@ -4847,14 +4589,14 @@
   {
    "name": "machine.plan",
    "args": {
-    "actionKind": "power.shutdown",
+    "actionKind": "power.poweroff",
     "params": {}
    },
    "request": {
     "methodId": "machine.actions.plan",
     "params": {},
     "body": {
-     "actionKind": "power.shutdown",
+     "actionKind": "power.poweroff",
      "params": {}
     },
     "write": true

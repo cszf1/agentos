@@ -8,8 +8,18 @@
 #include <QGuiApplication>
 #include <QJsonDocument>
 #include <QQuickStyle>
+#include <QJsonArray>
+#include <QJsonObject>
+#include <QtEndian>
 #include <QTemporaryDir>
 #include <atomic>
+#include <cstring>
+#include <mutex>
+#include <thread>
+
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <unistd.h>
 
 using namespace agentos;
 using namespace agentos::test;
@@ -23,6 +33,94 @@ static void captureQml(QtMsgType t, const QMessageLogContext& c, const QString& 
   if (t >= QtWarningMsg && (m.contains(QLatin1String("qrc:/agentos/qml")) || m.contains(QLatin1String("qml:")))) g_qmlWarnings << m;
   if (g_prev) g_prev(t, c, m);
 }
+
+/** The login session agent's socket ($XDG_RUNTIME_DIR/agentos-session.sock, 4-byte big-endian length + JSON), answering
+ *  like native/crates/desktop-session: status, audio.setVolume/setMute, display.set (15 s revert), display.keep. It
+ *  runs on its own thread because the Shell talks to the agent with blocking calls. */
+struct FakeSessionAgent {
+  QString path;
+  int fd = -1;
+  std::thread th;
+  std::mutex m;
+  QVector<QJsonObject> reqs;
+  int volume = 40;
+  bool muted = false;
+  explicit FakeSessionAgent(const QString& dir) : path(dir + QStringLiteral("/agentos-session.sock")) {
+    fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+    sockaddr_un a{};
+    a.sun_family = AF_UNIX;
+    const QByteArray p = path.toUtf8();
+    std::strncpy(a.sun_path, p.constData(), sizeof(a.sun_path) - 1);
+    ::unlink(p.constData());
+    if (::bind(fd, reinterpret_cast<sockaddr*>(&a), sizeof(a)) == 0 && ::listen(fd, 8) == 0) th = std::thread([this] { loop(); });
+  }
+  ~FakeSessionAgent() {
+    ::shutdown(fd, SHUT_RDWR);
+    ::close(fd);
+    if (th.joinable()) th.join();
+    ::unlink(path.toUtf8().constData());
+  }
+  QVector<QJsonObject> requests() {
+    std::lock_guard<std::mutex> g(m);
+    return reqs;
+  }
+  QVector<QJsonObject> ops(const QString& op) {
+    QVector<QJsonObject> out;
+    for (const auto& r : requests())
+      if (r.value(QStringLiteral("op")).toString() == op) out << r;
+    return out;
+  }
+  static bool readN(int c, char* b, size_t n) {
+    while (n > 0) {
+      const ssize_t k = ::read(c, b, n);
+      if (k <= 0) return false;
+      b += k;
+      n -= size_t(k);
+    }
+    return true;
+  }
+  QJsonObject answer(const QJsonObject& r) {
+    const QString op = r.value(QStringLiteral("op")).toString();
+    const auto audio = [&] { return QJsonObject{{QStringLiteral("available"), true}, {QStringLiteral("volume"), volume}, {QStringLiteral("muted"), muted}}; };
+    const auto mode = [](int w, int h) { return QJsonObject{{QStringLiteral("width"), w}, {QStringLiteral("height"), h}, {QStringLiteral("refresh"), 60000}}; };
+    if (op == QLatin1String("status"))
+      return {{QStringLiteral("locked"), false}, {QStringLiteral("lockMinutes"), 5}, {QStringLiteral("audio"), audio()}, {QStringLiteral("backlight"), false},
+              {QStringLiteral("outputs"), QJsonArray{QJsonObject{{QStringLiteral("name"), QStringLiteral("Virtual-1")}, {QStringLiteral("active"), true}, {QStringLiteral("scale"), 1.0},
+                                                                 {QStringLiteral("current"), mode(1280, 800)}, {QStringLiteral("modes"), QJsonArray{mode(1280, 800), mode(1920, 1080), mode(1920, 1080)}}}}}};
+    if (op == QLatin1String("audio.setVolume")) volume = r.value(QStringLiteral("percent")).toInt();
+    if (op == QLatin1String("audio.setMute")) muted = r.value(QStringLiteral("muted")).toBool();
+    if (op.startsWith(QLatin1String("audio."))) return audio();
+    if (op == QLatin1String("display.set")) return {{QStringLiteral("applied"), true}, {QStringLiteral("revertInSeconds"), 15}};
+    if (op == QLatin1String("display.keep")) return {{QStringLiteral("kept"), true}};
+    return {};
+  }
+  void loop() {
+    for (;;) {
+      const int c = ::accept(fd, nullptr, nullptr);
+      if (c < 0) return;
+      for (;;) {
+        char h[4];
+        if (!readN(c, h, 4)) break;
+        const quint32 n = qFromBigEndian<quint32>(reinterpret_cast<const uchar*>(h));
+        QByteArray body(int(n), '\0');
+        if (n > 65536 || !readN(c, body.data(), n)) break;
+        const QJsonObject r = QJsonDocument::fromJson(body).object();
+        QJsonObject data;
+        {
+          std::lock_guard<std::mutex> g(m);
+          reqs << r;
+          data = answer(r);
+        }
+        const QByteArray out = QJsonDocument(QJsonObject{{QStringLiteral("ok"), true}, {QStringLiteral("data"), data}}).toJson(QJsonDocument::Compact);
+        QByteArray f(4, '\0');
+        qToBigEndian<quint32>(quint32(out.size()), reinterpret_cast<uchar*>(f.data()));
+        f += out;
+        if (::write(c, f.constData(), size_t(f.size())) != f.size()) break;
+      }
+      ::close(c);
+    }
+  }
+};
 
 /** Scripted machine state the peer answers from. */
 struct Backend {
@@ -78,16 +176,12 @@ struct Backend {
                              {QStringLiteral("components"), JValue::object({{QStringLiteral("host"), hostDown ? QStringLiteral("down") : QStringLiteral("ok")}, {QStringLiteral("model"), modelDown ? QStringLiteral("down") : QStringLiteral("ok")}, {QStringLiteral("broker"), brokerDown ? QStringLiteral("down") : QStringLiteral("ok")}})},
                              {QStringLiteral("setup"), JValue::object({{QStringLiteral("state"), QStringLiteral("done")}, {QStringLiteral("steps"), JValue::array()}})}});
     }
-    if (m == QLatin1String("machine.capabilities"))
+    if (m == QLatin1String("machine.capabilities"))  // the shape machined's capabilities() reports, under `hardware`
       return JValue::object({{QStringLiteral("hardware"), JValue::object({
-                                 {QStringLiteral("audio"), JValue::object({{QStringLiteral("available"), true}, {QStringLiteral("volume"), 40}, {QStringLiteral("muted"), false}, {QStringLiteral("outputs"), JValue::array({QStringLiteral("speaker")})}, {QStringLiteral("output"), QStringLiteral("speaker")}})},
-                                 {QStringLiteral("display"), JValue::object({{QStringLiteral("available"), true}, {QStringLiteral("outputs"), JValue::array({JValue::object({{QStringLiteral("name"), QStringLiteral("Virtual-1")}, {QStringLiteral("modes"), JValue::array({QStringLiteral("1280x800"), QStringLiteral("1920x1080")})}, {QStringLiteral("current"), QStringLiteral("1280x800")}, {QStringLiteral("scale"), 1}})})}})},
                                  {QStringLiteral("network"), JValue::object({{QStringLiteral("available"), false}})},
-                                 {QStringLiteral("brightness"), JValue::object({{QStringLiteral("available"), false}})},
-                                 {QStringLiteral("battery"), JValue::object({{QStringLiteral("available"), false}})},
-                                 {QStringLiteral("time"), JValue::object({{QStringLiteral("available"), false}})},
-                                 {QStringLiteral("power"), JValue::object({{QStringLiteral("available"), true}})},
-                                 {QStringLiteral("session"), JValue::object({{QStringLiteral("available"), true}})}})}});
+                                 {QStringLiteral("battery"), JValue::object({{QStringLiteral("available"), true}, {QStringLiteral("batteryPresent"), true}, {QStringLiteral("percentage"), 81.6}, {QStringLiteral("onBattery"), true}})},
+                                 {QStringLiteral("time"), JValue::object({{QStringLiteral("timezone"), QStringLiteral("UTC")}})},
+                                 {QStringLiteral("power"), JValue::object({{QStringLiteral("reboot"), QStringLiteral("yes")}, {QStringLiteral("poweroff"), QStringLiteral("yes")}, {QStringLiteral("suspend"), QStringLiteral("yes")}, {QStringLiteral("hibernate"), QStringLiteral("unsupported")}})}})}});
     if (m == QLatin1String("machine.actions.plan")) {
       plannedBackground = b.get(QStringLiteral("params")).get(QStringLiteral("enabled")).toBool();
       if (lastKind == QLatin1String("time.timezone.set"))  // the shape machined's ops.plan returns for an admin kind
@@ -154,7 +248,7 @@ struct Backend {
     if (route.endsWith(QLatin1String(".list"))) return JValue::object({{QStringLiteral("items"), JValue::array()}});
     return JValue::object();
   }
-  QString lastKind = QStringLiteral("audio.volume.set");
+  QString lastKind = QStringLiteral("power.reboot");
 };
 
 struct Harness {
@@ -340,7 +434,7 @@ class FlowsTest : public QObject {
     Harness h;
     QVERIFY(h.up());
     h.click(QStringLiteral("nav:hardware"));
-    h.shell->hardware(QStringLiteral("audio.volume.set"), {{QStringLiteral("percent"), 40}});
+    h.shell->hardware(QStringLiteral("power.reboot"), {});
     QTRY_VERIFY(h.shell->confirm().value(QStringLiteral("visible")).toBool());
     const QVariantMap c = h.shell->confirm();
     QCOMPARE(c.value(QStringLiteral("planHash")).toString(), QStringLiteral("sha256:") + QString(64, QLatin1Char('2')));
@@ -358,17 +452,9 @@ class FlowsTest : public QObject {
     QCOMPARE(conf.get(QStringLiteral("body")).get(QStringLiteral("planHash")).str(), c.value(QStringLiteral("planHash")).toString());
     QCOMPARE(conf.get(QStringLiteral("body")).get(QStringLiteral("ticket")).str(), QStringLiteral("ticket-1"));
     QTRY_COMPARE(h.actionState(QStringLiteral("machine.confirm")), QStringLiteral("reconciled"));
-    // display change: 15 s revert window
-    h.shell->hardware(QStringLiteral("display.mode.set"), {{QStringLiteral("output"), QStringLiteral("Virtual-1")}, {QStringLiteral("mode"), QStringLiteral("1920x1080")}, {QStringLiteral("scale"), 1}});
-    QTRY_VERIFY(h.shell->confirm().value(QStringLiteral("visible")).toBool());
-    QCOMPARE(h.sent(QStringLiteral("machine.actions.plan")).last().get(QStringLiteral("body")).get(QStringLiteral("params")).get(QStringLiteral("revertAfterSeconds")).toNumber(), 15.0);
-    h.shell->confirmAccept();
-    QTRY_VERIFY_WITH_TIMEOUT(h.shell->displayRevertLeft() > 0, 5000);
-    QVERIFY(h.shell->displayRevertLeft() <= 15);
-    h.shell->keepDisplay();
-    QCOMPARE(h.shell->displayRevertLeft(), 0);
     // a confirmation shown under an older session epoch is never sent
-    h.shell->hardware(QStringLiteral("audio.mute.set"), {{QStringLiteral("muted"), true}});
+    h.shell->hardware(QStringLiteral("power.poweroff"), {});
+    QTRY_COMPARE(h.sent(QStringLiteral("machine.actions.plan")).last().get(QStringLiteral("body")).get(QStringLiteral("actionKind")).str(), QStringLiteral("power.poweroff"));
     QTRY_VERIFY(h.shell->confirm().value(QStringLiteral("visible")).toBool());
     const int confirmsBefore = h.sent(QStringLiteral("machine.actions.confirm")).size();
     h.be.sessionEpoch = 2;
@@ -380,7 +466,7 @@ class FlowsTest : public QObject {
     QTRY_VERIFY_WITH_TIMEOUT(h.shell->sessionBound() && !h.shell->locked(), 5000);
     h.be.planStale = true;
     const int plansBefore = h.sent(QStringLiteral("machine.actions.plan")).size();
-    h.shell->hardware(QStringLiteral("audio.volume.set"), {{QStringLiteral("percent"), 10}});
+    h.shell->hardware(QStringLiteral("power.reboot"), {});
     QTRY_VERIFY(h.shell->confirm().value(QStringLiteral("visible")).toBool());
     h.shell->confirmAccept();
     QTRY_COMPARE(h.actionState(QStringLiteral("machine.confirm")), QStringLiteral("failed"));
@@ -513,6 +599,67 @@ class FlowsTest : public QObject {
     h.shell->hardware(QStringLiteral("network.wifi.disconnect"), {{QStringLiteral("device"), QStringLiteral("wlan0")}});
     QTRY_COMPARE(h.sent(QStringLiteral("machine.actions.plan")).size(), before + 2);
     QVERIFY(h.sent(QStringLiteral("machine.actions.plan")).last().get(QStringLiteral("body")).get(QStringLiteral("secret")).isNullish());
+  }
+
+  void sessionSettingsGoToTheSessionAgentNotAMachinePlan() {
+    QTemporaryDir rt;
+    const QByteArray oldRt = qgetenv("XDG_RUNTIME_DIR");
+    qputenv("XDG_RUNTIME_DIR", rt.path().toUtf8());
+    {
+      FakeSessionAgent agent(rt.path());
+      Harness h;
+      QVERIFY(h.up());
+      h.click(QStringLiteral("nav:hardware"));
+      // the page shows the agent's real state: volume, outputs and modes (deduplicated), no brightness control
+      QTRY_COMPARE(h.shell->sessionSettings().value(QStringLiteral("audio")).toMap().value(QStringLiteral("volume")).toInt(), 40);
+      QTRY_VERIFY(h.find(QStringLiteral("volumeSlider")) && reallyVisible(h.find(QStringLiteral("volumeSlider"))));
+      QQuickItem* modeSel = h.find(QStringLiteral("displayMode:Virtual-1"));
+      QVERIFY(modeSel && reallyVisible(modeSel));
+      QCOMPARE(modeSel->property("count").toInt(), 2);
+      bool brightness = false;
+      walkItems(h.view->root(), [&](QQuickItem* i) { brightness = brightness || i->property("text").toString().contains(QString::fromUtf8("亮度")) || accessibleName(i).contains(QString::fromUtf8("亮度")); });
+      QVERIFY(!brightness);
+      // battery and power read in machined's own shape
+      QCOMPARE(h.find(QStringLiteral("batteryText"))->property("text").toString(), QString::fromUtf8("电量 82%，正在使用电池"));
+      QVERIFY(h.find(QStringLiteral("powerReboot"))->isEnabled() && h.find(QStringLiteral("powerOff"))->isEnabled());
+      QVERIFY(imageLooksRendered(h.view->shot(QStringLiteral("hardware.png"))));
+      const int plans = h.sent(QStringLiteral("machine.actions.plan")).size();
+      // volume and mute: one agent request each, no machine plan, no trusted confirmation
+      h.shell->hardware(QStringLiteral("audio.volume.set"), {{QStringLiteral("percent"), 30}});
+      QCOMPARE(agent.ops(QStringLiteral("audio.setVolume")).size(), 1);
+      QCOMPARE(agent.ops(QStringLiteral("audio.setVolume")).first().value(QStringLiteral("percent")).toInt(), 30);
+      QTRY_COMPARE(h.shell->sessionSettings().value(QStringLiteral("audio")).toMap().value(QStringLiteral("volume")).toInt(), 30);
+      h.shell->hardware(QStringLiteral("audio.mute.set"), {{QStringLiteral("muted"), true}});
+      QCOMPARE(agent.ops(QStringLiteral("audio.setMute")).size(), 1);
+      QVERIFY(agent.ops(QStringLiteral("audio.setMute")).first().value(QStringLiteral("muted")).toBool());
+      // display mode: the agent's display.set with the parsed mode, then the 15 s keep-or-revert window
+      h.shell->hardware(QStringLiteral("display.mode.set"), {{QStringLiteral("output"), QStringLiteral("Virtual-1")}, {QStringLiteral("mode"), QStringLiteral("1920x1080")}, {QStringLiteral("scale"), 1}});
+      QCOMPARE(agent.ops(QStringLiteral("display.set")).size(), 1);
+      const QJsonObject ds = agent.ops(QStringLiteral("display.set")).first();
+      QCOMPARE(ds.value(QStringLiteral("name")).toString(), QStringLiteral("Virtual-1"));
+      QCOMPARE(ds.value(QStringLiteral("width")).toInt(), 1920);
+      QCOMPARE(ds.value(QStringLiteral("height")).toInt(), 1080);
+      QCOMPARE(ds.value(QStringLiteral("scale")).toDouble(), 1.0);
+      QTRY_VERIFY_WITH_TIMEOUT(h.shell->displayRevertLeft() > 0, 5000);
+      QVERIFY(h.shell->displayRevertLeft() <= 15);
+      QTRY_VERIFY(h.find(QStringLiteral("displayKeep")) && reallyVisible(h.find(QStringLiteral("displayKeep"))));
+      h.click(QStringLiteral("displayKeep"));
+      QCOMPARE(h.shell->displayRevertLeft(), 0);
+      QCOMPARE(agent.ops(QStringLiteral("display.keep")).size(), 1);
+      QTest::qWait(100);
+      QCOMPARE(h.sent(QStringLiteral("machine.actions.plan")).size(), plans);
+      QVERIFY(!h.shell->confirm().value(QStringLiteral("visible")).toBool());
+      // power off is the backend's power.poweroff, through the danger dialog and the trusted layer
+      h.click(QStringLiteral("powerOff"));
+      QTRY_VERIFY(reallyVisible(h.find(QStringLiteral("dangerSure"))));
+      h.click(QStringLiteral("dangerSureAccept"));
+      QTRY_COMPARE(h.sent(QStringLiteral("machine.actions.plan")).size(), plans + 1);
+      QCOMPARE(h.sent(QStringLiteral("machine.actions.plan")).last().get(QStringLiteral("body")).get(QStringLiteral("actionKind")).str(), QStringLiteral("power.poweroff"));
+      QTRY_VERIFY(h.shell->confirm().value(QStringLiteral("visible")).toBool());
+      h.shell->confirmReject();
+    }
+    if (oldRt.isNull()) qunsetenv("XDG_RUNTIME_DIR");
+    else qputenv("XDG_RUNTIME_DIR", oldRt);
   }
 
   void adminPlanShowsDetailsAndSendsThePasswordOnlyInTheConfirm() {

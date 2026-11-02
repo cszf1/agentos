@@ -23,22 +23,18 @@ const native = (methodId: NativeRouteId, params: Record<string, unknown> = {}, b
   return { methodId, params, body, write: WRITE_ROUTES.has(methodId) };
 };
 
-/** Hardware/session and owner policy controls (§12.1/§9.3); fixed machine plans, never direct D-Bus calls. */
+/** Machine plan kinds the Shell sends (§12.1/§9.3), named as machined's fixed catalogue (machine ops.rs KINDS); fixed
+ *  machine plans, never direct D-Bus calls. session.lock/logout go to the login session agent. The user's own session
+ *  settings (volume, mute, display mode with its 15 s revert) also go to the session agent, not to a machine plan. */
 export const HARDWARE_ACTIONS = [
   "network.wifi.connect",
   "network.wifi.disconnect",
-  "audio.volume.set",
-  "audio.mute.set",
-  "audio.output.select",
-  "display.brightness.set",
-  "display.mode.set",
-  "display.revert",
   "time.timezone.set",
-  "time.ntp.set",
+  "time.ntp.enable",
   "session.lock",
   "session.logout",
   "power.reboot",
-  "power.shutdown",
+  "power.poweroff",
   "workspaces.runWhenLoggedOut",
 ] as const;
 export const DISPLAY_REVERT_SECONDS = 15;

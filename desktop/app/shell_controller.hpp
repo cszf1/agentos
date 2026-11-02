@@ -9,6 +9,7 @@
 #include "shell_actions.hpp"
 
 #include <QDateTime>
+#include <QJsonObject>
 #include <QObject>
 #include <QPointer>
 #include <QTimer>
@@ -49,6 +50,8 @@ class ShellController : public QObject, public RequestSink {
   Q_PROPERTY(QString banner READ banner NOTIFY statusChanged)
   Q_PROPERTY(QVariantMap machineStatus READ machineStatus NOTIFY machineChanged)
   Q_PROPERTY(QVariantMap capabilities READ capabilities NOTIFY machineChanged)
+  /** The login session agent's `status` (audio, outputs) for the user's own session settings. */
+  Q_PROPERTY(QVariantMap session READ sessionSettings NOTIFY machineChanged)
   Q_PROPERTY(QVariantMap updateStatus READ updateStatus NOTIFY machineChanged)
   Q_PROPERTY(QVariantMap setupStatus READ setupStatus NOTIFY machineChanged)
   Q_PROPERTY(QVariantMap maintenanceState READ maintenanceState NOTIFY pagesChanged)
@@ -140,6 +143,7 @@ class ShellController : public QObject, public RequestSink {
   qreal uiScale() const { return uiScale_; }
   void setUiScale(qreal s);
   QVariantMap confirm() const { return confirm_; }
+  QVariantMap sessionSettings() const { return session_.toVariant().toMap(); }
   QVariantMap appConfirm() const { return appConfirm_; }
   int displayRevertLeft() const { return displayRevertLeft_; }
 
@@ -240,7 +244,7 @@ class ShellController : public QObject, public RequestSink {
   void withdrawConfirms();
   QTimer statusPoll_, displayRevert_;
   int displayRevertLeft_ = 0;
-  JValue displayPrevious_;
+  JValue session_ = JValue::object();
   QString layoutDir_;
   QHash<QString, QString> actionKeys_;
   QHash<QString, ShellRequest> actionReqs_;
@@ -263,15 +267,18 @@ class ShellController : public QObject, public RequestSink {
   void onEvent(const RpcEvent& e);
   void onGap(const QString& ws);
   void clearScopeState(const QString& reason);
-  /** Lock/logout through the login session agent ($XDG_RUNTIME_DIR/agentos-session.sock); empty on success. */
-  QString sessionAgent(const QString& op);
+  /** One request to the login session agent ($XDG_RUNTIME_DIR/agentos-session.sock): lock/logout and the user's own
+   *  session settings. Empty on success; the agent's `data` goes to *data. */
+  QString sessionAgent(const QString& op, const QJsonObject& args = {}, QJsonObject* data = nullptr);
+  void sessionSetting(const QString& kind, const QVariantMap& params);
+  void loadSession();
+  void startDisplayRevert(int seconds);
   void applyAvailability(const JValue& state);
   void applyApps(const JValue& state);
   void trackReply(const QString& id, const RpcReply& r);
   void pollAction(const QString& id, const QString& getName, const JValue& args, int attempt);
   void showPlan(const QString& kind, const JValue& plan, std::function<void(bool)> done);
   void markHostDown(bool down);
-  void startDisplayRevert(const JValue& previous);
   void loadLayout();
 };
 
