@@ -1,13 +1,11 @@
-# AgentOS v1.0 — release materials (spec §32 V1-O10)
+# AgentOS — existing system build and operations
 
-**Status: not a completed release.** V1-O10 requires all 100 acceptance items with evidence and no open blocking
-issue. docs/ACCEPTANCE_V1.0.md lists the items that are still partial or not passed (including every item that needs a
-physical machine). This file is the material that must ship with a release; it is kept current so that the release
-can be cut once the remaining evidence exists. Nothing here claims an untested piece of hardware works.
+This document explains the Linux/NixOS implementation that remains in the repository: build outputs, administration,
+updates and recovery. It is not the current development roadmap or a complete-OS delivery checklist. The project is
+moving toward a reusable core and an improved frontend; see [README](../README.md). No signed public release exists,
+and no untested hardware or hypervisor is claimed supported.
 
-Review-fix closeout (decision 111): fixed SHA `7e4a8aedc42e96c1628bd7e6f11202b723a96593`, all-27 KVM/build run `41325583957`: `success` (28 success（plan+27）：plan、build-audit、build-iso、build-oci、build-physical、build-qcow2、build-release、build-repro、build-shell、m2-identity、m3-members、m5-desktop、m6-install、m6-qcow2、m7-update、m8-backup、m9-restore、m10-sched、m11-ops、m12-clone、m13-native、m14-create、m15-wifi、m16-fetch、m17-shared、m18-o09、m19-iso、m20-sway). VM matrix closed on this SHA. It does not close V1-O10.
-
-## What a release consists of
+## Build outputs
 
 | Artifact | Built by | Notes |
 |---|---|---|
@@ -23,7 +21,7 @@ expiry, closure NAR hashes, OCI image IDs, files present); Nix `require-sigs = t
 
 | Profile | State |
 |---|---|
-| `qemu-virtio` (x86_64 UEFI, virtio-blk, virtio-gpu, QEMU/KVM) | tested in KVM VM checks (os/tests, docs/V1.0_VM_TESTS.md) |
+| `qemu-virtio` (x86_64 UEFI, virtio-blk, virtio-gpu, QEMU/KVM) | exercised by the existing checks in `os/tests` |
 | Intel/AMD GPU on bare metal, real displays, Wi-Fi, audio/backlight, suspend, physical disks, serial devices | **not tested — not supported in this tree** (V1-H01…H08, D10, U01/U02 on real disks, V3-E04) |
 
 Minimum disk for an install: 64 GiB (the installer refuses smaller disks and system disks).
@@ -32,9 +30,11 @@ Minimum disk for an install: 64 GiB (the installer refuses smaller disks and sys
 
 - Support period: the signed manifest's `supportUntil`; this tree has published no signed release, so no support
   period is promised yet.
-- Known limits (details in docs/ACCEPTANCE_V1.0.md and docs/V1.0_PROGRESS.md):
-  - reference-machine timings (O04/O05) are not measured;
-  - performance and hardware claims are limited to the `qemu-virtio` profile.
+- Known limits of the existing system layer:
+  - reference-machine startup, interaction and sustained-background timings are not established;
+  - performance and hardware claims are limited to the `qemu-virtio` profile;
+  - the native frontend/machine-permission real-model flow and all slow-reader/cross-client event bounds are not fully verified.
+  These are limitations, not a commitment to continue the retired full-OS acceptance programme.
 
 ## Administration (no root shell)
 

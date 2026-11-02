@@ -1,25 +1,40 @@
-# AgentOS v1.0 (branch `v1.0`, in acceptance)
+# AgentOS
 
-**v1.0 is an installable operating system, not a runtime you add to Debian/Ubuntu.** It is a NixOS-based
-distribution (x86_64 UEFI) that ships its own kernel, firmware list, greetd login, Sway session with the native Qt
-Shell, LUKS2 + Btrfs disk layout, the privileged `machined` service and broker, offline OCI images, and A/B system
-updates with rollback. You install it on an empty disk from its ISO; no host Linux is needed. The v0.4 runtime
-described further down is now one layer inside it (the per-workspace Host).
+AgentOS combines an application/Agent runtime, persistent workspaces, controlled tool execution and a native Qt/QML
+frontend. The current implementation includes a Linux/NixOS system layer; it is **not yet a platform-independent core**.
+
+## Current direction
+
+The next development goal is to extract a smaller, platform-independent AgentOS runtime/core and improve the existing
+frontend. A complete system running in virtual machines on Linux and Windows hosts is later work by the project owner;
+this does not require a Windows-native port now. Core extraction and frontend redesign have not started.
+
+The previous full-OS acceptance checklist is no longer the project's current delivery target. Historical design
+specifications remain implementation references, not the new roadmap. Progress ledgers, acceptance reports, review
+notes and captured test output are available in Git history rather than maintained in the working tree.
+
+The existing cloud matrix passed **19 VM checks + 8 build checks** at
+[`7e4a8ae`](https://github.com/cszf1/agentos/commit/7e4a8aedc42e96c1628bd7e6f11202b723a96593)
+([run 41325583957](https://github.com/cszf1/agentos/actions/runs/41325583957)). This is a baseline, not proof of complete
+hardware support, a native real-model end-to-end flow, or a finished portable core. Source and automated tests are
+retained; future changes should validate the affected behavior, not pursue the retired full-OS checklist.
+
+## Existing system build and operation
+
+The existing system layer is NixOS-based (x86_64 UEFI), with greetd, Sway, the native Qt Shell, LUKS2 + Btrfs,
+`machined`, the broker, offline OCI images and system update rollback. The per-workspace Host is the runtime described
+below. These components remain available unchanged; their presence does not make a complete OS release the current goal.
 
 | Build | Command |
 |---|---|
-| Installer ISO (offline, whole release closure on the medium) | `cd os && nix build .#agentos-iso` |
-| VM template (same layout) | `cd os && nix build .#agentos-qcow2` |
-| Release manifest, SBOM, firmware list, SHA256SUMS | `cd os && nix build .#agentos-release` |
-| VM acceptance checks (needs KVM) | `cd os && nix build .#checks.x86_64-linux.<name>`, or the `v1-vm-tests` workflow |
+| Installer ISO (offline, whole closure on the medium) | `cd os && nix build .#agentos-iso` |
+| VM template | `cd os && nix build .#agentos-qcow2` |
+| Manifest, SBOM, firmware list, SHA256SUMS | `cd os && nix build .#agentos-release` |
+| Existing VM checks (needs KVM) | `cd os && nix build .#checks.x86_64-linux.<name>`, or the `v1-vm-tests` workflow |
 
-- Install: boot the ISO and run `agentos-install inspect`, `plan --disk /dev/disk/by-id/X`, `confirm` (you type the
-  disk serial or WWN) and `run`; it erases the whole target disk and refuses disks under 64 GiB. Dual boot, Secure Boot, NVIDIA proprietary drivers and ARM64 install are out of scope for v1.0
-  (spec `docs/AGENTOS_MVP_V1.0.md`).
-- Tested hardware: only the `qemu-virtio` profile (QEMU/KVM). Bare-metal GPU, displays, Wi-Fi, audio, suspend and
-  physical disks are **not yet accepted**; see `docs/RELEASE_V1.0.md`.
-- Status: **not a completed release** (V1-O10). Item-by-item evidence: `docs/ACCEPTANCE_V1.0.md`; checklist
-  `docs/V1.0_CHECKLIST.md`; progress and design decisions `docs/V1.0_PROGRESS.md`; handoff `docs/HANDOFF_V1.0.md`.
+The existing installer erases the selected whole disk and refuses disks under 64 GiB. Only the `qemu-virtio`
+QEMU/KVM profile has system-level test evidence; other hypervisors and bare-metal hardware are not claimed supported.
+There is no signed public release. Build outputs, administration and recovery: [docs/OPERATIONS.md](docs/OPERATIONS.md).
 
 ---
 
@@ -65,10 +80,11 @@ compaction, and model-backed **diagnosis** (a structured report over frozen, scr
 (a candidate checked on platform fixtures that you publish yourself with its exact hash and app epoch). Nothing a
 model suggests is installed, merged or published automatically.
 
-Baseline: [docs/AGENTOS_MVP_V0.4.md](docs/AGENTOS_MVP_V0.4.md) (M0–M8, 88 checks). Acceptance report:
-[docs/ACCEPTANCE_V0.4.md](docs/ACCEPTANCE_V0.4.md). Earlier: v0.3 [docs/AGENTOS_MVP_V0.3.md](docs/AGENTOS_MVP_V0.3.md)
-(M0–M7, 80 checks), report [docs/ACCEPTANCE_V0.3.md](docs/ACCEPTANCE_V0.3.md). Earlier: v0.2 [docs/AGENTOS_MVP_V0.2.md](docs/AGENTOS_MVP_V0.2.md) (M0–M6). Acceptance report:
-[docs/ACCEPTANCE_V0.2.md](docs/ACCEPTANCE_V0.2.md). Contracts: [docs/contracts/](docs/contracts/).
+Historical implementation references: [v0.4 runtime](docs/AGENTOS_MVP_V0.4.md),
+[v0.3 providers](docs/AGENTOS_MVP_V0.3.md), [v0.2 code apps](docs/AGENTOS_MVP_V0.2.md),
+[v0.1 declarative apps](docs/AGENTOS_MVP_V0.1.md), [v1.0 system layer](docs/AGENTOS_MVP_V1.0.md).
+Their old milestones and acceptance requirements are historical, not current delivery gates.
+Machine-readable contracts used by code and builds: [docs/contracts/](docs/contracts/).
 
 ## Layout
 
@@ -94,6 +110,10 @@ packages/broker-client   host ↔ broker protocol client (framing, canonical JSO
 native/                  Rust 1.91.0 workspace: protocol, broker (root), provider-user, provider-workers
                          (file/service/net/serial), telemetry (eBPF collector); bpf/exec_exit.bpf.c (fixed object)
 deploy/v0.3/             agentos-system-admin (install/inspect/reinstall-log/uninstall), unit templates
+desktop/                Qt/QML native frontend, renderer and transport
+os/                     existing NixOS system modules, image builds and VM checks
+docs/contracts/         machine-readable contracts consumed by source/builds
+docs/examples/          example declarative apps
 ```
 
 ## Requirements
@@ -106,8 +126,8 @@ deploy/v0.3/             agentos-system-admin (install/inspect/reinstall-log/uni
   delegation of `cpu`, `memory` and `pids` to the user. Without it the host still runs declarative apps; code apps
   answer `SANDBOX_UNAVAILABLE` (there is no fallback to plain processes).
 
-Verified on Debian 13 (kernel 6.18, Podman 5.4.2, crun) and Ubuntu 24.04.5 for v0.1; see the acceptance report for the
-exact environment of the v0.2 run.
+Runtime development has been exercised on Debian 13 (kernel 6.18, Podman 5.4.2, crun) and, for v0.1, Ubuntu
+24.04.5. These runtime environments do not establish support for every system image or hardware configuration.
 
 ## Install from a clean machine
 
