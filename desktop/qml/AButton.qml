@@ -6,6 +6,20 @@ Button {
     property string variant: "secondary"
     // false on the trusted layer's accept button: Enter must never confirm a system plan (product decision)
     property bool enterActivates: true
+    // Red danger buttons ask "are you sure" once more (ShellRoot's dangerSure dialog) and only then emit `confirmed`;
+    // other buttons emit `confirmed` right after `clicked`. A button that may be red handles onConfirmed, not onClicked.
+    property bool askSure: variant === "danger"
+    signal confirmed()
+    Connections {
+        target: b
+        function onClicked() {
+            if (!b.askSure) { b.confirmed(); return }
+            var r = b.parent
+            while (r && r.objectName !== "shellRoot") r = r.parent
+            if (r) r.askSure(b)
+            else console.warn("AButton: no shell root to ask for confirmation; danger action not run")
+        }
+    }
     text: label
     focusPolicy: Qt.StrongFocus
     Accessible.name: label

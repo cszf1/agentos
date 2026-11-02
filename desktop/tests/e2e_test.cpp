@@ -350,6 +350,11 @@ class E2E : public QObject {
     QTest::qWaitFor([&] { mt = findByObjectName(r.view->root(), QStringLiteral("maintToggle")); return mt && reallyVisible(mt); }, 20000);
     QVERIFY(mt);
     r.press(mt);
+    // the red pause button asks once more before anything is sent
+    QQuickItem* sureOk = nullptr;
+    QTest::qWaitFor([&] { sureOk = findByObjectName(r.view->root(), QStringLiteral("dangerSureAccept")); return sureOk && reallyVisible(sureOk); }, 10000);
+    QVERIFY2(sureOk, "no danger confirmation after the pause button");
+    r.press(sureOk);
     QTRY_COMPARE_WITH_TIMEOUT(r.actionState(QStringLiteral("maintenance.pause")), QStringLiteral("reconciled"), 60000);
     QTRY_VERIFY_WITH_TIMEOUT((r.go(QStringLiteral("policies")), r.shell->maintenanceState().value(QStringLiteral("state")).toString() == QLatin1String("paused")), 30000);
     report(QStringLiteral("maintenance"), {{QStringLiteral("state"), r.shell->maintenanceState()}});

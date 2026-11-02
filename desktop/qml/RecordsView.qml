@@ -52,7 +52,8 @@ Column {
             readonly property int rowIndex: index
             Repeater { model: r.view.records.headers.length; delegate: PText { width: 150 * r.s; text: r.view.records.cellAt(parent.rowIndex, index); elide: Text.ElideRight; maximumLineCount: 2 } }
             AButton { visible: !!r.st.writable; label: "编辑"; enabled: !r.st.formOpen; onClicked: r.view.openEdit(parent.rowIndex) }
-            AButton { visible: !!r.st.writable; label: "删除"; variant: "danger"; onClicked: r.view.askDelete(parent.rowIndex) } } }
+            // askSure off: 删除 opens the confirmation row below, which is the second step
+            AButton { visible: !!r.st.writable; label: "删除"; variant: "danger"; askSure: false; onClicked: r.view.askDelete(parent.rowIndex) } } }
     PText { visible: r.view && r.view.records.rows === 0; text: "没有记录"; variant: "muted" }
     Row { spacing: 8
         AButton { label: "上一页"; enabled: !!r.st.hasPrev; onClicked: r.view.pageBy(-1) }
@@ -63,6 +64,6 @@ Column {
         Column { id: dc; x: 6; y: 6; width: parent.width - 12; spacing: 4
             PText { width: parent.width; text: "删除“" + (r.st.deleteAsk || "") + "”？删除是永久的，切换应用版本不会恢复它（只能从备份恢复）。" }
             Row { spacing: 8
-                AButton { label: "确认删除"; variant: "danger"; onClicked: r.view.confirmDelete(true) }
+                AButton { label: "确认删除"; variant: "danger"; askSure: false; onClicked: r.view.confirmDelete(true) }
                 AButton { label: "取消"; onClicked: r.view.confirmDelete(false) } } } }
 }

@@ -7,7 +7,7 @@ PageFrame {
         AButton { label: "归档此应用"; onClicked: shell.act("app.archive", { appId: app.appId, appEpoch: app.appEpoch }, "归档应用") }
         AButton { label: "恢复此应用"; onClicked: shell.act("app.restore", { appId: app.appId }, "恢复应用") }
         AButton { label: "启动运行时"; onClicked: shell.act("app.runtime", { appId: app.appId, action: "start", appEpoch: app.appEpoch }, "启动应用") }
-        AButton { label: "停止运行时"; onClicked: shell.act("app.runtime", { appId: app.appId, action: "stop", appEpoch: app.appEpoch }, "停止应用") }
+        AButton { label: "停止运行时"; variant: "danger"; onConfirmed: shell.act("app.runtime", { appId: app.appId, action: "stop", appEpoch: app.appEpoch }, "停止应用") }
         AButton { label: "重启运行时"; onClicked: shell.act("app.runtime", { appId: app.appId, action: "restart", appEpoch: app.appEpoch }, "重启应用") } }
     SlotCanvas { visible: !!app; width: parent.width; view: app }
     PText { text: "版本"; font.bold: true }

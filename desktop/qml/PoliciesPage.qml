@@ -4,7 +4,7 @@ PageFrame {
     readonly property bool paused: shell.maintenanceState.state === "paused"
     Row { spacing: 8
         PText { text: "自动维护：" + (paused ? "已暂停" : (shell.maintenanceState.state || "未知")) }
-        AButton { objectName: "maintToggle"; label: paused ? "恢复自动维护" : "暂停全部自动维护"; variant: paused ? "primary" : "danger"; onClicked: shell.act(paused ? "maintenance.resume" : "maintenance.pause", {}, paused ? "恢复维护" : "暂停维护") } }
+        AButton { objectName: "maintToggle"; label: paused ? "恢复自动维护" : "暂停全部自动维护"; variant: paused ? "primary" : "danger"; onConfirmed: shell.act(paused ? "maintenance.resume" : "maintenance.pause", {}, paused ? "恢复维护" : "暂停维护") } }
     Repeater { model: shell.policies
         delegate: Row { spacing: 8
             PText { width: 260 * shell.uiScale; text: (row.templateId || "") + " → " + (row.target ? row.target.kind + ":" + row.target.id : ""); elide: Text.ElideRight; maximumLineCount: 1 }

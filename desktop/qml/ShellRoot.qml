@@ -7,6 +7,10 @@ Item {
     id: root
     objectName: "shellRoot"
     readonly property real s: shell.uiScale
+    // The danger button waiting for its second confirmation (AButton.askSure); cleared on lock/scope change.
+    property Item sureFor: null
+    function askSure(btn) { sureFor = btn }
+    Connections { target: shell; function onScopeCleared(reason) { root.sureFor = null } }
     readonly property var pages: [
         { id: "home", label: "首页" }, { id: "login", label: "登录与设置" }, { id: "workspaces", label: "工作区与成员" },
         { id: "app", label: "应用与版本" }, { id: "tasks", label: "任务中心" }, { id: "policies", label: "维护策略" },
@@ -99,6 +103,26 @@ Item {
         anchors.fill: parent; z: 900; visible: shell.locked; color: "#111827"
         MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons }
         Text { anchors.centerIn: parent; color: "#ffffff"; textFormat: Text.PlainText; font.pixelSize: 22 * root.s; text: "会话已锁定" }
+    }
+    // "Are you sure?" for red danger buttons (product decision): a second, explicit step; focus starts on 取消.
+    Rectangle {
+        id: sure
+        objectName: "dangerSure"
+        anchors.fill: parent; z: 850; visible: root.sureFor !== null; color: "#66000000"
+        Accessible.role: Accessible.Dialog; Accessible.name: "确认危险操作"
+        MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons; hoverEnabled: true; onWheel: function(w) { w.accepted = true } }
+        onVisibleChanged: if (visible) sureNo.forceActiveFocus()
+        Keys.onEscapePressed: root.sureFor = null
+        Rectangle {
+            anchors.centerIn: parent; width: Math.min(parent.width - 40, 420 * root.s); height: sureCol.implicitHeight + 32
+            radius: 8; color: "#ffffff"; border.color: "#a01515"; border.width: 1
+            Column { id: sureCol; x: 16; y: 16; width: parent.width - 32; spacing: 10
+                PText { objectName: "dangerSureText"; width: parent.width; variant: "title"; text: "确定要" + (root.sureFor ? root.sureFor.label : "") + "吗？" }
+                PText { width: parent.width; variant: "muted"; text: "这是危险操作，请再确认一次。" }
+                Row { spacing: 10
+                    AButton { objectName: "dangerSureAccept"; label: "确定"; askSure: false; onClicked: { var t = root.sureFor; root.sureFor = null; if (t) t.confirmed() } }
+                    AButton { id: sureNo; objectName: "dangerSureCancel"; label: "取消"; onClicked: root.sureFor = null } } }
+        }
     }
     AppConfirm { anchors.fill: parent }
     TrustedConfirm { anchors.fill: parent }

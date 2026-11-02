@@ -54,8 +54,8 @@ PageFrame {
     Row { spacing: 8
         AButton { label: "锁定"; enabled: av("session") || true; onClicked: shell.hardware("session.lock", {}) }
         AButton { label: "注销"; enabled: av("session"); onClicked: shell.hardware("session.logout", {}) }
-        AButton { label: "重启"; variant: "danger"; enabled: av("power"); onClicked: shell.hardware("power.reboot", {}) }
-        AButton { label: "关机"; variant: "danger"; enabled: av("power"); onClicked: shell.hardware("power.shutdown", {}) } }
+        AButton { label: "重启"; variant: "danger"; enabled: av("power"); onConfirmed: shell.hardware("power.reboot", {}) }
+        AButton { label: "关机"; variant: "danger"; enabled: av("power"); onConfirmed: shell.hardware("power.shutdown", {}) } }
     Unavailable { visible: !av("power") }
     ActionsList { prefix: "machine." }
 }

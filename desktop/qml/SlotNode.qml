@@ -132,10 +132,10 @@ Item {
     Component { id: checkboxC
         ACheck { label: root.d.label; checked: root.d.checked; onToggled: root.view.check(root.d.formId, root.d.name, checked) } }
     Component { id: buttonC
-        AButton { label: root.d.label; variant: root.d.variant; enabled: !root.d.disabled; onClicked: root.view.click(root.node.path) } }
+        AButton { label: root.d.label; variant: root.d.variant; askSure: false; enabled: !root.d.disabled; onClicked: root.view.click(root.node.path) } }
     Component { id: systemButtonC
         Column { spacing: 2
-            AButton { label: "⚙ " + root.d.label; variant: root.d.variant; enabled: !root.d.disabled; onClicked: root.view.click(root.node.path) }
+            AButton { label: "⚙ " + root.d.label; variant: root.d.variant; askSure: false; enabled: !root.d.disabled; onClicked: root.view.click(root.node.path) }
             PText { text: "系统动作：先生成计划，由 AgentOS 可信确认层确认后才执行"; variant: "small" } } }
     Component { id: chartC
         Column { width: root.width; spacing: 4

@@ -16,8 +16,8 @@ PageFrame {
             PText { width: 90 * shell.uiScale; text: row.state || "" }
             AButton { label: "切换"; enabled: row.workspaceId !== shell.workspaceId; onClicked: shell.switchWorkspace(row.workspaceId) }
             AButton { label: "启动"; onClicked: shell.act("workspaces.start", { workspaceId: row.workspaceId }, "启动工作区") }
-            AButton { label: "停止"; onClicked: shell.act("workspaces.stop", { workspaceId: row.workspaceId }, "停止工作区") }
-            AButton { label: "归档"; variant: "danger"; onClicked: shell.act("workspaces.archive", { workspaceId: row.workspaceId }, "归档工作区") } } }
+            AButton { label: "停止"; variant: "danger"; onConfirmed: shell.act("workspaces.stop", { workspaceId: row.workspaceId }, "停止工作区") }
+            AButton { label: "归档"; variant: "danger"; onConfirmed: shell.act("workspaces.archive", { workspaceId: row.workspaceId }, "归档工作区") } } }
     PText { text: "成员"; font.bold: true }
     Repeater { model: shell.members
         delegate: Row { spacing: 8
@@ -25,7 +25,7 @@ PageFrame {
             ASelect { label: "角色 " + (row.userName || row.userId); value: row.role || "viewer"
                       options: [{ value: "owner", label: "所有者" }, { value: "editor", label: "编辑者" }, { value: "viewer", label: "查看者" }]  // the backend roles (machine dir.rs Role)
                       onChosen: function(v) { shell.act("members.setRole", { userId: row.userId, role: v, expectedMemberVersion: row.memberVersion }, "设置角色") } }
-            AButton { label: "撤销成员"; variant: "danger"; onClicked: shell.act("members.revoke", { userId: row.userId, expectedMemberVersion: row.memberVersion }, "撤销成员") }
+            AButton { label: "撤销成员"; variant: "danger"; onConfirmed: shell.act("members.revoke", { userId: row.userId, expectedMemberVersion: row.memberVersion }, "撤销成员") }
             AButton { label: "转让所有权"; onClicked: shell.act("members.transferOwner", { userId: row.userId, expectedMemberVersion: row.memberVersion, confirm: true }, "转让所有权") } } }
     ActionsList { prefix: "" }
 }

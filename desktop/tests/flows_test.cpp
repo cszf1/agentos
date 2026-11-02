@@ -302,8 +302,23 @@ class FlowsTest : public QObject {
     QTRY_COMPARE(h.actionState(QStringLiteral("conversation.compact")), QStringLiteral("reconciled"));
     h.click(QStringLiteral("nav:policies"));
     QTRY_VERIFY(h.find(QStringLiteral("maintToggle")));
+    // a red danger button asks once more: 取消 sends nothing, 确定 sends exactly one request
+    const int pausesBefore = h.sent(QStringLiteral("maintenance.control.post")).size();
+    h.view->view.requestActivate();
     h.click(QStringLiteral("maintToggle"));
+    QTRY_VERIFY(reallyVisible(h.find(QStringLiteral("dangerSure"))));
+    QVERIFY(h.find(QStringLiteral("dangerSureText"))->property("text").toString().contains(QString::fromUtf8("暂停全部自动维护")));
+    QTRY_COMPARE(h.view->view.activeFocusItem(), h.find(QStringLiteral("dangerSureCancel")));
+    QVERIFY(imageLooksRendered(h.view->shot(QStringLiteral("danger-sure.png"))));
+    h.click(QStringLiteral("dangerSureCancel"));
+    QTRY_VERIFY(!h.find(QStringLiteral("dangerSure"))->isVisible());
+    QTest::qWait(100);
+    QCOMPARE(h.sent(QStringLiteral("maintenance.control.post")).size(), pausesBefore);
+    h.click(QStringLiteral("maintToggle"));
+    QTRY_VERIFY(reallyVisible(h.find(QStringLiteral("dangerSure"))));
+    h.click(QStringLiteral("dangerSureAccept"));
     QTRY_COMPARE(h.actionState(QStringLiteral("maintenance.pause")), QStringLiteral("reconciled"));
+    QCOMPARE(h.sent(QStringLiteral("maintenance.control.post")).size(), pausesBefore + 1);
     QTRY_COMPARE(h.shell->maintenanceState().value(QStringLiteral("state")).toString(), QStringLiteral("paused"));
     h.click(QStringLiteral("nav:proposals"));
     QTRY_VERIFY(h.find(QStringLiteral("acceptProposal")));

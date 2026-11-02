@@ -10,7 +10,7 @@ PageFrame {
             PText { text: row.state || "" }
             AButton { label: "检查"; onClicked: shell.act("backups.inspect", { backupId: row.backupId }, "检查备份") }
             AButton { label: "导出到 U 盘"; onClicked: shell.act("backups.export", { backupId: row.backupId, targetId: "removable" }, "导出备份") }
-            AButton { label: "生成恢复计划"; variant: "danger"; onClicked: shell.act("restores.plan", { backupId: row.backupId, mode: mode.currentValue }, "恢复计划") } } }
+            AButton { label: "生成恢复计划"; variant: "danger"; onConfirmed: shell.act("restores.plan", { backupId: row.backupId, mode: mode.currentValue }, "恢复计划") } } }
     PText { visible: shell.backups.count === 0; text: "没有备份"; variant: "muted" }
     ActionsList { prefix: "" }
 }
