@@ -349,7 +349,6 @@ export async function main(): Promise<void> {
     const b = core.apps.getApp(a.appId).bundle;
     if (b && !checkAnyStructure(b).ok) log.error("active bundle not accepted by this renderer", { appId: a.appId });
   }
-  if (!fs.existsSync(path.join(config.webDir, "index.html"))) log.warn("web shell build not found", { webDir: config.webDir });
   rt.status.phase = "ready";
   if (rt.maint && process.env.AGENTOS_MAINTENANCE_DISABLED !== "1") rt.maint.start();
   else if (compactionsAlone) core.compactions.start(1000);

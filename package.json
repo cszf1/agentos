@@ -8,13 +8,12 @@
     "node": ">=24.22.1 <25"
   },
   "scripts": {
-    "typecheck": "tsc -b packages/host && tsc -p packages/app-sdk && tsc -p packages/app-runner && tsc -p tests/tsconfig.json --noEmit && pnpm --filter @agentos/web typecheck",
-    "build": "tsc -b packages/host && tsc -p packages/app-sdk && tsc -p packages/app-runner && pnpm --filter @agentos/web build",
+    "typecheck": "tsc -b packages/host && tsc -p packages/app-sdk && tsc -p packages/app-runner && tsc -p tests/tsconfig.json --noEmit",
+    "build": "tsc -b packages/host && tsc -p packages/app-sdk && tsc -p packages/app-runner",
     "dev": "node scripts/dev.mjs",
     "start": "bin/agentos-host",
     "test": "pnpm build && vitest run --project unit",
     "test:recovery": "pnpm build && vitest run --project recovery && vitest run --project perf",
-    "test:e2e": "pnpm build && playwright test -c tests/e2e/playwright.config.ts",
     "smoke:real": "pnpm build && node scripts/smoke-real.mjs",
     "backup": "bin/agentos-admin backup",
     "restore": "bin/agentos-admin restore",
@@ -45,7 +44,6 @@
     "test:migration-v1": "vitest run --project migration-v1"
   },
   "devDependencies": {
-    "@playwright/test": "1.64.1",
     "@types/node": "24.19.2",
     "typescript": "5.9.3",
     "vitest": "3.2.7"

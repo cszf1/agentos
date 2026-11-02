@@ -24,7 +24,6 @@ AgentOS 是基于 Linux/NixOS 开发的操作系统，包含持久化工作区�
 | `packages/app-runner`、`packages/app-sdk` | 隔离应用执行与 SDK |
 | `packages/broker-client`、`native` | 原生协议、权限网关与系统能力实现 |
 | `desktop` | Qt/QML 原生前端、渲染与通信 |
-| `packages/web` | Web 开发界面 |
 | `runtime` | 锁定的运行时目录、镜像配方与兼容实现 |
 | `os`、`deploy` | 现有系统构建、安装与部署实现 |
 | `tests`、`fixtures` | 自动化测试、协议向量与固定输入数据 |
@@ -47,7 +46,7 @@ pnpm build
 pnpm native:build
 ```
 
-开发界面：
+开发用 Host（独立数据目录 `.data/dev`，端口 4318）：
 
 ```bash
 AGENTOS_MODEL_MODE=faux pnpm dev

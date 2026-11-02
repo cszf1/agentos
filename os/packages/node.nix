@@ -8,9 +8,8 @@ stdenv.mkDerivation (finalAttrs: {
     inherit (finalAttrs) pname version src;
     pnpm = pnpm_10;
     fetcherVersion = 2;
-    hash = "sha256-a8IpDeZ+Hjs8eDoNEH9v5KjjHLlhDBJfJIrHEMq+7DQ=";
+    hash = "sha256-42c89ftiEL+72MXYITqnnkjNe/fv0L9myfUvaUfTpbs=";
   };
-  env.PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD = "1";
   buildPhase = ''
     runHook preBuild
     pnpm build
@@ -31,5 +30,5 @@ stdenv.mkDerivation (finalAttrs: {
     done
     runHook postInstall
   '';
-  meta.description = "AgentOS Host, Pi harness adapter, web dev client and admin tools";
+  meta.description = "AgentOS Host, Pi harness adapter and admin tools";
 })

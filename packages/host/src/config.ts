@@ -7,7 +7,6 @@ export interface HostConfig {
   port: number;
   allowedHosts: string[];
   logLevel: "debug" | "info" | "warn" | "error";
-  webDir: string;
   sessionTtlMs: number;
   testMode: boolean;
   /** v0.2 code runtime: rootless Podman API socket (null = runtime disabled), platform files root and catalog. */
@@ -29,7 +28,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): HostConfig {
   const allowedHosts = [`${host}:${port}`, `localhost:${port}`, `127.0.0.1:${port}`];
   for (const h of (env.AGENTOS_ALLOWED_HOSTS ?? "").split(",").map((s) => s.trim()).filter(Boolean)) allowedHosts.push(h);
   const lvl = (env.AGENTOS_LOG_LEVEL || "info") as HostConfig["logLevel"];
-  const webDir = path.resolve(env.AGENTOS_WEB_DIR || path.join(import.meta.dirname, "..", "..", "web", "dist"));
   const platformRoot = path.resolve(env.AGENTOS_PLATFORM_ROOT || path.join(import.meta.dirname, "..", "..", ".."));
   const uid = typeof process.getuid === "function" ? process.getuid() : 1000;
   const runtimeMode = (env.AGENTOS_RUNTIME || "podman").toLowerCase();
@@ -40,7 +38,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): HostConfig {
     port,
     allowedHosts: [...new Set(allowedHosts)],
     logLevel: ["debug", "info", "warn", "error"].includes(lvl) ? lvl : "info",
-    webDir,
     sessionTtlMs: 12 * 3600 * 1000,
     testMode: env.NODE_ENV === "test",
     podmanSocket,

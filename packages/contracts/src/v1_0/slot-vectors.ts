@@ -1,6 +1,6 @@
-// Shell behaviour model shared by the web renderer and the native Qt Shell (spec §10.3). This file is the reference the
+// Shell behaviour model of the native Qt Shell (spec §10.3). This file is the reference the
 // vector generator (scripts/slot-vectors.mjs) runs; the C++ renderer in desktop/renderer must reproduce its outputs.
-// It is a data-only port of packages/web/src/SlotRenderer.tsx (render semantics, forms, commands, idempotency keys).
+// It began as a data-only port of the former web SlotRenderer (render semantics, forms, commands, idempotency keys).
 import { asText, readPointer, checkSlotTree, COMPONENT_TYPES_V2, UI_LIMITS, type SlotTreeContext } from "../v2/ui.js";
 export { asText };
 import { codePoints } from "../bundle.js";
@@ -8,7 +8,7 @@ import { WEB_ERROR_TEXT, NETWORK_ERROR_TEXT, INVOCATION_TEXT as INVOCATION_MESSA
 export { NETWORK_ERROR_TEXT };
 import { FORWARD_ROUTES } from "./forward-routes.js";
 
-/** describeError() texts of packages/web/src/api.ts plus the v1.0 native error classes (spec §16.2). */
+/** describeError() texts of the former web client (WEB_ERROR_TEXT) plus the v1.0 native error classes (spec §16.2). */
 export const ERROR_TEXT: Record<string, string> = {
   ...WEB_ERROR_TEXT,
   NOT_FOUND_OR_FORBIDDEN: "对象不存在或你没有权限",

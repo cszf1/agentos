@@ -1,5 +1,5 @@
-// formatVersion 1 records view model shared by the web AppView and the native Shell (spec §10.2 first row, V1-D02).
-// Port of packages/web/src/AppView.tsx: default draft rules, hidden fields kept by sending only changed form fields,
+// formatVersion 1 records view model of the native Shell (spec §10.2 first row, V1-D02).
+// Port of the former web AppView: default draft rules, hidden fields kept by sending only changed form fields,
 // search/filter/paging requests, version rebase. Local field checks use the Host's own valueIssue().
 import { defaultRecordDraft as defaultDraft, displayRecordValue as displayValue, editRecordDraft as openEdit, rebaseRecordDraft as rebase } from "../view.js";
 import { fieldSpec, valueIssue, type AppBundle, type Field, type FieldValue } from "../bundle.js";

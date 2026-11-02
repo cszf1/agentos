@@ -1,8 +1,5 @@
 import { randomUUID } from "node:crypto";
-import fs from "node:fs";
-import path from "node:path";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
-import fastifyStatic from "@fastify/static";
 import {
   AgentOsError,
   HOST_VERSION,
@@ -559,14 +556,5 @@ export function buildServer(rt: HostRuntime): FastifyInstance {
   app.all("/api/*", async () => {
     throw new AgentOsError("NOT_FOUND", "no such endpoint");
   });
-
-  // ---- static shell (same origin) ----
-  if (fs.existsSync(path.join(config.webDir, "index.html"))) {
-    app.register(fastifyStatic, { root: config.webDir, prefix: "/", index: ["index.html"], cacheControl: false });
-    app.setNotFoundHandler((req, reply) => {
-      if (req.method === "GET" && !req.url.startsWith("/api/") && !req.url.startsWith("/health/")) return reply.sendFile("index.html");
-      return sendError(reply, new AgentOsError("NOT_FOUND", "not found"));
-    });
-  }
   return app;
 }
