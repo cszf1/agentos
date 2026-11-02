@@ -27,7 +27,10 @@ PageFrame {
             PText { visible: shell.runs.count === 0; text: "没有任务"; variant: "muted" } }
         Column { spacing: 2; width: 260 * shell.uiScale
             PText { text: "通知"; font.bold: true }
-            Repeater { model: shell.notifications; delegate: PText { width: 260 * shell.uiScale; visible: index < 4; height: visible ? implicitHeight : 0; text: row.title || ""; elide: Text.ElideRight; maximumLineCount: 1 } } }
+            // the Host's merged notifications: {id, kind, subject, severity, title, detail, count, state}
+            Repeater { model: shell.notifications; delegate: PText { objectName: "notification:" + (row.id || ""); width: 260 * shell.uiScale; visible: index < 4; height: visible ? implicitHeight : 0
+                                                                       text: (row.title || "") + (row.count > 1 ? "（" + row.count + " 次）" : ""); color: row.severity === "critical" || row.severity === "error" ? "#a01515" : "#1f1f1f"
+                                                                       elide: Text.ElideRight; maximumLineCount: 1 } } }
     }
     // app canvas
     Row { spacing: 8

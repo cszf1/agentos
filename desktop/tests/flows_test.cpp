@@ -4,6 +4,7 @@
 #include "gui_support.hpp"
 
 #include <QClipboard>
+#include <QColor>
 #include <QDateTime>
 #include <QGuiApplication>
 #include <QJsonDocument>
@@ -128,6 +129,7 @@ struct Backend {
   std::atomic<bool> locked{false};
   std::atomic<bool> backgroundEnabled{false}, workspaceOwner{true}, nativeStatusShape{false};
   bool plannedBackground = false;
+  std::atomic<bool> withNotification{false};
   std::atomic<bool> hostDown{false}, modelDown{false}, brokerDown{false}, planStale{false}, holdQueries{false}, holdRecordLists{false};
   JValue kanban = loadFixture(QStringLiteral("v1.0/slot-vectors/scenario-v2-kanban.json"));
   JValue console = loadFixture(QStringLiteral("v1.0/slot-vectors/scenario-v3-system-console.json"));
@@ -252,6 +254,10 @@ struct Backend {
     if (route == QLatin1String("apps.archive.post")) return JValue::object({{QStringLiteral("state"), QStringLiteral("archived")}});
     if (route == QLatin1String("apps.restore.post")) return JValue::object({{QStringLiteral("state"), QStringLiteral("active")}});
     if (route == QLatin1String("conversations.compactions.post")) return JValue::object({{QStringLiteral("compactionId"), QStringLiteral("cmp-1")}, {QStringLiteral("state"), QStringLiteral("completed")}});
+    if (route == QLatin1String("notifications.list") && withNotification)  // core health/incidents.ts Notifications.list()
+      return JValue::object({{QStringLiteral("items"), JValue::array({JValue::object({{QStringLiteral("id"), QStringLiteral("n-disk")}, {QStringLiteral("kind"), QStringLiteral("disk")}, {QStringLiteral("subject"), QStringLiteral("machine")},
+                                                                                     {QStringLiteral("severity"), QStringLiteral("critical")}, {QStringLiteral("title"), QString::fromUtf8("磁盘空间不足")}, {QStringLiteral("detail"), QStringLiteral("5% free")},
+                                                                                     {QStringLiteral("count"), 3}, {QStringLiteral("state"), QStringLiteral("open")}, {QStringLiteral("createdAt"), QStringLiteral("2026-11-02T10:00:00Z")}})})}});
     if (route.endsWith(QLatin1String(".list"))) return JValue::object({{QStringLiteral("items"), JValue::array()}});
     return JValue::object();
   }
@@ -667,6 +673,17 @@ class FlowsTest : public QObject {
     }
     if (oldRt.isNull()) qunsetenv("XDG_RUNTIME_DIR");
     else qputenv("XDG_RUNTIME_DIR", oldRt);
+  }
+
+  void homeShowsHostNotificationsInTheirOwnShape() {
+    Harness h;
+    h.be.withNotification = true;
+    QVERIFY(h.up());
+    h.click(QStringLiteral("nav:home"));
+    QTRY_VERIFY(h.find(QStringLiteral("notification:n-disk")));
+    QQuickItem* n = h.find(QStringLiteral("notification:n-disk"));
+    QCOMPARE(n->property("text").toString(), QString::fromUtf8("磁盘空间不足（3 次）"));
+    QCOMPARE(n->property("color").value<QColor>(), QColor(QStringLiteral("#a01515")));
   }
 
   void updateActivationUsesTheBackendStatesAndAnAdminPlan() {
