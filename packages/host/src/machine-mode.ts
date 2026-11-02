@@ -11,7 +11,7 @@ import net from "node:net";
 import fs from "node:fs";
 import { randomUUID, randomBytes, createHash } from "node:crypto";
 import type { FastifyInstance } from "fastify";
-import { identityContext, pauseAsync, type BuildGate, type Core, type MachineGate, type WorkspaceIdentity } from "@agentos/core";
+import { identityContext, pauseAsync, readBootId, type BuildGate, type Core, type MachineGate, type WorkspaceIdentity } from "@agentos/core";
 import type { HostRuntime } from "./http.js";
 import type { Logger } from "./log.js";
 
@@ -254,11 +254,7 @@ export class MachineMode {
   }
 
   bootId(): string {
-    try {
-      return fs.readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
-    } catch {
-      return "unknown";
-    }
+    return readBootId();
   }
 
   async start(): Promise<void> {

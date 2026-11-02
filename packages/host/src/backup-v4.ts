@@ -1,4 +1,3 @@
-import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { canonicalJson, sha256Hex } from "@agentos/contracts";
@@ -127,6 +126,5 @@ export function applyV04Restore(dataDir: string, reason: string): Record<string,
   } finally {
     db.close();
   }
-  void fs;
   return out;
 }

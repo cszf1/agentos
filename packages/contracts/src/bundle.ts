@@ -3,6 +3,8 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import type { ErrorObject } from "ajv";
 import schema from "./app-bundle.schema.json" with { type: "json" };
 import { LIMITS } from "./limits.js";
+import { RESERVED_KEYS } from "./view.js";
+export { RESERVED_KEYS };
 
 export const APP_BUNDLE_SCHEMA: object = schema;
 
@@ -51,8 +53,6 @@ export interface ValidationIssue {
   code: string;
   message: string;
 }
-
-export const RESERVED_KEYS: ReadonlySet<string> = new Set(["constructor", "prototype", "__proto__"]);
 
 const ajv = new Ajv2020({ allErrors: true, strict: true, coerceTypes: false, removeAdditional: false, useDefaults: false });
 const validateSchema = ajv.compile(APP_BUNDLE_SCHEMA);

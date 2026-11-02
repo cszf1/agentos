@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { createHash } from "node:crypto";
+import { fsyncPath as syncPath, sha256File } from "./fs-utils.js";
 import { DatabaseSync } from "node:sqlite";
 import { HOST_VERSION, RUNNER_ABI_VERSION, catalogHash, type RuntimeCatalog, type RuntimeLock } from "@agentos/contracts";
 import { ArtifactStore, MIGRATIONS, RUNTIME_POLICY, type RuntimeDriver } from "@agentos/core";
@@ -40,16 +40,9 @@ export interface ManifestV2 {
   v04?: V04BackupFacts;
 }
 
-const sha256File = (f: string) => createHash("sha256").update(fs.readFileSync(f)).digest("hex");
-
 function fsyncPath(p: string): void {
   try {
-    const fd = fs.openSync(p, "r");
-    try {
-      fs.fsyncSync(fd);
-    } finally {
-      fs.closeSync(fd);
-    }
+    syncPath(p);
   } catch {
     /* directories on some filesystems */
   }

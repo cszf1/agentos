@@ -1,29 +1,13 @@
 // formatVersion 1 records view model shared by the web AppView and the native Shell (spec §10.2 first row, V1-D02).
 // Port of packages/web/src/AppView.tsx: default draft rules, hidden fields kept by sending only changed form fields,
 // search/filter/paging requests, version rebase. Local field checks use the Host's own valueIssue().
+import { defaultRecordDraft as defaultDraft, displayRecordValue as displayValue, editRecordDraft as openEdit, rebaseRecordDraft as rebase } from "../view.js";
 import { fieldSpec, valueIssue, type AppBundle, type Field, type FieldValue } from "../bundle.js";
 import { forward, type ForwardRequest } from "./slot-vectors.js";
 
+export { defaultDraft, displayValue, openEdit, rebase };
 export const RECORDS_PAGE = 20;
 type Draft = Record<string, FieldValue | undefined>;
-
-export function defaultDraft(bundle: AppBundle): Draft {
-  const d: Draft = {};
-  for (const k of bundle.view.formFields) {
-    const f = bundle.data.fields[k]!;
-    if (f.default !== undefined) d[k] = f.default;
-    else if (f.type === "boolean") d[k] = false;
-    else if (f.type === "string") d[k] = "";
-    else if (f.type === "enum") d[k] = f.values[0]!;
-  }
-  return d;
-}
-
-export function displayValue(f: Field, v: FieldValue | undefined): string {
-  if (v === undefined) return "";
-  if (f.type === "boolean") return v ? "✓" : "—";
-  return String(v);
-}
 
 /** What an input control hands back: integer "" -> undefined, otherwise Number(text) (a number input never gives junk). */
 export function fieldInput(f: Field, raw: string | boolean): FieldValue | undefined {
@@ -55,12 +39,6 @@ export function keepFilters(bundle: AppBundle, filters: Record<string, FieldValu
   return Object.fromEntries(Object.entries(filters).filter(([k]) => bundle.view.filters.includes(k)));
 }
 
-export function openEdit(bundle: AppBundle, data: Record<string, FieldValue>): Draft {
-  const draft: Draft = {};
-  for (const k of bundle.view.formFields) if (data[k] !== undefined) draft[k] = data[k]!;
-  return draft;
-}
-
 export function localIssues(bundle: AppBundle, draft: Draft): Record<string, string> {
   const out: Record<string, string> = {};
   for (const k of bundle.view.formFields) {
@@ -88,13 +66,6 @@ export function editRequest(appId: string, appEpoch: number, record: { id: strin
 
 export function deleteRequest(appId: string, appEpoch: number, record: { id: string; recordVersion: number }, key: string): ForwardRequest {
   return forward("apps.records.delete", { appId, recordId: record.id }, { expectedAppEpoch: appEpoch, expectedRecordVersion: record.recordVersion }, key);
-}
-
-/** Rebase a dirty form onto a new version: keep values for fields the new form still has. */
-export function rebase(bundle: AppBundle, mode: "create" | "edit", draft: Draft): Draft {
-  const fresh: Draft = mode === "create" ? defaultDraft(bundle) : {};
-  for (const k of bundle.view.formFields) if (draft[k] !== undefined) fresh[k] = draft[k]!;
-  return fresh;
 }
 
 export function deployRequest(appId: string, appEpoch: number, revisionId: string, key: string): ForwardRequest {

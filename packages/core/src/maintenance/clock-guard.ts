@@ -15,7 +15,7 @@ export function bootTimeMs(): number | null {
   }
 }
 
-function bootId(): string {
+export function readBootId(): string {
   try {
     return fs.readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
   } catch {
@@ -38,7 +38,7 @@ export class ClockGuard {
   bootTime: () => number | null = bootTimeMs;
   /** last observed suspend (for diagnostics) */
   lastSleep: { at: number; ms: number } | null = null;
-  readonly boot = bootId();
+  readonly boot = readBootId();
 
   constructor(
     private readonly store: Store,

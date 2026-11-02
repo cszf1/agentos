@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
+import { sha256File } from "./fs-utils.js";
 import { DatabaseSync } from "node:sqlite";
 import { BrokerClient, type BrokerOperation } from "@agentos/broker-client";
 import { CAPABILITIES, canonicalJson, sha256Hex } from "@agentos/contracts";
@@ -91,10 +92,6 @@ function readPolicyManagedRoot(storeUUID: string): string | null {
   } catch {
     return null;
   }
-}
-
-function sha256File(f: string): string {
-  return createHash("sha256").update(fs.readFileSync(f)).digest("hex");
 }
 
 /**

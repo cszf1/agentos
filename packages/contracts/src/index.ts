@@ -1,6 +1,7 @@
 export * from "./errors.js";
 export * from "./limits.js";
 export * from "./bundle.js";
+export { defaultRecordDraft, displayRecordValue, editRecordDraft, rebaseRecordDraft } from "./view.js";
 export * from "./dto.js";
 export * from "./v2/rpc-schema.js";
 export * from "./v2/ui.js";

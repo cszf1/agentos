@@ -2,7 +2,8 @@
 
 This document explains the Linux/NixOS implementation that remains in the repository: build outputs, administration,
 updates and recovery. It is not the current development roadmap or a complete-OS delivery checklist. The project is
-moving toward a reusable core and an improved frontend; see [README](../README.md). No signed public release exists,
+simplifying redundant code within the existing Linux architecture while retaining all functionality; see
+[README](../README.md). This does not introduce cross-platform adapters. No signed public release exists,
 and no untested hardware or hypervisor is claimed supported.
 
 ## Build outputs

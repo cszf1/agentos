@@ -1,47 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { AppDetail, CodeBundle, SlotNode } from "@agentos/contracts";
+import type { AppDetail, CodeBundle, SlotNode, Binding } from "@agentos/contracts";
+import { asText, readPointer, SLOT_COMPONENT_TYPES, UI_LIMITS, INVOCATION_TEXT } from "@agentos/contracts/view";
+export { asText, readPointer };
 import { ApiError, NetworkError, api, describeError, newKey } from "./api";
 
 /**
  * Trusted Slot Tree renderer (spec §9). The tree is data: a fixed component set, bindings that read JSON Pointers
  * over own properties, no expressions, no HTML, no URLs. Everything shown is a text node.
  */
-const RESERVED = new Set(["__proto__", "prototype", "constructor"]);
-const POINTER = /^(\/[A-Za-z0-9_-]{1,64}){0,8}$/;
-const KNOWN = new Set(["Stack", "Grid", "Tabs", "Text", "Alert", "Metric", "Table", "Kanban", "Form", "TextInput", "TextArea", "Select", "Checkbox", "Button", "BarChart", "LineChart", "SystemActionButton", "List"]);
-const MAX_NODES = 256;
-const MAX_DEPTH = 12;
-
-export function readPointer(root: unknown, ptr: string): unknown {
-  if (!POINTER.test(ptr)) return undefined;
-  if (ptr === "") return root;
-  let cur: unknown = root;
-  for (const seg of ptr.slice(1).split("/")) {
-    if (RESERVED.has(seg)) return undefined;
-    if (Array.isArray(cur)) {
-      if (!/^(0|[1-9][0-9]{0,5})$/.test(seg)) return undefined;
-      cur = cur[Number(seg)];
-    } else if (cur !== null && typeof cur === "object") {
-      if (!Object.prototype.hasOwnProperty.call(cur, seg)) return undefined;
-      cur = (cur as Record<string, unknown>)[seg];
-    } else return undefined;
-  }
-  return cur;
-}
-
-type Bind = { $bind: { from: "query"; source: string; pointer: string } | { from: "form"; formId: string; pointer: string } | { from: "selection"; selectionId: string } | { from: "item"; pointer: string } };
-const isBind = (v: unknown): v is Bind => v !== null && typeof v === "object" && !Array.isArray(v) && Object.prototype.hasOwnProperty.call(v, "$bind");
-
-export function asText(v: unknown): string {
-  if (v === null || v === undefined) return "";
-  if (typeof v === "string") return v;
-  if (typeof v === "number" || typeof v === "boolean") return String(v);
-  try {
-    return JSON.stringify(v);
-  } catch {
-    return "";
-  }
-}
+const KNOWN = new Set<string>(SLOT_COMPONENT_TYPES);
+const { maxNodes: MAX_NODES, maxDepth: MAX_DEPTH } = UI_LIMITS;
+const isBind = (v: unknown): v is Binding => v !== null && typeof v === "object" && !Array.isArray(v) && Object.prototype.hasOwnProperty.call(v, "$bind");
 
 interface SourceState {
   data: unknown;
@@ -427,17 +396,6 @@ function validateForm(bundle: CodeBundle, formId: string, values: FormValues): s
   }
   return null;
 }
-
-const INVOCATION_TEXT: Record<string, string> = {
-  DATA_EPOCH_STALE: "数据在命令执行期间被修改，没有写入任何内容；请刷新后重试（输入已保留）",
-  APP_EPOCH_STALE: "应用版本已切换，命令没有执行（输入已保留）",
-  INSTANCE_STALE: "应用实例在执行中切换，没有写入任何内容",
-  INVALID_MUTATION: "应用返回了不允许的修改，已整体拒绝",
-  APP_TIMEOUT: "应用执行超时，已被停止，没有写入任何内容",
-  INVOCATION_EXPIRED: "命令超过了最长期限，没有写入任何内容",
-  RUNTIME_STOPPED: "应用已停止，请先启动",
-  INSTANCE_NOT_READY: "应用正在恢复，请稍后再试",
-};
 
 /** A code app's page: data sources, forms, selections, commands with progress and conflict handling. */
 export function CodeAppView(props: { detail: AppDetail; dataEpoch: number | null; refreshToken: number; disabled: boolean; onChanged: () => void; onSystemPlan?: (actionId: string) => void }) {

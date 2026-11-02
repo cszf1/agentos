@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { createHash } from "node:crypto";
+import { fsyncPath, sha256File } from "./fs-utils.js";
 import { DatabaseSync } from "node:sqlite";
 import { createRequire } from "node:module";
 import { loadConfig, expandHome, type HostConfig } from "./config.js";
@@ -21,19 +21,6 @@ import { checkAnyStructure, isCodeBundle } from "@agentos/contracts";
 const RESTORE_MARKER = "restore-in-progress";
 const DBS = ["os.sqlite", "agent.sqlite"] as const;
 const SIDE = ["", "-wal"] as const;
-
-function sha256File(file: string): string {
-  return createHash("sha256").update(fs.readFileSync(file)).digest("hex");
-}
-
-function fsyncPath(p: string): void {
-  const fd = fs.openSync(p, "r");
-  try {
-    fs.fsyncSync(fd);
-  } finally {
-    fs.closeSync(fd);
-  }
-}
 
 function piVersion(): string {
   try {

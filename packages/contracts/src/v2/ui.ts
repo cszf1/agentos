@@ -1,29 +1,18 @@
 import { Ajv2020, type ValidateFunction } from "ajv/dist/2020.js";
-import { RESERVED_KEYS, type ValidationIssue } from "../bundle.js";
+import type { ValidationIssue } from "../bundle.js";
+import { RESERVED_KEYS, POINTER_PATTERN, UI_LIMITS } from "../view.js";
+export { POINTER_PATTERN, UI_LIMITS, asText, readPointer } from "../view.js";
 
 /**
  * Slot Tree UI protocol (spec §9). Pure data: a fixed component set with one props schema each, typed bindings that
  * read JSON Pointers from query results, form state, selections or the current item. No expressions, no HTML, no CSS,
  * no URLs. The tree is fixed per revision; query results only fill values.
  */
-export const UI_LIMITS = {
-  maxNodes: 256,
-  maxDepth: 12,
-  maxChildren: 64,
-  maxSeries: 8,
-  maxPointsPerSeries: 500,
-  minRefreshSeconds: 5,
-  maxRefreshSeconds: 3600,
-  maxDataSources: 8,
-} as const;
-
 export const SLOT_NAMES = ["main", "toolbar", "aside"] as const;
 export type SlotName = (typeof SLOT_NAMES)[number];
 
 export const IDENT_PATTERN = "^[A-Za-z][A-Za-z0-9_]{0,63}$";
-export const POINTER_PATTERN = "^(/[A-Za-z0-9_-]{1,64}){0,8}$";
 const IDENT_RE = new RegExp(IDENT_PATTERN);
-const POINTER_RE = new RegExp(POINTER_PATTERN);
 
 export type Pointer = string;
 export type Binding =
@@ -262,24 +251,6 @@ export function slotTreeSchemaDocument(version: 1 | 2 = 1): object {
 
 export function isBinding(v: unknown): v is Binding {
   return v !== null && typeof v === "object" && !Array.isArray(v) && Object.hasOwn(v, "$bind");
-}
-
-/** Read a restricted JSON Pointer over own properties only (no prototype access, no evaluation). */
-export function readPointer(root: unknown, ptr: string): unknown {
-  if (!POINTER_RE.test(ptr)) return undefined;
-  if (ptr === "") return root;
-  let cur: unknown = root;
-  for (const seg of ptr.slice(1).split("/")) {
-    if (RESERVED_KEYS.has(seg)) return undefined;
-    if (Array.isArray(cur)) {
-      if (!/^(0|[1-9][0-9]{0,5})$/.test(seg)) return undefined;
-      cur = cur[Number(seg)];
-    } else if (cur !== null && typeof cur === "object") {
-      if (!Object.hasOwn(cur, seg)) return undefined;
-      cur = (cur as Record<string, unknown>)[seg];
-    } else return undefined;
-  }
-  return cur;
 }
 
 export interface SlotTreeContext {

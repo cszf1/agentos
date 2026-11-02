@@ -1,28 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { AppBundle, AppDetail, Field, FieldValue, RecordEnvelope, RecordPage } from "@agentos/contracts";
+import { defaultRecordDraft as defaultDraft, displayRecordValue as display, editRecordDraft, rebaseRecordDraft } from "@agentos/contracts/view";
 import { ApiError, NetworkError, api, describeError, newKey } from "./api";
 
 const PAGE = 20;
-
 type Draft = Record<string, FieldValue>;
-
-function defaultDraft(bundle: AppBundle): Draft {
-  const d: Draft = {};
-  for (const k of bundle.view.formFields) {
-    const f = bundle.data.fields[k]!;
-    if (f.default !== undefined) d[k] = f.default;
-    else if (f.type === "boolean") d[k] = false;
-    else if (f.type === "string") d[k] = "";
-    else if (f.type === "enum") d[k] = f.values[0]!;
-  }
-  return d;
-}
-
-function display(f: Field, v: FieldValue | undefined): string {
-  if (v === undefined) return "";
-  if (f.type === "boolean") return v ? "✓" : "—";
-  return String(v);
-}
 
 function FieldInput(props: { name: string; field: Field; value: FieldValue | undefined; onChange: (v: FieldValue | undefined) => void; error?: string; disabled?: boolean }) {
   const { field: f, value, onChange, name } = props;
@@ -133,16 +115,14 @@ export function AppView(props: { detail: AppDetail; onChanged: () => void; refre
 
   const openCreate = () => setForm({ mode: "create", draft: defaultDraft(bundle), epoch: detail.appEpoch, key: newKey(), errors: {}, busy: false });
   const openEdit = (rec: RecordEnvelope) => {
-    const draft: Draft = {};
-    for (const k of bundle.view.formFields) if (rec.data[k] !== undefined) draft[k] = rec.data[k]!;
+    const draft = editRecordDraft(bundle, rec.data);
     setForm({ mode: "edit", record: rec, draft, epoch: detail.appEpoch, key: newKey(), errors: {}, busy: false });
   };
 
   /** Rebase a dirty form onto the new version: keep values for fields the new form still has. */
   const rebase = () => {
     if (!form) return;
-    const fresh = form.mode === "create" ? defaultDraft(bundle) : {};
-    for (const k of bundle.view.formFields) if (form.draft[k] !== undefined) fresh[k] = form.draft[k]!;
+    const fresh = rebaseRecordDraft(bundle, form.mode, form.draft);
     if (form.mode === "edit") {
       const cur = page?.items.find((r) => r.id === form.record!.id);
       setForm({ ...form, draft: fresh, epoch: detail.appEpoch, key: newKey(), record: cur ?? form.record, errors: {}, message: undefined });

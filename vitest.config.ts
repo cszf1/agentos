@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 
 const src = (p: string) => fileURLToPath(new URL(`./packages/${p}/src/index.ts`, import.meta.url));
 const alias = {
+  "@agentos/contracts/view": fileURLToPath(new URL("./packages/contracts/src/view.ts", import.meta.url)),
   "@agentos/contracts": src("contracts"),
   "@agentos/core": src("core"),
   "@agentos/agent-pi": src("agent-pi"),
