@@ -1,7 +1,8 @@
 import QtQuick
 import QtQuick.Controls.Basic
 // Shell frame: top bar (workspace switcher, status), degraded-mode banner, navigation, the page, and the trusted
-// layers (system confirmation, lock mask) above everything generated.
+// layers (system confirmation, lock mask) above everything generated. An app's own confirmation is an ordinary
+// dialog (AppConfirm) below the trusted layer.
 Item {
     id: root
     objectName: "shellRoot"
@@ -99,5 +100,6 @@ Item {
         MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons }
         Text { anchors.centerIn: parent; color: "#ffffff"; textFormat: Text.PlainText; font.pixelSize: 22 * root.s; text: "会话已锁定" }
     }
+    AppConfirm { anchors.fill: parent }
     TrustedConfirm { anchors.fill: parent }
 }

@@ -45,8 +45,6 @@ Rectangle {
             PText { width: parent.width; text: "计划 hash：" + (t.c.planHash || "—"); font.family: "monospace" }
             PText { width: parent.width; text: "版本/基线：" + (t.c.version || "—") }
             PText { width: parent.width; text: "权限变化：" + (t.c.permissionChange || "") }
-            Rectangle { visible: !!t.c.appText; width: parent.width; implicitHeight: at.implicitHeight + 12; height: visible ? implicitHeight : 0; color: "#f4f4f4"; radius: 4
-                PText { id: at; x: 6; y: 6; width: parent.width - 12; text: "应用说明（应用提供的文字）：" + (t.c.appText || "") } }
             PText { width: parent.width; text: t.c.unknownNote || ""; variant: "muted" }
             PText { visible: !!t.c.stale; width: parent.width; color: "#a01515"; text: "计划已过期（身份、会话或工作区代次已变化）。请重新生成计划后再确认。" }
             AField { id: adminPw; objectName: "confirmAdminPassword"; visible: !!t.c.admin; width: Math.min(parent.width, 320 * t.s)

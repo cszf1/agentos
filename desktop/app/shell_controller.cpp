@@ -345,13 +345,7 @@ void ShellController::onLocked() {
     v->runtime().clearUnsubmittedInput();
     v->clearScope();
   }
-  if (confirm_.value(QStringLiteral("visible")).toBool()) {
-    auto done = confirmDone_;
-    confirmDone_ = {};
-    confirm_.clear();
-    emit confirmChanged();
-    if (done) done(false);  // a pending confirmation is never carried over a lock
-  }
+  withdrawConfirms();  // a pending confirmation is never carried over a lock
   emit draftsChanged();
   emit pagesChanged();
   emit statusChanged();
@@ -413,13 +407,7 @@ void ShellController::clearScopeState(const QString& reason) {
   maintState_ = JValue::object();
   writesStopped_ = false;
   if (auto* cb = QGuiApplication::clipboard()) cb->clear(QClipboard::Clipboard);  // no clipboard across workspaces
-  if (confirm_.value(QStringLiteral("visible")).toBool()) {
-    auto done = confirmDone_;
-    confirmDone_ = {};
-    confirm_.clear();
-    emit confirmChanged();
-    if (done) done(false);
-  }
+  withdrawConfirms();
   setNotice(QString());
   emit draftsChanged();
   emit pagesChanged();
@@ -1000,7 +988,6 @@ void ShellController::showPlan(const QString& kind, const JValue& plan, std::fun
               {QStringLiteral("version"), pick({"version", "resourceGeneration", "appEpoch", "releaseId", "baseline"})},
               {QStringLiteral("permissionChange"), perm.isEmpty() ? S("无权限变化") : perm},
               {QStringLiteral("unknownNote"), S("如果执行后结果无法确定，AgentOS 会保留已知事实并请你核对，不会自动换 ID 重做。")},
-              {QStringLiteral("appText"), QString()},
               {QStringLiteral("sessionEpoch"), sessionEpoch_},
               {QStringLiteral("clientEpoch"), clientEpoch_},
               {QStringLiteral("workspaceId"), ws_},
@@ -1025,23 +1012,45 @@ void ShellController::openSystemPlan(const QString& actionId) {
 }
 
 void ShellController::askAppConfirm(const QString& appTitle, const QString& text, std::function<void(bool)> done) {
-  confirm_ = {{QStringLiteral("visible"), true},
-              {QStringLiteral("kind"), QStringLiteral("app")},
-              {QStringLiteral("title"), S("应用请求确认")},
-              {QStringLiteral("user"), userName_},
-              {QStringLiteral("workspace"), wsName_},
-              {QStringLiteral("resource"), appTitle},
-              {QStringLiteral("appText"), text},
-              {QStringLiteral("planHash"), QString()},
-              {QStringLiteral("version"), QString()},
-              {QStringLiteral("permissionChange"), S("无（这是应用自己的操作确认，不改变任何权限）")},
-              {QStringLiteral("unknownNote"), S("以下文字由应用提供，不代表系统批准。")},
-              {QStringLiteral("sessionEpoch"), sessionEpoch_},
-              {QStringLiteral("clientEpoch"), clientEpoch_},
-              {QStringLiteral("workspaceId"), ws_},
-              {QStringLiteral("stale"), false}};
-  confirmDone_ = std::move(done);
-  emit confirmChanged();
+  // An app's confirmation is the app's own question: it gets an ordinary dialog, never the trusted system layer, so
+  // an app cannot dress its text up as a system approval (product decision v3).
+  if (appConfirmDone_) appConfirmDone_(false);  // one at a time: an older unanswered question counts as refused
+  appConfirm_ = {{QStringLiteral("visible"), true},
+                 {QStringLiteral("app"), appTitle},
+                 {QStringLiteral("text"), text},
+                 {QStringLiteral("sessionEpoch"), sessionEpoch_},
+                 {QStringLiteral("clientEpoch"), clientEpoch_},
+                 {QStringLiteral("workspaceId"), ws_}};
+  appConfirmDone_ = std::move(done);
+  emit appConfirmChanged();
+}
+
+void ShellController::appConfirmAnswer(bool yes) {
+  if (!appConfirm_.value(QStringLiteral("visible")).toBool()) return;
+  const bool current = appConfirm_.value(QStringLiteral("sessionEpoch")).toLongLong() == sessionEpoch_ && appConfirm_.value(QStringLiteral("clientEpoch")).toLongLong() == clientEpoch_ &&
+                       appConfirm_.value(QStringLiteral("workspaceId")).toString() == ws_ && !locked_;
+  auto done = appConfirmDone_;
+  appConfirmDone_ = {};
+  appConfirm_.clear();
+  emit appConfirmChanged();
+  if (done) done(yes && current);
+}
+
+void ShellController::withdrawConfirms() {
+  if (confirm_.value(QStringLiteral("visible")).toBool()) {
+    auto done = confirmDone_;
+    confirmDone_ = {};
+    confirm_.clear();
+    emit confirmChanged();
+    if (done) done(false);
+  }
+  if (appConfirm_.value(QStringLiteral("visible")).toBool()) {
+    auto done = appConfirmDone_;
+    appConfirmDone_ = {};
+    appConfirm_.clear();
+    emit appConfirmChanged();
+    if (done) done(false);
+  }
 }
 
 void ShellController::confirmAccept(const QString& adminPassword) {

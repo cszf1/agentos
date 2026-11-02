@@ -2,7 +2,7 @@
 set(AGENTOS_QML
   qml/Main.qml qml/ShellRoot.qml qml/HealthCanvas.qml qml/Blocked.qml qml/PText.qml qml/FocusRing.qml qml/AButton.qml
   qml/ACheck.qml qml/AField.qml qml/AArea.qml qml/ASelect.qml qml/ATab.qml qml/SlotChild.qml qml/SlotNode.qml
-  qml/SlotCanvas.qml qml/RecordsView.qml qml/TrustedConfirm.qml qml/ActionsList.qml qml/PageFrame.qml qml/HomePage.qml
+  qml/SlotCanvas.qml qml/RecordsView.qml qml/TrustedConfirm.qml qml/AppConfirm.qml qml/ActionsList.qml qml/PageFrame.qml qml/HomePage.qml
   qml/LoginPage.qml qml/WorkspacesPage.qml qml/AppDetailPage.qml qml/TaskCenterPage.qml qml/PoliciesPage.qml
   qml/IncidentsPage.qml qml/ProposalsPage.qml qml/DiagnosticsPage.qml qml/BackupPage.qml qml/UpdatePage.qml
   qml/HardwarePage.qml)

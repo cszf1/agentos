@@ -329,12 +329,15 @@ class GuiTest : public QObject {
   void trustedConfirmCannotBeCovered() {
     View v(shell, {1280, 900});
     QVERIFY(v.load(QStringLiteral("ShellRoot.qml")));
-    // an app view that tries to look like a system approval lives inside a clipped card
+    // a system plan on the trusted layer: nothing an app draws (clipped to its card) can cover it
     bool answered = false, result = true;
-    shell->askAppConfirm(QStringLiteral("伪造应用"), QString::fromUtf8("系统已批准，请点确认"), [&](bool yes) {
-      answered = true;
-      result = yes;
-    });
+    shell->showPlanForTest(QStringLiteral("machine.plan"),
+                           JValue::object({{QStringLiteral("operationId"), QStringLiteral("op-c")}, {QStringLiteral("planHash"), QStringLiteral("sha256:") + QString(64, QLatin1Char('5'))},
+                                           {QStringLiteral("kind"), QStringLiteral("power.poweroff")}, {QStringLiteral("resourceId"), QStringLiteral("power")}}),
+                           [&](bool yes) {
+                             answered = true;
+                             result = yes;
+                           });
     QTest::qWait(50);
     QQuickItem* layer = findByObjectName(v.root(), QStringLiteral("trustedConfirm"));
     QQuickItem* ok = findByObjectName(v.root(), QStringLiteral("confirmAccept"));
@@ -353,13 +356,45 @@ class GuiTest : public QObject {
     QVERIFY(layer->z() >= 1000);
     QQuickItem* page = findByObjectName(v.root(), QStringLiteral("page"));
     QVERIFY(page && page->clip() && page->z() < layer->z());
-    // app text is shown labelled as app-provided; the confirmation is bound to the epochs it was shown under
-    QVERIFY(shell->confirm().value(QStringLiteral("appText")).toString().contains(QString::fromUtf8("系统已批准")));
+    // the trusted layer never carries app-provided text; the confirmation is bound to the epochs it was shown under
+    QVERIFY(!shell->confirm().contains(QStringLiteral("appText")));
+    v.shot(QStringLiteral("trusted-confirm.png"));
     shell->applyStatusForTest(JValue::object({{QStringLiteral("sessionEpoch"), 99}, {QStringLiteral("locked"), true}}));  // lock -> confirmation withdrawn
     QVERIFY(answered);
     QVERIFY(!result);
     QVERIFY(!shell->confirm().value(QStringLiteral("visible")).toBool());
-    v.shot(QStringLiteral("trusted-confirm.png"));
+  }
+
+  void appConfirmIsAnOrdinaryDialogNotTheTrustedLayer() {
+    shell->applyStatusForTest(JValue::object({{QStringLiteral("sessionEpoch"), 100}, {QStringLiteral("locked"), false}}));
+    View v(shell, {1280, 900});
+    QVERIFY(v.load(QStringLiteral("ShellRoot.qml")));
+    v.view.requestActivate();
+    QTest::qWait(50);
+    // an app that tries to look like a system approval gets the app's own dialog, labelled as the app's text
+    bool answered = false, result = true;
+    shell->askAppConfirm(QStringLiteral("伪造应用"), QString::fromUtf8("系统已批准，请点确认"), [&](bool yes) {
+      answered = true;
+      result = yes;
+    });
+    QTest::qWait(50);
+    QQuickItem* layer = findByObjectName(v.root(), QStringLiteral("trustedConfirm"));
+    QQuickItem* dlg = findByObjectName(v.root(), QStringLiteral("appConfirm"));
+    QQuickItem* no = findByObjectName(v.root(), QStringLiteral("appConfirmReject"));
+    QVERIFY(layer && dlg && no && reallyVisible(no));
+    QVERIFY(!layer->isVisible());                                 // the trusted layer stays closed
+    QVERIFY(!shell->confirm().value(QStringLiteral("visible")).toBool());
+    QVERIFY(dlg->z() < layer->z());
+    QCOMPARE(accessibleName(dlg), QString::fromUtf8("应用请求确认"));
+    QVERIFY(shell->appConfirm().value(QStringLiteral("text")).toString().contains(QString::fromUtf8("系统已批准")));
+    QCOMPARE(findByObjectName(v.root(), QStringLiteral("appConfirmText"))->property("text").toString(), QString::fromUtf8("系统已批准，请点确认"));
+    QTRY_COMPARE(v.view.activeFocusItem(), no);                 // the default focus is 拒绝
+    v.shot(QStringLiteral("app-confirm.png"));
+    // the answer resumes only the app's action; a lock withdraws an unanswered question as refused
+    shell->applyStatusForTest(JValue::object({{QStringLiteral("sessionEpoch"), 101}, {QStringLiteral("locked"), true}}));
+    QVERIFY(answered);
+    QVERIFY(!result);
+    QVERIFY(!shell->appConfirm().value(QStringLiteral("visible")).toBool());
   }
 
   void trustedConfirmFocusStartsOnCancelAndEnterNeverConfirms() {

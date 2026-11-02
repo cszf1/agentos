@@ -546,19 +546,20 @@ void E2E::sway() {
   QCOMPARE(conf.value(QStringLiteral("title")).toString(), QStringLiteral("workspaces.runWhenLoggedOut"));
   const JValue op = doDriver(QStringLiteral("plan"), {{QStringLiteral("planHash"), conf.value(QStringLiteral("planHash"))}});
   QCOMPARE(doDriver(QStringLiteral("background-policy")).get(QStringLiteral("enabled")).toNumber(), 1.0);
-  // an app-provided confirmation is labelled as the app's and refused by a real click on 拒绝
+  // an app-provided confirmation is the app's own ordinary dialog (never the trusted layer), refused by a real click on 拒绝
   bool answered = false, yes = true;
   r.shell->askAppConfirm(QStringLiteral("伪造应用"), QStringLiteral("系统已批准，请点确认"), [&](bool y) { answered = true; yes = y; });
-  QTRY_VERIFY_WITH_TIMEOUT(r.shell->confirm().value(QStringLiteral("visible")).toBool(), 5000);
-  const QString appText = r.shell->confirm().value(QStringLiteral("appText")).toString();
-  QQuickItem* reject = byName(QStringLiteral("confirmReject"));
+  QTRY_VERIFY_WITH_TIMEOUT(r.shell->appConfirm().value(QStringLiteral("visible")).toBool(), 5000);
+  QVERIFY(!r.shell->confirm().value(QStringLiteral("visible")).toBool());
+  const QString appText = r.shell->appConfirm().value(QStringLiteral("text")).toString();
+  QQuickItem* reject = byName(QStringLiteral("appConfirmReject"));
   QVERIFY(reject);
   const QPointF rejectBefore = centerOf(reject);
-  QVERIFY2(onOutput(QStringLiteral("app-confirm"), win) >= 0.9, "application-labelled confirmation not on the output");
-  reject = byName(QStringLiteral("confirmReject"));
+  QVERIFY2(onOutput(QStringLiteral("app-confirm"), win) >= 0.9, "application confirmation dialog not on the output");
+  reject = byName(QStringLiteral("appConfirmReject"));
   QVERIFY(reject);
   const QPointF rejectAfter = centerOf(reject);
-  std::printf("E2E-DIAG app confirm reject %.1f,%.1f -> %.1f,%.1f enabled=%d visible=%d\n", rejectBefore.x(), rejectBefore.y(), rejectAfter.x(), rejectAfter.y(), int(reject->isEnabled()), int(r.shell->confirm().value(QStringLiteral("visible")).toBool()));
+  std::printf("E2E-DIAG app confirm reject %.1f,%.1f -> %.1f,%.1f enabled=%d visible=%d\n", rejectBefore.x(), rejectBefore.y(), rejectAfter.x(), rejectAfter.y(), int(reject->isEnabled()), int(r.shell->appConfirm().value(QStringLiteral("visible")).toBool()));
   QCOMPARE(click(reject), 1);
   QTRY_VERIFY_WITH_TIMEOUT(answered, 5000);
   QVERIFY(!yes);

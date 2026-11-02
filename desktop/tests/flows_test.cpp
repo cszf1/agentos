@@ -418,6 +418,7 @@ class FlowsTest : public QObject {
     QVERIFY(QGuiApplication::clipboard()->text().isEmpty());
     QVERIFY(rejected);
     QVERIFY(!h.shell->confirm().value(QStringLiteral("visible")).toBool());
+    QVERIFY(!h.shell->appConfirm().value(QStringLiteral("visible")).toBool());
   }
 
   void rebindObservesALockUnlockEpochWhileDisconnected() {

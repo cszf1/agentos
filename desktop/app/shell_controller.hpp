@@ -80,6 +80,8 @@ class ShellController : public QObject, public RequestSink {
   Q_PROPERTY(qreal uiScale READ uiScale WRITE setUiScale NOTIFY uiScaleChanged)
   // trusted confirmation layer
   Q_PROPERTY(QVariantMap confirm READ confirm NOTIFY confirmChanged)
+  /** An app's own confirmation: an ordinary dialog (AppConfirm.qml), never the trusted system layer. */
+  Q_PROPERTY(QVariantMap appConfirm READ appConfirm NOTIFY appConfirmChanged)
   Q_PROPERTY(int displayRevertLeft READ displayRevertLeft NOTIFY displayRevertChanged)
 
  public:
@@ -138,6 +140,7 @@ class ShellController : public QObject, public RequestSink {
   qreal uiScale() const { return uiScale_; }
   void setUiScale(qreal s);
   QVariantMap confirm() const { return confirm_; }
+  QVariantMap appConfirm() const { return appConfirm_; }
   int displayRevertLeft() const { return displayRevertLeft_; }
 
   // RequestSink
@@ -168,6 +171,7 @@ class ShellController : public QObject, public RequestSink {
    *  the one machine.actions.confirm request (gateway PAM check, then the one-time ticket) and is never kept. */
   Q_INVOKABLE void confirmAccept(const QString& adminPassword = QString());
   Q_INVOKABLE void confirmReject();
+  Q_INVOKABLE void appConfirmAnswer(bool yes);
   Q_INVOKABLE void expandCard(const QString& appId, bool on);
   Q_INVOKABLE void saveLayout();
   Q_INVOKABLE void zoom(int step);
@@ -193,6 +197,7 @@ class ShellController : public QObject, public RequestSink {
   void noticeChanged();
   void uiScaleChanged();
   void confirmChanged();
+  void appConfirmChanged();
   void displayRevertChanged();
   /** QML fields drop their text and any uncommitted IME preedit (lock, logout, workspace switch). */
   void scopeCleared(QString reason);
@@ -229,8 +234,10 @@ class ShellController : public QObject, public RequestSink {
   QString page_ = QStringLiteral("home");
   QString intentDraft_, intentKey_, notice_;
   qreal uiScale_ = 1.0;
-  QVariantMap confirm_;
-  std::function<void(bool)> confirmDone_;
+  QVariantMap confirm_, appConfirm_;
+  std::function<void(bool)> confirmDone_, appConfirmDone_;
+  /** Withdraw both confirmations (lock, scope change): neither is ever carried over. */
+  void withdrawConfirms();
   QTimer statusPoll_, displayRevert_;
   int displayRevertLeft_ = 0;
   JValue displayPrevious_;
