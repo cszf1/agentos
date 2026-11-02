@@ -22,10 +22,10 @@
         inherit system;
         modules = [ { nixpkgs.pkgs = pkgs; } ] ++ modules;
       };
-      releaseModules = [ ./modules/base.nix ./modules/graphics.nix ./modules/agentos.nix ./hardware/qemu.nix ./modules/disk-layout.nix
+      releaseModules = [ ./modules/base.nix ./modules/graphics.nix ./modules/agentos.nix ./hardware/vm.nix ./modules/disk-layout.nix
         { agentos.enable = true; agentos.softwareRendering = true; agentos.releaseImages = pkgs.agentos-oci; } ];
       agentosSystem = mk releaseModules;
-      # review F15: the same system for real Intel/AMD machines (hardware/physical.nix instead of hardware/qemu.nix,
+      # review F15: the same system for real Intel/AMD machines (hardware/physical.nix instead of hardware/vm.nix,
       # GPU rendering instead of pixman). Built in CI (build-physical); booting it needs real hardware (H01–H08).
       physicalSystem = mk ([ ./modules/base.nix ./modules/graphics.nix ./modules/agentos.nix ./hardware/physical.nix ./modules/disk-layout.nix
         { agentos.enable = true; agentos.softwareRendering = false; agentos.releaseImages = pkgs.agentos-oci; } ]);
@@ -41,6 +41,7 @@
       installerPkg = pkgs.callPackage ./packages/installer.nix { system = toplevel; release = "${release}/manifest.json"; };
       installerSystem = mk [
         "${nixpkgs}/nixos/modules/installer/cd-dvd/installation-cd-minimal.nix"
+        ./hardware/vm-drivers.nix   # the same disk, input and GPU drivers as the installed system
         ({ lib, ... }: {
           system.stateVersion = "26.05";
           isoImage.volumeID = lib.mkForce "AGENTOS-INSTALL";
@@ -81,7 +82,7 @@
       };
       nixosConfigurations.agentos = agentosSystem;
       nixosConfigurations.installer = installerSystem;
-      nixosConfigurations.m0-proto = mk [ ./modules/base.nix ./modules/graphics.nix ./hardware/qemu.nix ./modules/disk-layout.nix ];
+      nixosConfigurations.m0-proto = mk [ ./modules/base.nix ./modules/graphics.nix ./hardware/vm.nix ./modules/disk-layout.nix ];
       checks.${system} = {
         # KVM runs (CI) may use several vCPUs; "-tcg" variants are single-vCPU for hosts without KVM (RCU stalls).
         m2-identity = test "m2" ./tests/m2-identity.nix { };
