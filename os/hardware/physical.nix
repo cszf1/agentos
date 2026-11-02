@@ -1,7 +1,6 @@
-# Review F15: the physical-machine profile (Intel/AMD x86_64 desktops and laptops), separate from qemu.nix (which
-# stays the qemu-virtio profile of the release and every VM check). Only the build of this profile is checked in CI
-# (build-physical); booting it on real hardware - KMS output, NVMe, firmware, suspend/battery - is "需实体机，未验收"
-# (docs/ACCEPTANCE_V1.0.md, H01–H08).
+# Physical-machine profile (Intel/AMD x86_64 desktops and laptops), separate from the qemu-virtio profile.
+# CI checks only that this profile builds, not that it boots or works on real hardware.
+# Current system support limits are documented in docs/OPERATIONS.md.
 { config, lib, pkgs, ... }:
 {
   # storage and input reachable from stage 1: NVMe, AHCI/SATA, USB (installer media, keyboards), Thunderbolt, SD/MMC

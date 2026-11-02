@@ -11,7 +11,15 @@ playwright-report/
 .data/
 native/target/
 desktop/build/
-desktop/build/
 desktop/tests/out/
 os/result*
 __pycache__/
+.cache/
+.pytest_cache/
+coverage/
+*.log
+*.exit
+*.tmp
+*.bak
+*.orig
+*.rej

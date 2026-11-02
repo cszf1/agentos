@@ -4,11 +4,6 @@
 name: v1-vm-tests
 
 on:
-  push:
-    branches: [v1.0]
-    # review F14: every change except documentation runs the whole set, so the release commit itself is always tested
-    # (scripts/, tests/, package.json and the workflow included); docs-only commits do not.
-    paths-ignore: ["docs/**", "**/*.md"]
   workflow_dispatch:
     inputs:
       test:

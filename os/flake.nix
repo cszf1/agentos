@@ -14,7 +14,7 @@
         inherit system;
         overlays = [ rust-overlay.overlays.default (import ./packages/overlay.nix) ];
         # Build-time only: pnpm at the repository's packageManager pin (10.34.9). nixpkgs flags the whole pnpm 10
-        # line; the tool never ships in the image. Recorded in docs/v1.0-decisions.tsv.
+        # line; the tool never ships in the image.
         config.permittedInsecurePackages = [ "pnpm-10.34.9" ];
       };
       lib = nixpkgs.lib;
@@ -59,7 +59,7 @@
       # the W09/O03 code fixes) whose AgentOS programs the m7 older generation boots. Fetched by fixed revision.
       olderAgentos = pkgs.agentos-older (builtins.fetchGit {
         url = "https://github.com/cszf1/agentos.git";
-        ref = "refs/heads/v1.0";
+        ref = "refs/heads/main";
         rev = "32ea4dbafb0c8679a8b3ce2ca795c18f6c86478e";
       });
       test = name: file: extra: import file ({ inherit pkgs; modules = [ ./modules/base.nix ./modules/agentos.nix ]; } // extra);
