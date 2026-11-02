@@ -38,7 +38,9 @@ Minimum disk for an install: 64 GiB (the installer refuses smaller disks and sys
 
 One system (`os/hardware/vm.nix`) serves every hypervisor. It boots only through UEFI (systemd-boot; no BIOS, no GRUB
 on the installed disk) and always renders in software (`agentos.softwareRendering`): leave 3D acceleration off.
-Neither the ISO nor the images are signed, so Secure Boot must be off.
+Neither the ISO nor the images are signed, so Secure Boot must be off. The ISO also boots through BIOS, but only as
+far as its menu: the installed system is UEFI-only, so enable EFI in the VM's settings before you install. (The
+ISO keeps its isolinux menu because the `m19-iso` check reads its boot entries from `isolinux.cfg`.)
 
 Size, from the existing QEMU checks in `os/tests`: 2 vCPUs in every check; memory 3072 MiB for the ISO install through
 to the desktop (`m19-iso`), 4096 MiB for `m5-desktop` and 6144 MiB for `m20-sway`. Give at least 2 vCPUs and
