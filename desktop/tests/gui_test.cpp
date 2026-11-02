@@ -5,6 +5,7 @@
 #include "ime_guard.hpp"
 
 #include <QClipboard>
+#include <QDateTime>
 #include <QGuiApplication>
 #include <QQuickStyle>
 #include <QTemporaryDir>
@@ -359,6 +360,41 @@ class GuiTest : public QObject {
     QVERIFY(!result);
     QVERIFY(!shell->confirm().value(QStringLiteral("visible")).toBool());
     v.shot(QStringLiteral("trusted-confirm.png"));
+  }
+
+  void trustedConfirmFocusStartsOnCancelAndEnterNeverConfirms() {
+    View v(shell, {1280, 900});
+    QVERIFY(v.load(QStringLiteral("ShellRoot.qml")));
+    v.view.requestActivate();
+    QTest::qWait(50);
+    int accepted = 0, rejected = 0;
+    const JValue plan = JValue::object({{QStringLiteral("operationId"), QStringLiteral("op-r")}, {QStringLiteral("planHash"), QStringLiteral("sha256:") + QString(64, QLatin1Char('4'))},
+                                        {QStringLiteral("kind"), QStringLiteral("power.reboot")}, {QStringLiteral("resourceId"), QStringLiteral("power")}, {QStringLiteral("admin"), false},
+                                        {QStringLiteral("expiresAt"), double(QDateTime::currentMSecsSinceEpoch() + 5 * 60000)}});
+    shell->showPlanForTest(QStringLiteral("machine.plan"), plan, [&](bool yes) { yes ? ++accepted : ++rejected; });
+    QQuickItem* ok = findByObjectName(v.root(), QStringLiteral("confirmAccept"));
+    QQuickItem* cancel = findByObjectName(v.root(), QStringLiteral("confirmReject"));
+    QVERIFY(ok && cancel && reallyVisible(ok));
+    QTRY_COMPARE(v.view.activeFocusItem(), cancel);  // the default focus is 取消
+    QCOMPARE(shell->confirm().value(QStringLiteral("what")).toString(), QString::fromUtf8("重启这台机器"));
+    QCOMPARE(shell->confirm().value(QStringLiteral("reversible")).toString(), QString::fromUtf8("不能撤销"));
+    QVERIFY(shell->confirm().value(QStringLiteral("expires")).toString().contains(QString::fromUtf8("5 分钟")));
+    QVERIFY(!reallyVisible(findByObjectName(v.root(), QStringLiteral("confirmAdminPassword"))));  // not an admin plan
+    v.shot(QStringLiteral("trusted-confirm-system.png"));
+    // Enter never confirms, even with the focus moved onto the accept button
+    ok->forceActiveFocus();
+    QCOMPARE(v.view.activeFocusItem(), ok);
+    QTest::keyClick(&v.view, Qt::Key_Return);
+    QTest::keyClick(&v.view, Qt::Key_Enter);
+    QTest::qWait(50);
+    QCOMPARE(accepted, 0);
+    QVERIFY(shell->confirm().value(QStringLiteral("visible")).toBool());
+    // Enter on the default focus cancels
+    cancel->forceActiveFocus();
+    QTest::keyClick(&v.view, Qt::Key_Return);
+    QTRY_COMPARE(rejected, 1);
+    QCOMPARE(accepted, 0);
+    QVERIFY(!shell->confirm().value(QStringLiteral("visible")).toBool());
   }
 
   void lockClearsSensitiveState() {

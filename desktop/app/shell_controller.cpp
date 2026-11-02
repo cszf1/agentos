@@ -711,6 +711,16 @@ QString ShellController::act(const QString& name, const QVariantMap& argsV, cons
     sendNative(withSecret, key, [this, id](const RpcReply& rep) { trackReply(id, rep); });
     return id;
   }
+  if (name == QLatin1String("machine.confirm") && !pendingPassword_.isEmpty()) {
+    // the administrator password rides only in this request (gateway: PAM, then the one-time ticket); actionReqs_
+    // (retry) and the action list never see it, so a retry has to be confirmed (and authenticated) again
+    ShellRequest withPassword = r;
+    JValue b = r.body.isObject() ? r.body : JValue::object();
+    b.set(QStringLiteral("password"), pendingPassword_);
+    withPassword.body = b;
+    sendNative(withPassword, key, [this, id](const RpcReply& rep) { trackReply(id, rep); });
+    return id;
+  }
   if (name == QLatin1String("machine.plan")) lastPlanSent_ = r.body.stringify();
   sendNative(r, key, [this, id](const RpcReply& rep) { trackReply(id, rep); });
   return id;
@@ -912,6 +922,35 @@ void ShellController::keepDisplay() {
 }
 
 // ------------------------------------------------------------------ trusted confirmation layer
+namespace {
+struct PlanFacts {
+  const char* what;
+  const char* risk;
+  const char* reversible;
+};
+// What each machine action does, its risk and whether it can be undone, shown on the trusted layer. A kind that is
+// not listed is shown as unknown rather than guessed.
+PlanFacts planFacts(const QString& kind) {
+  static const QHash<QString, PlanFacts> m = {
+      {QStringLiteral("network.wifi.connect"), {"连接 Wi-Fi 网络", "低：切换这台机器的网络连接", "可以：断开或连回原来的网络"}},
+      {QStringLiteral("network.wifi.disconnect"), {"断开 Wi-Fi", "中：断开后这台机器可能没有网络", "可以：重新连接"}},
+      {QStringLiteral("time.timezone.set"), {"更改系统时区", "低：所有用户看到的时间都会变", "可以：改回原来的时区"}},
+      {QStringLiteral("time.ntp.enable"), {"开启自动对时", "低：系统时间会按网络时间校准", "可以"}},
+      {QStringLiteral("power.reboot"), {"重启这台机器", "高：所有会话断开，没保存的内容会丢失", "不能撤销"}},
+      {QStringLiteral("power.poweroff"), {"关闭这台机器", "高：所有会话断开，没保存的内容会丢失", "不能撤销"}},
+      {QStringLiteral("workspaces.runWhenLoggedOut"), {"更改注销后是否继续运行", "中：注销后这个工作区的应用仍会运行", "可以：再改回来"}},
+      {QStringLiteral("users.create"), {"创建用户", "中：新用户可以登录这台机器", "可以：停用这个用户"}},
+      {QStringLiteral("users.disable"), {"停用用户", "高：这个用户立即无法登录，会话会结束", "需要管理员重新处理"}},
+      {QStringLiteral("admin.update"), {"系统更新步骤", "高：激活后会重启并试启动新版本", "可以：试启动失败会自动回到旧版本"}},
+      {QStringLiteral("admin.backup"), {"创建整机备份", "低：只读取数据，备份期间写入会暂停", "可以：删除这个备份"}},
+      {QStringLiteral("admin.restore"), {"从备份恢复", "高：会用备份里的数据替换现在的数据", "不能撤销"}},
+      {QStringLiteral("restores.confirm"), {"执行恢复计划", "高：会用备份里的数据替换现在的数据", "不能撤销"}},
+      {QStringLiteral("workspaces.delete"), {"删除工作区", "高：工作区和它的数据会被删除", "不能撤销"}},
+  };
+  return m.value(kind, {"", "未知（系统没有提供这个操作的风险说明）", "未知"});
+}
+}  // namespace
+
 void ShellController::showPlan(const QString& kind, const JValue& plan, std::function<void(bool)> done) {
   const JValue& sum = plan.get(QStringLiteral("summary"));
   auto pick = [&](std::initializer_list<const char*> keys) -> QString {
@@ -922,8 +961,36 @@ void ShellController::showPlan(const QString& kind, const JValue& plan, std::fun
     return QString();
   };
   QString perm = pick({"permissionChange", "grantChange", "permissions"});
+  const QString actionKind = pick({"actionKind", "kind"});
+  const PlanFacts facts = planFacts(actionKind);
+  const JValue& impact = plan.get(QStringLiteral("impact"));
+  auto side = [&](const char* a, const char* b) -> QString {
+    for (const JValue* src : {&impact, &sum})
+      for (const char* k : {a, b})
+        if (src->isObject() && !src->get(QString::fromLatin1(k)).isNullish()) return asText(src->get(QString::fromLatin1(k)));
+    return QString();
+  };
+  QString before = side("from", "before"), after = side("to", "after");
+  if (actionKind == QLatin1String("workspaces.runWhenLoggedOut") && impact.get(QStringLiteral("enabled")).isBool()) {
+    const bool on = impact.get(QStringLiteral("enabled")).toBool();
+    before = on ? S("注销后停止") : S("注销后继续运行");
+    after = on ? S("注销后继续运行") : S("注销后停止");
+  }
+  QString expires;
+  const JValue& exp = plan.get(QStringLiteral("expiresAt"));
+  if (exp.isNumber()) {
+    const qint64 left = qint64(exp.toNumber()) - QDateTime::currentMSecsSinceEpoch();
+    expires = left <= 0 ? S("已过期") : S("%1 分钟后过期").arg((left + 59999) / 60000);
+  }
   confirm_ = {{QStringLiteral("visible"), true},
               {QStringLiteral("kind"), kind},
+              {QStringLiteral("what"), *facts.what ? QString::fromUtf8(facts.what) : pick({"title", "label", "actionKind", "kind", "handlerId"})},
+              {QStringLiteral("before"), before.isEmpty() ? S("—") : before},
+              {QStringLiteral("after"), after.isEmpty() ? S("—") : after},
+              {QStringLiteral("risk"), QString::fromUtf8(facts.risk)},
+              {QStringLiteral("reversible"), QString::fromUtf8(facts.reversible)},
+              {QStringLiteral("expires"), expires.isEmpty() ? S("系统没有给出过期时间") : expires},
+              {QStringLiteral("admin"), plan.get(QStringLiteral("admin")).toBool()},
               {QStringLiteral("title"), pick({"title", "label", "actionKind", "kind", "handlerId"})},
               {QStringLiteral("user"), userName_ + QStringLiteral("（") + role_ + QStringLiteral("）")},
               {QStringLiteral("workspace"), wsName_.isEmpty() ? S("机器") : wsName_},
@@ -977,8 +1044,12 @@ void ShellController::askAppConfirm(const QString& appTitle, const QString& text
   emit confirmChanged();
 }
 
-void ShellController::confirmAccept() {
+void ShellController::confirmAccept(const QString& adminPassword) {
   if (!confirm_.value(QStringLiteral("visible")).toBool()) return;
+  if (confirm_.value(QStringLiteral("admin")).toBool() && adminPassword.isEmpty()) {
+    setNotice(S("这是管理员操作：请先输入你自己的管理员密码"));
+    return;
+  }
   // A confirmation is bound to the identity/epochs it was shown under; anything else is a stale plan.
   if (confirm_.value(QStringLiteral("sessionEpoch")).toLongLong() != sessionEpoch_ || confirm_.value(QStringLiteral("clientEpoch")).toLongLong() != clientEpoch_ ||
       confirm_.value(QStringLiteral("workspaceId")).toString() != ws_ || locked_) {
@@ -989,9 +1060,13 @@ void ShellController::confirmAccept() {
   }
   auto done = confirmDone_;
   confirmDone_ = {};
+  const bool admin = confirm_.value(QStringLiteral("admin")).toBool();
   confirm_.clear();
   emit confirmChanged();
+  if (admin) pendingPassword_ = adminPassword;
   if (done) done(true);
+  pendingPassword_.fill(QLatin1Char('\0'));
+  pendingPassword_.clear();
 }
 
 void ShellController::confirmReject() {

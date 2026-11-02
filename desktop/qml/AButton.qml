@@ -4,6 +4,8 @@ Button {
     id: b
     property string label: ""
     property string variant: "secondary"
+    // false on the trusted layer's accept button: Enter must never confirm a system plan (product decision)
+    property bool enterActivates: true
     text: label
     focusPolicy: Qt.StrongFocus
     Accessible.name: label
@@ -19,6 +21,6 @@ Button {
         elide: Text.ElideRight
     }
     background: FocusRing { implicitWidth: 64; implicitHeight: 30; on: b.activeFocus; danger: b.variant === "danger"; primary: b.variant === "primary" }
-    Keys.onReturnPressed: if (enabled) clicked()
-    Keys.onEnterPressed: if (enabled) clicked()
+    Keys.onReturnPressed: if (enabled && enterActivates) clicked()
+    Keys.onEnterPressed: if (enabled && enterActivates) clicked()
 }

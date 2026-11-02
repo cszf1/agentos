@@ -164,7 +164,9 @@ class ShellController : public QObject, public RequestSink {
   /** The body actually sent for the last machine plan, with any secret replaced (tests only). */
   QString lastPlanSentForTest() const { return lastPlanSent_; }
   Q_INVOKABLE void keepDisplay();
-  Q_INVOKABLE void confirmAccept();
+  /** Accept the shown plan. An administrator plan (`admin` in the plan) needs the user's own password: it rides only in
+   *  the one machine.actions.confirm request (gateway PAM check, then the one-time ticket) and is never kept. */
+  Q_INVOKABLE void confirmAccept(const QString& adminPassword = QString());
   Q_INVOKABLE void confirmReject();
   Q_INVOKABLE void expandCard(const QString& appId, bool on);
   Q_INVOKABLE void saveLayout();
@@ -174,6 +176,7 @@ class ShellController : public QObject, public RequestSink {
   /** Test hook / session agent signal path: the session was locked (clears sensitive state). */
   Q_INVOKABLE void onLocked();
   void applyStatusForTest(const JValue& status) { applySessionStatus(status); }
+  void showPlanForTest(const QString& kind, const JValue& plan, std::function<void(bool)> done) { showPlan(kind, plan, std::move(done)); }
   int lateDropped() const { return lateDropped_; }
   int scopeGeneration() const { return scopeGen_; }
   QString layoutFile() const;
@@ -195,7 +198,7 @@ class ShellController : public QObject, public RequestSink {
   void scopeCleared(QString reason);
 
  private:
-  QString pendingSecret_;
+  QString pendingSecret_, pendingPassword_;
   QString lastPlanSent_;
   struct Scope {
     QString ws;

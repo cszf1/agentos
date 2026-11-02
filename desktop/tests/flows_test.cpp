@@ -4,6 +4,7 @@
 #include "gui_support.hpp"
 
 #include <QClipboard>
+#include <QDateTime>
 #include <QGuiApplication>
 #include <QJsonDocument>
 #include <QQuickStyle>
@@ -89,6 +90,12 @@ struct Backend {
                                  {QStringLiteral("session"), JValue::object({{QStringLiteral("available"), true}})}})}});
     if (m == QLatin1String("machine.actions.plan")) {
       plannedBackground = b.get(QStringLiteral("params")).get(QStringLiteral("enabled")).toBool();
+      if (lastKind == QLatin1String("time.timezone.set"))  // the shape machined's ops.plan returns for an admin kind
+        return JValue::object({{QStringLiteral("operationId"), QStringLiteral("op-tz")}, {QStringLiteral("planHash"), QStringLiteral("sha256:") + QString(64, QLatin1Char('3'))},
+                               {QStringLiteral("state"), QStringLiteral("planned")}, {QStringLiteral("kind"), lastKind}, {QStringLiteral("admin"), true},
+                               {QStringLiteral("resourceId"), QStringLiteral("timedate:zone")}, {QStringLiteral("resourceGeneration"), 4},
+                               {QStringLiteral("expiresAt"), double(QDateTime::currentMSecsSinceEpoch() + 10 * 60000)},
+                               {QStringLiteral("impact"), JValue::object({{QStringLiteral("from"), QStringLiteral("UTC")}, {QStringLiteral("to"), b.get(QStringLiteral("params")).get(QStringLiteral("zone"))}})}});
       if (lastKind == QLatin1String("workspaces.runWhenLoggedOut"))
         return JValue::object({{QStringLiteral("operationId"), QStringLiteral("op-1")}, {QStringLiteral("planHash"), QStringLiteral("sha256:") + QString(64, QLatin1Char('2'))},
                                {QStringLiteral("state"), QStringLiteral("planned")}, {QStringLiteral("kind"), lastKind}, {QStringLiteral("admin"), false},
@@ -99,6 +106,8 @@ struct Backend {
     }
     if (m == QLatin1String("machine.actions.confirm")) {
       if (planStale) return err(QStringLiteral("PLAN_STALE"));
+      // the gateway refuses an admin plan without the administrator's password (gw.rs confirm, PAM)
+      if (lastKind == QLatin1String("time.timezone.set") && b.get(QStringLiteral("password")).str() != QLatin1String("admin-pw-1")) return err(QStringLiteral("SESSION_REQUIRED"));
       if (lastKind == QLatin1String("workspaces.runWhenLoggedOut")) backgroundEnabled = plannedBackground;
       return JValue::object({{QStringLiteral("operationId"), QStringLiteral("op-1")}, {QStringLiteral("state"), QStringLiteral("dispatching")}});
     }
@@ -488,6 +497,46 @@ class FlowsTest : public QObject {
     h.shell->hardware(QStringLiteral("network.wifi.disconnect"), {{QStringLiteral("device"), QStringLiteral("wlan0")}});
     QTRY_COMPARE(h.sent(QStringLiteral("machine.actions.plan")).size(), before + 2);
     QVERIFY(h.sent(QStringLiteral("machine.actions.plan")).last().get(QStringLiteral("body")).get(QStringLiteral("secret")).isNullish());
+  }
+
+  void adminPlanShowsDetailsAndSendsThePasswordOnlyInTheConfirm() {
+    Harness h;
+    QVERIFY(h.up());
+    h.click(QStringLiteral("nav:hardware"));
+    const QString pw = QStringLiteral("admin-pw-1");
+    h.shell->hardware(QStringLiteral("time.timezone.set"), {{QStringLiteral("zone"), QStringLiteral("Asia/Shanghai")}});
+    QTRY_VERIFY(h.shell->confirm().value(QStringLiteral("visible")).toBool());
+    const QVariantMap c = h.shell->confirm();
+    // what, to what, before/after, risk, reversibility and expiry are on the trusted layer
+    QCOMPARE(c.value(QStringLiteral("what")).toString(), QString::fromUtf8("更改系统时区"));
+    QCOMPARE(c.value(QStringLiteral("resource")).toString(), QStringLiteral("timedate:zone"));
+    QCOMPARE(c.value(QStringLiteral("before")).toString(), QStringLiteral("UTC"));
+    QCOMPARE(c.value(QStringLiteral("after")).toString(), QStringLiteral("Asia/Shanghai"));
+    QVERIFY(!c.value(QStringLiteral("risk")).toString().isEmpty());
+    QVERIFY(!c.value(QStringLiteral("reversible")).toString().isEmpty());
+    QVERIFY(c.value(QStringLiteral("expires")).toString().contains(QString::fromUtf8("10 分钟")));
+    QVERIFY(c.value(QStringLiteral("admin")).toBool());
+    for (const char* n : {"confirmWhat", "confirmBefore", "confirmAfter", "confirmRisk", "confirmReversible", "confirmExpires", "confirmAdminPassword"})
+      QVERIFY2(h.find(QString::fromLatin1(n)) && reallyVisible(h.find(QString::fromLatin1(n))), n);
+    // no password: the accept button is disabled and a direct accept sends nothing
+    QVERIFY(!h.find(QStringLiteral("confirmAccept"))->isEnabled());
+    h.shell->confirmAccept();
+    QTest::qWait(100);
+    QCOMPARE(h.sent(QStringLiteral("machine.actions.confirm")).size(), 0);
+    QVERIFY(h.shell->confirm().value(QStringLiteral("visible")).toBool());
+    QVERIFY(imageLooksRendered(h.view->shot(QStringLiteral("trusted-confirm-admin.png"))));
+    // typed into the field, the password reaches the gateway in the confirm request and nowhere else
+    h.find(QStringLiteral("confirmAdminPassword"))->setProperty("text", pw);
+    h.click(QStringLiteral("confirmAccept"));
+    QTRY_COMPARE(h.sent(QStringLiteral("machine.actions.confirm")).size(), 1);
+    const JValue conf = h.sent(QStringLiteral("machine.actions.confirm")).first();
+    QCOMPARE(conf.get(QStringLiteral("body")).get(QStringLiteral("password")).str(), pw);
+    QCOMPARE(conf.get(QStringLiteral("body")).get(QStringLiteral("planHash")).str(), QStringLiteral("sha256:") + QString(64, QLatin1Char('3')));
+    QTRY_COMPARE(h.actionState(QStringLiteral("machine.confirm")), QStringLiteral("reconciled"));
+    for (const auto& r : h.sent(QStringLiteral("machine.actions.plan"))) QVERIFY(!r.stringify().contains(pw));
+    auto* a = static_cast<ActionTracker*>(h.shell->actions());
+    for (int i = 0; i < a->count(); ++i) QVERIFY(!a->at(i).stringify().contains(pw));
+    QVERIFY(h.find(QStringLiteral("confirmAdminPassword"))->property("text").toString().isEmpty());
   }
 
   void systemActionButtonOnlyRequestsAPlan() {

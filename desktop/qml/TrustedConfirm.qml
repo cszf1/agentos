@@ -1,8 +1,10 @@
 import QtQuick
 import QtQuick.Controls.Basic
 // The trusted system confirmation layer (spec §11, V1-D07). It is a Shell layer above every app canvas; app content
-// is clipped to its card and cannot cover it. It shows who/where/what/planHash/version/permission change and the
-// unknown-result note; confirming is bound to the identity and epochs it was shown under.
+// is clipped to its card and cannot cover it. It shows what the plan does, to what, before/after, risk, whether it
+// can be undone, when the plan expires, who/where, planHash/version/permission change and the unknown-result note;
+// confirming is bound to the identity and epochs it was shown under. Focus starts on 取消 and Enter never confirms.
+// Administrator plans ask for the user's own password, which goes only into the confirm request (PAM + ticket).
 Rectangle {
     id: t
     objectName: "trustedConfirm"
@@ -15,7 +17,8 @@ Rectangle {
     Accessible.role: Accessible.Dialog
     Accessible.name: "AgentOS 系统确认"
     MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons; hoverEnabled: true; onWheel: function(w) { w.accepted = true } }
-    onVisibleChanged: if (visible) okBtn.forceActiveFocus()
+    // after `focus: visible` has taken effect, so the root does not take the focus back from 取消
+    onVisibleChanged: { adminPw.text = ""; if (visible) Qt.callLater(function() { cancelBtn.forceActiveFocus() }) }
     Rectangle {
         anchors.centerIn: parent
         width: Math.min(parent.width - 40, 640 * t.s)
@@ -29,10 +32,16 @@ Rectangle {
             x: 16; y: 16; width: parent.width - 32; spacing: 6
             PText { text: "AgentOS 系统确认（由系统显示，应用无法修改此框）"; variant: "title" }
             PText { width: parent.width; text: t.c.title || "" ; font.bold: true }
+            PText { objectName: "confirmWhat"; width: parent.width; visible: !!t.c.what; text: "做什么：" + (t.c.what || "") }
             PText { width: parent.width; text: "用户：" + (t.c.user || "") }
             PText { width: parent.width; text: "工作区：" + (t.c.workspace || "") }
             PText { width: parent.width; text: "资源：" + (t.c.resource || "—") }
             PText { width: parent.width; visible: !!t.c.effect; text: "效果：" + (t.c.effect || "") }
+            PText { objectName: "confirmBefore"; width: parent.width; visible: !!t.c.before; text: "变更前：" + (t.c.before || "") }
+            PText { objectName: "confirmAfter"; width: parent.width; visible: !!t.c.after; text: "变更后：" + (t.c.after || "") }
+            PText { objectName: "confirmRisk"; width: parent.width; visible: !!t.c.risk; text: "风险：" + (t.c.risk || "") }
+            PText { objectName: "confirmReversible"; width: parent.width; visible: !!t.c.reversible; text: "能否撤销：" + (t.c.reversible || "") }
+            PText { objectName: "confirmExpires"; width: parent.width; visible: !!t.c.expires; text: "计划有效期：" + (t.c.expires || "") }
             PText { width: parent.width; text: "计划 hash：" + (t.c.planHash || "—"); font.family: "monospace" }
             PText { width: parent.width; text: "版本/基线：" + (t.c.version || "—") }
             PText { width: parent.width; text: "权限变化：" + (t.c.permissionChange || "") }
@@ -40,9 +49,13 @@ Rectangle {
                 PText { id: at; x: 6; y: 6; width: parent.width - 12; text: "应用说明（应用提供的文字）：" + (t.c.appText || "") } }
             PText { width: parent.width; text: t.c.unknownNote || ""; variant: "muted" }
             PText { visible: !!t.c.stale; width: parent.width; color: "#a01515"; text: "计划已过期（身份、会话或工作区代次已变化）。请重新生成计划后再确认。" }
+            AField { id: adminPw; objectName: "confirmAdminPassword"; visible: !!t.c.admin; width: Math.min(parent.width, 320 * t.s)
+                     label: "管理员密码"; echoMode: TextInput.Password; sensitive: true; placeholderText: "输入你自己的管理员密码（管理员操作）" }
             Row { spacing: 10
-                AButton { id: okBtn; objectName: "confirmAccept"; label: "确认执行"; variant: "primary"; enabled: !t.c.stale; onClicked: shell.confirmAccept() }
-                AButton { objectName: "confirmReject"; label: "取消"; onClicked: shell.confirmReject() } }
+                AButton { id: okBtn; objectName: "confirmAccept"; label: "确认执行"; variant: "primary"; enterActivates: false
+                          enabled: !t.c.stale && (!t.c.admin || adminPw.text !== "")
+                          onClicked: { var pw = adminPw.text; adminPw.text = ""; shell.confirmAccept(pw) } }
+                AButton { id: cancelBtn; objectName: "confirmReject"; label: "取消"; onClicked: { adminPw.text = ""; shell.confirmReject() } } }
         }
     }
     Keys.onEscapePressed: shell.confirmReject()
