@@ -23,7 +23,7 @@ PageFrame {
         delegate: Row { spacing: 8
             PText { width: 180 * shell.uiScale; text: row.userName || row.userId; elide: Text.ElideRight; maximumLineCount: 1 }
             ASelect { label: "角色 " + (row.userName || row.userId); value: row.role || "viewer"
-                      options: [{ value: "owner", label: "所有者" }, { value: "editor", label: "编辑者" }, { value: "operator", label: "操作员" }, { value: "viewer", label: "只读" }]
+                      options: [{ value: "owner", label: "所有者" }, { value: "editor", label: "编辑者" }, { value: "viewer", label: "查看者" }]  // the backend roles (machine dir.rs Role)
                       onChosen: function(v) { shell.act("members.setRole", { userId: row.userId, role: v, expectedMemberVersion: row.memberVersion }, "设置角色") } }
             AButton { label: "撤销成员"; variant: "danger"; onClicked: shell.act("members.revoke", { userId: row.userId, expectedMemberVersion: row.memberVersion }, "撤销成员") }
             AButton { label: "转让所有权"; onClicked: shell.act("members.transferOwner", { userId: row.userId, expectedMemberVersion: row.memberVersion, confirm: true }, "转让所有权") } } }
