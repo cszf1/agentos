@@ -7,7 +7,7 @@ import {
 } from "@agentos/contracts";
 import { defaultDraft, displayValue, openEdit, rebase } from "../../packages/contracts/src/v1_0/slot-vectors-records.js";
 import { SLOT_COMPONENT_TYPES, WEB_ERROR_TEXT, NETWORK_ERROR_TEXT, INVOCATION_TEXT } from "../../packages/contracts/src/view.js";
-import { INVOCATION_TEXT as REFERENCE_INVOCATION_TEXT } from "../../packages/contracts/src/v1_0/slot-vectors.js";
+import { INVOCATION_TEXT as REFERENCE_INVOCATION_TEXT, ERROR_TEXT, describeError } from "../../packages/contracts/src/v1_0/slot-vectors.js";
 import { fsyncPath, sha256File } from "../../packages/host/src/fs-utils.js";
 import { fixture, tmpDir } from "../helpers.js";
 
@@ -83,18 +83,17 @@ describe("shared Slot value helpers", () => {
 });
 
 describe("shared error display messages", () => {
-  it("keeps all web messages, network text and the existing fallback for native-only errors", async () => {
-    const source = "../../packages/web/src/api.js";
-    const web = await import(/* @vite-ignore */ source) as {
-      ApiError: new (status: number, body: { code: string; message: string; retryable: boolean }) => Error;
-      NetworkError: new (message: string) => Error;
-      describeError(error: unknown): string;
-    };
+  it("keeps the former web messages and the network text in the error policy the native Shell embeds", () => {
+    // the web client is gone; its describeError() texts live on in ERROR_TEXT, which the generated error-policy.json
+    // carries to the native Shell (desktop/tests/slot_vectors.cpp checks describeError() for every code there)
+    const policy = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, "../../fixtures/v1.0/slot-vectors/error-policy.json"), "utf8")) as { errorText: Record<string, string>; networkText: string };
     for (const [code, text] of Object.entries(WEB_ERROR_TEXT)) {
-      expect(web.describeError(new web.ApiError(400, { code, message: "server detail", retryable: false }))).toBe(`${text}（${code}）`);
+      expect(ERROR_TEXT[code]).toBe(text);
+      expect(policy.errorText[code]).toBe(text);
+      expect(describeError(code, "server detail")).toBe(`${text}（${code}）`);
     }
-    expect(web.describeError(new web.NetworkError("offline"))).toBe(NETWORK_ERROR_TEXT);
-    expect(web.describeError(new web.ApiError(403, { code: "SESSION_REQUIRED", message: "server detail", retryable: false }))).toBe("server detail（SESSION_REQUIRED）");
+    expect(policy.networkText).toBe(NETWORK_ERROR_TEXT);
+    expect(describeError("SOME_NEW_CODE", "server detail")).toBe("server detail（SOME_NEW_CODE）");
   });
 
   it("keeps the reference model's invocation messages", () => {

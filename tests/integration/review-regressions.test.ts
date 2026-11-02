@@ -3,17 +3,13 @@ import { checkPlan } from "../../packages/core/src/records/mutations.js";
 import { RunCoordinator } from "@agentos/core";
 import fs from "node:fs";
 import path from "node:path";
-import { createElement } from "react";
-import { renderToStaticMarkup } from "react-dom/server";
 import { checkSlotTree, slotTreeSchemaDocument } from "@agentos/contracts";
-// The web source is type-checked by its own project (DOM lib, bundler resolution); here it is only loaded.
-const SLOT_RENDERER = "../../packages/web/src/SlotRenderer.js";
-const { SlotPreview } = (await import(/* @vite-ignore */ SLOT_RENDERER)) as { SlotPreview: (props: Record<string, unknown>) => ReturnType<typeof createElement> };
 import { codeFixture } from "../fixtures-v02.js";
 
 /**
  * Regressions for the code review of main@79377eb (2026-10-28): issues 1–5. Issue 1 (deployment expiry rolled back)
- * is covered on the real sandbox in tests/sandbox/v03-regressions.test.ts; issue 4 in the e2e suite.
+ * is covered on the real sandbox in tests/sandbox/v03-regressions.test.ts; issue 4 (a late answer for the previous app)
+ * by desktop/tests/flows_test.cpp (workspaceSwitchDropsLateResponses, rapidRoundTripDropsAnswersFromTheEarlierVisit).
  */
 describe("review #3: the record limit applies after the whole atomic plan", () => {
   const b = codeFixture("todo-kanban");
@@ -97,20 +93,6 @@ describe("review #5: item bindings (implemented in v0.4 as the slot-tree-v2 List
   it("a nested Table inside an item may read an item array (no selection)", () => {
     expect(msgs("slot-tree-v2", list([{ type: "Table", props: { items: item("/subtasks"), columns: [{ pointer: "/t", label: "子任务" }] } }]))).toEqual([]);
   });
-  it("the real renderer draws one template per item, resolves item bindings and passes input.item", () => {
-    const calls: unknown[] = [];
-    const html = renderToStaticMarkup(
-      createElement(SlotPreview, { node: good as never, sources: { todos: { items: [{ id: "a1", title: "买牛奶", done: true }, { id: "b2", title: "<写周报>", done: false }] } }, onCommand: (p: { command: string }, it: unknown) => calls.push([p.command, it]) }),
-    );
-    expect(html.match(/role="listitem"/g)?.length).toBe(2);
-    expect(html).toContain('data-row-id="a1"');
-    expect(html).toContain("买牛奶");
-    expect(html).toContain("&lt;写周报&gt;"); // data is text, never markup
-    expect(html.match(/已完成/g)?.length).toBe(1); // item visibleWhen: only the done item
-    const empty = renderToStaticMarkup(createElement(SlotPreview, { node: list([{ type: "Text", props: { text: item("/title") } }], { emptyText: "没有任务" }) as never, sources: { todos: { items: [] } } }));
-    expect(empty).toContain("没有任务");
-    const many = renderToStaticMarkup(createElement(SlotPreview, { node: list([{ type: "Text", props: { text: item("/title") } }], { maxItems: 3 }) as never, sources: { todos: { items: Array.from({ length: 10 }, (_, i) => ({ id: `r${i}`, title: `t${i}` })) } } }));
-    expect(many.match(/role="listitem"/g)?.length).toBe(3);
-    expect(many).toContain("仅显示前 3 项（共 10 项）");
-  });
+  // the renderer half (one template per item, item bindings, item visibleWhen, emptyText, maxItems) moved with the
+  // web client's removal to the native renderer: desktop/tests/gui_test.cpp listItemTemplateBindsEachItem
 });

@@ -129,7 +129,7 @@ struct Backend {
   std::atomic<bool> locked{false};
   std::atomic<bool> backgroundEnabled{false}, workspaceOwner{true}, nativeStatusShape{false};
   bool plannedBackground = false;
-  std::atomic<bool> withNotification{false};
+  std::atomic<bool> withNotification{false}, forbidRuns{false};
   std::atomic<bool> hostDown{false}, modelDown{false}, brokerDown{false}, planStale{false}, holdQueries{false}, holdRecordLists{false};
   JValue kanban = loadFixture(QStringLiteral("v1.0/slot-vectors/scenario-v2-kanban.json"));
   JValue console = loadFixture(QStringLiteral("v1.0/slot-vectors/scenario-v3-system-console.json"));
@@ -250,6 +250,7 @@ struct Backend {
       return JValue::object({{QStringLiteral("items"), JValue::array({JValue::object({{QStringLiteral("runId"), QStringLiteral("run-1")}, {QStringLiteral("intent"), QString::fromUtf8("做个记账应用")}, {QStringLiteral("status"), QStringLiteral("running")}, {QStringLiteral("conversationId"), QStringLiteral("conv-1")}})})}});
     if (route == QLatin1String("runs.cancel.post")) return JValue::object({{QStringLiteral("runId"), QStringLiteral("run-1")}, {QStringLiteral("status"), QStringLiteral("cancelling")}});
     if (route == QLatin1String("runs.get")) return JValue::object({{QStringLiteral("runId"), QStringLiteral("run-1")}, {QStringLiteral("status"), QStringLiteral("cancelled")}});
+    if (route == QLatin1String("runs.post") && forbidRuns) return err(QStringLiteral("NOT_FOUND_OR_FORBIDDEN"));  // the gateway's answer to a viewer
     if (route == QLatin1String("runs.post")) return modelDown ? err(QStringLiteral("MODEL_UNAVAILABLE")) : JValue::object({{QStringLiteral("runId"), QStringLiteral("run-2")}, {QStringLiteral("status"), QStringLiteral("queued")}});
     if (route == QLatin1String("maintenance.state.list")) return JValue::object({{QStringLiteral("state"), maint}, {QStringLiteral("circuits"), JValue::array()}});
     if (route == QLatin1String("maintenance.control.post")) {
@@ -722,6 +723,80 @@ class FlowsTest : public QObject {
     QCOMPARE(h.shell->confirm().value(QStringLiteral("what")).toString(), QString::fromUtf8("停用用户"));
     h.shell->confirmReject();
     QTRY_COMPARE(h.sent(QStringLiteral("machine.actions.cancel")).size(), 1);
+  }
+
+  // Migrated from the removed web e2e suite (tests/e2e/*.spec.ts, Playwright): the four flows it guarded, driven
+  // through the native Shell's own controls. The full-stack versions run in the VM tests (e2e_test mainline creates
+  // apps from intents on the real gateway; e2e_sway clicks the trusted layer and the app dialog on a real output).
+  void webE2eFlowsOnTheNativeDesktop() {
+    Harness h;
+    QVERIFY(h.up());
+    // 1. create an app: the Home intent box sends one run request with the typed intent
+    h.click(QStringLiteral("nav:home"));
+    QTRY_VERIFY(h.find(QStringLiteral("intentInput")));
+    h.find(QStringLiteral("intentInput"))->setProperty("text", QString::fromUtf8("做一个待办应用"));
+    h.click(QStringLiteral("intentSubmit"));
+    QTRY_COMPARE(h.sent(QStringLiteral("runs.post")).size(), 1);
+    QCOMPARE(h.sent(QStringLiteral("runs.post")).first().get(QStringLiteral("body")).get(QStringLiteral("body")).get(QStringLiteral("intent")).str(), QString::fromUtf8("做一个待办应用"));
+    QTRY_VERIFY(!h.actionState(QStringLiteral("runs.submit")).isEmpty() && h.actionState(QStringLiteral("runs.submit")) != QLatin1String("failed"));
+
+    // 2. insufficient permission: the gateway refuses the write; the Shell says so and does not resend
+    h.be.forbidRuns = true;
+    h.find(QStringLiteral("intentInput"))->setProperty("text", QString::fromUtf8("再做一个记账应用"));
+    h.click(QStringLiteral("intentSubmit"));
+    QTRY_COMPARE(h.sent(QStringLiteral("runs.post")).size(), 2);
+    auto* a = static_cast<ActionTracker*>(h.shell->actions());
+    const auto denied = [&] {
+      for (int i = 0; i < a->count(); ++i)
+        if (a->at(i).get(QStringLiteral("label")).str() == QString::fromUtf8("意图：再做一个记账应用")) return a->at(i);
+      return JValue::object();
+    };
+    QTRY_COMPARE(denied().get(QStringLiteral("state")).str(), QStringLiteral("failed"));
+    QVERIFY2(denied().get(QStringLiteral("detail")).str().contains(QString::fromUtf8("对象不存在或你没有权限（NOT_FOUND_OR_FORBIDDEN）")), qPrintable(denied().stringify()));
+    QTest::qWait(300);
+    QCOMPARE(h.sent(QStringLiteral("runs.post")).size(), 2);
+    h.be.forbidRuns = false;
+
+    // 3. trusted confirmation: an app's system action only asks; the plan runs after the real Accept button
+    const QString consoleId = h.be.console.get(QStringLiteral("app")).get(QStringLiteral("appId")).str();
+    auto* vm = qobject_cast<AppViewModel*>(h.shell->appView(consoleId));
+    QTRY_COMPARE(vm->mode(), QStringLiteral("slot"));
+    QString path;
+    for (const auto& st : h.be.console.get(QStringLiteral("steps")).items()) {
+      if (st.get(QStringLiteral("op")).str() == QLatin1String("type")) vm->typeText(st.get(QStringLiteral("formId")).str(), st.get(QStringLiteral("name")).str(), st.get(QStringLiteral("raw")).str());
+      if (st.get(QStringLiteral("op")).str() == QLatin1String("click") && st.get(QStringLiteral("expect")).get(QStringLiteral("result")).get(QStringLiteral("kind")).str() == QLatin1String("request")) {
+        path = st.get(QStringLiteral("path")).str();
+        break;
+      }
+    }
+    QVERIFY(!path.isEmpty());
+    vm->click(path);
+    QTRY_VERIFY(reallyVisible(h.find(QStringLiteral("trustedConfirm"))));
+    QCOMPARE(h.sent(QStringLiteral("systemactions.confirm.post")).size(), 0);
+    h.click(QStringLiteral("confirmAccept"));
+    QTRY_COMPARE(h.sent(QStringLiteral("systemactions.confirm.post")).size(), 1);
+    QTRY_VERIFY(!h.shell->confirm().value(QStringLiteral("visible")).toBool());
+
+    // 4. app confirmation: the app's own question is an ordinary dialog; refusing sends nothing, accepting sends once
+    JValue cov = loadFixture(QStringLiteral("v1.0/slot-vectors/scenario-v3-coverage.json"));
+    auto* app = new AppViewModel(cov.get(QStringLiteral("app")).get(QStringLiteral("appId")).str(), h.shell.get(), h.shell.get());
+    app->setDetail(JValue::object({{QStringLiteral("appId"), cov.get(QStringLiteral("app")).get(QStringLiteral("appId"))}, {QStringLiteral("appEpoch"), cov.get(QStringLiteral("app")).get(QStringLiteral("appEpoch"))},
+                                   {QStringLiteral("activeRevisionId"), cov.get(QStringLiteral("app")).get(QStringLiteral("revisionId"))}, {QStringLiteral("bundle"), cov.get(QStringLiteral("bundle"))}}));
+    QCOMPARE(app->mode(), QStringLiteral("slot"));
+    const QString purge = QStringLiteral("/view/slots/toolbar/children/1");  // the coverage scenario's "清空" (confirm: 确定清空？)
+    app->click(purge);
+    QTRY_VERIFY(reallyVisible(h.find(QStringLiteral("appConfirm"))));
+    QVERIFY(!reallyVisible(h.find(QStringLiteral("trustedConfirm"))));
+    QCOMPARE(h.shell->appConfirm().value(QStringLiteral("text")).toString(), QString::fromUtf8("确定清空？"));
+    h.click(QStringLiteral("appConfirmReject"));
+    QTRY_VERIFY(!h.shell->appConfirm().value(QStringLiteral("visible")).toBool());
+    QTest::qWait(200);
+    QCOMPARE(h.sent(QStringLiteral("apps.commands.post")).size(), 0);
+    app->click(purge);
+    QTRY_VERIFY(reallyVisible(h.find(QStringLiteral("appConfirm"))));
+    h.click(QStringLiteral("appConfirmAccept"));
+    QTRY_COMPARE(h.sent(QStringLiteral("apps.commands.post")).size(), 1);
+    QCOMPARE(h.sent(QStringLiteral("apps.commands.post")).first().get(QStringLiteral("body")).get(QStringLiteral("params")).get(QStringLiteral("commandId")).str(), QStringLiteral("purge"));
   }
 
   void homeShowsHostNotificationsInTheirOwnShape() {

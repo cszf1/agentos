@@ -86,9 +86,11 @@ describe("entire M: the four-code-app limit counts v3 bundles", () => {
 });
 
 describe("entire H1: proposal reasons are a string", () => {
-  it("MaintenanceCenter renders reasons without join()", () => {
-    const src = fs.readFileSync(path.join(ROOT, "packages/web/src/MaintenanceCenter.tsx"), "utf8");
+  // the web MaintenanceCenter is gone; the native proposals page is where reasons are shown now
+  it("the native proposals page renders reasons as text, without join()", () => {
+    const src = fs.readFileSync(path.join(ROOT, "desktop/qml/ProposalsPage.qml"), "utf8");
     expect(src).not.toMatch(/reasons!?\.join/);
-    expect(fs.readFileSync(path.join(ROOT, "packages/web/src/api.ts"), "utf8")).toMatch(/reasons: string;/);
+    expect(src).toMatch(/text: row\.reasons \|\| ""/);
+    expect(fs.readFileSync(path.join(ROOT, "packages/core/src/proposals/proposal-service.ts"), "utf8")).toMatch(/reasons: string;/);
   });
 });

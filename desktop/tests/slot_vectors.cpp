@@ -431,6 +431,17 @@ class SlotVectors : public QObject {
       QCOMPARE(describeError(code, QString::fromUtf8("原始消息")), c.get(QStringLiteral("text")).str());
       QVERIFY2(errorPolicy(code).toJson().deepEquals(c.get(QStringLiteral("policy"))), qPrintable(code + QStringLiteral(" ") + errorPolicy(code).toJson().stringify()));
     }
+    // Migrated from the web suite (tests/integration/shared-helpers.test.ts, which called the web client's
+    // describeError): every known error text, the former web texts included, reads "text（CODE）" in the native
+    // Shell, and a network failure has its own text.
+    const JValue ep = loadJson(QStringLiteral("v1.0/slot-vectors/error-policy.json"));
+    int texts = 0;
+    for (const auto& [code, text] : ep.get(QStringLiteral("errorText")).members()) {
+      QCOMPARE(describeError(code, QString::fromUtf8("服务器细节")), text.str() + QString::fromUtf8("（") + code + QString::fromUtf8("）"));
+      ++texts;
+    }
+    QVERIFY(texts >= 40);
+    QCOMPARE(networkErrorText(), ep.get(QStringLiteral("networkText")).str());
   }
 };
 

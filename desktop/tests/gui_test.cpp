@@ -10,6 +10,8 @@
 #include <QQuickStyle>
 #include <QTemporaryDir>
 
+#include <functional>
+
 using namespace agentos;
 using namespace agentos::test;
 
@@ -439,6 +441,49 @@ class GuiTest : public QObject {
     QVERIFY(QGuiApplication::clipboard()->text().isEmpty());
     QVERIFY(shell->intentDraft().isEmpty());
     QVERIFY(shell->locked());
+  }
+
+  // Migrated from the web suite (tests/integration/review-regressions.test.ts, review #5, which rendered the React
+  // SlotPreview to markup): the native renderer's output has one template per List item with item bindings
+  // resolved, an item visibleWhen applied, data kept as text, emptyText for no items and a "more" line past maxItems.
+  void listItemTemplateBindsEachItem() {
+    const std::function<JValue(const JValue&)> findList = [&](const JValue& n) -> JValue {
+      if (n.isObject()) {
+        if (n.get(QStringLiteral("type")).str() == QLatin1String("List") && n.get(QStringLiteral("path")).str() == QLatin1String("/view/slots/main/children/2")) return n;
+        for (const auto& m : n.members())
+          if (JValue r = findList(m.second); r.isObject()) return r;
+      } else if (n.isArray()) {
+        for (const auto& c : n.items())
+          if (JValue r = findList(c); r.isObject()) return r;
+      }
+      return JValue();
+    };
+    const auto row = [](const QString& id, const QString& title, bool late) {
+      return JValue::object({{QStringLiteral("id"), id}, {QStringLiteral("title"), title}, {QStringLiteral("late"), late}});
+    };
+    auto* vm = scenarioView(QStringLiteral("scenario-v3-coverage.json"), this);
+    vm->setTab(QStringLiteral("/view/slots/main"), 2);
+    vm->applySource(QStringLiteral("items"), JValue::object({{QStringLiteral("items"), JValue::array({row(QStringLiteral("a1"), QStringLiteral("买牛奶"), true), row(QStringLiteral("b2"), QStringLiteral("<写周报>"), false)})}}));
+    JValue list = findList(vm->runtime().render());
+    QVERIFY2(list.isObject(), qPrintable(vm->runtime().render().stringify().left(500)));
+    QCOMPARE(list.get(QStringLiteral("items")).items().size(), 2);   // one template per item
+    const JValue first = list.get(QStringLiteral("items")).items()[0], second = list.get(QStringLiteral("items")).items()[1];
+    QCOMPARE(first.get(QStringLiteral("key")).str(), QStringLiteral("a1"));
+    QCOMPARE(first.get(QStringLiteral("children")).items()[0].get(QStringLiteral("text")).str(), QStringLiteral("买牛奶"));
+    QCOMPARE(second.get(QStringLiteral("children")).items()[0].get(QStringLiteral("text")).str(), QStringLiteral("<写周报>"));  // text, never markup
+    QVERIFY(first.get(QStringLiteral("children")).items()[1].get(QStringLiteral("visible")).toBool());    // item visibleWhen: late
+    QVERIFY(!second.get(QStringLiteral("children")).items()[1].get(QStringLiteral("visible")).toBool());  // not late
+    QCOMPARE(second.get(QStringLiteral("children")).items()[2].get(QStringLiteral("label")).str(), QStringLiteral("完成此项"));
+    vm->applySource(QStringLiteral("items"), JValue::object({{QStringLiteral("items"), JValue::array()}}));
+    list = findList(vm->runtime().render());
+    QCOMPARE(list.get(QStringLiteral("items")).items().size(), 0);
+    QCOMPARE(list.get(QStringLiteral("emptyText")).str(), QStringLiteral("列表为空"));
+    JValue many = JValue::array();
+    for (int i = 0; i < 10; ++i) many.push(row(QStringLiteral("r%1").arg(i), QStringLiteral("t%1").arg(i), false));
+    vm->applySource(QStringLiteral("items"), JValue::object({{QStringLiteral("items"), many}}));
+    list = findList(vm->runtime().render());
+    QCOMPARE(list.get(QStringLiteral("items")).items().size(), 5);   // maxItems
+    QCOMPARE(list.get(QStringLiteral("more")).str(), QString::fromUtf8("仅显示前 5 项（共 10 项）"));
   }
 };
 
