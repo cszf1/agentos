@@ -277,7 +277,10 @@ def operator_login(m, user, pw):
     m.send_chars(user + "\n", delay=0.08)
     wait_screen(m, r"[Pp]assword:", timeout=120)
     keyed(m, pw + "\n")
-    wait_screen(m, user + r"@", timeout=120)
+    # ReGreet can finish activating after PAM accepted the tty password and reclaim
+    # the output. Reselect the same tty while observing its authenticated prompt;
+    # do not type credentials again or treat the greeter as a successful login.
+    wait_screen(m, user + r"@", timeout=120, before_poll=lambda: m.send_key("ctrl-alt-f2"), stable_polls=2)
 
 def operator_phase(m, user, phase, marker, from_media=False, timeout=1200):
     script = f"/home/{user}/drill/drill.mjs"

@@ -51,16 +51,20 @@ def login_function(clock):
 class LoginConsole:
     process = None
 
-    def __init__(self, never=False):
+    def __init__(self, never=False, reclaim_after_secret=False, reject=False):
+        self.reclaim_after_secret, self.reject, self.reclaimed = reclaim_after_secret, reject, False
         self.never, self.switches, self.state, self.last = never, 0, "greeter", ""
         self.entered = []
 
     def send_key(self, key):
         assert key == "ctrl-alt-f2"
         self.switches += 1
+        self.reclaimed = False
 
     def get_screen_text_variants(self):
-        if self.state == "greeter":
+        if self.reclaimed:
+            self.last = "Welcome back! User: bea Session: AgentOS"
+        elif self.state == "greeter":
             self.last = "nixos login:" if self.switches >= 2 and not self.never else "Welcome back! User: bea Session: AgentOS"
         else:
             self.last = "Password:" if self.state == "password" else "bea@nixos:~$"
@@ -74,7 +78,8 @@ class LoginConsole:
     def submit_secret(self, value):
         assert self.last == "Password:", "secret typed before a PAM password prompt"
         self.entered.append(value)
-        self.state = "shell"
+        self.state = "password" if self.reject else "shell"
+        self.reclaimed = self.reclaim_after_secret
 
 
 def ocr_function(runner):
@@ -129,8 +134,23 @@ class ScreenWaitTest(unittest.TestCase):
         clock, screen = Clock(), LoginConsole()
         with contextlib.redirect_stdout(io.StringIO()):
             login_function(clock)(screen, "bea", "test-pw")
-        self.assertEqual(screen.switches, 3)  # two separately observed tty frames after the stolen first switch
+        self.assertEqual(screen.switches, 5)  # two observed tty frames both before and after authentication
         self.assertEqual(screen.entered, ["bea\n", "test-pw\n"])
+
+    def test_operator_reselects_authenticated_tty_after_late_greeter_activation(self):
+        clock, screen = Clock(), LoginConsole(reclaim_after_secret=True)
+        with contextlib.redirect_stdout(io.StringIO()):
+            login_function(clock)(screen, "bea", "test-pw")
+        self.assertEqual(screen.state, "shell")
+        self.assertEqual(screen.entered, ["bea\n", "test-pw\n"])
+        self.assertIn("bea@", screen.last)
+
+    def test_reselecting_tty_does_not_accept_a_failed_pam_login(self):
+        clock, screen = Clock(), LoginConsole(reclaim_after_secret=True, reject=True)
+        with contextlib.redirect_stdout(io.StringIO()), self.assertRaisesRegex(AssertionError, "did not show.*bea@"):
+            login_function(clock)(screen, "bea", "test-pw")
+        self.assertEqual(screen.entered, ["bea\n", "test-pw\n"])
+        self.assertEqual(screen.state, "password")
 
     def test_operator_never_types_credentials_without_observing_the_console(self):
         clock, screen = Clock(), LoginConsole(never=True)
