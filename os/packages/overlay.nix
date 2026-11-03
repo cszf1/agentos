@@ -22,11 +22,16 @@ in {
   agentos-native = final.callPackage ./native.nix { inherit rustPlatform; src = final.lib.fileset.toSource { root = ../..; fileset = final.lib.fileset.unions [ ../../native/Cargo.toml ../../native/Cargo.lock ../../native/crates ../../native/bpf ../../native/rust-toolchain.toml ../../docs/contracts ../../fixtures/v1.0 ../../fixtures/v0.3 ]; }; };
   agentos-node = final.callPackage ./node.nix { src = final.lib.fileset.toSource { root = ../..; fileset = final.lib.fileset.unions [ ../../package.json ../../pnpm-lock.yaml ../../pnpm-workspace.yaml ../../.node-version ../../tsconfig.base.json ../../packages ../../runtime ../../fixtures ../../docs/contracts ../../bin ]; }; };
   # V1-U11 (m7 only, never in a release): the same recipes over an EARLIER v1.0 commit's sources, so the rollback boots
-  # genuinely older AgentOS programs. The caller picks a commit with the same schemas and the same lockfiles (the
-  # pnpm dependency hash above stays valid).
+  # genuinely older AgentOS programs. The caller picks a commit with compatible schemas; its lockfile and pnpm
+  # dependency hash are pinned independently of the current release.
   agentos-older = olderSrc: {
     native = final.callPackage ./native.nix { inherit rustPlatform; src = olderSrc; };
-    node = final.callPackage ./node.nix { src = olderSrc; };
+    node = (final.callPackage ./node.nix {
+      src = olderSrc;
+      pnpmDepsHash = "sha256-a8IpDeZ+Hjs8eDoNEH9v5KjjHLlhDBJfJIrHEMq+7DQ=";
+    }).overrideAttrs (_: {
+      env.PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD = "1";
+    });
   };
   agentos-shell = final.callPackage ../../desktop/package.nix { };
   # Test-only: the Shell's controller + QML driven against a real gateway in the m13-native and m20-sway VM checks (never in a

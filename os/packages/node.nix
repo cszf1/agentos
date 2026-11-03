@@ -1,4 +1,4 @@
-{ lib, stdenv, nodejs_24, pnpm_10, fetchPnpmDeps, makeWrapper, util-linux, coreutils, bash, src }:
+{ lib, stdenv, nodejs_24, pnpm_10, fetchPnpmDeps, makeWrapper, util-linux, coreutils, bash, src, pnpmDepsHash ? "sha256-42c89ftiEL+72MXYITqnnkjNe/fv0L9myfUvaUfTpbs=" }:
 stdenv.mkDerivation (finalAttrs: {
   pname = "agentos-node";
   version = "1.0.0";
@@ -8,7 +8,7 @@ stdenv.mkDerivation (finalAttrs: {
     inherit (finalAttrs) pname version src;
     pnpm = pnpm_10;
     fetcherVersion = 2;
-    hash = "sha256-42c89ftiEL+72MXYITqnnkjNe/fv0L9myfUvaUfTpbs=";
+    hash = pnpmDepsHash;
   };
   buildPhase = ''
     runHook preBuild
