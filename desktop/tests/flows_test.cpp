@@ -396,6 +396,8 @@ class FlowsTest : public QObject {
     QQuickItem* password = h.find(QStringLiteral("confirmAdminPassword"));
     QVERIFY(no && ok && password);
     QTRY_COMPARE(h.view->view.activeFocusItem(), no);
+    QTest::keyClick(&h.view->view, Qt::Key_Tab);
+    QTRY_COMPARE(h.view->view.activeFocusItem(), password);
     for (QQuickItem* item : {no, ok, password}) {
       QVERIFY(reallyVisible(item));
       QVERIFY(viewport.contains(item->mapRectToScene(item->boundingRect())));

@@ -103,13 +103,16 @@ FocusScope {
                 sensitive: true
                 placeholder: "只用于本次可信确认，不留存"
                 enterSubmits: false
+                KeyNavigation.tab: acceptBtn
+                KeyNavigation.backtab: cancelBtn
             }
             RowLayout {
                 Layout.fillWidth: true; Layout.topMargin: Theme.s2; spacing: Theme.s3
                 AButton {
                     id: cancelBtn; objectName: "confirmReject"
                     label: "取消"; enterActivates: true
-                    KeyNavigation.tab: acceptBtn
+                    KeyNavigation.tab: root.needsPassword ? adminPwdField : acceptBtn
+                    KeyNavigation.backtab: acceptBtn
                     onConfirmed: { adminPwdField.boundValue = ""; if (root.shellRef) root.shellRef.confirmReject() }
                 }
                 Item { Layout.fillWidth: true }
@@ -118,6 +121,7 @@ FocusScope {
                     label: "确认执行"; variant: "primary"; askSure: false; enterActivates: false
                     enabled: !root.c.stale && (!root.needsPassword || adminPwdField.boundValue.length > 0)
                     KeyNavigation.tab: cancelBtn
+                    KeyNavigation.backtab: root.needsPassword ? adminPwdField : cancelBtn
                     onConfirmed: {
                         if (!root.shellRef) return
                         var pw = adminPwdField.boundValue
