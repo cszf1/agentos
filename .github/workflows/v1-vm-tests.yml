@@ -10,6 +10,11 @@ on:
         description: "VM check to run (all, or one name from the list in the 'plan' job)"
         required: true
         default: all
+      upload_iso:
+        description: "Upload the built test ISO as a 3-day artifact (only for build-iso)"
+        type: boolean
+        required: true
+        default: false
 
 permissions:
   contents: read
@@ -181,6 +186,28 @@ jobs:
           fi
           echo "commit $GITHUB_SHA" | tee -a "$RUNNER_TEMP/build-$A.log"
           find -L "$RUNNER_TEMP"/out-$A* -maxdepth 3 -type f \( -name '*.iso' -o -name '*.qcow2' \) -exec sha256sum {} \; | tee -a "$RUNNER_TEMP/build-$A.log"
+
+      - name: Prepare test ISO artifact
+        if: ${{ matrix.test == 'build-iso' && inputs.upload_iso }}
+        run: |
+          shopt -s nullglob
+          images=("$RUNNER_TEMP"/out-agentos-iso/iso/*.iso)
+          [ "${#images[@]}" -eq 1 ] || { echo "Expected exactly one ISO, found ${#images[@]}"; exit 1; }
+          mkdir -p "$RUNNER_TEMP/agentos-test-iso"
+          cp --reflink=auto "${images[0]}" "$RUNNER_TEMP/agentos-test-iso/agentos-test.iso"
+          cd "$RUNNER_TEMP/agentos-test-iso"
+          sha256sum agentos-test.iso > SHA256SUMS
+          printf 'commit %s\n' "$GITHUB_SHA" > SOURCE.txt
+
+      - name: Upload test ISO
+        if: ${{ matrix.test == 'build-iso' && inputs.upload_iso }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: agentos-test-iso
+          path: ${{ runner.temp }}/agentos-test-iso/
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 0
 
       - name: Layered release audit (review F16)
         if: ${{ matrix.test == 'build-audit' }}
