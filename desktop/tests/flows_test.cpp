@@ -371,11 +371,19 @@ class FlowsTest : public QObject {
     h.view = std::make_unique<View>(h.shell.get(), QSize(1280, 800));
     QVERIFY(h.up());
     h.view->view.requestActivate();
+    // A model outage and a notice occupy both status strips; every nav item must still fit.
+    h.be.modelDown = true;
+    h.shell->refreshPage();
+    QTRY_VERIFY(!h.shell->modelAvailable());
+    h.shell->submitIntent(QStringLiteral("viewport outage check"), QString());
+    QVERIFY(!h.shell->notice().isEmpty());
     const QRectF viewport(0, 0, 1280, 800);
     for (const char* page : {"home", "login", "workspaces", "app", "tasks", "policies", "incidents", "proposals", "diagnostics", "backup", "update", "hardware"}) {
       QQuickItem* nav = h.find(QStringLiteral("nav:") + QString::fromLatin1(page));
       QVERIFY(nav && reallyVisible(nav));
       QVERIFY2(viewport.contains(nav->mapRectToScene(nav->boundingRect())), page);
+      for (QQuickItem* parent = nav->parentItem(); parent; parent = parent->parentItem())
+        if (parent->clip()) QVERIFY2(parent->boundingRect().contains(nav->mapRectToItem(parent, nav->boundingRect())), page);
     }
     bool rejected = false;
     h.shell->showPlanForTest(QStringLiteral("machine.plan"), JValue::object({

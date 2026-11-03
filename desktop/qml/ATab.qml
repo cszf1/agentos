@@ -17,7 +17,7 @@ TabButton {
     Accessible.name: label
 
     implicitWidth: fullWidth ? Theme.px(200) : (row.implicitWidth + Theme.s4)
-    implicitHeight: Theme.px(36)
+    implicitHeight: Theme.px(fullWidth ? 30 : 36)
     activeFocusOnTab: true
 
     background: Rectangle {
