@@ -65,7 +65,7 @@ Item {
         PText { width: root.width; text: root.d.text; variant: root.d.variant } }
     Component { id: alertC
         Rectangle { width: root.width; implicitHeight: at.implicitHeight + 16; radius: 4
-            color: root.d.status === "error" ? "#fde7e7" : root.d.status === "warning" ? "#fff4d6" : root.d.status === "success" ? "#e2f5e8" : "#e6effc"
+            color: root.d.status === "error" ? Theme.dangerSubtle : root.d.status === "warning" ? Theme.warningSubtle : root.d.status === "success" ? Theme.successSubtle : Theme.accentSubtle
             Accessible.role: Accessible.AlertMessage; Accessible.name: root.d.text
             PText { id: at; x: 8; y: 8; width: parent.width - 16; text: root.d.text } } }
     Component { id: metricC
@@ -92,18 +92,18 @@ Item {
     Component { id: kanbanC
         Flow { width: root.width; spacing: 10
             Repeater { model: root.d.columns
-                delegate: Rectangle { width: Math.max(180, (root.width - 20) / Math.max(1, root.d.columns.length) - 10); implicitHeight: kc.implicitHeight + 12; height: implicitHeight; color: "#f2f4f7"; radius: 6
+                delegate: Rectangle { width: Math.max(180, (root.width - 20) / Math.max(1, root.d.columns.length) - 10); implicitHeight: kc.implicitHeight + 12; height: implicitHeight; color: Theme.bgSubtle; radius: 6
                     Accessible.role: Accessible.List; Accessible.name: modelData.label
                     Column { id: kc; x: 6; y: 6; width: parent.width - 12; spacing: 6
                         PText { text: modelData.label + "  " + modelData.count; font.bold: true }
                         Repeater { model: modelData.cards
-                            delegate: Rectangle { width: kc.width; implicitHeight: cc.implicitHeight + 10; height: implicitHeight; radius: 4; color: modelData.selected ? "#dce7fb" : "#ffffff"; border.color: "#d0d0d0"
+                            delegate: Rectangle { width: kc.width; implicitHeight: cc.implicitHeight + 10; height: implicitHeight; radius: 4; color: modelData.selected ? Theme.accentSubtle : Theme.bgSurface; border.color: Theme.borderStrong
                                 Column { id: cc; x: 5; y: 5; width: parent.width - 10
                                     ACheck { visible: !!root.d.selectionId; label: "选择 " + modelData.title; checked: modelData.selected; onToggled: root.view.toggle(root.d.selectionId, modelData.id, checked) }
                                     PText { width: parent.width; text: modelData.title; font.bold: true }
                                     Repeater { model: modelData.fields; delegate: PText { width: cc.width; text: modelData; variant: "small" } } } } } } } } } }
     Component { id: formC
-        Rectangle { width: root.width; implicitHeight: fc.implicitHeight + 16; color: "#fafafa"; border.color: "#dddddd"; radius: 6
+        Rectangle { width: root.width; implicitHeight: fc.implicitHeight + 16; color: Theme.bgSubtle; border.color: Theme.border; radius: 6
             Accessible.role: Accessible.Form; Accessible.name: root.d.title || root.d.formId
             Column { id: fc; x: 8; y: 8; width: parent.width - 16; spacing: 8
                 PText { visible: !!root.d.title; text: root.d.title || ""; font.bold: true }
@@ -175,15 +175,26 @@ Item {
                     required property var itemNode
                     required property int index
                     property bool granted: false
+                    property int chargedCost: 0
+                    property bool completed: false
+                    onCostChanged: if (completed) acquireBudget()
+                    function acquireBudget() {
+                        if (granted) return
+                        // Read the template data directly: readonly bindings may still hold
+                        // their initial zero when Qt completes a newly created delegate.
+                        var n = root.node ? Number(root.node.data.templateNodes) : 0
+                        if (!isFinite(n) || n < 1) return
+                        if (InstanceBudget.acquire(n)) { chargedCost = n; granted = true }
+                    }
                     readonly property int cost: Math.max(1, root.d.templateNodes)
                     width: lv.orientation === ListView.Vertical ? lv.width : 260 * root.s
                     // placeholder sized like the real template so scrolling is stable before budget/instantiation
                     height: granted && body.item ? body.item.implicitHeight : cost * 27 * root.s
                     Accessible.role: Accessible.ListItem
                     Accessible.name: "第 " + (index + 1) + " 项"
-                    Component.onCompleted: granted = InstanceBudget.acquire(cost)
-                    Component.onDestruction: if (granted) InstanceBudget.release(cost)
-                    Connections { target: InstanceBudget; function onFreed() { if (!del.granted) del.granted = InstanceBudget.acquire(del.cost) } }
+                    Component.onCompleted: { completed = true; acquireBudget() }
+                    Component.onDestruction: if (granted) InstanceBudget.release(chargedCost)
+                    Connections { target: InstanceBudget; function onFreed() { del.acquireBudget() } }
                     PText { visible: !del.granted; text: "（渲染预算已满，滚动后显示）"; variant: "small" }
                     Loader { id: body; width: del.width; active: del.granted
                         sourceComponent: Column { width: del.width; spacing: 4
@@ -192,7 +203,7 @@ Item {
             }
             PText { visible: !!root.d.more; text: root.d.more || ""; variant: "small" } } }
     Component { id: errorC
-        Rectangle { width: root.width; implicitHeight: ec.implicitHeight + 16; color: "#fde7e7"; radius: 4
+        Rectangle { width: root.width; implicitHeight: ec.implicitHeight + 16; color: Theme.dangerSubtle; radius: 4
             Column { id: ec; x: 8; y: 8; width: parent.width - 16
                 PText { width: parent.width; text: root.d.text ? root.d.text : ("未知组件 " + (root.node ? root.node.type : "")) } } } }
 }

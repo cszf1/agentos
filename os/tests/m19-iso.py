@@ -146,26 +146,22 @@ def near(c, ref, tol=8):
 def hexc(c):
     return "#%02x%02x%02x" % c
 
-TOPBAR, NAVBG, PRIMARY = (0x1f, 0x29, 0x37), (0xf3, 0xf4, 0xf6), (0xdc, 0xe7, 0xfb)
+TOPBAR, NAVBG, PRIMARY = (0xff, 0xff, 0xff), (0xff, 0xff, 0xff), (0xef, 0xf6, 0xff)
 
 def nav_buttons(img):
+    """Find the 12 sidebar tabs by their full-height navigation rails, excluding toolbar controls."""
     w, h, _ = img
-    # FocusRing.qml uses a blue border on the focused (clicked) item, not the ordinary grey border.
+    # ATab's 3 px rail is muted (#94a3b8), accent (#2563eb) for the current page.
+    # x=17 crosses the rail but lies outside label/icon text and the workspace selector's border.
     rows = [y for y in range(h) if near(px(img, 3, y), NAVBG) and (
-        (max(px(img, 12, y)) < 0xc0 and max(px(img, 12, y)) - min(px(img, 12, y)) < 24)
-        or near(px(img, 12, y), (0x1a, 0x5f, 0xd0), 24))]
+        near(px(img, 17, y), (0x94, 0xa3, 0xb8), 3)
+        or near(px(img, 17, y), (0x25, 0x63, 0xeb), 3))]
     lines = []
     for r in rows:
         if lines and r - lines[-1][1] <= 1: lines[-1][1] = r
         else: lines.append([r, r])
-    btns, k = [], 0
-    while k + 1 < len(lines):
-        top, bot = lines[k][1], lines[k + 1][0]
-        if 18 <= bot - top <= 80:
-            btns.append((top, bot)); k += 2
-        else:
-            k += 1
-    return btns
+    return [(top, bot) for top, bot in lines if 18 <= bot - top <= 80]
+
 
 def shell_frame(m, name, timeout=180):
     end = time.time() + timeout
@@ -334,16 +330,16 @@ with subtest("the installed disk alone: first unlock, first-boot administrator o
     img = shell_frame(target, "shell")
     w, h, _ = img
     b = nav_buttons(img)
-    click(target, 75, (b[2][0] + b[2][1]) // 2, w, h)           # 工作区与成员
+    click(target, 75, (b[1][0] + b[1][1]) // 2, w, h)           # 工作区与成员
     end = time.time() + 60
     while True:
         img2 = shot(target, "shell-workspaces")
         b2 = nav_buttons(img2)
-        done = len(b2) == 12 and near(px(img2, 18, (b2[2][0] + b2[2][1]) // 2), PRIMARY)
+        done = len(b2) == 12 and near(px(img2, 24, (b2[1][0] + b2[1][1]) // 2), PRIMARY)
         if done or time.time() > end:
             break
         time.sleep(3)
-    assert done, [hexc(px(img2, 18, (x[0] + x[1]) // 2)) for x in b2]
+    assert done, [hexc(px(img2, 24, (x[0] + x[1]) // 2)) for x in b2]
     time.sleep(10)                                              # let the Shell's requests land in the journal
     operator_login(target, "alice", "alice-pw-1")
     target.send_chars(SHELL_PROBE + "\n", delay=0.03)

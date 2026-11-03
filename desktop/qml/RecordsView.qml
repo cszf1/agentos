@@ -15,15 +15,15 @@ Column {
                 onChosen: function(v) { r.view.setFilter(modelData.key, v) } } }
         AButton { visible: !!r.st.writable; label: "新建"; variant: "primary"; enabled: !r.st.formOpen; onClicked: r.view.openCreate() }
     }
-    PText { visible: !!r.st.error; width: r.width; text: r.st.error || ""; color: "#a01515" }
+    PText { visible: !!r.st.error; width: r.width; text: r.st.error || ""; color: Theme.danger }
     Rectangle {
         visible: !!r.st.formOpen
-        width: r.width; implicitHeight: fc.implicitHeight + 16; height: visible ? implicitHeight : 0; color: "#fafafa"; border.color: "#cccccc"; radius: 6
+        width: r.width; implicitHeight: fc.implicitHeight + 16; height: visible ? implicitHeight : 0; color: Theme.bgSubtle; border.color: Theme.borderStrong; radius: 6
         Accessible.role: Accessible.Dialog; Accessible.name: r.st.formMode === "create" ? "新建记录" : "编辑记录"
         Column { id: fc; x: 8; y: 8; width: parent.width - 16; spacing: 6
             PText { text: r.st.formMode === "create" ? "新建记录" : "编辑记录"; font.bold: true }
             Row { visible: !!r.st.formStale; spacing: 6
-                PText { text: "应用版本已切换，表单已停用。你的输入已保留。"; color: "#7a5a00" }
+                PText { text: "应用版本已切换，表单已停用。你的输入已保留。"; color: Theme.warning }
                 AButton { label: "刷新表单"; onClicked: r.view.rebaseRecord() } }
             // model: the field names only (stable while typing); each delegate reads its field's current state
             Repeater { model: r.view ? r.view.recordFormNames.filter(function(n) { return n.charAt(0) !== "\u001f" }) : []
@@ -39,8 +39,8 @@ Column {
                              boundValue: String(fd.value); enabled: !r.st.formStale && !r.st.formBusy
                              inputMethodHints: fd.type === "integer" ? Qt.ImhFormattedNumbersOnly : Qt.ImhNone
                              onTextEdited: r.view.setDraft(fd.name, text) }
-                    PText { visible: !!fd.error; text: fd.error || ""; color: "#a01515"; variant: "small" } } }
-            PText { visible: !!r.st.formMessage; width: fc.width; text: r.st.formMessage || ""; color: "#a01515" }
+                    PText { visible: !!fd.error; text: fd.error || ""; color: Theme.danger; variant: "small" } } }
+            PText { visible: !!r.st.formMessage; width: fc.width; text: r.st.formMessage || ""; color: Theme.danger }
             Row { spacing: 8
                 AButton { label: r.st.formMessage && !r.st.formStale ? "重试" : "保存"; variant: "primary"; enabled: !r.st.formStale && !r.st.formBusy; onClicked: r.view.submitRecord() }
                 AButton { label: "取消"; onClicked: r.view.cancelRecord() } } } }
@@ -59,7 +59,7 @@ Column {
         AButton { label: "上一页"; enabled: !!r.st.hasPrev; onClicked: r.view.pageBy(-1) }
         PText { text: r.st.pageText || "" }
         AButton { label: "下一页"; enabled: !!r.st.hasNext; onClicked: r.view.pageBy(1) } }
-    Rectangle { visible: !!r.st.hasDelete; width: r.width; implicitHeight: dc.implicitHeight + 12; height: visible ? implicitHeight : 0; color: "#fff4d6"; radius: 4
+    Rectangle { visible: !!r.st.hasDelete; width: r.width; implicitHeight: dc.implicitHeight + 12; height: visible ? implicitHeight : 0; color: Theme.warningSubtle; radius: 4
         Accessible.role: Accessible.AlertMessage; Accessible.name: "确认删除"
         Column { id: dc; x: 6; y: 6; width: parent.width - 12; spacing: 4
             PText { width: parent.width; text: "删除“" + (r.st.deleteAsk || "") + "”？删除是永久的，切换应用版本不会恢复它（只能从备份恢复）。" }

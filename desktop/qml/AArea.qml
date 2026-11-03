@@ -5,12 +5,20 @@ TextArea {
     id: a
     property string label: ""
     property string boundValue: ""
+    property string placeholder: ""
+    property bool monospace: false
+    property int areaHeight: Theme.px(110)
+    placeholderText: placeholder || label
+    implicitHeight: areaHeight
+    padding: Theme.s2
     textFormat: TextEdit.PlainText
     focusPolicy: Qt.StrongFocus
     Accessible.name: label
     Accessible.role: Accessible.EditableText
     wrapMode: TextEdit.Wrap
-    font.pixelSize: 14 * (typeof shell !== "undefined" && shell ? shell.uiScale : 1)
+    font.family: monospace ? Theme.monoFamily : Theme.fontFamily
+    font.pixelSize: Theme.textBody
+    color: Theme.textPrimary
     onBoundValueChanged: if (text !== boundValue) text = boundValue
     Component.onCompleted: text = boundValue
     onActiveFocusChanged: if (!activeFocus) ime.commit(a)
@@ -23,5 +31,5 @@ TextArea {
         ignoreUnknownSignals: true
         function onScopeCleared(reason) { ime.discard(a); a.text = "" }
     }
-    background: FocusRing { implicitWidth: 240; implicitHeight: 72; on: a.activeFocus; color: "#ffffff" }
+    background: FocusRing { implicitWidth: 240; implicitHeight: 72; on: a.activeFocus; color: Theme.bgSurface }
 }

@@ -1,15 +1,35 @@
 import QtQuick
+import QtQuick.Layouts
+
 PageFrame {
+    id: root
     title: "任务中心"
-    Repeater { model: shell.runs
-        delegate: Column { spacing: 2; width: parent ? parent.width : 400
-            Row { spacing: 8
-                PText { width: 320 * shell.uiScale; text: row.intent || row.runId; elide: Text.ElideRight; maximumLineCount: 1 }
-                PText { text: row.status || row.state || ""; width: 90 * shell.uiScale }
-                AButton { objectName: "cancelRun"; property string runId: row.runId || ""; label: "取消任务"; enabled: ["queued", "running", "accepted", "planning", "building"].indexOf(row.status || row.state) >= 0; onClicked: shell.act("runs.cancel", { runId: row.runId }, "取消任务") }
-                AButton { label: "查看记录"; onClicked: shell.loadTranscript(row.runId) }
-                AButton { objectName: "compact"; label: "压缩会话"; visible: !!row.conversationId; onClicked: shell.act("conversation.compact", { conversationId: row.conversationId }, "压缩会话") } } } }
-    PText { visible: shell.runs.count === 0; text: "没有任务"; variant: "muted" }
-    PText { visible: shell.transcriptText !== ""; width: parent.width; text: shell.transcriptText; variant: "small" }
+    subtitle: "真实任务、维护作业与异步操作状态"
+    PText { text: "运行任务"; variant: "subhead"; bold: true }
+    Repeater {
+        model: shell.runs
+        delegate: Rectangle {
+            Layout.fillWidth: true; implicitHeight: r.implicitHeight + Theme.s3 * 2
+            radius: Theme.radiusCard; color: Theme.bgSurface; border.color: Theme.border
+            RowLayout {
+                id: r; anchors.fill: parent; anchors.margins: Theme.s3; spacing: Theme.s2
+                PText { text: row.intent || row.runId; Layout.fillWidth: true }
+                PText { text: row.status || row.state || ""; tone: "secondary" }
+                AButton { objectName: "cancelRun"; property string runId: row.runId || ""; label: "取消任务"; writeAction: true
+                    enabled: ["queued", "running", "accepted", "planning", "building"].indexOf(row.status || row.state) >= 0
+                    onConfirmed: shell.act("runs.cancel", {runId:row.runId}, "取消任务") }
+                AButton { label: "查看记录"; onConfirmed: shell.loadTranscript(row.runId) }
+                AButton { objectName: "compact"; label: "压缩会话"; visible: !!row.conversationId; writeAction: true
+                    onConfirmed: shell.act("conversation.compact", {conversationId:row.conversationId}, "压缩会话") }
+            }
+        }
+    }
+    PText { text: "维护作业"; variant: "subhead"; bold: true }
+    Repeater { model: shell.jobs
+        delegate: PText { Layout.fillWidth: true; text: (row.templateId || row.jobId) + " — " + (row.state || ""); tone: "secondary" } }
+    PText { text: "系统操作"; variant: "subhead"; bold: true }
+    Repeater { model: shell.operations
+        delegate: PText { Layout.fillWidth: true; text: (row.actionId || "") + " — " + (row.state || row.phase || ""); tone: "secondary" } }
+    AArea { Layout.fillWidth: true; readOnly: true; monospace: true; areaHeight: Theme.px(200); boundValue: shell.transcriptText }
     ActionsList { }
 }

@@ -181,6 +181,7 @@ class GuiTest : public QObject {
     QVERIFY(v.load(QStringLiteral("SlotCanvas.qml"), {{QStringLiteral("view"), QVariant::fromValue<QObject*>(vm)}}));
     QTest::qWait(200);
     QVERIFY(b->live() > 0);
+    QCOMPARE(b->live() % 24, 0);  // every live delegate is charged its full 24-node template
     QList<QQuickItem*> lists;
     for (QQuickItem* i : itemsOfClass(v.root(), "QQuickListView"))
       if (i->objectName() == QLatin1String("slotList")) lists << i;

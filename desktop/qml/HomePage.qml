@@ -1,73 +1,105 @@
 import QtQuick
-import QtQuick.Controls.Basic
+import QtQuick.Layouts
+
 PageFrame {
-    id: page
+    id: root
     title: "首页"
-    // intent input
-    Row { spacing: 8; width: parent.width
-        AField { id: intent; objectName: "intentInput"; width: Math.min(560 * shell.uiScale, parent.width - 260); label: "意图输入"; placeholderText: shell.modelAvailable ? "想做什么？例如：做一个记账应用" : "模型不可用：暂不能生成或修改应用"
-                 boundValue: shell.intentDraft; enabled: shell.modelAvailable && !shell.readOnly; onTextEdited: shell.intentDraft = text
-                 onAccepted: shell.submitIntent(text, intentTarget.value) }
-        ASelect { id: intentTarget; label: "目标应用"; value: ""; onChosen: function(v) { intentTarget.value = v }
-                  options: { var o = [{ value: "", label: "新应用" }]; for (var i = 0; i < shell.apps.count; ++i) { var a = shell.apps.get(i); o.push({ value: a.appId, label: a.title || a.appId }) } return o } }
-        AButton { objectName: "intentSubmit"; label: "提交"; variant: "primary"; enabled: shell.modelAvailable && !shell.readOnly; onClicked: shell.submitIntent(intent.text, intentTarget.value) }
+    subtitle: "原生应用画布 · 连接与权限由可信 Shell 管理"
+    property string targetApp: ""
+    RowLayout {
+        Layout.fillWidth: true; spacing: Theme.s3
+        AField { id: intent; objectName: "intentInput"; label: "意图输入"; Layout.fillWidth: true
+            placeholder: shell.modelAvailable ? "想做什么？例如：做一个记账应用" : "模型暂不可用"
+            boundValue: shell.intentDraft; enterSubmits: true; enabled: shell.modelAvailable && !shell.readOnly
+            onTextEdited: shell.intentDraft = text
+            onSubmitted: function(v) { if (!shell.readOnly && shell.modelAvailable) shell.submitIntent(v, root.targetApp) }
+        }
+        ASelect { id: intentTarget; label: "目标应用"; value: root.targetApp
+            options: {
+                var options = [{value:"",label:"新应用"}]
+                for (var i = 0; i < shell.apps.count; ++i) {
+                    var a = shell.apps.get(i)
+                    options.push({value:a.appId, label:a.title || a.appId})
+                }
+                return options
+            }
+            onChosen: function(v) { root.targetApp = v }
+        }
+        AButton { objectName: "intentSubmit"; label: "提交"; variant: "primary"; writeAction: true
+            enabled: shell.modelAvailable && !shell.readOnly
+            onConfirmed: shell.submitIntent(intent.boundValue, root.targetApp) }
     }
-    Connections { target: shell; function onScopeCleared(reason) { intentTarget.value = "" } }
-    // system + task status
-    Row { spacing: 24
-        Column { spacing: 2
-            PText { text: "系统状态"; font.bold: true }
-            PText { text: "版本：" + (shell.machineStatus.release ? (shell.machineStatus.release.releaseId || shell.machineStatus.release) : "未知") }
-            PText { text: "工作区服务：" + (shell.hostAvailable ? "正常" : "不可用（只读）") }
-            PText { text: "模型：" + (shell.modelAvailable ? "可用" : "不可用") }
-            PText { text: "系统执行服务：" + (shell.brokerAvailable ? "可用" : "不可用") } }
-        Column { spacing: 2
-            PText { text: "任务状态"; font.bold: true }
-            Repeater { model: shell.runs; delegate: PText { visible: index < 5; height: visible ? implicitHeight : 0; text: (row.intent || row.runId) + " — " + (row.status || row.state || "") } }
-            PText { visible: shell.runs.count === 0; text: "没有任务"; variant: "muted" } }
-        Column { spacing: 2; width: 260 * shell.uiScale
-            PText { text: "通知"; font.bold: true }
-            // the Host's merged notifications: {id, kind, subject, severity, title, detail, count, state}
-            Repeater { model: shell.notifications; delegate: PText { objectName: "notification:" + (row.id || ""); width: 260 * shell.uiScale; visible: index < 4; height: visible ? implicitHeight : 0
-                                                                       text: (row.title || "") + (row.count > 1 ? "（" + row.count + " 次）" : ""); color: row.severity === "critical" || row.severity === "error" ? "#a01515" : "#1f1f1f"
-                                                                       elide: Text.ElideRight; maximumLineCount: 1 } } }
+    Connections { target: shell; function onScopeCleared(reason) { root.targetApp = "" } }
+    RowLayout {
+        Layout.fillWidth: true; spacing: Theme.s4
+        Rectangle {
+            Layout.fillWidth: true; implicitHeight: healthCol.implicitHeight + Theme.s4 * 2
+            radius: Theme.radiusCard; color: Theme.bgSurface; border.color: Theme.border
+            ColumnLayout {
+                id: healthCol; anchors.fill: parent; anchors.margins: Theme.s4; spacing: Theme.s2
+                PText { text: "系统状态"; variant: "subhead"; bold: true }
+                PText { text: "工作区服务：" + (shell.hostAvailable ? "正常" : "不可用（只读）"); tone: shell.hostAvailable ? "success" : "danger" }
+                PText { text: "模型：" + (shell.modelAvailable ? "可用" : "不可用") }
+                PText { text: "Broker：" + (shell.brokerAvailable ? "可用" : "不可用") }
+                PText { text: "当前工作区：" + shell.workspaceName; tone: "secondary" }
+            }
+        }
+        Rectangle {
+            Layout.fillWidth: true; implicitHeight: tasksCol.implicitHeight + Theme.s4 * 2
+            radius: Theme.radiusCard; color: Theme.bgSurface; border.color: Theme.border
+            ColumnLayout {
+                id: tasksCol; anchors.fill: parent; anchors.margins: Theme.s4; spacing: Theme.s2
+                PText { text: "最近任务"; variant: "subhead"; bold: true }
+                Repeater { model: shell.runs
+                    delegate: PText { visible: index < 4; Layout.fillWidth: true
+                        text: (row.intent || row.runId) + " — " + (row.status || row.state || ""); variant: "caption"; elide: Text.ElideRight } }
+                PText { visible: shell.runs.count === 0; text: "没有任务"; tone: "muted" }
+            }
+        }
     }
-    // app canvas
-    Row { spacing: 8
-        PText { text: "应用画布（最多同时展开 4 张卡）"; font.bold: true }
-        AButton { label: "重新排列"; onClicked: { shell.canvas.arrange(); shell.saveLayout() } }
+    RowLayout {
+        Layout.fillWidth: true
+        PText { text: "应用画布（最多同时展开 4 张）"; variant: "subhead"; bold: true; Layout.fillWidth: true }
+        AButton { label: "重新排列"; onConfirmed: { shell.canvas.arrange(); shell.saveLayout() } }
     }
     Flow {
+        Layout.fillWidth: true; width: root.width - Theme.s6 * 2; spacing: Theme.s3
         objectName: "canvas"
-        width: parent.width
-        spacing: 10
         Repeater {
             model: shell.canvas
             delegate: Rectangle {
                 id: card
+                clip: true
                 objectName: "card:" + appId
-                width: expanded ? Math.min(page.width - 40, 520 * cw * shell.uiScale) : 240 * shell.uiScale
-                implicitHeight: cc.implicitHeight + 12
-                height: implicitHeight
-                radius: 6
-                color: "#f7f8fa"
-                border.color: pinned ? "#1a5fd0" : "#d0d0d0"
-                Accessible.role: Accessible.Grouping
-                Accessible.name: "应用卡片：" + title
-                Column { id: cc; x: 6; y: 6; width: card.width - 12; spacing: 6
-                    Row { spacing: 4
-                        PText { text: title; font.bold: true; width: 120 * shell.uiScale; elide: Text.ElideRight; maximumLineCount: 1 }
-                        AButton { label: expanded ? "收起" : "展开"; onClicked: shell.expandCard(appId, !expanded) }
-                        AButton { label: pinned ? "取消固定" : "固定"; onClicked: { shell.canvas.setPinned(appId, !pinned); shell.saveLayout() } }
-                        AButton { label: "打开"; onClicked: shell.openApp(appId) }
-                        AButton { label: "←"; onClicked: { shell.canvas.move(appId, cx - 1, cy); shell.saveLayout() } }
-                        AButton { label: "→"; onClicked: { shell.canvas.move(appId, cx + 1, cy); shell.saveLayout() } }
-                        AButton { label: "宽"; onClicked: { shell.canvas.resize(appId, cw % 2 + 1, ch); shell.saveLayout() } } }
-                    PText { visible: !expanded; text: "位置 " + cx + "," + cy; variant: "small" }
-                    SlotCanvas { visible: expanded && view !== null; width: cc.width; height: visible ? implicitHeight : 0; view: expanded ? model.view : null }
+                width: expanded ? Math.min(root.width - Theme.s6 * 2, Theme.px(520) * cw) : Theme.px(260)
+                implicitHeight: cardCol.implicitHeight + Theme.s3 * 2; height: implicitHeight
+                radius: Theme.radiusCard; color: Theme.bgSurface
+                border.color: pinned ? Theme.accent : Theme.borderStrong; border.width: Theme.borderThin
+                ColumnLayout {
+                    id: cardCol; anchors.fill: parent; anchors.margins: Theme.s3; spacing: Theme.s2
+                    RowLayout {
+                        Layout.fillWidth: true
+                        PText { text: title; variant: "subhead"; bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
+                        AButton { label: expanded ? "收起" : "展开"; compact: true; onConfirmed: shell.expandCard(appId, !expanded) }
+                        AButton { label: "打开"; compact: true; variant: "primary"; onConfirmed: shell.openApp(appId) }
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        AButton { label: pinned ? "取消固定" : "固定"; compact: true; onConfirmed: { shell.canvas.setPinned(appId,!pinned); shell.saveLayout() } }
+                        AButton { label: "←"; compact: true; onConfirmed: { shell.canvas.move(appId,cx-1,cy); shell.saveLayout() } }
+                        AButton { label: "→"; compact: true; onConfirmed: { shell.canvas.move(appId,cx+1,cy); shell.saveLayout() } }
+                        AButton { label: "宽"; compact: true; onConfirmed: { shell.canvas.resize(appId,cw%2+1,ch); shell.saveLayout() } }
+                    }
+                    // Critical: render actual C++ AppViewModel, never fabricated JS slot arrays.
+                    SlotCanvas { visible: expanded && view !== null; Layout.fillWidth: true; width: cardCol.width
+                        view: expanded ? model.view : null; height: visible ? implicitHeight : 0 }
                 }
             }
         }
     }
+    PText { text: "通知"; variant: "subhead"; bold: true }
+    Repeater { model: shell.notifications
+        delegate: PText { objectName: "notification:" + row.id; visible: index < 4; Layout.fillWidth: true
+            text: (row.title || "") + (row.count > 1 ? "（" + row.count + " 次）" : ""); color: row.severity === "critical" || row.severity === "error" ? "#a01515" : Theme.textSecondary } }
     ActionsList { }
 }

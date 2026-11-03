@@ -5,7 +5,8 @@ set(AGENTOS_QML
   qml/SlotCanvas.qml qml/RecordsView.qml qml/TrustedConfirm.qml qml/AppConfirm.qml qml/ActionsList.qml qml/PageFrame.qml qml/HomePage.qml
   qml/LoginPage.qml qml/WorkspacesPage.qml qml/AppDetailPage.qml qml/TaskCenterPage.qml qml/PoliciesPage.qml
   qml/IncidentsPage.qml qml/ProposalsPage.qml qml/DiagnosticsPage.qml qml/BackupPage.qml qml/UpdatePage.qml
-  qml/HardwarePage.qml)
+  qml/HardwarePage.qml
+  qml/Theme.qml qml/Strings.js qml/qmldir qml/ServiceBlocked.qml)
 
 add_library(agentos_ui STATIC
   models/json_list_model.cpp models/json_list_model.hpp
@@ -19,7 +20,10 @@ add_library(agentos_ui STATIC
   app/health_canvas.cpp app/health_canvas.hpp)
 target_include_directories(agentos_ui PUBLIC models renderer app)
 target_link_libraries(agentos_ui PUBLIC agentos_core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickControls2)
-qt_add_resources(agentos_ui "shell_qml" PREFIX "/agentos/qml" BASE qml FILES ${AGENTOS_QML})
+# Raster icons are qrc-only; URLs must pass QmlUrlGuard (no data: SVG URLs).
+file(GLOB AGENTOS_QML_ICONS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/qml/icons/*.png")
+qt_add_resources(agentos_ui "shell_qml" PREFIX "/agentos/qml" BASE qml
+  FILES ${AGENTOS_QML} ${AGENTOS_QML_ICONS})
 
 add_executable(agentos-shell app/main.cpp)
 target_link_libraries(agentos-shell PRIVATE agentos_ui)

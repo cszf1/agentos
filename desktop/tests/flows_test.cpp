@@ -366,6 +366,50 @@ class FlowsTest : public QObject {
     QVERIFY2(g_qmlWarnings.isEmpty(), qPrintable(g_qmlWarnings.join(QLatin1Char('\n'))));
   }
 
+  void softwareViewportKeepsNavigationAndLongAdminPlansReachable() {
+    Harness h;
+    h.view = std::make_unique<View>(h.shell.get(), QSize(1280, 800));
+    QVERIFY(h.up());
+    h.view->view.requestActivate();
+    const QRectF viewport(0, 0, 1280, 800);
+    for (const char* page : {"home", "login", "workspaces", "app", "tasks", "policies", "incidents", "proposals", "diagnostics", "backup", "update", "hardware"}) {
+      QQuickItem* nav = h.find(QStringLiteral("nav:") + QString::fromLatin1(page));
+      QVERIFY(nav && reallyVisible(nav));
+      QVERIFY2(viewport.contains(nav->mapRectToScene(nav->boundingRect())), page);
+    }
+    bool rejected = false;
+    h.shell->showPlanForTest(QStringLiteral("machine.plan"), JValue::object({
+      {QStringLiteral("kind"), QStringLiteral("time.timezone.set")}, {QStringLiteral("admin"), true},
+      {QStringLiteral("planHash"), QStringLiteral("sha256:") + QString(64, QLatin1Char('a'))},
+      {QStringLiteral("effect"), QString(8000, QLatin1Char('x'))}
+    }), [&](bool yes) { rejected = !yes; });
+    QQuickItem* no = h.find(QStringLiteral("confirmReject"));
+    QQuickItem* ok = h.find(QStringLiteral("confirmAccept"));
+    QQuickItem* password = h.find(QStringLiteral("confirmAdminPassword"));
+    QVERIFY(no && ok && password);
+    QTRY_COMPARE(h.view->view.activeFocusItem(), no);
+    for (QQuickItem* item : {no, ok, password}) {
+      QVERIFY(reallyVisible(item));
+      QVERIFY(viewport.contains(item->mapRectToScene(item->boundingRect())));
+    }
+    QVERIFY(!ok->isEnabled());
+    password->setProperty("text", QStringLiteral("one-time-test-password"));
+    QVERIFY(ok->isEnabled());
+    password->forceActiveFocus();
+    QTest::keyClick(&h.view->view, Qt::Key_Return);
+    QVERIFY(h.shell->confirm().value(QStringLiteral("visible")).toBool());
+    ok->forceActiveFocus();
+    QTest::keyClick(&h.view->view, Qt::Key_Return);
+    QTest::keyClick(&h.view->view, Qt::Key_Enter);
+    QVERIFY(h.shell->confirm().value(QStringLiteral("visible")).toBool());
+    QCOMPARE(h.sent(QStringLiteral("machine.actions.confirm")).size(), 0);
+    QVERIFY(imageLooksRendered(h.view->shot(QStringLiteral("trusted-long-plan-1280x800.png"))));
+    no->forceActiveFocus();
+    QTest::keyClick(&h.view->view, Qt::Key_Return);
+    QTRY_VERIFY(rejected);
+    QVERIFY(password->property("text").toString().isEmpty());
+  }
+
   void canvasLayoutKeepsOnlyPositionsAndPrefs() {
     Harness h;
     QVERIFY(h.up());

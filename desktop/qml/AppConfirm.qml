@@ -1,38 +1,41 @@
 import QtQuick
 import QtQuick.Controls.Basic
-// An app's own confirmation question (the app's confirm step). It is an ordinary dialog: no system header, no system
-// colours, below the trusted system layer, and it says the text comes from the app, so an app can never pass its
-// question off as a system approval. Focus starts on 拒绝; the answer only resumes the app's own action.
-Rectangle {
-    id: a
+import QtQuick.Layouts
+
+// Ordinary application question: never styled as trusted system confirmation.
+FocusScope {
+    id: root
     objectName: "appConfirm"
-    readonly property var c: (typeof shell !== "undefined" && shell) ? shell.appConfirm : ({})
-    readonly property real s: (typeof shell !== "undefined" && shell) ? shell.uiScale : 1
-    visible: !!c.visible
-    color: "#66000000"
-    z: 800
-    focus: visible
+    property var shellRef: typeof shell !== "undefined" ? shell : null
+    readonly property var c: shellRef ? shellRef.appConfirm : ({})
+    readonly property bool isOpen: !!c.visible
+    anchors.fill: parent; visible: isOpen; z: 800; focus: visible
     Accessible.role: Accessible.Dialog
     Accessible.name: "应用请求确认"
-    MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons; hoverEnabled: true; onWheel: function(w) { w.accepted = true } }
-    onVisibleChanged: if (visible) Qt.callLater(function() { noBtn.forceActiveFocus() })  // after `focus: visible`
+    onIsOpenChanged: if (isOpen) Qt.callLater(function() { reject.forceActiveFocus() })
+    Keys.onEscapePressed: if (root.shellRef) root.shellRef.appConfirmAnswer(false)
+    Rectangle {
+        anchors.fill: parent; color: Theme.scrimModal
+        MouseArea { anchors.fill: parent; onClicked: if (root.shellRef) root.shellRef.appConfirmAnswer(false) }
+    }
     Rectangle {
         anchors.centerIn: parent
-        width: Math.min(parent.width - 40, 520 * a.s)
-        height: col.implicitHeight + 32
-        radius: 8
-        color: "#ffffff"
-        border.color: "#c8c8c8"; border.width: 1
-        Column {
-            id: col
-            x: 16; y: 16; width: parent.width - 32; spacing: 8
-            PText { width: parent.width; text: "「" + (a.c.app || "应用") + "」请求确认"; variant: "title" }
-            PText { objectName: "appConfirmText"; width: parent.width; text: a.c.text || "" }
-            PText { width: parent.width; variant: "muted"; text: "以上文字由应用提供，不是系统确认，也不会改变任何权限。" }
-            Row { spacing: 10
-                AButton { objectName: "appConfirmAccept"; label: "继续"; onClicked: shell.appConfirmAnswer(true) }
-                AButton { id: noBtn; objectName: "appConfirmReject"; label: "拒绝"; onClicked: shell.appConfirmAnswer(false) } }
+        width: Math.min(parent.width - Theme.s6, Theme.px(510))
+        height: content.implicitHeight + Theme.s5 * 2
+        radius: Theme.radiusModal; color: Theme.bgSurface
+        border.width: Theme.borderThin; border.color: Theme.borderStrong
+        ColumnLayout {
+            id: content
+            anchors.fill: parent; anchors.margins: Theme.s5; spacing: Theme.s3
+            PText { text: "「" + (root.c.app || "应用") + "」请求确认"; variant: "title"; bold: true }
+            PText { objectName: "appConfirmText"; Layout.fillWidth: true; text: root.c.text || "" }
+            PText { Layout.fillWidth: true; variant: "caption"; tone: "muted"; text: "以上文字来自应用，不是系统确认，也不授予系统权限。" }
+            RowLayout {
+                Layout.fillWidth: true; spacing: Theme.s3
+                AButton { id: reject; objectName: "appConfirmReject"; label: "拒绝"; onConfirmed: if (root.shellRef) root.shellRef.appConfirmAnswer(false) }
+                Item { Layout.fillWidth: true }
+                AButton { objectName: "appConfirmAccept"; label: "继续"; variant: "primary"; onConfirmed: if (root.shellRef) root.shellRef.appConfirmAnswer(true) }
+            }
         }
     }
-    Keys.onEscapePressed: shell.appConfirmAnswer(false)
 }

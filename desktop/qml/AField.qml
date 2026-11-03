@@ -8,10 +8,21 @@ TextField {
     property string label: ""
     property string boundValue: ""
     property bool sensitive: false
+    property string placeholder: ""
+    property bool enterSubmits: false
+    signal submitted(string value)
+    placeholderText: placeholder || label
+    echoMode: sensitive ? TextInput.Password : TextInput.Normal
+    onTextChanged: if (boundValue !== text) boundValue = text
+    onAccepted: if (enterSubmits) submitted(text)
+    leftPadding: Theme.s2
+    rightPadding: Theme.s2
     focusPolicy: Qt.StrongFocus
     Accessible.name: label
     Accessible.role: Accessible.EditableText
-    font.pixelSize: 14 * (typeof shell !== "undefined" && shell ? shell.uiScale : 1)
+    font.family: Theme.fontFamily
+    font.pixelSize: Theme.textBody
+    color: Theme.textPrimary
     selectByMouse: true
     onBoundValueChanged: if (text !== boundValue) text = boundValue
     Component.onCompleted: text = boundValue
@@ -20,7 +31,7 @@ TextField {
     Connections {
         target: (typeof shell !== "undefined") ? shell : null
         ignoreUnknownSignals: true
-        function onScopeCleared(reason) { ime.discard(f); f.text = "" }
+        function onScopeCleared(reason) { ime.discard(f); f.boundValue = ""; f.text = "" }
     }
-    background: FocusRing { implicitWidth: 200; implicitHeight: 30; on: f.activeFocus; color: "#ffffff" }
+    background: FocusRing { implicitWidth: 200; implicitHeight: Theme.px(36); on: f.activeFocus; color: Theme.bgSurface }
 }

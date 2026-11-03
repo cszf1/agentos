@@ -1,0 +1,35 @@
+module AgentOS
+singleton Theme 1.0 Theme.qml
+AButton 1.0 AButton.qml
+AField 1.0 AField.qml
+ASelect 1.0 ASelect.qml
+ACheck 1.0 ACheck.qml
+ATab 1.0 ATab.qml
+AArea 1.0 AArea.qml
+PText 1.0 PText.qml
+FocusRing 1.0 FocusRing.qml
+PageFrame 1.0 PageFrame.qml
+ShellRoot 1.0 ShellRoot.qml
+LoginPage 1.0 LoginPage.qml
+Blocked 1.0 Blocked.qml
+ServiceBlocked 1.0 ServiceBlocked.qml
+HomePage 1.0 HomePage.qml
+WorkspacesPage 1.0 WorkspacesPage.qml
+AppDetailPage 1.0 AppDetailPage.qml
+TaskCenterPage 1.0 TaskCenterPage.qml
+ProposalsPage 1.0 ProposalsPage.qml
+PoliciesPage 1.0 PoliciesPage.qml
+IncidentsPage 1.0 IncidentsPage.qml
+BackupPage 1.0 BackupPage.qml
+UpdatePage 1.0 UpdatePage.qml
+HardwarePage 1.0 HardwarePage.qml
+DiagnosticsPage 1.0 DiagnosticsPage.qml
+SlotCanvas 1.0 SlotCanvas.qml
+SlotNode 1.0 SlotNode.qml
+SlotChild 1.0 SlotChild.qml
+RecordsView 1.0 RecordsView.qml
+ActionsList 1.0 ActionsList.qml
+HealthCanvas 1.0 HealthCanvas.qml
+TrustedConfirm 1.0 TrustedConfirm.qml
+AppConfirm 1.0 AppConfirm.qml
+Strings 1.0 Strings.js

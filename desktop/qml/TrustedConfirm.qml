@@ -1,60 +1,131 @@
 import QtQuick
 import QtQuick.Controls.Basic
-// The trusted system confirmation layer (spec §11, V1-D07). It is a Shell layer above every app canvas; app content
-// is clipped to its card and cannot cover it. It shows what the plan does, to what, before/after, risk, whether it
-// can be undone, when the plan expires, who/where, planHash/version/permission change and the unknown-result note;
-// confirming is bound to the identity and epochs it was shown under. Focus starts on 取消 and Enter never confirms.
-// Administrator plans ask for the user's own password, which goes only into the confirm request (PAM + ticket).
-Rectangle {
-    id: t
+import QtQuick.Layouts
+import "Strings.js" as Strings
+
+// Trusted Shell-owned confirmation. Never app-provided content, never an app confirmation.
+FocusScope {
+    id: root
     objectName: "trustedConfirm"
-    readonly property var c: (typeof shell !== "undefined" && shell) ? shell.confirm : ({})
-    readonly property real s: (typeof shell !== "undefined" && shell) ? shell.uiScale : 1
-    visible: !!c.visible
-    color: "#cc1b1b1f"
+    property var shellRef: typeof shell !== "undefined" ? shell : null
+    readonly property var c: shellRef ? shellRef.confirm : ({})
+    readonly property bool isOpen: !!c.visible
+    readonly property bool needsPassword: !!c.admin
+    anchors.fill: parent
+    visible: isOpen
     z: 1000
     focus: visible
     Accessible.role: Accessible.Dialog
     Accessible.name: "AgentOS 系统确认"
-    MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons; hoverEnabled: true; onWheel: function(w) { w.accepted = true } }
-    // after `focus: visible` has taken effect, so the root does not take the focus back from 取消
-    onVisibleChanged: { adminPw.text = ""; if (visible) Qt.callLater(function() { cancelBtn.forceActiveFocus() }) }
-    Rectangle {
-        anchors.centerIn: parent
-        width: Math.min(parent.width - 40, 640 * t.s)
-        implicitHeight: col.implicitHeight + 32
-        height: implicitHeight
-        radius: 8
-        color: "#ffffff"
-        border.color: "#1a5fd0"; border.width: 3
-        Column {
-            id: col
-            x: 16; y: 16; width: parent.width - 32; spacing: 6
-            PText { text: "AgentOS 系统确认（由系统显示，应用无法修改此框）"; variant: "title" }
-            PText { width: parent.width; text: t.c.title || "" ; font.bold: true }
-            PText { objectName: "confirmWhat"; width: parent.width; visible: !!t.c.what; text: "做什么：" + (t.c.what || "") }
-            PText { width: parent.width; text: "用户：" + (t.c.user || "") }
-            PText { width: parent.width; text: "工作区：" + (t.c.workspace || "") }
-            PText { width: parent.width; text: "资源：" + (t.c.resource || "—") }
-            PText { width: parent.width; visible: !!t.c.effect; text: "效果：" + (t.c.effect || "") }
-            PText { objectName: "confirmBefore"; width: parent.width; visible: !!t.c.before; text: "变更前：" + (t.c.before || "") }
-            PText { objectName: "confirmAfter"; width: parent.width; visible: !!t.c.after; text: "变更后：" + (t.c.after || "") }
-            PText { objectName: "confirmRisk"; width: parent.width; visible: !!t.c.risk; text: "风险：" + (t.c.risk || "") }
-            PText { objectName: "confirmReversible"; width: parent.width; visible: !!t.c.reversible; text: "能否撤销：" + (t.c.reversible || "") }
-            PText { objectName: "confirmExpires"; width: parent.width; visible: !!t.c.expires; text: "计划有效期：" + (t.c.expires || "") }
-            PText { width: parent.width; text: "计划 hash：" + (t.c.planHash || "—"); font.family: "monospace" }
-            PText { width: parent.width; text: "版本/基线：" + (t.c.version || "—") }
-            PText { width: parent.width; text: "权限变化：" + (t.c.permissionChange || "") }
-            PText { width: parent.width; text: t.c.unknownNote || ""; variant: "muted" }
-            PText { visible: !!t.c.stale; width: parent.width; color: "#a01515"; text: "计划已过期（身份、会话或工作区代次已变化）。请重新生成计划后再确认。" }
-            AField { id: adminPw; objectName: "confirmAdminPassword"; visible: !!t.c.admin; width: Math.min(parent.width, 320 * t.s)
-                     label: "管理员密码"; echoMode: TextInput.Password; sensitive: true; placeholderText: "输入你自己的管理员密码（管理员操作）" }
-            Row { spacing: 10
-                AButton { id: okBtn; objectName: "confirmAccept"; label: "确认执行"; variant: "primary"; enterActivates: false
-                          enabled: !t.c.stale && (!t.c.admin || adminPw.text !== "")
-                          onClicked: { var pw = adminPw.text; adminPw.text = ""; shell.confirmAccept(pw) } }
-                AButton { id: cancelBtn; objectName: "confirmReject"; label: "取消"; onClicked: { adminPw.text = ""; shell.confirmReject() } } }
+
+    function resetPasswordAndFocus() {
+        adminPwdField.boundValue = ""
+        if (isOpen) Qt.callLater(function() { cancelBtn.forceActiveFocus() })
+    }
+    onIsOpenChanged: resetPasswordAndFocus()
+    Connections {
+        target: root.shellRef
+        ignoreUnknownSignals: true
+        function onScopeCleared(reason) { root.resetPasswordAndFocus() }
+    }
+    Keys.onPressed: function(event) {
+        if (event.key === Qt.Key_Escape) {
+            if (root.shellRef) root.shellRef.confirmReject()
+            event.accepted = true
+        } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+            event.accepted = true  // Enter never confirms a system plan.
         }
     }
-    Keys.onEscapePressed: shell.confirmReject()
+    Rectangle {
+        anchors.fill: parent; color: Theme.bgTrustedScrim
+        MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons; onClicked: function(mouse) { mouse.accepted = true } }
+    }
+    Rectangle {
+        anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
+        height: Theme.px(56); color: Theme.bgTrustedBar
+        Rectangle { anchors.top: parent.top; width: parent.width; height: Theme.px(3); color: Theme.warning }
+        RowLayout {
+            anchors.fill: parent; anchors.leftMargin: Theme.s4; anchors.rightMargin: Theme.s4; spacing: Theme.s3
+            Image { source: Theme.iconSource("shield", Theme.textOnAccent.toString()); sourceSize.width: Theme.iconMd; sourceSize.height: Theme.iconMd }
+            PText { text: "AgentOS 系统确认 · 应用无法修改此框"; tone: "onAccent"; bold: true; Layout.fillWidth: true }
+            PText { text: root.needsPassword ? "需管理员身份复核" : "受信任系统操作"; tone: "onAccent"; variant: "caption" }
+        }
+    }
+    Rectangle {
+        id: panel
+        anchors.centerIn: parent
+        anchors.verticalCenterOffset: Theme.px(16)
+        width: Math.min(parent.width - Theme.s6, Theme.px(680))
+        height: Math.min(parent.height - Theme.px(100), content.implicitHeight + footer.implicitHeight + Theme.s4 * 3)
+        radius: Theme.radiusModal
+        color: Theme.bgTrustedCard
+        border.width: Theme.focusWidth
+        border.color: Theme.warning
+        ScrollView {
+            anchors.top: parent.top; anchors.left: parent.left; anchors.right: parent.right
+            anchors.bottom: footer.top; anchors.margins: Theme.s4
+            clip: true
+            ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+            ColumnLayout {
+                id: content
+                width: panel.width - Theme.s4 * 2 - Theme.px(12)
+                spacing: Theme.s2
+                PText { Layout.fillWidth: true; text: root.c.title || "系统操作"; variant: "title"; bold: true }
+                PText { Layout.fillWidth: true; objectName: "confirmWhat"; text: "做什么：" + (root.c.what || ""); wrapMode: Text.Wrap }
+                PText { Layout.fillWidth: true; text: "用户：" + (root.c.user || "") }
+                PText { Layout.fillWidth: true; text: "工作区：" + (root.c.workspace || "") }
+                PText { Layout.fillWidth: true; text: "资源：" + (root.c.resource || "—") }
+                PText { Layout.fillWidth: true; text: "效果：" + (root.c.effect || "") }
+                PText { Layout.fillWidth: true; objectName: "confirmBefore"; text: "变更前：" + (root.c.before || "") }
+                PText { Layout.fillWidth: true; objectName: "confirmAfter"; text: "变更后：" + (root.c.after || "") }
+                Rectangle { Layout.fillWidth: true; height: Theme.borderThin; color: Theme.border }
+                PText { Layout.fillWidth: true; objectName: "confirmRisk"; text: "风险：" + (root.c.risk || ""); tone: "danger"; bold: true }
+                PText { Layout.fillWidth: true; objectName: "confirmReversible"; text: "能否撤销：" + (root.c.reversible || "") }
+                PText { Layout.fillWidth: true; objectName: "confirmExpires"; text: "计划有效期：" + (root.c.expires || "") }
+                PText { Layout.fillWidth: true; text: "计划 hash：" + (root.c.planHash || "—"); mono: true; variant: "caption" }
+                PText { Layout.fillWidth: true; text: "版本/基线：" + (root.c.version || "—") }
+                PText { Layout.fillWidth: true; text: "权限变化：" + (root.c.permissionChange || "") }
+                PText { Layout.fillWidth: true; text: root.c.unknownNote || ""; tone: "warning"; variant: "caption" }
+                PText { Layout.fillWidth: true; visible: !!root.c.stale; text: "计划已过期（身份、会话或工作区已变化），请重新生成计划。"; tone: "danger"; bold: true }
+            }
+        }
+        ColumnLayout {
+            id: footer
+            anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom
+            anchors.margins: Theme.s4; spacing: Theme.s2
+            PText { Layout.fillWidth: true; visible: root.needsPassword; text: "管理员密码（当前管理员自己的密码）"; bold: true }
+            AField {
+                id: adminPwdField
+                objectName: "confirmAdminPassword"
+                visible: root.needsPassword
+                Layout.fillWidth: true
+                label: "管理员密码（当前管理员自己的密码）"
+                sensitive: true
+                placeholder: "只用于本次可信确认，不留存"
+                enterSubmits: false
+            }
+            RowLayout {
+                Layout.fillWidth: true; Layout.topMargin: Theme.s2; spacing: Theme.s3
+                AButton {
+                    id: cancelBtn; objectName: "confirmReject"
+                    label: "取消"; enterActivates: true
+                    KeyNavigation.tab: acceptBtn
+                    onConfirmed: { adminPwdField.boundValue = ""; if (root.shellRef) root.shellRef.confirmReject() }
+                }
+                Item { Layout.fillWidth: true }
+                AButton {
+                    id: acceptBtn; objectName: "confirmAccept"
+                    label: "确认执行"; variant: "primary"; askSure: false; enterActivates: false
+                    enabled: !root.c.stale && (!root.needsPassword || adminPwdField.boundValue.length > 0)
+                    KeyNavigation.tab: cancelBtn
+                    onConfirmed: {
+                        if (!root.shellRef) return
+                        var pw = adminPwdField.boundValue
+                        adminPwdField.boundValue = ""
+                        root.shellRef.confirmAccept(pw)
+                    }
+                }
+            }
+        }
+    }
 }

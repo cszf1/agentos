@@ -1,40 +1,63 @@
 import QtQuick
 import QtQuick.Controls.Basic
+import QtQuick.Layouts
+
 Button {
-    id: b
+    id: root
     property string label: ""
     property string variant: "secondary"
-    // false on the trusted layer's accept button: Enter must never confirm a system plan (product decision)
     property bool enterActivates: true
-    // Red danger buttons ask "are you sure" once more (ShellRoot's dangerSure dialog) and only then emit `confirmed`;
-    // other buttons emit `confirmed` right after `clicked`. A button that may be red handles onConfirmed, not onClicked.
     property bool askSure: variant === "danger"
+    property string iconName: ""
+    property bool writeAction: false
+    property bool compact: false
+    property string disabledReason: ""
+    property var shellRef: typeof shell !== "undefined" ? shell : null
+    readonly property bool blockedByWriteState: writeAction && shellRef && (shellRef.readOnly || shellRef.writesStopped || shellRef.role === "viewer")
     signal confirmed()
-    Connections {
-        target: b
-        function onClicked() {
-            if (!b.askSure) { b.confirmed(); return }
-            var r = b.parent
-            while (r && r.objectName !== "shellRoot") r = r.parent
-            if (r) r.askSure(b)
-            else console.warn("AButton: no shell root to ask for confirmation; danger action not run")
-        }
-    }
+    enabled: !blockedByWriteState
     text: label
     focusPolicy: Qt.StrongFocus
     Accessible.name: label
-    Accessible.role: Accessible.Button
-    font.pixelSize: 14 * (typeof shell !== "undefined" && shell ? shell.uiScale : 1)
-    contentItem: Text {
-        text: b.text
-        textFormat: Text.PlainText
-        font: b.font
-        color: b.enabled ? (b.variant === "danger" ? "#a01515" : "#1f1f1f") : "#8a8a8a"
-        horizontalAlignment: Text.AlignHCenter
-        verticalAlignment: Text.AlignVCenter
-        elide: Text.ElideRight
+    font.family: Theme.fontFamily
+    font.pixelSize: compact ? Theme.textCaption : Theme.textBody
+    implicitWidth: Math.max(Theme.px(compact ? 52 : 84), contentItem.implicitWidth + Theme.s3 * 2)
+    implicitHeight: Theme.px(compact ? 30 : 36)
+    Connections {
+        target: root
+        function onClicked() {
+            if (!root.askSure) { root.confirmed(); return }
+            var r = root.parent
+            while (r && r.objectName !== "shellRoot") r = r.parent
+            if (r) r.askSure(root)
+        }
     }
-    background: FocusRing { implicitWidth: 64; implicitHeight: 30; on: b.activeFocus; danger: b.variant === "danger"; primary: b.variant === "primary" }
-    Keys.onReturnPressed: if (enabled && enterActivates) clicked()
-    Keys.onEnterPressed: if (enabled && enterActivates) clicked()
+    Keys.onReturnPressed: function(e) { if (enabled && enterActivates) clicked(); e.accepted = true }
+    Keys.onEnterPressed: function(e) { if (enabled && enterActivates) clicked(); e.accepted = true }
+    contentItem: RowLayout {
+        spacing: Theme.s2
+        Image {
+            visible: root.iconName !== ""
+            source: visible ? Theme.iconSource(root.iconName, (root.variant === "secondary" ? Theme.textPrimary : Theme.textOnAccent).toString()) : ""
+            sourceSize.width: Theme.iconSm; sourceSize.height: Theme.iconSm
+            Layout.preferredWidth: Theme.iconSm; Layout.preferredHeight: Theme.iconSm
+        }
+        Text {
+            text: root.label; textFormat: Text.PlainText; font: root.font
+            color: root.variant === "secondary" ? Theme.textPrimary : Theme.textOnAccent
+            horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
+            elide: Text.ElideRight; Layout.fillWidth: true
+        }
+    }
+    background: Rectangle {
+        implicitHeight: Theme.px(36); radius: Theme.radiusControl
+        opacity: root.enabled ? 1 : 0.48
+        color: root.variant === "danger" ? (root.down || root.hovered ? Theme.dangerHover : Theme.danger)
+             : root.variant === "primary" ? (root.down ? Theme.accentPressed : root.hovered ? Theme.accentHover : Theme.accent)
+             : root.down ? Theme.bgPressed : root.hovered ? Theme.bgHover : Theme.bgSurface
+        border.width: root.activeFocus ? Theme.focusWidth : Theme.borderThin
+        border.color: root.activeFocus ? Theme.borderFocus : root.variant === "secondary" ? Theme.borderStrong : color
+    }
+    ToolTip.visible: hovered && !enabled && (disabledReason !== "" || blockedByWriteState)
+    ToolTip.text: disabledReason || "只读或系统暂停写入"
 }

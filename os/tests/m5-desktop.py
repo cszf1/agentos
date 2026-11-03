@@ -20,7 +20,7 @@ def near(c, ref, tol=8):
 def hexc(c):
     return "#%02x%02x%02x" % c
 
-TOPBAR, NAVBG, PRIMARY, BUTTON = (0x1f, 0x29, 0x37), (0xf3, 0xf4, 0xf6), (0xdc, 0xe7, 0xfb), (0xf4, 0xf4, 0xf4)
+TOPBAR, NAVBG, PRIMARY, BUTTON = (0xff, 0xff, 0xff), (0xff, 0xff, 0xff), (0xef, 0xf6, 0xff), (0xff, 0xff, 0xff)
 
 def click(x, y, w, h):
     """A left click at a screen pixel through the USB tablet (absolute pointer, as a real mouse/touchpad reaches Sway)."""
@@ -33,30 +33,19 @@ def click(x, y, w, h):
     qsend("input-send-event", {"events": [{"type": "btn", "data": {"down": False, "button": "left"}}]})
 
 def nav_buttons(img):
-    """The Shell's navigation buttons, found in the pixels: 1-px grey borders in a column left of the labels."""
+    """Find the 12 sidebar tabs by their full-height navigation rails, excluding toolbar controls."""
     w, h, _ = img
-    x, rows, y = 12, [], 0
-    while y < h:
-        c = px(img, x, y)
-        # FocusRing.qml: ordinary #9a9a9a border, or focused #1a5fd0 (the clicked navigation item).
-        border = (max(c) < 0xc0 and max(c) - min(c) < 24) or near(c, (0x1a, 0x5f, 0xd0), 24)
-        if near(px(img, 3, y), NAVBG) and border:
-            rows.append(y)
-        y += 1
-    # merge adjacent rows into lines, pair lines into buttons (top border, bottom border)
+    # ATab's 3 px rail is muted (#94a3b8), accent (#2563eb) for the current page.
+    # x=17 crosses the rail but lies outside label/icon text and the workspace selector's border.
+    rows = [y for y in range(h) if near(px(img, 3, y), NAVBG) and (
+        near(px(img, 17, y), (0x94, 0xa3, 0xb8), 3)
+        or near(px(img, 17, y), (0x25, 0x63, 0xeb), 3))]
     lines = []
     for r in rows:
         if lines and r - lines[-1][1] <= 1: lines[-1][1] = r
         else: lines.append([r, r])
-    btns = []
-    k = 0
-    while k + 1 < len(lines):
-        top, bot = lines[k][1], lines[k + 1][0]
-        if 18 <= bot - top <= 80:
-            btns.append((top, bot)); k += 2
-        else:
-            k += 1
-    return btns
+    return [(top, bot) for top, bot in lines if 18 <= bot - top <= 80]
+
 
 def nav_width(img):
     w, h, _ = img
@@ -66,7 +55,7 @@ def nav_width(img):
     return x
 
 def shell_frame(name, timeout=90):
-    """Wait until the Shell's frame is on the real output: dark top bar, light navigation column, 12 nav buttons."""
+    """Wait until the Shell's frame is on the real output: light top bar, sidebar navigation column, 12 nav buttons."""
     end = time.time() + timeout
     while True:
         img = shot(name)
@@ -211,19 +200,19 @@ with subtest("real output and input (review F12): the Shell frame in Sway's pixe
     img = shell_frame("shell")
     w, h, _ = img
     btns = nav_buttons(img)
-    inner = lambda im, b: px(im, 12 + 6, (b[0] + b[1]) // 2)
+    inner = lambda im, b: px(im, 24, (b[0] + b[1]) // 2)
     assert near(inner(img, btns[0]), PRIMARY), [hexc(inner(img, b)) for b in btns]    # 首页 is the current page
-    assert near(inner(img, btns[4]), BUTTON, 6), hexc(inner(img, btns[4]))
-    click(75, (btns[4][0] + btns[4][1]) // 2, w, h)                                       # 任务中心
+    assert near(inner(img, btns[3]), BUTTON, 6), hexc(inner(img, btns[3]))
+    click(75, (btns[3][0] + btns[3][1]) // 2, w, h)                                       # 任务中心
     end = time.time() + 30
     while True:
         img2 = shot("shell-after-click")
         b2 = nav_buttons(img2)
-        if (len(b2) == 12 and near(inner(img2, b2[4]), PRIMARY) and not near(inner(img2, b2[0]), PRIMARY)) or time.time() > end:
+        if (len(b2) == 12 and near(inner(img2, b2[3]), PRIMARY) and not near(inner(img2, b2[0]), PRIMARY)) or time.time() > end:
             break
         time.sleep(2)
     print("after click", [hexc(inner(img2, b)) for b in b2])
-    assert len(b2) == 12 and near(inner(img2, b2[4]), PRIMARY) and not near(inner(img2, b2[0]), PRIMARY), "the click did not reach the Shell"
+    assert len(b2) == 12 and near(inner(img2, b2[3]), PRIMARY) and not near(inner(img2, b2[0]), PRIMARY), "the click did not reach the Shell"
     nw0 = nav_width(img2)
     machine.send_key("ctrl-equal")
     time.sleep(3)

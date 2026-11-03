@@ -25,7 +25,7 @@ def px(img, x, y):
 def near(c, ref, tol=8):
     return all(abs(a - b) <= tol for a, b in zip(c, ref))
 
-TOPBAR, NAVBG = (0x1f, 0x29, 0x37), (0xf3, 0xf4, 0xf6)
+TOPBAR, NAVBG = (0xff, 0xff, 0xff), (0xff, 0xff, 0xff)
 SCREEN = [0, 0]
 
 def qsend(cmd, args):
@@ -107,12 +107,27 @@ def regreet_login(pw):
                 continue
             raise
 
+def nav_buttons(img):
+    """Find the 12 sidebar tabs by their full-height navigation rails, excluding toolbar controls."""
+    w, h, _ = img
+    # ATab's 3 px rail is muted (#94a3b8), accent (#2563eb) for the current page.
+    # x=17 crosses the rail but lies outside label/icon text and the workspace selector's border.
+    rows = [y for y in range(h) if near(px(img, 3, y), NAVBG) and (
+        near(px(img, 17, y), (0x94, 0xa3, 0xb8), 3)
+        or near(px(img, 17, y), (0x25, 0x63, 0xeb), 3))]
+    lines = []
+    for r in rows:
+        if lines and r - lines[-1][1] <= 1: lines[-1][1] = r
+        else: lines.append([r, r])
+    return [(top, bot) for top, bot in lines if 18 <= bot - top <= 80]
+
+
 def shell_frame(name, timeout=120):
     end = time.time() + timeout
     while True:
         img = shot(name)
         w, h, _ = img
-        ok = near(px(img, w - 4, 3), TOPBAR) and near(px(img, 3, h - 6), NAVBG)
+        ok = near(px(img, w - 4, 3), TOPBAR) and near(px(img, 3, h - 6), NAVBG) and len(nav_buttons(img)) == 12
         if ok or time.time() > end:
             assert ok, f"{name}: the Shell frame is not on the output"
             return img
