@@ -133,6 +133,19 @@ jobs:
           tail -n 150 "$RUNNER_TEMP/vm-${{ matrix.test }}.log"
           [ "$rc" = 0 ] || exit "$rc"
 
+      - name: Collect screenshots
+        if: ${{ always() && !startsWith(matrix.test, 'build-') }}
+        working-directory: os
+        run: |
+          # machine.screenshot(name) writes <name>.png to machine.out_dir, the check derivation's $out (run.nix: -o $out).
+          # Nix keeps $out only when the check passed; on failure pnm.log_failure_screen puts the PNG in the log instead.
+          out=$(nix eval --raw ".#checks.x86_64-linux.${{ matrix.test }}.outPath")
+          if [ -d "$out" ]; then find "$out" -maxdepth 1 -name '*.png' -exec cp {} "$RUNNER_TEMP/" \; ; fi
+          ls -l "$RUNNER_TEMP"/*.png 2>/dev/null || echo "no screenshots in $out"
+          if [ "${{ matrix.test }}" = m22-virtio ] && [ "${{ job.status }}" = success ]; then
+            test -s "$RUNNER_TEMP/m22-greeter.png" || { echo "m22 passed but m22-greeter.png is missing from $out"; exit 1; }
+          fi
+
       - name: Rebuild and compare (O09 part)
         if: ${{ matrix.test == 'build-repro' }}
         working-directory: os
@@ -234,4 +247,5 @@ jobs:
             ${{ runner.temp }}/*.log
             ${{ runner.temp }}/*.json
             ${{ runner.temp }}/SHA256SUMS
+            ${{ runner.temp }}/*.png
           retention-days: 14
