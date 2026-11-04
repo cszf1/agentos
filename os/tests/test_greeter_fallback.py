@@ -104,6 +104,12 @@ def kms_script():
     return textwrap.dedent(body).replace("''${", "${")
 
 
+class GreeterVtTest(unittest.TestCase):
+    def test_greetd_never_switches_the_console_to_vt1(self):
+        # a crashing greeter's retries must not pull a tty2 user back to VT1 (m22 crash subtest checks it in a VM)
+        self.assertIn("services.greetd.settings.terminal.switch = lib.mkIf cfg.graphical false;", NIX)
+
+
 class GreeterKmsGateTest(unittest.TestCase):
     """greetd switches to VT1 for every greeter it starts; without a DRM card it must not start at all (m21 41894778781:
     the retries kept pulling the console off the tty2 text login)."""

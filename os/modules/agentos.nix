@@ -120,7 +120,7 @@ let
   # greetd 0.10 context.rs), so a Cage/ReGreet crash used to loop through Restart=on-success into start-limit-hit
   # and leave VT1 black. greetd now retries a bounded number of times; when it gives up, this runs on VT1: it logs
   # why, shows the last greeter lines, and starts the login screen again on Enter.
-  # greetd opens VT1 and switches to it ([terminal] vt = 1, switch defaults to true) for every greeter it starts. With
+  # greetd used to open VT1 and switch to it ([terminal] vt = 1, switch then true) for every greeter it started. With
   # no KMS device Cage cannot start, so each bounded retry pulled the console back to VT1 and the text login on
   # Ctrl+Alt+F2 was unusable until greetd gave up (m21 41894778781). Root runs this as greetd's ExecCondition: without
   # a DRM card greetd itself never runs, so the VT stays where the user put it. Retrying cannot conjure a card, so
@@ -224,6 +224,13 @@ in {
       ${pkgs.util-linux}/bin/logger -t agentos-greeter "greeter ended rc=$rc"
       exit "$rc"
     ''}");
+    # Never take the console from another VT. With switch = true (the default) greetd 0.10 activates VT1 for every
+    # greeter it starts (session/worker.rs: `if switch && vt != current { vt_setactivate }`), so with a DRM card a
+    # crashing Cage/ReGreet pulled a user on the Ctrl+Alt+F2 text login back to VT1 on each of its bounded retries
+    # (as the no-card retries did in m21 41894778781). With switch = false greetd waits at start until VT1 is active
+    # (server.rs wait_vt) and then starts the greeter there: at boot and after the notice's Enter VT1 already is; a
+    # user on tty2 meanwhile keeps tty2 and finds the login screen when switching back.
+    services.greetd.settings.terminal.switch = lib.mkIf cfg.graphical false;
     services.greetd.enable = cfg.graphical;
     programs.regreet.enable = cfg.graphical;
     security.pam.services.swaylock = lib.mkIf cfg.graphical { };
