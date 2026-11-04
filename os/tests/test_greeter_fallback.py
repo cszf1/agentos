@@ -19,7 +19,7 @@ FAKES = {
 echo "systemctl $*" >> "$T/calls"
 case "$*" in
   "show -p Result --value greetd.service") echo start-limit-hit ;;
-  "show -p NRestarts --value greetd.service") echo 4 ;;
+  "show -p NRestarts --value greetd.service") echo 5 ;;
 esac
 """,
     "journalctl": '#!/usr/bin/env bash\necho "journalctl $*" >> "$T/calls"\necho "cage: unable to create renderer"\necho "greeter ended rc=1"\n',
@@ -69,7 +69,7 @@ class GreeterFallbackTest(unittest.TestCase):
     def test_gave_up_logs_the_reason_shows_the_greeter_output_and_retries_on_enter(self):
         p, calls, log = self.run_fallback("\n")
         self.assertEqual(p.returncode, 0, p.stderr)
-        self.assertIn("login screen gave up: greetd result=start-limit-hit restarts=4", log)
+        self.assertIn("login screen gave up: greetd result=start-limit-hit restarts=5", log)
         self.assertIn("cage: unable to create renderer", p.stdout)
         self.assertTrue(p.stdout.startswith("\033c"), p.stdout)            # the VT was cleared first
         self.assertIn("Press Enter", p.stdout)

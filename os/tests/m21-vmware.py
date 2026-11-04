@@ -65,10 +65,14 @@ with subtest("no DRM device on QEMU's SVGA II: greetd gives up after bounded ret
     machine.fail("ls /dev/dri/card*")
     machine.wait_until_succeeds("journalctl -b -o cat --no-pager -t agentos-greeter-fallback | grep -q 'login screen gave up'", timeout=600)
     print(machine.succeed("journalctl -b -o cat --no-pager -t agentos-greeter | tail -20"))
-    # StartLimitBurst = 5: four automatic restarts, the sixth start is refused and OnFailure runs the notice
-    machine.succeed("journalctl -b -o cat --no-pager -t agentos-greeter-fallback | grep -q 'result=start-limit-hit restarts=4'")
+    # systemd (service.c, service_enter_restart) counts NRestarts when it queues the restart job, and the start limit
+    # refuses that job later (service_test_startable). With StartLimitBurst=N, greetd starts N times, the Nth restart
+    # job is refused, and NRestarts is N when OnFailure runs the notice.
+    burst = int(machine.succeed("systemctl show -p StartLimitBurst --value greetd.service"))
+    assert burst >= 2, burst
+    machine.succeed(f"journalctl -b -o cat --no-pager -t agentos-greeter-fallback | grep -q 'result=start-limit-hit restarts={burst}$'")
     n = started("greetd.service")
-    assert n == 5, f"greetd started {n} times before the fallback"
+    assert n == burst, f"greetd started {n} times before the fallback, StartLimitBurst={burst}"
     machine.succeed("chvt 1")
     machine.wait_until_tty_matches("1", "Press Enter to start the login screen again", timeout=60)
     machine.send_key("ret")
