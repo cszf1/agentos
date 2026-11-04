@@ -3,6 +3,7 @@
 #include "error_policy.hpp"
 
 #include <QClipboard>
+#include <QDebug>
 #include <QGuiApplication>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -201,7 +202,7 @@ void ShellController::request(const QString& name, const JValue& args, std::func
   }
   const bool needsHost = r.methodId == QLatin1String("workspace.forward");
   sendNative(r, QString(), [this, done, needsHost](const RpcReply& rep) {
-    if (needsHost && rep.ok() && !rep.local) markHostDown(false);
+    if (needsHost && rep.ok() && !rep.local) markHostDown(false, "forward");
     if (!rep.ok()) reportError(rep.errorCode);
     if (done) done(rep);
   }, scoped);
@@ -216,7 +217,7 @@ void ShellController::sendForward(const ForwardRequest& f, std::function<void(co
   r.write = true;
   sendNative(r, f.idempotencyKey.startsWith(QLatin1String("q:")) || f.idempotencyKey == QLatin1String("read") ? QStringLiteral("read:") + uuid() : f.idempotencyKey,
              [this, done](const RpcReply& rep) {
-               if (rep.ok() && !rep.local) markHostDown(false);
+               if (rep.ok() && !rep.local) markHostDown(false, "forward");
                if (done) done(rep);
              });
 }
@@ -230,12 +231,14 @@ bool ShellController::canWrite(bool systemAction) const {
 void ShellController::reportError(const QString& code) {
   if (code.isEmpty()) return;
   const ErrorPolicy p = errorPolicy(code);
-  if (p.degrade == QLatin1String("host")) markHostDown(true);
+  if (p.degrade == QLatin1String("host")) markHostDown(true, "degrade");
   if (p.degrade == QLatin1String("model") && modelAvailable_) {
+    qInfo("shell health component=model source=degrade code=%s available=0", qPrintable(code));
     modelAvailable_ = false;
     emit statusChanged();
   }
   if (p.degrade == QLatin1String("broker") && brokerAvailable_) {
+    qInfo("shell health component=broker source=degrade code=%s available=0", qPrintable(code));
     brokerAvailable_ = false;
     emit statusChanged();
   }
@@ -250,15 +253,20 @@ void ShellController::reportError(const QString& code) {
   if (code == QLatin1String("EVENT_GAP") && !ws_.isEmpty()) onGap(ws_);
 }
 
-void ShellController::markHostDown(bool down) {
+void ShellController::markHostDown(bool down, const char* source) {
   // A HOST_UNAVAILABLE answer to a request sent while the Host was stopped can arrive after a newer request has already
   // proven the restarted Host up; applying it puts the read-only banner back for a moment (the likely cause of m20 D11
   // run 41917407780: the home cards moved 38px under a click). Evidence older than what is applied is stale, not an outage.
+  // Every applied change and every ignored stale report is logged: a banner that flashes must name its source.
   if (replySeq_) {
-    if (replySeq_ < hostEvidenceSeq_) return;
+    if (replySeq_ < hostEvidenceSeq_) {
+      if (hostAvailable_ == down) qInfo("shell health component=host source=%s seq=%llu applied=%llu down=%d ignored=stale", source, qulonglong(replySeq_), qulonglong(hostEvidenceSeq_), int(down));
+      return;
+    }
     hostEvidenceSeq_ = replySeq_;
   }
   if (hostAvailable_ == !down) return;
+  qInfo("shell health component=host source=%s seq=%llu down=%d", source, qulonglong(replySeq_), int(down));
   hostAvailable_ = !down;
   for (auto* v : views_) v->setDisabled(readOnly() || writesStopped_);
   emit statusChanged();
@@ -266,6 +274,7 @@ void ShellController::markHostDown(bool down) {
 
 // ------------------------------------------------------------------ session
 void ShellController::onConnection(bool up) {
+  if (connected_ != up) qInfo("shell health component=gateway source=transport connected=%d", int(up));
   connected_ = up;
   for (auto* v : views_) v->setDisabled(readOnly() || writesStopped_);
   emit statusChanged();
@@ -490,12 +499,18 @@ void ShellController::loadMachine() {
     const bool b = c.get(QStringLiteral("broker")).isMissing() ? brokerAvailable_ : up("broker");
     const bool m = c.get(QStringLiteral("model")).isMissing() ? modelAvailable_ : up("model");
     if (m != modelAvailable_ || b != brokerAvailable_) {
+      qInfo("shell health component=model,broker source=status model=%d broker=%d", int(m), int(b));
       modelAvailable_ = m;
       brokerAvailable_ = b;
       emit statusChanged();
     }
-    // The native machine status has no Host-health field; absence is not proof of recovery.
-    if (!c.get(QStringLiteral("host")).isMissing()) markHostDown(!up("host"));
+    // The native machine status has no Host-health field; absence is not proof of recovery. A Host that is "starting"
+    // (or in any other transitional state) is not evidence either way: only ok/ready proves it up and only an explicit
+    // failed/stopped/down proves it down, so a status poll during a restart cannot flash the read-only banner over a
+    // Host whose forwards already succeed.
+    const QString host = c.get(QStringLiteral("host")).str();
+    if (host == QLatin1String("ok") || host == QLatin1String("ready")) markHostDown(false, "status");
+    else if (host == QLatin1String("failed") || host == QLatin1String("stopped") || host == QLatin1String("down")) markHostDown(true, "status");
     emit machineChanged();
   }, false);
   request(QStringLiteral("machine.capabilities"), JValue::object(), [this](const RpcReply& r) {
@@ -515,11 +530,13 @@ void ShellController::applyAvailability(const JValue& state) {
   // (m13 O03 run 41143307884: Host logged modelAvailable=false, the submit button stayed enabled).
   const JValue& ma = state.get(QStringLiteral("modelAvailable"));
   if (ma.isBool() && ma.toBool() != modelAvailable_) {
+    qInfo("shell health component=model source=state available=%d", int(ma.toBool()));
     modelAvailable_ = ma.toBool();
     emit statusChanged();
   }
   const JValue& br = state.get(QStringLiteral("brokerReady"));
   if (br.isBool() && br.toBool() != brokerAvailable_) {
+    qInfo("shell health component=broker source=state available=%d", int(br.toBool()));
     brokerAvailable_ = br.toBool();
     emit statusChanged();
   }
@@ -742,7 +759,7 @@ void ShellController::trackReply(const QString& id, const RpcReply& rep) {
     actions_->setState(id, rep.errorCode == QLatin1String("EFFECT_UNKNOWN") ? QStringLiteral("unknown") : QStringLiteral("failed"), describeError(rep.errorCode, rep.errorMessage));
     return;
   }
-  if (actionReqs_.value(id).methodId == QLatin1String("workspace.forward") && !rep.local) markHostDown(false);
+  if (actionReqs_.value(id).methodId == QLatin1String("workspace.forward") && !rep.local) markHostDown(false, "forward");
   JValue b = rep.body;
   if (b.get(QStringLiteral("state")).isNullish() && b.get(QStringLiteral("phase")).isNullish() && b.get(QStringLiteral("status")).isString()) b.set(QStringLiteral("state"), b.get(QStringLiteral("status")));
   QString st = displayState(b);

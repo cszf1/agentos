@@ -36,6 +36,7 @@ void E2E::sway() {
     // Click where the target has come to rest: a banner appearing or hiding reflows the page by 38px
     // (m20 D11 run 41917407780: "打开" computed at y=593, at y=555 when the click landed).
     QPointF c = centerOf(i);
+    const QString bannerAtAim = r.shell->banner();
     QTest::qWaitFor([&] {
       QTest::qWait(100);
       if (!target) return true;
@@ -50,7 +51,8 @@ void E2E::sway() {
     // A real click can unload the page and destroy i (Home's "打开" is one such button).
     // cc is a stack QObject: either endpoint's destruction disconnects automatically. Never touch i after the wait.
     if (sig && cc.n == 0) {
-      QVariantMap diag{{QStringLiteral("x"), c.x()}, {QStringLiteral("y"), c.y()}, {QStringLiteral("targetAlive"), !target.isNull()}};
+      QVariantMap diag{{QStringLiteral("x"), c.x()}, {QStringLiteral("y"), c.y()}, {QStringLiteral("targetAlive"), !target.isNull()},
+                       {QStringLiteral("bannerAtAim"), bannerAtAim}, {QStringLiteral("bannerNow"), r.shell->banner()}};
       if (target) {
         const QPointF now = centerOf(target);
         diag.insert(QStringLiteral("objectName"), target->objectName());
@@ -225,9 +227,28 @@ void E2E::sway() {
   const QString todoTitle = r.app(0).get(QStringLiteral("title")).str();
   report(QStringLiteral("generated"), {{QStringLiteral("runId"), run1}, {QStringLiteral("appId"), todo}, {QStringLiteral("title"), todoTitle}});
 
-  auto openTodo = [&]() -> AppViewModel* {
+  // The banner (38px) reflows Home: aim only once its text has held still for 1s, so a degraded state that is still
+  // settling cannot move "打开" under the click. A banner that keeps changing fails here, by name, instead.
+  auto bannerSettled = [&](bool mustBeEmpty) -> bool {
+    QString last = r.shell->banner();
+    QElapsedTimer still;
+    still.start();
+    const bool ok = QTest::qWaitFor([&] {
+      const QString now = r.shell->banner();
+      if (now != last) {
+        qInfo("E2E-DIAG banner changed while settling: '%s' -> '%s'", qPrintable(last), qPrintable(now));
+        last = now;
+        still.restart();
+      }
+      return still.elapsed() >= 1000 && (!mustBeEmpty || now.isEmpty());
+    }, 30000);
+    if (!ok) qInfo("E2E-DIAG banner did not settle: '%s'", qPrintable(last));
+    return ok;
+  };
+  auto openTodo = [&](bool bannerMustBeEmpty = false) -> AppViewModel* {
     if (r.shell->currentPage() != QLatin1String("home")) page(QStringLiteral("home"));
     QTest::qWait(500);
+    if (!bannerSettled(bannerMustBeEmpty)) return nullptr;
     click(byLabel(QStringLiteral("打开")));
     if (!QTest::qWaitFor([&] { return r.shell->currentPage() == QLatin1String("app"); }, 10000)) return nullptr;
     auto* v = qobject_cast<AppViewModel*>(r.shell->appView(todo));
@@ -693,8 +714,8 @@ void E2E::sway() {
   QVERIFY2(onOutput(QStringLiteral("host-down"), win) >= 0.9, "host-down state not on the output");
   wsCall(QStringLiteral("workspaces.attach"));
   QTRY_VERIFY_WITH_TIMEOUT(r.shell->hostAvailable(), 120000);
-  v = openTodo();
-  QVERIFY(v);
+  v = openTodo(true);  // the Host is back and every component up: no banner may remain or flash back
+  QVERIFY2(v, qPrintable(QStringLiteral("after-host reopen failed; banner='%1'").arg(r.shell->banner())));
   QVERIFY2(newRecord(QStringLiteral("after-host-4")), "CRUD after the Host came back");
   // model unreachable: generation disabled with a reason, CRUD still works
   doDriver(QStringLiteral("model-off"));

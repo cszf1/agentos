@@ -283,7 +283,7 @@ class ShellController : public QObject, public RequestSink {
   void trackReply(const QString& id, const RpcReply& r);
   void pollAction(const QString& id, const QString& getName, const JValue& args, int attempt);
   void showPlan(const QString& kind, const JValue& plan, std::function<void(bool)> done);
-  void markHostDown(bool down);
+  void markHostDown(bool down, const char* source);  // source: forward | status | degrade (logged)
   void loadLayout();
 };
 

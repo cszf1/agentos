@@ -1133,6 +1133,38 @@ class FlowsTest : public QObject {
     QVERIFY(!h.shell->readOnly());
   }
 
+  void startingHostStatusNeverFlashesTheBannerOverAWorkingHost() {
+    // m20 D11 run 41930998357: after reattach the banner was there when "打开" was aimed and gone when the click landed.
+    // A machine.status that reports the Host "starting" while its forwards already succeed is not an outage.
+    Harness h;
+    QVERIFY(h.up());
+    QTRY_VERIFY(h.shell->hostAvailable());
+    QStringList banners;
+    QObject::connect(h.shell.get(), &ShellController::statusChanged, [&] { banners << h.shell->banner(); });
+    h.gw->gw->setHandler([&](const JValue& r) {
+      if (r.get(QStringLiteral("methodId")).str() == QLatin1String("machine.status"))
+        return JValue::object({{QStringLiteral("components"), JValue::object({{QStringLiteral("host"), QStringLiteral("starting")}, {QStringLiteral("model"), QStringLiteral("ok")}, {QStringLiteral("broker"), QStringLiteral("ok")}})}});
+      return h.be.handle(r);
+    });
+    const int before = h.sent(QStringLiteral("machine.status")).size();
+    h.shell->setCurrentPage(QStringLiteral("hardware"));
+    QTRY_VERIFY(h.sent(QStringLiteral("machine.status")).size() > before);
+    h.shell->setCurrentPage(QStringLiteral("home"));
+    h.shell->refreshPage();
+    QTest::qWait(500);
+    QVERIFY2(h.shell->hostAvailable(), qPrintable(banners.join(QStringLiteral(" | "))));
+    for (const QString& b : banners) QVERIFY2(b.isEmpty(), qPrintable(QStringLiteral("banner flashed: ") + banners.join(QStringLiteral(" | "))));
+    // an explicit stop is still an outage (the Host really stopped: its forwards are refused too)
+    h.gw->gw->setHandler([&](const JValue& r) {
+      if (r.get(QStringLiteral("methodId")).str() == QLatin1String("machine.status"))
+        return JValue::object({{QStringLiteral("components"), JValue::object({{QStringLiteral("host"), QStringLiteral("stopped")}})}});
+      return h.be.handle(r);
+    });
+    h.be.hostDown = true;
+    h.shell->setCurrentPage(QStringLiteral("hardware"));
+    QTRY_VERIFY(!h.shell->hostAvailable());
+  }
+
   void workspaceSwitcherNamesEveryWorkspaceAcrossHostStopAndReattach() {
     Harness h;
     QVERIFY(h.up());

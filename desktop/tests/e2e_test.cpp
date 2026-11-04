@@ -21,6 +21,7 @@
 #include "slot_models.hpp"
 
 #include <QDateTime>
+#include <QElapsedTimer>
 #include <QPointer>
 #include <QUuid>
 #include <QJsonDocument>
