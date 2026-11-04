@@ -142,7 +142,7 @@ with subtest("first boot from the local console (spec 19.4, review F11): adminis
     type_secret("alice-pw-1")
     machine.wait_until_tty_matches("1", "default workspace name", timeout=60)
     machine.send_chars("A\n", delay=0.08)
-    machine.wait_until_succeeds("test -e /var/lib/agentos-machine/machine.secret", timeout=180)
+    machine.wait_until_succeeds("test -e /var/lib/agentos-machine/first-boot-closed", timeout=180)
     machine.wait_for_unit("greetd.service")
     st = json.loads(machine.succeed("agentosctl status"))
     print("after console first boot", st.get("workspaceList"))

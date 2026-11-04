@@ -20,6 +20,9 @@ pub const MAX_RUNNING: i64 = 2;
 /// Space kept free for receipts and audit of work already accepted (spec §27.1).
 pub const MIN_FREE_BYTES: u64 = 256 * 1024 * 1024;
 pub const TRANSFER_MS: i64 = 86_400_000;
+/// Written in the machine directory only after first_boot_state = 'closed' is committed. The console setup unit
+/// is conditioned on its absence: machine.secret already exists after install.ensure, before any administrator.
+pub const FIRST_BOOT_CLOSED: &str = "first-boot-closed";
 
 pub const USER_STEPS: [&str; 3] = ["allocate", "account", "registry"];
 pub const WORKSPACE_STEPS: [&str; 7] = ["allocate", "account", "directory", "databases", "broker", "linger", "registry"];
@@ -173,7 +176,18 @@ impl Machine {
             }
             c.execute("UPDATE machine_meta SET first_boot_state = 'closed' WHERE id = 1", [])?;
             Self::audit(c, "root", "install.first_boot_closed", None, "closed", None)
-        })
+        })?;
+        self.mark_first_boot_closed()
+    }
+
+    /// The closed-state marker follows the committed state: a crash between the commit and the file is healed here
+    /// on the next machined start. An open or uninstalled machine never gets one.
+    pub fn mark_first_boot_closed(&self) -> R<()> {
+        let f = self.paths.machine_dir.join(FIRST_BOOT_CLOSED);
+        if !self.installed()? || self.first_boot_open()? || f.exists() {
+            return Ok(());
+        }
+        write_private(&f, b"closed\n")
     }
 
     pub fn first_boot_open(&self) -> R<bool> {

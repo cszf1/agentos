@@ -998,3 +998,45 @@ fn o09_admin_actions_take_only_confined_validated_params() {
     assert_eq!(code(argv("admin.clone", &json!({ "set": "s1", "owner": "Bad Name" }), "alice")), "INVALID_REQUEST");
     assert!(crate::ops::kind_admin("admin.restore").unwrap());
 }
+
+#[test]
+fn first_boot_interrupted_after_ensure_resumes_and_once_closed_never_reopens() {
+    use crate::dir::FIRST_BOOT_CLOSED;
+    let dir = std::env::temp_dir().join(format!("agentos-firstboot-{}", uuid()));
+    let paths = Paths { machine_dir: dir.join("machine"), workspaces_dir: dir.join("ws"), runtime_dir: dir.join("rt"), run_dir: dir.join("run"), snapshots_dir: dir.join("snap") };
+    let marker = paths.machine_dir.join(FIRST_BOOT_CLOSED);
+    let fb = uuid();
+    let m = Machine::open(paths.clone(), Box::new(Fake::default())).unwrap();
+    m.ensure_install(&fb).unwrap();
+    // agentosctl firstboot interrupted here: the identity (machine.secret) exists, no administrator yet
+    assert!(paths.machine_dir.join("machine.secret").exists());
+    assert!(!marker.exists(), "an interrupted first boot must not look closed");
+    drop(m);
+    // reboot: machined starts again and the entry is still open
+    let mut m = Machine::open(paths.clone(), Box::new(Fake::default())).unwrap();
+    m.mark_first_boot_closed().unwrap();
+    assert!(!marker.exists());
+    assert!(m.first_boot_open().unwrap());
+    assert_eq!(m.status().unwrap()["meta"]["firstBootState"], "open");
+    // the retry with the same first-boot id finishes it
+    assert_eq!(m.ensure_install(&fb).unwrap()["created"], false);
+    assert_eq!(m.close_first_boot().unwrap_err().code, "PLAN_STALE");
+    assert!(!marker.exists(), "no administrator: still open");
+    let pid = uuid();
+    let admin = m.provision_user(&pid, "alice", "admin").unwrap();
+    m.create_workspace(&uuid(), admin["userId"].as_str().unwrap(), "Home", None, "created").unwrap();
+    m.close_first_boot().unwrap();
+    assert!(marker.exists());
+    assert!(!m.first_boot_open().unwrap());
+    // nothing reopens it: a repeated ensure, another first-boot id, a restart without the marker
+    assert_eq!(m.ensure_install(&fb).unwrap()["created"], false);
+    assert_eq!(m.ensure_install(&uuid()).unwrap_err().code, "CONFLICT");
+    assert!(!m.first_boot_open().unwrap());
+    drop(m);
+    std::fs::remove_file(&marker).unwrap();
+    let m = Machine::open(paths.clone(), Box::new(Fake::default())).unwrap();
+    assert_eq!(m.status().unwrap()["meta"]["firstBootState"], "closed");
+    m.mark_first_boot_closed().unwrap();
+    assert!(marker.exists(), "machined start restores the marker of a committed close");
+    let _ = std::fs::remove_dir_all(&dir);
+}

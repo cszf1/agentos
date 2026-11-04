@@ -57,6 +57,9 @@ fn main() {
         }),
     };
     if m.installed().unwrap_or(false) {
+        if let Err(e) = m.mark_first_boot_closed() {
+            eprintln!("first-boot marker: {e}");
+        }
         match m.resume_creations() {
             Ok(v) if !v.is_empty() => eprintln!("resumed {} workspace creations", v.len()),
             _ => {}

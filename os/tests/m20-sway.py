@@ -142,7 +142,7 @@ with subtest("first boot on the console, a second workspace and a member to revo
     type_secret("alice-pw-1")
     machine.wait_until_tty_matches("1", "default workspace name", timeout=60)
     machine.send_chars("A\n", delay=0.08)
-    machine.wait_until_succeeds("test -e /var/lib/agentos-machine/machine.secret", timeout=180)
+    machine.wait_until_succeeds("test -e /var/lib/agentos-machine/first-boot-closed", timeout=180)
     machine.wait_for_unit("greetd.service")
     ws = json.loads(machine.succeed("agentosctl status"))["workspaceList"][0]["workspaceId"]
     machine.wait_for_unit("agentos-broker.service")

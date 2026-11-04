@@ -19,7 +19,9 @@ let
     exec ${native}/bin/agentos-session-agent
   '';
   # spec §19.4: first boot creates the local administrator and the default workspace from the local console, then
-  # the unauthenticated first-boot entry closes for good (the unit's condition: machine.secret exists afterwards).
+  # the unauthenticated first-boot entry closes for good. machined writes first-boot-closed only after
+  # first_boot_state = 'closed' is committed (machine.secret already exists after install.ensure, so an attempt
+  # interrupted before closeFirstBoot comes back on the next boot and resumes with the same IDs).
   # Graphical systems only: it runs on tty1 before greetd; the password is read without echo and handed to
   # agentosctl on stdin (never argv, never a log). Review F11: before this an installed system had no way to create
   # its first account (root is locked), so the ISO install could never reach the ReGreet login.
@@ -45,22 +47,26 @@ let
     set -u
     export PATH=${lib.makeBinPath [ native pkgs.coreutils pkgs.util-linux pkgs.gnugrep ]}
     log() { logger -t agentos-first-setup "$*"; }
-    installed() { test -e /var/lib/agentos-machine/machine.secret; }
+    closed() { test -e /var/lib/agentos-machine/first-boot-closed; }
     o=""
     for i in $(seq 120); do
-      installed && exit 0
+      closed && exit 0
       o=$(agentosctl status 2>&1) && break
       case "$o" in *"not installed"*) break ;; esac
       sleep 1
     done
-    case "$o" in *"not installed"*) ;; *) log "machined is not waiting for first boot; nothing to set up"; exit 0 ;; esac
+    if printf '%s' "$o" | grep -Eq '"firstBootState": *"open"'; then
+      log "an earlier first boot did not finish; resuming it"
+    else
+      case "$o" in *"not installed"*) ;; *) log "machined is not waiting for first boot; nothing to set up"; exit 0 ;; esac
+    fi
     log "waiting for the administrator on the local console"
     # read with a timeout so that a first boot completed some other way (agentosctl as root) lets greetd start
     ask() { # $1 prompt, $2 "-s" for a secret
       printf '%s' "$1"
       while :; do
         if IFS= read -r ''${2:-} -t 5 REPLY; then [ -n "''${2:-}" ] && echo; return 0; fi
-        installed && { echo; log "first boot was completed elsewhere"; exit 0; }
+        closed && { echo; log "first boot was completed elsewhere"; exit 0; }
       done
     }
     while :; do
@@ -82,6 +88,7 @@ let
         exit 0
       fi
       pw=; pw2=
+      case "$out" in *"first boot is already closed"*) log "first boot is already closed"; exit 0 ;; esac
       log "first boot refused: $(printf '%s' "$out" | tail -1)"
       echo "失败 / failed: $(printf '%s' "$out" | tail -1)"; sleep 5
     done
@@ -207,7 +214,7 @@ in {
       wants = [ "agentos-machine.service" ];
       after = [ "agentos-machine.service" "agentos-disk-rekey.service" "systemd-user-sessions.service" ];
       before = [ "display-manager.service" "greetd.service" ];
-      unitConfig.ConditionPathExists = "!/var/lib/agentos-machine/machine.secret";
+      unitConfig.ConditionPathExists = "!/var/lib/agentos-machine/first-boot-closed";
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
