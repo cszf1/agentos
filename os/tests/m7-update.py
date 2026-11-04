@@ -110,6 +110,7 @@ with subtest("release verification: tampered manifest/closure/OCI/signature, unk
     machine.wait_for_unit("agentos-machine.service")
     # the release high-water mark lives in the machine identity: first boot creates it
     machine.succeed("printf 'alice-pw-1' | agentosctl firstboot --admin alice")
+    machine.succeed("test -s /var/lib/agentos-machine/first-boot-closed")   # closeFirstBoot writes the marker
     machine.succeed("mkdir -p /root/rel && cd /root/rel && openssl genpkey -algorithm ed25519 -out rel.pem && openssl genpkey -algorithm ed25519 -out other.pem")
     pk = machine.succeed("openssl pkey -in /root/rel/rel.pem -pubout -outform DER | tail -c 32 | od -An -tx1 | tr -d ' \\n'").strip()
     assert len(pk) == 64, pk
@@ -366,6 +367,12 @@ with subtest("commit window: a crash after the intent or after the default resol
     machine.wait_until_succeeds("test -S /run/agentos/machine/machine.sock", timeout=120)
     ws = msql("SELECT workspace_id FROM workspaces ORDER BY created_at LIMIT 1")   # first boot ran in the U04 subtest
     assert ws, "no workspace"
+    # Upgrade path: an install from before the first-boot-closed marker has a closed first boot in machine.sqlite and
+    # no marker. The new machined writes it before it reports ready (Type=notify), so agentos-first-setup (After=
+    # agentos-machine.service, ConditionPathExists=!marker) is skipped; m21-vmware checks that across a reboot to greetd.
+    assert msql("SELECT first_boot_state FROM machine_meta") == "closed"
+    machine.succeed("rm /var/lib/agentos-machine/first-boot-closed && systemctl restart agentos-machine.service")
+    machine.succeed("test -s /var/lib/agentos-machine/first-boot-closed")
     comp = json.dumps({"machineSchema": [1, 2], "workspaceSchema": [5, 5], "brokerSchema": [4, 4], "brokerProtocol": [3, 3], "nativeRpc": [1, 1]}).replace('"', '\\"')
     seq0 = int(msql("SELECT IFNULL(MAX(release_sequence), 0) FROM releases"))
     for k, rid in enumerate((CAND, C1, C2), 1):

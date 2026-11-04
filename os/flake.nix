@@ -133,6 +133,7 @@
         m19-iso = import ./tests/m19-iso.nix { inherit pkgs release; iso = installerSystem.config.system.build.isoImage; };
         m5-desktop = import ./tests/m5-desktop.nix { inherit pkgs; modules = [ ./modules/base.nix ./modules/graphics.nix ./modules/agentos.nix ]; };
         m20-sway = import ./tests/m20-sway.nix { inherit pkgs; modules = [ ./modules/base.nix ./modules/graphics.nix ./modules/agentos.nix ]; };
+        m21-vmware = import ./tests/m21-vmware.nix { inherit pkgs; modules = [ ./modules/base.nix ./modules/graphics.nix ./modules/agentos.nix ]; };
       };
     };
 }
