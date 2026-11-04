@@ -46,7 +46,11 @@ class GreeterFallbackTest(unittest.TestCase):
         (self.t / "bin").mkdir()
         for name, text in FAKES.items():
             unit_path.write_fake(self.t / "bin", name, text)
-        (self.t / "fallback.sh").write_text(unit_path.confine(script(), self.t / "bin", self.t / "real", self.t / "missing"))
+        (self.t / "dri").mkdir()
+        body = script()
+        loop = "for c in /dev/dri/card*;"
+        self.assertEqual(body.count(loop), 1, body)
+        (self.t / "fallback.sh").write_text(unit_path.confine(body.replace(loop, f"for c in {self.t}/dri/card*;"), self.t / "bin", self.t / "real", self.t / "missing"))
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -67,7 +71,10 @@ class GreeterFallbackTest(unittest.TestCase):
         self.assertIn('unitConfig.OnFailure = [ "agentos-greeter-fallback.service" ];', g)
 
     def test_gave_up_logs_the_reason_shows_the_greeter_output_and_retries_on_enter(self):
+        # a DRM card exists, so greetd ran its greeter and retried it: the notice reports how often
+        (self.t / "dri" / "card0").touch()
         p, calls, log = self.run_fallback("\n")
+        self.assertIn("(greetd: start-limit-hit, 5 restarts)", p.stdout)
         self.assertEqual(p.returncode, 0, p.stderr)
         self.assertIn("login screen gave up: greetd result=start-limit-hit restarts=5", log)
         self.assertIn("cage: unable to create renderer", p.stdout)
@@ -77,6 +84,19 @@ class GreeterFallbackTest(unittest.TestCase):
         self.assertIn("-t agentos-greeter", calls)
         self.assertLess(calls.index("systemctl reset-failed greetd.service"), calls.index("systemctl --no-block start greetd.service"))
         self.assertIn("starting the login screen again", log)
+
+    def test_no_display_device_says_so_and_claims_no_retries(self):
+        # greetd's ExecCondition found no card and started the notice at once: nothing was retried
+        p, calls, log = self.run_fallback("\n")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn("login screen not started: no display device (/dev/dri/card*)", log)
+        self.assertNotIn("gave up", log)
+        self.assertIn("no display device was found (/dev/dri/card*)", p.stdout)
+        self.assertNotIn("restart", p.stdout.split("Last messages")[0])
+        self.assertNotIn("NRestarts", calls)
+        self.assertTrue(p.stdout.startswith("\033c"), p.stdout)
+        self.assertTrue(p.stdout.isascii(), p.stdout)
+        self.assertLess(calls.index("systemctl reset-failed greetd.service"), calls.index("systemctl --no-block start greetd.service"))
 
 
 def kms_script():
@@ -94,6 +114,7 @@ class GreeterKmsGateTest(unittest.TestCase):
         (self.t / "bin").mkdir()
         (self.t / "dri").mkdir()
         unit_path.write_fake(self.t / "bin", "logger", '#!/usr/bin/env bash\nshift 2; echo "$*" >> "$T/log"\n')
+        unit_path.write_fake(self.t / "bin", "systemctl", '#!/usr/bin/env bash\necho "systemctl $*" >> "$T/calls"\n')
         # each sleep is counted; CARD_AFTER=k makes udev "add" card0 during the k-th wait
         unit_path.write_fake(self.t / "bin", "sleep", '#!/usr/bin/env bash\necho x >> "$T/sleeps"\n'
                              '[ -n "$CARD_AFTER" ] && [ $(wc -l < "$T/sleeps") -ge "$CARD_AFTER" ] && touch "$T/dri/card0"\nexit 0\n')
@@ -111,14 +132,21 @@ class GreeterKmsGateTest(unittest.TestCase):
         p = subprocess.run(["bash", str(self.t / "kms.sh")], capture_output=True, text=True, env=e, timeout=60)
         read = lambda n: (self.t / n).read_text() if (self.t / n).exists() else ""
         self.assertEqual(read("missing"), "", "commands the unit's PATH does not provide")
+        self.calls = read("calls")
         return p.returncode, read("log"), read("sleeps").count("x")
 
-    def test_runs_before_greetd_and_its_defaults_as_root(self):
-        self.assertIn('serviceConfig.ExecStartPre = [ "+${greeterNeedsKms}" "+${greeterDefaults}" ];', greetd_block())
+    def test_is_greetds_exec_condition_as_root(self):
+        # ExecCondition, not ExecStartPre: a skipped condition is never restarted (Restart=always included), it is
+        # not a failure, and greetd's main process (the VT1 switch) never runs
+        g = greetd_block()
+        self.assertIn('serviceConfig.ExecCondition = "+${greeterNeedsKms}";', g)
+        self.assertIn('serviceConfig.ExecStartPre = [ "+${greeterDefaults}" ];', g)
+        self.assertNotIn("greeterNeedsKms}\" \"", g)
 
-    def test_no_card_fails_after_cages_wait_and_says_why(self):
+    def test_no_card_skips_after_cages_wait_says_why_and_shows_the_notice(self):
         rc, log, sleeps = self.run_gate()
-        self.assertEqual(rc, 1)
+        self.assertEqual(rc, 1)                           # 1..254: ExecCondition skips the unit
+        self.assertEqual(self.calls, "systemctl --no-block start agentos-greeter-fallback.service\n")
         self.assertEqual(sleeps, 20)                      # 20 x 0.5 s: as long as Cage waits for a KMS device
         self.assertIn("no display device (/dev/dri/card*)", log)
         self.assertIn("VT1 was not taken", log)
@@ -126,9 +154,10 @@ class GreeterKmsGateTest(unittest.TestCase):
     def test_card_present_or_added_late_lets_greetd_start(self):
         (self.t / "dri" / "card0").touch()
         self.assertEqual(self.run_gate()[:2], (0, ""))
+        self.assertEqual(self.calls, "")
         (self.t / "dri" / "card0").unlink()
         rc, log, sleeps = self.run_gate(CARD_AFTER="3")
-        self.assertEqual((rc, log, sleeps), (0, "", 3))
+        self.assertEqual((rc, log, sleeps, self.calls), (0, "", 3, ""))
 
 
 if __name__ == "__main__":

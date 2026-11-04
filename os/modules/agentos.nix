@@ -122,26 +122,38 @@ let
   # why, shows the last greeter lines, and starts the login screen again on Enter.
   # greetd opens VT1 and switches to it ([terminal] vt = 1, switch defaults to true) for every greeter it starts. With
   # no KMS device Cage cannot start, so each bounded retry pulled the console back to VT1 and the text login on
-  # Ctrl+Alt+F2 was unusable until greetd gave up (m21 41894778781). Root runs this before greetd itself: without a
-  # DRM card greetd is never started, the VT stays where the user put it, and the failure still counts towards
-  # the start limit and the notice below. It waits as long as Cage would (10 s) for a card that udev adds late.
+  # Ctrl+Alt+F2 was unusable until greetd gave up (m21 41894778781). Root runs this as greetd's ExecCondition: without
+  # a DRM card greetd itself never runs, so the VT stays where the user put it. Retrying cannot conjure a card, so
+  # there is no retry: the condition skips the unit (systemd 260 service.c service_shall_restart: Restart=always
+  # never restarts a SERVICE_SKIP_CONDITION result) and this starts the VT1 notice itself, about 10 s after boot.
+  # (As a failing ExecStartPre it was not retried either and went straight to OnFailure with NRestarts=0, m21
+  # 41900525722; that path is no longer used.) It waits as long as Cage would (10 s) for a card that udev adds late.
   greeterNeedsKms = pkgs.writeShellScript "agentos-greeter-kms" ''
-    export PATH=${lib.makeBinPath [ pkgs.coreutils pkgs.util-linux ]}
+    export PATH=${lib.makeBinPath [ pkgs.systemd pkgs.coreutils pkgs.util-linux ]}
     for _ in $(seq 20); do
       for c in /dev/dri/card*; do [ -e "$c" ] && exit 0; done
       sleep 0.5
     done
     logger -t agentos-greeter "no display device (/dev/dri/card*): the login screen was not started and VT1 was not taken"
+    systemctl --no-block start agentos-greeter-fallback.service
     exit 1
   '';
   greeterFallback = pkgs.writeShellScript "agentos-greeter-fallback" ''
     export PATH=${lib.makeBinPath [ pkgs.systemd pkgs.coreutils pkgs.util-linux ]}
     log() { logger -t agentos-greeter-fallback "$*"; }
-    r=$(systemctl show -p Result --value greetd.service)
-    n=$(systemctl show -p NRestarts --value greetd.service)
-    log "login screen gave up: greetd result=$r restarts=$n"
+    card=
+    for c in /dev/dri/card*; do [ -e "$c" ] && card=$c; done
     printf '\033c'   # RIS: the VT clears itself (no ncurses clear in this PATH)
-    echo "AgentOS: the login screen failed to start (greetd: $r, $n restarts)."
+    if [ -z "$card" ]; then
+      # greetd's ExecCondition found no display device and started this at once: nothing was retried
+      log "login screen not started: no display device (/dev/dri/card*)"
+      echo "AgentOS: no display device was found (/dev/dri/card*), so the graphical login screen was not started."
+    else
+      r=$(systemctl show -p Result --value greetd.service)
+      n=$(systemctl show -p NRestarts --value greetd.service)
+      log "login screen gave up: greetd result=$r restarts=$n"
+      echo "AgentOS: the login screen failed to start (greetd: $r, $n restarts)."
+    fi
     echo "Last messages from the login screen:"
     journalctl -b -o cat --no-pager -t agentos-greeter -n 8 | cut -c1-150
     echo
@@ -267,8 +279,9 @@ in {
     }) workerDefs // {
     # also as root before greetd itself starts (m5 41205165186: the greeter-side run left no state.toml behind)
     greetd = lib.mkIf cfg.graphical {
-      serviceConfig.ExecStartPre = [ "+${greeterNeedsKms}" "+${greeterDefaults}" ];
-      # bounded retry: a crashing greeter restarts every 2 s, at most 5 starts in 5 min, then the fallback below. Cage
+      serviceConfig.ExecCondition = "+${greeterNeedsKms}";
+      serviceConfig.ExecStartPre = [ "+${greeterDefaults}" ];
+      # bounded retry (with a DRM card; without one the ExecCondition above skips greetd, no retry): a crashing greeter restarts every 2 s, at most 5 starts in 5 min, then the fallback below. Cage
       # alone waits 10 s for a KMS device before it gives up, so one failed start can take 20 s or more: a 2 min window
       # would let such a greeter restart forever.
       serviceConfig.Restart = lib.mkForce "always";
