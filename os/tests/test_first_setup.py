@@ -95,12 +95,13 @@ class FirstSetupTest(unittest.TestCase):
         self.assertIn("firstboot --admin bea --workspace Home", calls)
 
     def test_vm_checks_wait_for_prompts_the_console_prints(self):
-        # m5-desktop and m20-sway type into tty1 after wait_until_tty_matches(...); m19-iso after an OCR wait_screen.
+        # m5-desktop, m20-sway and lib.answer_first_boot type into tty1 after wait_until_tty_matches(...); m19-iso after an OCR wait_screen.
         # A reworded prompt must fail here, not after a KVM run times out.
         p, _, _ = self.run_setup("bea\npw-2\npw-2\n\n")
         self.assertEqual(p.returncode, 0, p.stderr)
-        for check in ("m5-desktop.py", "m20-sway.py"):
-            text = (ROOT / "os/tests" / check).read_text().split("first-boot-closed", 1)[0]
+        for check in ("m5-desktop.py", "m20-sway.py", "lib.py"):      # lib.py: answer_first_boot (m21, m22)
+            text = (ROOT / "os/tests" / check).read_text()
+            text = text.split("def answer_first_boot", 1)[1] if check == "lib.py" else text.split("first-boot-closed", 1)[0]
             waits = re.findall(r'wait_until_tty_matches\("1", "([^"]+)"', text)
             self.assertEqual(len(waits), 4, (check, waits))
             for w in waits:

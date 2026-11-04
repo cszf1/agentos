@@ -1,4 +1,4 @@
-# m21-vmware: see m21-vmware.nix. Prepended: lib.py (tty_login).
+# m21-vmware: see m21-vmware.nix. Prepended: lib.py (tty_login, answer_first_boot).
 import re
 
 MD = "/var/lib/agentos-machine"
@@ -9,16 +9,6 @@ def sql(q):
 
 def started(unit):
     return int(machine.succeed(f"journalctl -b -o cat --no-pager -u {unit} | grep -c '^Started {unit}' || true").strip() or 0)
-
-def answer_first_boot(user, pw, ws):
-    machine.wait_until_tty_matches("1", "Administrator login: ", timeout=300)
-    machine.send_chars(f"{user}\n", delay=0.08)
-    machine.wait_until_tty_matches("1", "Password: ", timeout=60)
-    machine.send_chars(f"{pw}\n", delay=0.08)
-    machine.wait_until_tty_matches("1", "Password again: ", timeout=60)
-    machine.send_chars(f"{pw}\n", delay=0.08)
-    machine.wait_until_tty_matches("1", "Default workspace name", timeout=60)
-    machine.send_chars(f"{ws}\n", delay=0.08)
 
 machine.start()
 

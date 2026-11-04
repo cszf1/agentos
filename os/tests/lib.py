@@ -72,3 +72,14 @@ def must(cmd):
         raise Exception(f"failed: {cmd}")
     return out
 
+# The console first-boot prompts (agentos-first-setup), answered on tty1
+def answer_first_boot(user, pw, ws):
+    machine.wait_until_tty_matches("1", "Administrator login: ", timeout=300)
+    machine.send_chars(f"{user}\n", delay=0.08)
+    machine.wait_until_tty_matches("1", "Password: ", timeout=60)
+    machine.send_chars(f"{pw}\n", delay=0.08)
+    machine.wait_until_tty_matches("1", "Password again: ", timeout=60)
+    machine.send_chars(f"{pw}\n", delay=0.08)
+    machine.wait_until_tty_matches("1", "Default workspace name", timeout=60)
+    machine.send_chars(f"{ws}\n", delay=0.08)
+

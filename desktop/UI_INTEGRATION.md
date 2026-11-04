@@ -62,6 +62,6 @@ in GitHub Actions, against the pushed main commit:
 gh workflow run v1-vm-tests.yml -R cszf1/agentos --ref main -f test=all
 ```
 
-The workflow has 29 jobs including plan. Retry only individual jobs affected by
+The workflow has 31 jobs: plan plus the 30 checks in ALL. Retry only individual jobs affected by
 cache HTTP 418/416/429; retain the successful jobs. The workflow run is the source
 of VM results; local screenshots alone are not KVM evidence.

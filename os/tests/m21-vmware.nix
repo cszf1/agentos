@@ -5,19 +5,14 @@
 # before the first-boot-closed marker is not sent back into first boot.
 # QEMU's SVGA II has no pitchlock register, so vmwgfx refuses it (probe -38) after it has already removed the firmware
 # framebuffer: there is no DRM device and ReGreet cannot show here. A VMware host (Workstation/ESXi, 3D off) is still a
-# manual check; ReGreet, Sway and the Shell on a working output are m5-desktop and m20-sway (virtio-gpu).
+# manual check; the same system on virtio-gpu reaching ReGreet is m22-virtio.
 { pkgs, modules }:
 pkgs.testers.runNixOSTest {
   name = "agentos-m21-vmware";
   enableOCR = false;
-  nodes.machine = { lib, ... }: {
-    imports = modules ++ [ ../hardware/vm.nix ];
-    boot.initrd.systemd.enable = true;     # as the release images (hardware/disk-layout.nix)
-    agentos.enable = true;
-    agentos.softwareRendering = true;
-    agentos.releaseImages = pkgs.agentos-oci;
-    virtualisation = { memorySize = 4096; cores = 2; diskSize = 8192; qemu.options = [ "-vga vmware" ]; };
-    environment.systemPackages = [ pkgs.sqlite ];
+  nodes.machine = {
+    imports = [ (import ./vm-release-node.nix { inherit pkgs modules; }) ];
+    virtualisation.qemu.options = [ "-vga vmware" ];
   };
   testScript = builtins.readFile ./lib.py + builtins.readFile ./m21-vmware.py;
 }
