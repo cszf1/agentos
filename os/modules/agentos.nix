@@ -254,10 +254,12 @@ in {
     # also as root before greetd itself starts (m5 41205165186: the greeter-side run left no state.toml behind)
     greetd = lib.mkIf cfg.graphical {
       serviceConfig.ExecStartPre = [ "+${greeterDefaults}" ];
-      # bounded retry: a crashing greeter restarts every 2 s, at most 5 starts in 2 min, then the fallback below
+      # bounded retry: a crashing greeter restarts every 2 s, at most 5 starts in 5 min, then the fallback below. Cage
+      # alone waits 10 s for a KMS device before it gives up, so one failed start can take 20 s or more: a 2 min window
+      # would let such a greeter restart forever.
       serviceConfig.Restart = lib.mkForce "always";
       serviceConfig.RestartSec = 2;
-      unitConfig.StartLimitIntervalSec = 120;
+      unitConfig.StartLimitIntervalSec = 300;
       unitConfig.StartLimitBurst = 5;
       unitConfig.OnFailure = [ "agentos-greeter-fallback.service" ];
     };
