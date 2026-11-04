@@ -38,6 +38,10 @@ Minimum disk for an install: 64 GiB (the installer refuses smaller disks and sys
 
 One system (`os/hardware/vm.nix`) serves every hypervisor. It boots only through UEFI (systemd-boot; no BIOS, no GRUB
 on the installed disk) and always renders in software (`agentos.softwareRendering`): leave 3D acceleration off.
+Software rendering covers the login screen as well as the session: the greeter (Cage and ReGreet) and the desktop
+(Sway and the Shell) get the same settings (`WLR_RENDERER=pixman`, `WLR_NO_HARDWARE_CURSORS=1`, `GSK_RENDERER=cairo`,
+`QT_QUICK_BACKEND=software`; `softwareRenderingEnv` in `os/modules/agentos.nix`), so neither needs OpenGL from the
+virtual GPU.
 Neither the ISO nor the images are signed, so Secure Boot must be off. The ISO also boots through BIOS, but only as
 far as its menu: the installed system is UEFI-only, so enable EFI in the VM's settings before you install. (The
 ISO keeps its isolinux menu because the `m19-iso` check reads its boot entries from `isolinux.cfg`.)
@@ -55,6 +59,16 @@ to the desktop (`m19-iso`), 4096 MiB for `m5-desktop` and 6144 MiB for `m20-sway
 
 The installer names its target by `/dev/disk/by-id/…`. VirtualBox SATA, VMware NVMe or SATA and Hyper-V SCSI disks
 have such a name; a VMware SCSI (LSI or PVSCSI) disk has one only with `disk.EnableUUID = "TRUE"` in the `.vmx`.
+
+VMware without 3D: with "Accelerate 3D graphics" off (or `mks.enable3d = "FALSE"` in the `.vmx`) the SVGA device
+has no 3D, and the vmwgfx driver still gives a framebuffer and modesetting; AgentOS renders everything on the CPU,
+so this is the expected setting, not a degraded one. The virtual GPU drivers (vmwgfx, virtio_gpu, vboxvideo,
+hyperv_drm) are loaded by udev in the initrd only when their device is present, so a driver for another hypervisor
+never fails "Load Kernel Modules". If the login screen still does not come up, greetd retries a few times and then
+tty1 shows the last greeter log lines with "Press Enter to start the login screen again"; a text login is on
+Ctrl+Alt+F2. For a report, collect `journalctl -b -u greetd`, `journalctl -b -t agentos-greeter -t
+agentos-greeter-fallback` and `journalctl -b -u systemd-modules-load`. These paths are checked under QEMU's emulated VMware SVGA
+(`-vga vmware`) only; a real VMware host still needs manual verification.
 
 Guest tools start only on their own hypervisor (systemd `ConditionVirtualization=` or the hypervisor's own device):
 VBoxService and VBoxDRMClient on VirtualBox, vmtoolsd (headless build) on VMware, the Hyper-V KVP and VSS daemons on
