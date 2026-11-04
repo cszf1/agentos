@@ -108,6 +108,7 @@ jobs:
           python3 -B os/tests/test_m20_disk_scan.py
           python3 -B os/tests/test_first_setup.py
           python3 -B os/tests/test_greeter_fallback.py
+          python3 -B os/tests/test_unit_path.py
 
       - name: Build test driver
         if: ${{ !startsWith(matrix.test, 'build-') }}

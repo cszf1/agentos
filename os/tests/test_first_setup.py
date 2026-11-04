@@ -7,11 +7,16 @@ import re
 import subprocess
 import tempfile
 import textwrap
+import sys
 import unittest
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import unit_path  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 NIX = (ROOT / "os/modules/agentos.nix").read_text()
 DIR_RS = (ROOT / "native/crates/machine/src/dir.rs").read_text()
+CLEAR = "\033c"   # what the script prints to clear the VT
 MARKER = re.search(r'pub const FIRST_BOOT_CLOSED: &str = "([^"]+)";', DIR_RS).group(1)
 
 FAKE_CTL = r"""#!/usr/bin/env bash
@@ -34,8 +39,8 @@ esac
 def script(machine_dir, setup_dir):
     body = NIX.split('firstSetup = pkgs.writeShellScript "agentos-first-setup" \'\'', 1)[1].split("\n  '';", 1)[0]
     body = textwrap.dedent(body).replace("''${", "${")
-    body = re.sub(r"export PATH=\$\{lib\.makeBinPath \[[^]]*\]\}", 'export PATH="$FAKEBIN:$PATH"', body)
-    assert "${lib" not in body and "${pkgs" not in body, "unexpected Nix interpolation in the setup script"
+    rest = unit_path.EXPORT.sub("", body)
+    assert "${lib" not in rest and "${pkgs" not in rest, "unexpected Nix interpolation in the setup script"
     return body.replace("/var/lib/agentos-machine", str(machine_dir)).replace("/var/lib/agentos-first-setup", str(setup_dir))
 
 
@@ -53,20 +58,20 @@ class FirstSetupTest(unittest.TestCase):
         bin_ = self.t / "bin"
         bin_.mkdir()
         for name, text in {"agentosctl": FAKE_CTL.replace("MARKER", MARKER),
-                           "logger": '#!/usr/bin/env bash\nshift 2; echo "$*" >> "$T/log"\n',
-                           "clear": "#!/bin/sh\necho '<CLEAR>'\n"}.items():
-            (bin_ / name).write_text(text)
-            (bin_ / name).chmod(0o755)
+                           "logger": '#!/usr/bin/env bash\nshift 2; echo "$*" >> "$T/log"\n'}.items():
+            unit_path.write_fake(bin_, name, text)
         (self.t / "setup").mkdir()
-        (self.t / "setup.sh").write_text(script(self.t / "machine", self.t / "setup"))
+        body = script(self.t / "machine", self.t / "setup")
+        (self.t / "setup.sh").write_text(unit_path.confine(body, bin_, self.t / "real", self.t / "missing"))
 
     def tearDown(self):
         self.tmp.cleanup()
 
     def run_setup(self, typed=""):
-        env = dict(os.environ, T=str(self.t), FAKEBIN=str(self.t / "bin"))
+        env = dict(os.environ, T=str(self.t), HOST_PATH=os.environ["PATH"])
         p = subprocess.run(["bash", str(self.t / "setup.sh")], input=typed, capture_output=True, text=True, env=env, timeout=30)
         read = lambda n: (self.t / n).read_text() if (self.t / n).exists() else ""
+        self.assertEqual(read("missing"), "", "commands the unit's PATH does not provide")
         return p, read("calls"), read("log")
 
     def test_unit_condition_is_the_marker_machined_writes(self):
@@ -148,7 +153,7 @@ class FirstSetupTest(unittest.TestCase):
         self.assertNotRegex(NIX.split('firstSetup = pkgs.writeShellScript', 1)[1].split("\n  '';", 1)[0], r"sleep [35]")
         p, calls, _ = self.run_setup("Bad Name\n\nbea\npw-1\npw-2\n\nbea\npw-2\npw-2\n\n")
         self.assertEqual(p.returncode, 0, p.stderr)
-        rounds = p.stdout.split("<CLEAR>")[1:]
+        rounds = p.stdout.split(CLEAR)[1:]
         self.assertEqual(len(rounds), 3, p.stdout)
         self.assertIn("may only use lowercase letters", rounds[0])
         self.assertTrue(rounds[0].rstrip().endswith("Press Enter to try again."), rounds[0])
@@ -164,7 +169,7 @@ class FirstSetupTest(unittest.TestCase):
         (self.t / "provision-then-refuse").write_text("")
         p, calls, log = self.run_setup("alice\nsecret-pw-1\nsecret-pw-1\nHome\n\n\nsecret-pw-2\nsecret-pw-2\nHome\n")
         self.assertEqual(p.returncode, 0, p.stderr)
-        first, second = p.stdout.split("<CLEAR>")[1:]
+        first, second = p.stdout.split(CLEAR)[1:]
         self.assertIn("Administrator login: ", first)
         self.assertIn("CONFLICT", first)
         self.assertIn('already created the administrator account "alice"', second)

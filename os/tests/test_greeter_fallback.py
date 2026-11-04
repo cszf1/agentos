@@ -2,11 +2,14 @@
 the reason is logged, the last greeter lines are shown, and Enter starts the login screen again."""
 import os
 from pathlib import Path
-import re
 import subprocess
 import tempfile
 import textwrap
+import sys
 import unittest
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import unit_path  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 NIX = (ROOT / "os/modules/agentos.nix").read_text()
@@ -21,15 +24,14 @@ esac
 """,
     "journalctl": '#!/usr/bin/env bash\necho "journalctl $*" >> "$T/calls"\necho "cage: unable to create renderer"\necho "greeter ended rc=1"\n',
     "logger": '#!/usr/bin/env bash\nshift 2; echo "$*" >> "$T/log"\n',
-    "clear": "#!/bin/sh\n",
 }
 
 
 def script():
     body = NIX.split('greeterFallback = pkgs.writeShellScript "agentos-greeter-fallback" \'\'', 1)[1].split("\n  '';", 1)[0]
     body = textwrap.dedent(body).replace("''${", "${")
-    body = re.sub(r"export PATH=\$\{lib\.makeBinPath \[[^]]*\]\}", 'export PATH="$FAKEBIN:$PATH"', body)
-    assert "${lib" not in body and "${pkgs" not in body, "unexpected Nix interpolation in the fallback script"
+    rest = unit_path.EXPORT.sub("", body)
+    assert "${lib" not in rest and "${pkgs" not in rest, "unexpected Nix interpolation in the fallback script"
     return body
 
 
@@ -43,17 +45,17 @@ class GreeterFallbackTest(unittest.TestCase):
         self.t = Path(self.tmp.name)
         (self.t / "bin").mkdir()
         for name, text in FAKES.items():
-            (self.t / "bin" / name).write_text(text)
-            (self.t / "bin" / name).chmod(0o755)
-        (self.t / "fallback.sh").write_text(script())
+            unit_path.write_fake(self.t / "bin", name, text)
+        (self.t / "fallback.sh").write_text(unit_path.confine(script(), self.t / "bin", self.t / "real", self.t / "missing"))
 
     def tearDown(self):
         self.tmp.cleanup()
 
     def run_fallback(self, typed):
-        env = dict(os.environ, T=str(self.t), FAKEBIN=str(self.t / "bin"))
+        env = dict(os.environ, T=str(self.t), HOST_PATH=os.environ["PATH"])
         p = subprocess.run(["bash", str(self.t / "fallback.sh")], input=typed, capture_output=True, text=True, env=env, timeout=60)
         read = lambda n: (self.t / n).read_text() if (self.t / n).exists() else ""
+        self.assertEqual(read("missing"), "", "commands the unit's PATH does not provide")
         return p, read("calls"), read("log")
 
     def test_greetd_retries_a_bounded_number_of_times_then_hands_over(self):
@@ -69,6 +71,7 @@ class GreeterFallbackTest(unittest.TestCase):
         self.assertEqual(p.returncode, 0, p.stderr)
         self.assertIn("login screen gave up: greetd result=start-limit-hit restarts=4", log)
         self.assertIn("cage: unable to create renderer", p.stdout)
+        self.assertTrue(p.stdout.startswith("\033c"), p.stdout)            # the VT was cleared first
         self.assertIn("Press Enter", p.stdout)
         self.assertTrue(p.stdout.isascii(), p.stdout)          # the Linux VT font has no CJK glyphs
         self.assertIn("-t agentos-greeter", calls)

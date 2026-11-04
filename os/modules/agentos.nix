@@ -82,7 +82,7 @@ let
     previous() { [ -s "$last" ] && agentosctl status 2>/dev/null | grep -Eq '"users": *[1-9]' && head -c 32 "$last" | tr -dc 'a-z0-9_-'; }
     while :; do
       prev=$(previous) || prev=""
-      clear 2>/dev/null || true
+      printf '\033c'   # RIS: the VT clears itself (no ncurses clear in this PATH)
       echo "AgentOS first-boot setup"
       echo "Create the machine administrator and the default workspace."
       echo
@@ -126,7 +126,7 @@ let
     r=$(systemctl show -p Result --value greetd.service)
     n=$(systemctl show -p NRestarts --value greetd.service)
     log "login screen gave up: greetd result=$r restarts=$n"
-    clear
+    printf '\033c'   # RIS: the VT clears itself (no ncurses clear in this PATH)
     echo "AgentOS: the login screen failed to start (greetd: $r, $n restarts)."
     echo "Last messages from the login screen:"
     journalctl -b -o cat --no-pager -t agentos-greeter -n 8 | cut -c1-150
