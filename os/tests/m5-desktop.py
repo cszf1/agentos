@@ -134,13 +134,13 @@ ws = None
 with subtest("first boot from the local console (spec 19.4, review F11): administrator and workspace typed on tty1, then the entry closes"):
     machine.wait_until_succeeds("systemctl show -p ActiveState --value agentos-first-setup.service | grep -qx activating", timeout=180)
     machine.fail("systemctl is-active greetd.service")       # no login screen before the machine has an administrator
-    machine.wait_until_tty_matches("1", "administrator login", timeout=180)
+    machine.wait_until_tty_matches("1", "Administrator login: ", timeout=180)
     machine.send_chars("alice\n", delay=0.08)
-    machine.wait_until_tty_matches("1", "password: ", timeout=60)
+    machine.wait_until_tty_matches("1", "Password: ", timeout=60)
     type_secret("alice-pw-1")
-    machine.wait_until_tty_matches("1", "password again", timeout=60)
+    machine.wait_until_tty_matches("1", "Password again: ", timeout=60)
     type_secret("alice-pw-1")
-    machine.wait_until_tty_matches("1", "default workspace name", timeout=60)
+    machine.wait_until_tty_matches("1", "Default workspace name", timeout=60)
     machine.send_chars("A\n", delay=0.08)
     machine.wait_until_succeeds("test -e /var/lib/agentos-machine/first-boot-closed", timeout=180)
     machine.wait_for_unit("greetd.service")

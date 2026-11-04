@@ -134,13 +134,13 @@ def shell_frame(name, timeout=120):
         time.sleep(1)
 
 with subtest("first boot on the console, a second workspace and a member to revoke later, then ReGreet login into Sway"):
-    machine.wait_until_tty_matches("1", "administrator login", timeout=240)
+    machine.wait_until_tty_matches("1", "Administrator login: ", timeout=240)
     machine.send_chars("alice\n", delay=0.08)
-    machine.wait_until_tty_matches("1", "password: ", timeout=60)
+    machine.wait_until_tty_matches("1", "Password: ", timeout=60)
     type_secret("alice-pw-1")
-    machine.wait_until_tty_matches("1", "password again", timeout=60)
+    machine.wait_until_tty_matches("1", "Password again: ", timeout=60)
     type_secret("alice-pw-1")
-    machine.wait_until_tty_matches("1", "default workspace name", timeout=60)
+    machine.wait_until_tty_matches("1", "Default workspace name", timeout=60)
     machine.send_chars("A\n", delay=0.08)
     machine.wait_until_succeeds("test -e /var/lib/agentos-machine/first-boot-closed", timeout=180)
     machine.wait_for_unit("greetd.service")

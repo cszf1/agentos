@@ -89,6 +89,23 @@ class FirstSetupTest(unittest.TestCase):
         self.assertEqual(p.returncode, 0, p.stderr)
         self.assertIn("firstboot --admin bea --workspace Home", calls)
 
+    def test_vm_checks_wait_for_prompts_the_console_prints(self):
+        # m5-desktop and m20-sway type into tty1 after wait_until_tty_matches(...); m19-iso after an OCR wait_screen.
+        # A reworded prompt must fail here, not after a KVM run times out.
+        p, _, _ = self.run_setup("bea\npw-2\npw-2\n\n")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        for check in ("m5-desktop.py", "m20-sway.py"):
+            text = (ROOT / "os/tests" / check).read_text().split("first-boot-closed", 1)[0]
+            waits = re.findall(r'wait_until_tty_matches\("1", "([^"]+)"', text)
+            self.assertEqual(len(waits), 4, (check, waits))
+            for w in waits:
+                self.assertRegex(p.stdout, w, check)
+        waits = re.findall(r'wait_screen\((?:target|dest), r?"(\(\?i\)[^"]*(?:login|password|workspace)[^"]*)"',
+                           (ROOT / "os/tests/m19-iso.py").read_text())
+        self.assertEqual(len(waits), 8, waits)
+        for w in waits:
+            self.assertRegex(p.stdout, w)
+
     def test_closed_marker_never_shows_the_entry(self):
         (self.t / "machine/machine.secret").write_text("s")
         (self.t / f"machine/{MARKER}").write_text("closed\n")
