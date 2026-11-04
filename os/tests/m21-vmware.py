@@ -35,6 +35,8 @@ def vt_stays(n, until, timeout):
         polls += 1
         assert time.monotonic() < deadline, "timed out watching the console"
         time.sleep(1)
+    # zero polls verified nothing: the event happened before watching began
+    assert polls >= 1, "vt_stays watched no poll: the event was over before the console was checked"
     return polls
 
 machine.start()
@@ -85,21 +87,26 @@ with subtest("no DRM device on QEMU's SVGA II: greetd is not started or retried,
     machine.succeed("dmesg | grep -q 'vmwgfx.*probe with driver vmwgfx failed'")
     machine.fail("ls /dev/dri/card*")
     greetd_diag("no DRM device, first boot just closed")
-    # The KMS check waits 10 s for a card (as Cage would) before the notice; the user is on Ctrl+Alt+F2 meanwhile.
+    # The KMS check waits 10 s for a card (as Cage would) before the notice. The tty2 login may take longer than that,
+    # so the boot's round can be over before the console is watched: log in, let it finish, then run a round of its
+    # own (greetd started again, as the notice does on Enter) while tty2 is watched.
     tty_login(2, "alice", "alice-pw-1")
-    greetd_diag("tty2 login done")
-    polls = vt_stays(2, lambda: not_started() >= 1, timeout=120)
-    print(f"tty2 kept the console for {polls} polls until the notice")
-    greetd_diag("notice shown")
-    machine.succeed("loginctl list-sessions --no-legend | grep -w alice | grep -qw tty2")
-    # One check, no retry: Restart=always never restarts a skipped ExecCondition (systemd service.c
-    # service_shall_restart, SERVICE_SKIP_CONDITION), and greetd's main process (the VT1 switch) never ran.
+    machine.wait_until_succeeds("journalctl -b -o cat --no-pager -t agentos-greeter-fallback | grep -q 'login screen not started'", timeout=120)
+    greetd_diag("tty2 login done, boot round over")
     assert skips() == 1, skips()
+    machine.succeed("systemctl stop agentos-greeter-fallback.service; systemctl start --no-block greetd.service")
+    polls = vt_stays(2, lambda: not_started() >= 2, timeout=120)
+    print(f"tty2 kept the console for {polls} polls through a KMS check and the notice")
+    greetd_diag("second notice shown")
+    machine.succeed("loginctl list-sessions --no-legend | grep -w alice | grep -qw tty2")
+    # One check per start, no retry: Restart=always never restarts a skipped ExecCondition (systemd service.c
+    # service_shall_restart, SERVICE_SKIP_CONDITION), and greetd's main process (the VT1 switch) never ran.
+    assert skips() == 2, skips()
     assert machine.succeed("systemctl show -p Result --value greetd.service").strip() == "exec-condition"
     assert machine.succeed("systemctl show -p NRestarts --value greetd.service").strip() == "0"
     assert machine.succeed("systemctl show -p ExecMainStartTimestampMonotonic --value greetd.service").strip() == "0"
     assert gave_up() == "0", "the retry notice ran although nothing was retried"
-    assert not_started() == 1
+    assert not_started() == 2
     machine.succeed("chvt 1")
     machine.wait_until_tty_matches("1", "Press Enter to start the login screen again", timeout=60)
     tty1 = machine.get_tty_text("1")
@@ -110,9 +117,9 @@ with subtest("no DRM device on QEMU's SVGA II: greetd is not started or retried,
     machine.wait_until_succeeds("journalctl -b -o cat --no-pager -t agentos-greeter-fallback | grep -q 'starting the login screen again'", timeout=30)
     machine.send_key("alt-f2")
     machine.wait_until_succeeds("grep -qx tty2 /sys/class/tty/tty0/active", timeout=30)
-    vt_stays(2, lambda: not_started() >= 2, timeout=120)
+    vt_stays(2, lambda: not_started() >= 3, timeout=120)
     greetd_diag("after Enter")
-    assert skips() == 2, skips()
+    assert skips() == 3, skips()
     assert machine.succeed("systemctl show -p NRestarts --value greetd.service").strip() == "0"
     assert gave_up() == "0"
     machine.succeed("loginctl list-sessions --no-legend | grep -w alice | grep -qw tty2")
