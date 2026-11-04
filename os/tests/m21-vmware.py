@@ -33,7 +33,7 @@ with subtest("first boot cut off after install.ensure and before closeFirstBoot:
     machine.fail(f"test -e {MD}/first-boot-id")
     # Held stdin: agentosctl firstboot runs install.ensure and reads the status, then waits for the password, so it
     # stops between install.ensure and users.provision. The power is cut there.
-    machine.succeed("systemd-run --unit=fb-cut -p Type=exec sh -c 'sleep infinity | agentosctl firstboot --admin alice --workspace A'")
+    machine.succeed("systemd-run --unit=fb-cut -p Type=exec --setenv=PATH=/run/current-system/sw/bin sh -c 'sleep infinity | agentosctl firstboot --admin alice --workspace A'")
     machine.wait_until_succeeds(f"test -s {MD}/first-boot-id && agentosctl status >/dev/null", timeout=120)
     machine.succeed("systemctl is-active fb-cut.service")
     fbid = machine.succeed(f"cat {MD}/first-boot-id").strip()
