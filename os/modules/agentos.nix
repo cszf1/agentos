@@ -5,6 +5,11 @@ let
   native = cfg.nativePackage;
   node = cfg.nodePackage;
   shell = pkgs.agentos-shell;
+  # Software rendering on a virtual GPU (agentos.softwareRendering), one definition for the greeter (Cage + ReGreet,
+  # GTK4) and the session (Sway + the Qt Shell): pixman for wlroots, no hardware cursor planes, cairo for GSK, the
+  # software scene graph for Qt Quick.
+  softwareRenderingEnv = lib.optionalString cfg.softwareRendering
+    "export WLR_RENDERER=pixman WLR_NO_HARDWARE_CURSORS=1 GSK_RENDERER=cairo QT_QUICK_BACKEND=software";
   sysPath = lib.makeBinPath (with pkgs; [ shadow util-linux systemd coreutils podman ]);
   swayConfig = pkgs.writeText "agentos-sway.conf" ''
     # AgentOS session (spec §9.1): Sway is the compositor, the Qt Shell is the only application surface.
@@ -97,7 +102,7 @@ let
     # Started by greetd after PAM (a real logind session on seat0). Nothing here comes from the network or a model.
     export XDG_CURRENT_DESKTOP=sway XDG_SESSION_TYPE=wayland QT_QPA_PLATFORM=wayland QT_IM_MODULE=fcitx XMODIFIERS=@im=fcitx
     export AGENTOS_SHELL=${shell}/bin/agentos-shell AGENTOS_GATEWAY_SOCKET=/run/agentos/gateway.sock
-    ${lib.optionalString cfg.softwareRendering "export WLR_RENDERER=pixman WLR_NO_HARDWARE_CURSORS=1 QT_QUICK_BACKEND=software"}
+    ${softwareRenderingEnv}
     exec ${pkgs.sway}/bin/sway --unsupported-gpu -c ${swayConfig}
   '';
   sessionDesktop = pkgs.writeTextFile {
@@ -145,6 +150,7 @@ in {
     # (greetd runs the command as "exec <command>" under /bin/sh, so the defaults step and the greeter are one script)
     services.greetd.settings.default_session.command = lib.mkIf cfg.graphical (lib.mkForce "${pkgs.writeShellScript "agentos-greeter" ''
       ${greeterDefaults}
+      ${softwareRenderingEnv}
       # not exec: when the greeter ends, its exit status and last words reach the journal (m5 41208155307: the first
       # greeter died silently and ReGreet never came back)
       ${pkgs.dbus}/bin/dbus-run-session ${lib.getExe pkgs.cage} ${lib.escapeShellArgs config.programs.regreet.cageArgs} -- ${lib.getExe config.programs.regreet.package} 2>&1 \
