@@ -30,8 +30,8 @@ with subtest("card0 is a seat device of seat0, and ReGreet comes up on it"):
     try:
         machine.wait_until_succeeds("test -c /dev/dri/card0", timeout=60)
         # c4786ac: card0 had no udev database entry, so logind never assigned it
-        machine.wait_until_succeeds("udevadm info -q property /dev/dri/card0 | grep -Eq '^TAGS=.*:seat:'", timeout=60)
-        machine.wait_until_succeeds("loginctl seat-status seat0 --no-pager | grep -q 'drm:card0'", timeout=60)
+        machine.wait_until_succeeds("udevadm info -q property /dev/dri/card0 | tee -p /dev/null | grep -Eq '^TAGS=.*:seat:'", timeout=60)
+        machine.wait_until_succeeds("loginctl seat-status seat0 --no-pager | tee -p /dev/null | grep -q 'drm:card0'", timeout=60)
         machine.wait_for_unit("greetd.service")
         machine.wait_until_succeeds("pgrep -u greeter -f '[r]egreet'", timeout=180)
         machine.wait_until_succeeds("grep -qx tty1 /sys/class/tty/tty0/active", timeout=60)
@@ -65,7 +65,7 @@ with subtest("card0 is a seat device of seat0, and ReGreet comes up on it"):
             if time.time() > end:
                 raise AssertionError(f"the User field does not show alice without a UUID; OCR: {texts!r}")
             time.sleep(2)
-        machine.fail("journalctl -b -o cat --no-pager -t agentos-greeter-fallback | grep -q 'login screen gave up'")
+        machine.fail("journalctl -b -o cat --no-pager -t agentos-greeter-fallback | tee -p /dev/null | grep -q 'login screen gave up'")
     except BaseException:
         seat_diag()
         raise
@@ -129,7 +129,7 @@ with subtest("a DRM card and a greeter that always crashes: bounded retries, the
         # Back on VT1 the greeter runs and crashes each time: Restart=always retries until the start limit refuses the
         # Nth restart job (counted in NRestarts when queued, service.c service_enter_restart), then OnFailure.
         machine.succeed("chvt 1")
-        machine.wait_until_succeeds("journalctl -b -o cat --no-pager -t agentos-greeter-fallback | grep -q 'login screen gave up'", timeout=240)
+        machine.wait_until_succeeds("journalctl -b -o cat --no-pager -t agentos-greeter-fallback | tee -p /dev/null | grep -q 'login screen gave up'", timeout=240)
         greetd_diag("gave up")
         assert show("NRestarts") == str(burst), show("NRestarts")
         assert show("Result") == "start-limit-hit", show("Result")
@@ -142,13 +142,13 @@ with subtest("a DRM card and a greeter that always crashes: bounded retries, the
         machine.send_key("alt-f2")
         machine.wait_until_succeeds("grep -qx tty2 /sys/class/tty/tty0/active", timeout=30)
         watch_tty2(5, lambda: None)
-        machine.succeed("loginctl list-sessions --no-legend | grep -w alice | grep -qw tty2")
+        machine.succeed("loginctl list-sessions --no-legend | grep -w alice | tee -p /dev/null | grep -qw tty2")
         # the greeter is fixed again; Enter on the notice starts greetd, and ReGreet comes up on VT1
         machine.succeed(f"rm {CRASH}", "systemctl daemon-reload")
         machine.succeed("chvt 1")
         machine.send_key("ret")
-        machine.wait_until_succeeds("journalctl -b -o cat --no-pager -t agentos-greeter-fallback | grep -q 'starting the login screen again'", timeout=30)
-        machine.wait_until_succeeds("loginctl seat-status seat0 --no-pager | grep -q 'drm:card0'", timeout=60)
+        machine.wait_until_succeeds("journalctl -b -o cat --no-pager -t agentos-greeter-fallback | tee -p /dev/null | grep -q 'starting the login screen again'", timeout=30)
+        machine.wait_until_succeeds("loginctl seat-status seat0 --no-pager | tee -p /dev/null | grep -q 'drm:card0'", timeout=60)
         machine.wait_until_succeeds("pgrep -u greeter -f '[r]egreet'", timeout=180)
         machine.wait_until_succeeds("grep -qx tty1 /sys/class/tty/tty0/active", timeout=60)
         end = time.time() + 120

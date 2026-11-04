@@ -132,7 +132,7 @@ def regreet_login(pw):
 
 ws = None
 with subtest("first boot from the local console (spec 19.4, review F11): administrator and workspace typed on tty1, then the entry closes"):
-    machine.wait_until_succeeds("systemctl show -p ActiveState --value agentos-first-setup.service | grep -qx activating", timeout=180)
+    machine.wait_until_succeeds("systemctl show -p ActiveState --value agentos-first-setup.service | tee -p /dev/null | grep -qx activating", timeout=180)
     machine.fail("systemctl is-active greetd.service")       # no login screen before the machine has an administrator
     machine.wait_until_tty_matches("1", "Administrator login: ", timeout=180)
     machine.send_chars("alice\n", delay=0.08)
@@ -186,7 +186,7 @@ with subtest("ReGreet: a wrong password is refused and the greeter recovers; the
     assert machine.succeed(f"loginctl show-session {sid} -p Type --value").strip() == "wayland"
     swaypid = machine.succeed("pgrep -u alice -x sway | head -1").strip()
     machine.succeed(f"grep -q 'session-{sid}.scope' /proc/{swaypid}/cgroup")             # Sway lives in the greetd session
-    machine.succeed(f"tr '\\0' ' ' < /proc/{swaypid}/cmdline | grep -q agentos-sway.conf")  # the AgentOS session entry, not typed
+    machine.succeed(f"tr '\\0' ' ' < /proc/{swaypid}/cmdline | tee -p /dev/null | grep -q agentos-sway.conf")  # the AgentOS session entry, not typed
     machine.succeed("grep -q 'last_user = \"alice\"' /var/lib/regreet/state.toml && grep -q 'alice = \"AgentOS\"' /var/lib/regreet/state.toml")
     pid = machine.succeed("pgrep -u alice -f bin/agentos-shell | head -1").strip()
     time.sleep(5)
@@ -234,7 +234,7 @@ with subtest("Shell SIGKILL: the session agent brings it back within 5 s (O06 pa
     tree = "su - alice -c 'SWAYSOCK=$(ls /run/user/$(id -u)/sway-ipc.*.sock | head -1) swaymsg -t get_tree'"
     shells = "pgrep -u alice -f bin/agentos-shell | grep -vx " + old
     try:
-        machine.wait_until_succeeds(f"for p in $({shells}); do {tree} | grep -q \"\\\"pid\\\": $p,\" && exit 0; done; exit 1", timeout=10)
+        machine.wait_until_succeeds(f"for p in $({shells}); do {tree} | tee -p /dev/null | grep -q \"\\\"pid\\\": $p,\" && exit 0; done; exit 1", timeout=10)
     except BaseException:
         print(machine.execute(f"{shells}; {tree} | grep -E '\"(pid|app_id|name|visible)\"' | head -40")[1])
         raise
@@ -252,7 +252,7 @@ with subtest("app container from the release images, offline, with no escape sur
     machine.wait_until_succeeds(f"test -S /run/user/{uid}/podman/podman.sock", timeout=120)
     # The test VM has a QEMU user-net default route; take it away so nothing can reach a registry or substituter.
     machine.succeed("ip route del default 2>/dev/null; ip -6 route del default 2>/dev/null; true")
-    machine.fail("ip route | grep -q default")                                     # no network at all
+    machine.fail("ip route | tee -p /dev/null | grep -q default")                                     # no network at all
     env = (f"XDG_RUNTIME_DIR=/run/user/{uid} AGENTOS_RUNTIME=podman AGENTOS_PODMAN_SOCKET=/run/user/{uid}/podman/podman.sock "
            f"AGENTOS_DATA_DIR=/var/lib/agentos/workspaces/{ws}/data AGENTOS_RELEASE_IMAGES=$(systemctl --user -M {login}@ show -p Environment agentos-host@{ws}.service | grep -o 'AGENTOS_RELEASE_IMAGES=[^ ]*' | cut -d= -f2)")
     rel = machine.succeed(f"systemctl --user -M {login}@ show -p Environment agentos-host@{ws}.service | grep -o 'AGENTOS_RELEASE_IMAGES=[^ ]*' | cut -d= -f2").strip()
@@ -275,7 +275,7 @@ with subtest("app container from the release images, offline, with no escape sur
     lines = {l.split(":", 1)[0][6:]: l for l in dr.splitlines() if l.startswith(("ok  ", "FAIL"))}
     for n in ["probe container", "no network", "read-only rootfs", "capabilities / no_new_privs / seccomp", "no escape surfaces"]:
         assert n in lines and lines[n].startswith("ok"), (n, lines.get(n))
-    machine.succeed("test -S /run/user/$(id -u alice)/wayland-1 || ls /run/user/$(id -u alice)/ | grep -q wayland")   # the surface exists outside
+    machine.succeed("test -S /run/user/$(id -u alice)/wayland-1 || ls /run/user/$(id -u alice)/ | tee -p /dev/null | grep -q wayland")   # the surface exists outside
     machine.send_key("alt-f1")
     machine.succeed("chvt 1")
 
@@ -337,7 +337,7 @@ with subtest("lock from the Shell (Ctrl+Alt+L): swaylock confirms, logind Locked
     machine.send_key("ctrl-alt-l", delay=0.15)                     # still Shell shortcut → session agent → swaylock
     try:
         machine.wait_until_succeeds("pgrep -u alice swaylock", timeout=60)
-        machine.wait_until_succeeds(f"loginctl show-session {sid} -p LockedHint | grep -q yes", timeout=60)
+        machine.wait_until_succeeds(f"loginctl show-session {sid} -p LockedHint | tee -p /dev/null | grep -q yes", timeout=60)
     except Exception:
         print(machine.execute("ps -eo pid,user,comm,args | grep -E 'agentos-shell|swaylock|session-agent'; "
                               f"loginctl show-session {sid}; journalctl -b --no-pager -u greetd | tail -30")[1])
@@ -350,13 +350,13 @@ with subtest("lock from the Shell (Ctrl+Alt+L): swaylock confirms, logind Locked
     time.sleep(2)                                                    # swaylock has its surfaces mapped
     machine.send_chars("alice-pw-1\n", delay=0.05)
     try:
-        machine.wait_until_succeeds(f"loginctl show-session {sid} -p LockedHint | grep -q no", timeout=30)
+        machine.wait_until_succeeds(f"loginctl show-session {sid} -p LockedHint | tee -p /dev/null | grep -q no", timeout=30)
     except BaseException:
         print(machine.execute(f"cat /sys/class/tty/tty0/active; loginctl show-session {sid}; ps -o pid,stat,comm,args -u alice; "
                               "journalctl -b --no-pager | grep -iE 'swaylock|pam_unix|agentos-session-agent|sway\\[' | tail -40")[1])
         machine.screenshot("unlock-failed")
         type_secret("alice-pw-1", keywise=True)
-        machine.wait_until_succeeds(f"loginctl show-session {sid} -p LockedHint | grep -q no", timeout=30)
+        machine.wait_until_succeeds(f"loginctl show-session {sid} -p LockedHint | tee -p /dev/null | grep -q no", timeout=30)
     machine.wait_until_fails("pgrep -u alice swaylock", timeout=60)
     shell_frame("unlocked")
 
@@ -366,7 +366,7 @@ with subtest("logout, then log in again through ReGreet: the greeter returns, no
     machine.succeed(f"runuser -u alice -- env XDG_RUNTIME_DIR={rt} python3 -c \"import socket,json,struct;s=socket.socket(socket.AF_UNIX);s.connect('{rt}/agentos-session.sock');b=json.dumps({{'op':'logout'}}).encode();s.sendall(struct.pack('>I',len(b))+b);n=struct.unpack('>I',s.recv(4))[0];print(s.recv(n))\"")
     machine.wait_until_fails("pgrep -u alice -x sway", timeout=60)
     machine.wait_until_fails("pgrep -u alice -f bin/agentos-shell", timeout=60)
-    machine.wait_until_succeeds(f"! loginctl show-session {sid} -p State --value 2>/dev/null | grep -qE 'active|online'", timeout=60)
+    machine.wait_until_succeeds(f"! loginctl show-session {sid} -p State --value 2>/dev/null | tee -p /dev/null | grep -qE 'active|online'", timeout=60)
     assert greetd_session() is None
     greeter_ready()
     shot("greeter-after-logout")
@@ -385,12 +385,12 @@ with subtest("logout, then log in again through ReGreet: the greeter returns, no
 
 with subtest("a killed locker never returns to an unlocked desktop (H03)"):
     machine.succeed(f"loginctl lock-session {sid}")
-    machine.wait_until_succeeds(f"loginctl show-session {sid} -p LockedHint | grep -q yes", timeout=60)
+    machine.wait_until_succeeds(f"loginctl show-session {sid} -p LockedHint | tee -p /dev/null | grep -q yes", timeout=60)
     machine.succeed("pkill -KILL -u alice swaylock")
     # the session agent ends the session (back to the greeter) instead of clearing LockedHint
-    machine.wait_until_succeeds(f"! loginctl show-session {sid} -p State 2>/dev/null | grep -q active || loginctl show-session {sid} -p LockedHint | grep -q yes", timeout=60)
+    machine.wait_until_succeeds(f"! loginctl show-session {sid} -p State 2>/dev/null | tee -p /dev/null | grep -q active || loginctl show-session {sid} -p LockedHint | tee -p /dev/null | grep -q yes", timeout=60)
     machine.wait_until_fails("pgrep -u alice -f bin/agentos-shell", timeout=90)
-    machine.fail(f"loginctl show-session {sid} -p LockedHint 2>/dev/null | grep -q '=no'")
+    machine.fail(f"loginctl show-session {sid} -p LockedHint 2>/dev/null | tee -p /dev/null | grep -q '=no'")
 
 with subtest("health gate: false ready, SSH only, no Qt frame and an incompatible workspace each fail; a healthy system passes (U09)"):
     machine.wait_for_unit("greetd.service")
@@ -432,7 +432,7 @@ with subtest("health gate: false ready, SSH only, no Qt frame and an incompatibl
     # still fail the gate: readiness is read through the broker protocol (broker-health), not from the socket
     machine.succeed("systemctl stop agentos-broker.path agentos-broker.service; mkdir -p /root/broker-keep; mv /var/lib/agentos-broker/broker.sqlite* /root/broker-keep/")
     machine.succeed("systemctl start agentos-broker.service")
-    machine.wait_until_succeeds("journalctl -u agentos-broker -b --no-pager | grep -q 'diagnostics-only mode'", timeout=60)
+    machine.wait_until_succeeds("journalctl -u agentos-broker -b --no-pager | tee -p /dev/null | grep -q 'diagnostics-only mode'", timeout=60)
     machine.succeed("systemctl is-active agentos-broker.service && test -S /run/agentos-broker/broker.sock")
     r5 = gate()
     print("diagnostics-only broker", r5)

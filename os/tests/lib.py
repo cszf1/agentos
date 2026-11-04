@@ -1,5 +1,13 @@
 # Shared helpers for AgentOS VM checks (prepended to each test script).
 import json
+import re as _re
+
+# The driver runs each command under `set -o pipefail`. When cmd is piped into grep -q, grep exits at the first match, cmd's next
+# write gets EPIPE/SIGPIPE, and the pipe fails although P was found (dmesg in m21, m13 41177042175). Either capture and
+# match in Python (log_has), or keep the pipe and let tee drain what grep leaves: `cmd | tee -p /dev/null | grep -q P`.
+# test_vm_scripts_lint.py rejects any other pipe into grep -q.
+def log_has(cmd, pattern):
+    return _re.search(pattern, machine.succeed(cmd), _re.M) is not None
 
 RPC = "python3 /etc/agentos-test/rpc.py /run/agentos/gateway.sock"
 
@@ -59,7 +67,7 @@ def revocation_diag(rid):
 
 def wait_revoked(rid, timeout=90):
     try:
-        machine.wait_until_succeeds(f"sqlite3 /var/lib/agentos-machine/machine.sqlite \"SELECT state FROM revocations WHERE revocation_id='{rid}'\" | grep -qx revoked", timeout=timeout)
+        machine.wait_until_succeeds(f"sqlite3 /var/lib/agentos-machine/machine.sqlite \"SELECT state FROM revocations WHERE revocation_id='{rid}'\" | tee -p /dev/null | grep -qx revoked", timeout=timeout)
     except BaseException:
         revocation_diag(rid)
         raise

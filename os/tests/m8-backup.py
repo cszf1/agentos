@@ -24,7 +24,7 @@ with subtest("the Host creates the pair, then stops; a cold checkpoint needs hos
     machine.wait_until_fails(f"pgrep -u {ua} -f packages/host/dist/main.js")
     v = rw(f"checkpoint --data {root}/data --out /var/lib/agentos-snapshots/set1 --set-id {uuid.uuid4()} --workspace-id {ws} --barrier-id b --machine-install-id {mid}")
     rw("verify --set /var/lib/agentos-snapshots/set1")
-    machine.succeed("stat -c '%a %U' /var/lib/agentos-snapshots | grep -q '700 root'")
+    machine.succeed("stat -c '%a %U' /var/lib/agentos-snapshots | tee -p /dev/null | grep -q '700 root'")
     machine.fail(f"setpriv --reuid {ua} --regid {ua} --clear-groups ls /var/lib/agentos-snapshots/set1")
 
 with subtest("a checkpoint killed before its manifest is not recoverable (R03)"):
@@ -36,10 +36,10 @@ with subtest("restore swaps the whole tree, owned by the execution UID; newer da
     machine.succeed(f"setpriv --reuid {ua} --regid {ua} --clear-groups sqlite3 {root}/data/os.sqlite 'CREATE TABLE after_checkpoint (x)'")
     rid = str(uuid.uuid4())
     v = rw(f"restore --set /var/lib/agentos-snapshots/set1 --ws-root {root} --restore-id {rid} --uid {ua} --gid {ua}")
-    machine.fail(f"sqlite3 {root}/data/os.sqlite '.tables' | grep -q after_checkpoint")
-    machine.succeed(f"sqlite3 {v['result']['previous']}/os.sqlite '.tables' | grep -q after_checkpoint")
+    machine.fail(f"sqlite3 {root}/data/os.sqlite '.tables' | tee -p /dev/null | grep -q after_checkpoint")
+    machine.succeed(f"sqlite3 {v['result']['previous']}/os.sqlite '.tables' | tee -p /dev/null | grep -q after_checkpoint")
     machine.succeed(f"test \"$(find {root}/data ! -uid {ua} | wc -l)\" = 0")
-    machine.succeed(f"stat -c %a {root}/data | grep -q 700 && stat -c %a {root}/data/os.sqlite | grep -q 600")
+    machine.succeed(f"stat -c %a {root}/data | tee -p /dev/null | grep -q 700 && stat -c %a {root}/data/os.sqlite | tee -p /dev/null | grep -q 600")
 
 with subtest("encrypted export → read back → decrypt to an empty disk; wrong key / tampered refused (R04)"):
     machine.succeed("age-keygen -o /root/id.key 2>/root/id.pub; age-keygen -o /root/wrong.key 2>/dev/null")

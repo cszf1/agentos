@@ -268,17 +268,17 @@ def disk_scan(user, roots, skip, marker):
 
 def lock():
     machine.succeed(f"loginctl lock-session {sid}")
-    machine.wait_until_succeeds(f"loginctl show-session {sid} -p LockedHint | grep -q yes", timeout=60)
+    machine.wait_until_succeeds(f"loginctl show-session {sid} -p LockedHint | tee -p /dev/null | grep -q yes", timeout=60)
     machine.wait_until_succeeds("pgrep -u alice swaylock", timeout=60)
     time.sleep(2)
 
 def unlock():
     machine.send_chars("alice-pw-1\n", delay=0.06)
     try:
-        machine.wait_until_succeeds(f"loginctl show-session {sid} -p LockedHint | grep -q no", timeout=30)
+        machine.wait_until_succeeds(f"loginctl show-session {sid} -p LockedHint | tee -p /dev/null | grep -q no", timeout=30)
     except BaseException:
         type_secret("alice-pw-1", keywise=True)
-        machine.wait_until_succeeds(f"loginctl show-session {sid} -p LockedHint | grep -q no", timeout=30)
+        machine.wait_until_succeeds(f"loginctl show-session {sid} -p LockedHint | tee -p /dev/null | grep -q no", timeout=30)
     machine.wait_until_fails("pgrep -u alice swaylock", timeout=60)
     time.sleep(2)
 
@@ -411,7 +411,8 @@ with subtest("agentos-shell-e2e as a real Wayland client in alice's Sway session
             k, _, v = l[4:].partition(" ")
             steps[k] = json.loads(v)
     print("steps", sorted(steps))
-    assert "rc=0" in text, "agentos-shell-e2e sway failed"
+    # the whole line: an E2E step's JSON may contain "rc=0" too (the E2E-RPC line did) and hide a real rc=1
+    assert re.search(r"^rc=0$", text, re.M), "agentos-shell-e2e sway failed"
     for k in ["bound", "frame", "generated", "doubleClick", "crud", "version", "injection", "paging", "components", "invalidTree", "lists", "trusted", "slowReader", "degrade", "privacy", "done"]:
         assert k in steps, (k, sorted(steps))
     assert steps["bound"]["platform"] == "wayland"

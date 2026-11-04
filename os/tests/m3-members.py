@@ -48,7 +48,7 @@ def make_user(name, pw, tag):
 
 machine.start()
 machine.wait_for_unit("agentos-session-gateway.service")
-machine.succeed("systemctl show -p ActiveState --value agentos-broker.service | grep -qx inactive")  # no identity yet: skipped
+machine.succeed("systemctl show -p ActiveState --value agentos-broker.service | tee -p /dev/null | grep -qx inactive")  # no identity yet: skipped
 out = json.loads(must("printf 'alice-pw-1' | agentosctl firstboot --admin alice --workspace A"))
 machine.wait_for_unit("agentos-broker.service")  # started by agentos-broker.path once the identity exists
 ws_a = out["workspaceId"]
@@ -106,7 +106,7 @@ with subtest("broker protocol 3 end to end: an owner pause reaches the broker as
     def last_control():
         return machine.succeed(f"sqlite3 {hostdb} \"SELECT dispatch_state || ' ' || IFNULL(broker_result,'') FROM root_sync_outbox WHERE kind='control' ORDER BY created_at DESC, rowid DESC LIMIT 1\"").strip()
     def wait_control():
-        machine.wait_until_succeeds(f"sqlite3 {hostdb} \"SELECT dispatch_state FROM root_sync_outbox WHERE kind='control' ORDER BY created_at DESC, rowid DESC LIMIT 1\" | grep -qE '^(confirmed|failed)$'", timeout=120)
+        machine.wait_until_succeeds(f"sqlite3 {hostdb} \"SELECT dispatch_state FROM root_sync_outbox WHERE kind='control' ORDER BY created_at DESC, rowid DESC LIMIT 1\" | tee -p /dev/null | grep -qE '^(confirmed|failed)$'", timeout=120)
         return last_control()
     # the owner's pause travels Host → broker (machine mode wraps it in the protocol-3 workspace envelope)
     r = call(1, [fwd(ws_a, "maintenance.control.post", body={"action": "pause"}, idem="p3-1")], "p31")[0]
@@ -143,12 +143,12 @@ with subtest("F04a: broker cut from machined during a revocation: the gateway an
     mvg = int(sql(f"SELECT member_version FROM workspace_members WHERE workspace_id='{ws_a}' AND user_id='{fay}'"))
     r = call(1, [{"methodId": "members.setRole", "workspaceId": ws_a, "idempotencyKey": str(uuid.uuid4()), "body": {"userId": fay, "role": "editor", "expectedMemberVersion": mvg}}], "g2")[0]
     assert r["status"] == 200, r
-    machine.wait_until_succeeds(f"sqlite3 {BDB} \"SELECT state FROM machine_members WHERE store_uuid='{store_a}' AND user_id='{fay}'\" | grep -qx active", timeout=60)
+    machine.wait_until_succeeds(f"sqlite3 {BDB} \"SELECT state FROM machine_members WHERE store_uuid='{store_a}' AND user_id='{fay}'\" | tee -p /dev/null | grep -qx active", timeout=60)
     machine.succeed("systemctl stop agentos-broker.path agentos-broker.service")     # the broker loses machined
     rid_g = str(uuid.uuid4())
     r = call(1, [{"methodId": "members.revoke", "workspaceId": ws_a, "idempotencyKey": rid_g, "body": {"userId": fay}}], "g3")[0]
     assert r["status"] == 202, r
-    machine.wait_until_succeeds(f"sqlite3 {hostdb} \"SELECT COUNT(*) FROM revocation_receipts WHERE revocation_id='{rid_g}'\" | grep -qx 1", timeout=60)  # the Host applied it
+    machine.wait_until_succeeds(f"sqlite3 {hostdb} \"SELECT COUNT(*) FROM revocation_receipts WHERE revocation_id='{rid_g}'\" | tee -p /dev/null | grep -qx 1", timeout=60)  # the Host applied it
     time.sleep(10)
     assert sql(f"SELECT state FROM revocations WHERE revocation_id='{rid_g}'") == "revoking", "completed without the broker's ack"
     assert sql(f"SELECT state FROM workspace_members WHERE workspace_id='{ws_a}' AND user_id='{fay}'") == "revoking"
@@ -274,8 +274,8 @@ with subtest("the last owner cannot be removed; a disabled account gets nothing 
     machine.wait_until_fails("loginctl list-sessions --no-legend | grep -w erin", timeout=60)
     # root's su skips the password (pam_rootok), so prove it on the account itself and on a real VT login instead
     print(machine.succeed("passwd -S erin; chage -l erin"))
-    machine.succeed("passwd -S erin | awk '{print $2}' | grep -qx L")                 # password locked
-    machine.succeed("chage -l erin | grep 'Account expires' | grep -q 1970")          # account expired
+    machine.succeed("passwd -S erin | awk '{print $2}' | tee -p /dev/null | grep -qx L")                 # password locked
+    machine.succeed("chage -l erin | grep 'Account expires' | tee -p /dev/null | grep -q 1970")          # account expired
     machine.send_key("alt-f5")
     machine.succeed("chvt 5; systemctl start getty@tty5.service")
     machine.wait_until_tty_matches("5", "login: ")
@@ -297,7 +297,7 @@ with subtest("lock and logout end old session epochs (I10)"):
     assert lines[2]["status"] != 200, lines
     # a locked logind session (LockedHint) cannot bind
     tty_run(3, "busctl call org.freedesktop.login1 /org/freedesktop/login1/session/auto org.freedesktop.login1.Session SetLockedHint b true", "/tmp/l3")
-    machine.wait_until_succeeds(f"loginctl show-session {user_session('carol', 'tty3')} -p LockedHint | grep -q yes")
+    machine.wait_until_succeeds(f"loginctl show-session {user_session('carol', 'tty3')} -p LockedHint | tee -p /dev/null | grep -q yes")
     out = tty_run(3, f"{RPC} '[{{\"methodId\":\"session.bind\"}}]'", "/tmp/l4")
     lines = [json.loads(l) for l in out.splitlines() if l.startswith("{")]
     assert lines[0]["status"] != 200, lines
@@ -372,7 +372,7 @@ with subtest("delete: owner+admin, broker effect verdict, executors; UID and sto
     assert p["status"] == 201, p
     ok = confirm(p, "d5")
     assert '"succeeded"' in json.dumps(ok), ok
-    machine.wait_until_succeeds(f"sqlite3 /var/lib/agentos-machine/machine.sqlite \"SELECT delete_json FROM workspaces WHERE workspace_id='{ws_d}'\" | grep -q unresolvedEffects", timeout=60)
+    machine.wait_until_succeeds(f"sqlite3 /var/lib/agentos-machine/machine.sqlite \"SELECT delete_json FROM workspaces WHERE workspace_id='{ws_d}'\" | tee -p /dev/null | grep -q unresolvedEffects", timeout=60)
     assert sql(f"SELECT state FROM workspaces WHERE workspace_id='{ws_d}'") == "archived"
     machine.succeed(f"test -d /var/lib/agentos/workspaces/{ws_d}/data")
     # reconciled: the second deletion goes through
@@ -388,7 +388,7 @@ with subtest("delete: owner+admin, broker effect verdict, executors; UID and sto
     machine.wait_until_succeeds(f"test $(sqlite3 /var/lib/agentos-machine/machine.sqlite \"SELECT state FROM workspaces WHERE workspace_id='{ws_d}'\") = deleted", timeout=60)
     machine.fail(f"test -e /var/lib/agentos/workspaces/{ws_d}")
     machine.fail(f"test -e /var/lib/agentos-runtime/{ws_d}")
-    machine.succeed(f"passwd -S {login_d} | awk '{{print $2}}' | grep -q '^L'")        # account kept, locked: the UID is not reused
+    machine.succeed(f"passwd -S {login_d} | awk '{{print $2}}' | tee -p /dev/null | grep -q '^L'")        # account kept, locked: the UID is not reused
     machine.succeed(f"getent passwd {ud}")
     assert sql(f"SELECT store_uuid || ' ' || execution_uid FROM workspaces WHERE workspace_id='{ws_d}'") == f"{store_d} {ud}"
     r = call(1, [{"methodId": "workspaces.list"}], "d8")[0]
@@ -451,7 +451,7 @@ with subtest("delete with exported data only after an age copy of a set holding 
     machine.fail(f"test -e /var/lib/agentos/workspaces/{ws_x}")
     assert set_x in sql(f"SELECT delete_json FROM workspaces WHERE workspace_id='{ws_x}'")
     # the exported copy still restores the deleted workspace's data
-    machine.succeed(f"agentos-recovery-worker import --in /media/x/x1/ws-{ws_x}.age --identity /root/x.key --staging /root/xcheck | grep -q '\"ok\":true'")
+    machine.succeed(f"agentos-recovery-worker import --in /media/x/x1/ws-{ws_x}.age --identity /root/x.key --staging /root/xcheck | tee -p /dev/null | grep -q '\"ok\":true'")
 
 with subtest("owner transfer and disable: the old approvals wait for review; a stale memberVersion or plan is refused (I09, I12)"):
     # the machine holds at most 4 active local accounts (MAX_USERS): disable the two earlier accounts that own nothing
@@ -516,12 +516,12 @@ with subtest("owner transfer and disable: the old approvals wait for review; a s
     assert r["status"] == 200, r
     assert sql(f"SELECT role FROM workspace_members WHERE workspace_id='{ws_a}' AND user_id='{frank}'") == "owner"
     assert sql(f"SELECT role FROM workspace_members WHERE workspace_id='{ws_a}' AND user_id='{alice}'") != "owner"
-    machine.wait_until_succeeds(f"runuser -u {login_a} -- sqlite3 {hostdb} \"SELECT state FROM maintenance_policies WHERE id='i09-owner'\" | grep -qx paused_needs_review", timeout=90)
+    machine.wait_until_succeeds(f"runuser -u {login_a} -- sqlite3 {hostdb} \"SELECT state FROM maintenance_policies WHERE id='i09-owner'\" | tee -p /dev/null | grep -qx paused_needs_review", timeout=90)
     assert hq("SELECT state FROM maintenance_policies WHERE id='i09-editor'") == "enabled"
     # I09: disabling gina (owns nothing) puts her approval up for review as well
     p = call(1, [{"methodId": "machine.users.disable", "idempotencyKey": str(uuid.uuid4()), "body": {"userId": gina}}], "t12")[0]
     assert p["status"] == 201, p
     ok = call(1, [{"methodId": "machine.actions.confirm", "idempotencyKey": str(uuid.uuid4()), "body": {"operationId": p["body"]["operationId"], "planHash": p["body"]["planHash"], "password": "alice-pw-1"}}], "t13")[0]
     assert '"succeeded"' in json.dumps(ok), ok
-    machine.wait_until_succeeds(f"runuser -u {login_a} -- sqlite3 {hostdb} \"SELECT state FROM maintenance_policies WHERE id='i09-editor'\" | grep -qx paused_needs_review", timeout=90)
+    machine.wait_until_succeeds(f"runuser -u {login_a} -- sqlite3 {hostdb} \"SELECT state FROM maintenance_policies WHERE id='i09-editor'\" | tee -p /dev/null | grep -qx paused_needs_review", timeout=90)
     assert hq("SELECT COUNT(*) FROM maintenance_policies WHERE state IN ('enabled','syncing')") == "0"

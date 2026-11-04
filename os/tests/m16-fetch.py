@@ -37,7 +37,7 @@ NIX""")
     for p in closure:
         machine.fail(f"nix-store --check-validity {p}")
     machine.succeed("""cat > /root/serve.py <<'PY'
-import http.server, os, sys, time
+import http.server, os, re, sys, time
 ROOT, LOG = "/srv/cache", sys.argv[1]
 class H(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a): pass
@@ -78,7 +78,7 @@ with subtest("update fetch: a link loss leaves only complete paths; the same com
     machine.wait_until_succeeds("grep -q '^rc=' /tmp/u06-fetch-1.out", timeout=600)
     out1 = machine.succeed("cat /tmp/u06-fetch-1.out")
     print(out1)
-    assert "rc=0" not in out1 and "UPDATE_DOWNLOAD_INTERRUPTED" in out1, out1
+    assert re.search(r"^rc=[1-9][0-9]*$", out1, re.M) and "UPDATE_DOWNLOAD_INTERRUPTED" in out1, out1   # the rc line itself
     have = valid()
     print("present after the cut", len(have), "of", len(closure))
     assert 2 <= len(have) < len(closure), have

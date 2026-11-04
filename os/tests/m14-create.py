@@ -95,7 +95,7 @@ with subtest("Pi marker mismatch blocks new tasks; a missing agent.sqlite is nev
     print("B05 runs.post", r)
     assert r["status"] not in (200, 201, 202), r
     assert machine.succeed(f"sqlite3 {d1}/os.sqlite 'SELECT COUNT(*) FROM runs'").strip() == runs0          # no new task
-    machine.succeed(f"journalctl -b -o cat --no-pager _UID={u1} | grep -q 'workspace pairing failed'")
+    machine.succeed(f"journalctl -b -o cat --no-pager _UID={u1} | tee -p /dev/null | grep -q 'workspace pairing failed'")
     b05_stop()
     # (2) agent.sqlite missing for a bound workspace: refused, and no empty replacement store is created
     machine.succeed(f"rm -f {d1}/agent.sqlite {d1}/agent.sqlite-wal {d1}/agent.sqlite-shm")
@@ -104,7 +104,7 @@ with subtest("Pi marker mismatch blocks new tasks; a missing agent.sqlite is nev
     time.sleep(10)
     rc, st2 = machine.execute(f"ls -l {d1}/")
     print(st2)
-    machine.succeed(f"journalctl -b -o cat --no-pager _UID={u1} | grep -qE 'agent.sqlite was missing|refusing to create a replacement|agent.sqlite could not be opened'")
+    machine.succeed(f"journalctl -b -o cat --no-pager _UID={u1} | tee -p /dev/null | grep -qE 'agent.sqlite was missing|refusing to create a replacement|agent.sqlite could not be opened'")
     # whatever opened, a new empty Pi store never stands in for the lost one: either no file, or no workspace marker
     # and the Host stays blocked
     if machine.execute(f"test -e {d1}/agent.sqlite")[0] == 0:

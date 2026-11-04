@@ -246,7 +246,7 @@ def install_iso(cmd, name, serial):
     extra.append(iso)
     iso.start()
     iso_root_shell(iso)
-    rc, log = run(iso, "test -e /etc/agentos-install-medium.json && ! ip route | grep -q default && echo MEDIUM-OK", "env")
+    rc, log = run(iso, "test -e /etc/agentos-install-medium.json && ! ip route | tee -p /dev/null | grep -q default && echo MEDIUM-OK", "env")
     assert rc == 0 and "MEDIUM-OK" in log, log[-2000:]
     rc, log = run(iso, "agentos-install inspect | tail -n1 | sed 's/^/INSPECT:/'", "inspect")
     disks = {d["path"]: d for d in last_json(log, "INSPECT")["disks"]}

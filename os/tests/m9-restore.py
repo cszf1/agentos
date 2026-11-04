@@ -57,7 +57,7 @@ with subtest("a backup that dies under its barrier freezes every workspace; aban
         left = [l for l in procs if not (l.endswith(f"/user@{u}.service/init.scope") or f"/user@{u}.service/session.slice/dbus-broker.service" in l)]
         assert left == [], (u, left)
     # resources: the broker applied the barrier and refuses every new resource write (CHECKPOINT_INCOMPLETE) until release
-    machine.wait_until_succeeds("sqlite3 /var/lib/agentos-broker/broker.sqlite \"SELECT COUNT(*) FROM broker_meta WHERE key='machine_barrier'\" | grep -qx 1", timeout=60)
+    machine.wait_until_succeeds("sqlite3 /var/lib/agentos-broker/broker.sqlite \"SELECT COUNT(*) FROM broker_meta WHERE key='machine_barrier'\" | tee -p /dev/null | grep -qx 1", timeout=60)
     for ws, tag in ((ws_a, "f1"), (ws_b, "f2")):
         r = call(1, [{"methodId": "workspaces.attach", "workspaceId": ws, "idempotencyKey": str(uuid.uuid4()), "body": {}}], tag)[0]
         assert r["status"] != 200, r                           # no participant can start under the barrier
@@ -67,7 +67,7 @@ with subtest("a backup that dies under its barrier freezes every workspace; aban
     v = ctl("backup abandon")
     assert v["abandoned"], v
     assert sql("SELECT COUNT(*) FROM barriers WHERE state='held'") == "0"
-    machine.wait_until_succeeds("sqlite3 /var/lib/agentos-broker/broker.sqlite \"SELECT COUNT(*) FROM broker_meta WHERE key='machine_barrier'\" | grep -qx 0", timeout=60)
+    machine.wait_until_succeeds("sqlite3 /var/lib/agentos-broker/broker.sqlite \"SELECT COUNT(*) FROM broker_meta WHERE key='machine_barrier'\" | tee -p /dev/null | grep -qx 0", timeout=60)
     assert "abandoned" in sql("SELECT state FROM checkpoint_sets ORDER BY created_at DESC LIMIT 1")
 
 with subtest("one machine set over both workspaces, taken under one barrier, both restarted afterwards (R02, R01)"):
@@ -99,8 +99,8 @@ with subtest("a local set is not an off-machine copy until exported and read bac
     assert e["exportState"] == "verified" and e["offMachineCopy"] is True and len(e["files"]) == 3, e
     assert sql(f"SELECT export_state FROM checkpoint_sets WHERE set_id='{set_id}'") == "verified"
     # the copy really is a recoverable set: decrypt one workspace part to an empty staging dir and verify it
-    machine.succeed(f"agentos-recovery-worker import --in /media/offsite/m1/ws-{ws_a}.age --identity /root/off.key --staging /root/offcheck | grep -q '\"ok\":true'")
-    machine.succeed("age -d -i /root/off.key /media/offsite/m1/machine-set.json.age | grep -q agentos-machine-set")
+    machine.succeed(f"agentos-recovery-worker import --in /media/offsite/m1/ws-{ws_a}.age --identity /root/off.key --staging /root/offcheck | tee -p /dev/null | grep -q '\"ok\":true'")
+    machine.succeed("age -d -i /root/off.key /media/offsite/m1/machine-set.json.age | tee -p /dev/null | grep -q agentos-machine-set")
     # exporting a set that does not match machined's record is refused and changes nothing
     machine.succeed(f"cp -a {SNAP}/m1 /root/m1-bad && sed -i 's/agentos-machine-set/agentos-machine-sex/' /root/m1-bad/machine-set.json")
     rc, o = ctl(f"backup export --set /root/m1-bad --recipient {rec} --out /media/offsite/bad", ok=False)
@@ -112,7 +112,7 @@ with subtest("a local set is not an off-machine copy until exported and read bac
     # a per-mount flag that does not propagate into machined's sandbox namespace (review F10: ProtectSystem=strict),
     # so machined saw the store writable (run 41203693428); a filesystem-level remount is seen everywhere.
     machine.succeed(f"mount -t tmpfs -o size=64m agentos-ro-test {SNAP} && mount -o remount,ro {SNAP}")
-    machine.wait_until_succeeds(f"nsenter -t $(systemctl show -P MainPID agentos-machine.service) -m findmnt -no OPTIONS -T {SNAP} | grep -qw ro", timeout=10)
+    machine.wait_until_succeeds(f"nsenter -t $(systemctl show -P MainPID agentos-machine.service) -m findmnt -no OPTIONS -T {SNAP} | tee -p /dev/null | grep -qw ro", timeout=10)
     rc, o = ctl(f"backup --out {SNAP}/full", ok=False)
     assert rc != 0 and "MACHINE_CAPACITY" in o, o
     assert sql("SELECT COUNT(*) FROM barriers WHERE state='held'") == "0"
@@ -127,7 +127,7 @@ with subtest("a local set is not an off-machine copy until exported and read bac
 with subtest("after the backup: revoke bob, disable carol, leave a machine plan open"):
     r = call(1, [{"methodId": "members.revoke", "workspaceId": ws_a, "idempotencyKey": str(uuid.uuid4()), "body": {"userId": bob}}], "rv")[0]
     assert r["status"] == 202, r
-    machine.wait_until_succeeds(f"sqlite3 /var/lib/agentos-machine/machine.sqlite \"SELECT state FROM workspace_members WHERE workspace_id='{ws_a}' AND user_id='{bob}'\" | grep -qx revoked", timeout=90)
+    machine.wait_until_succeeds(f"sqlite3 /var/lib/agentos-machine/machine.sqlite \"SELECT state FROM workspace_members WHERE workspace_id='{ws_a}' AND user_id='{bob}'\" | tee -p /dev/null | grep -qx revoked", timeout=90)
     p = call(1, [{"methodId": "machine.users.disable", "idempotencyKey": str(uuid.uuid4()), "body": {"userId": carol}}], "dc")[0]
     ok = call(1, [{"methodId": "machine.actions.confirm", "idempotencyKey": str(uuid.uuid4()), "body": {"operationId": p["body"]["operationId"], "planHash": p["body"]["planHash"], "password": "alice-pw-1"}}], "dcc")[0]
     assert '"succeeded"' in json.dumps(ok), ok
@@ -200,7 +200,7 @@ with subtest("broker log lost: diagnostics only, never an empty log (R11)"):
     # agentos-broker.path would start the broker again the moment it stops (before the log is removed): hold it
     machine.succeed("systemctl stop agentos-broker.path agentos-broker.service; cp -a /var/lib/agentos-broker /tmp/broker-keep; rm -f /var/lib/agentos-broker/broker.sqlite*")
     machine.succeed("systemctl start agentos-broker.service")
-    machine.wait_until_succeeds("journalctl -u agentos-broker -b --no-pager | grep -q BROKER_HISTORY_MISSING", timeout=60)
+    machine.wait_until_succeeds("journalctl -u agentos-broker -b --no-pager | tee -p /dev/null | grep -q BROKER_HISTORY_MISSING", timeout=60)
     machine.fail("test -f /var/lib/agentos-broker/broker.sqlite")
     machine.succeed("systemctl stop agentos-broker.service; cp -a /tmp/broker-keep/. /var/lib/agentos-broker/; systemctl start agentos-broker.service agentos-broker.path")
     machine.wait_for_unit("agentos-broker.service")
@@ -240,16 +240,16 @@ with subtest("machine directory lost: recovery mode, then an explicit new identi
     assert st["meta"]["machineInstallId"] != mid0 and st["meta"]["firstBootState"] == "closed", st   # a new installation identity
     machine.wait_for_unit("agentos-broker.service")
     machine.succeed("test -f /var/lib/agentos-broker/broker.sqlite")
-    machine.fail(f"journalctl -u agentos-broker --since @{t_fb} --no-pager | grep -q 'BROKER_IDENTITY_MISMATCH\\|BROKER_HISTORY_MISSING'")
+    machine.fail(f"journalctl -u agentos-broker --since @{t_fb} --no-pager | tee -p /dev/null | grep -q 'BROKER_IDENTITY_MISMATCH\\|BROKER_HISTORY_MISSING'")
 
 with subtest("only the broker log lost, machine directory intact: refused without authorization, recovery mode, explicit new identity (R11, review F07)"):
     mid1 = ctl("status")["meta"]["machineInstallId"]
     # the broker of the new identity has acknowledged registry messages, so it had a log
-    machine.wait_until_succeeds("sqlite3 /var/lib/agentos-machine/machine.sqlite \"SELECT COUNT(*) > 0 FROM registry_outbox WHERE target_kind='broker' AND state='acked'\" | grep -qx 1", timeout=120)
+    machine.wait_until_succeeds("sqlite3 /var/lib/agentos-machine/machine.sqlite \"SELECT COUNT(*) > 0 FROM registry_outbox WHERE target_kind='broker' AND state='acked'\" | tee -p /dev/null | grep -qx 1", timeout=120)
     t_loss = machine.succeed("date +%s").strip()
     machine.succeed("systemctl stop agentos-broker.path agentos-broker.service; rm -f /var/lib/agentos-broker/broker.sqlite*")
     machine.succeed("systemctl start agentos-broker.service")
-    machine.wait_until_succeeds(f"journalctl -u agentos-broker --since @{t_loss} --no-pager | grep -q BROKER_HISTORY_MISSING", timeout=60)
+    machine.wait_until_succeeds(f"journalctl -u agentos-broker --since @{t_loss} --no-pager | tee -p /dev/null | grep -q BROKER_HISTORY_MISSING", timeout=60)
     machine.succeed("test -f /var/lib/agentos-machine/machine.sqlite")              # only the broker log is gone
     # machined still on the old identity: a new identity is refused without the explicit flag
     rc, o = ctl("recover --new-identity", ok=False)
@@ -278,4 +278,4 @@ with subtest("only the broker log lost, machine directory intact: refused withou
     assert st["meta"]["machineInstallId"] not in (mid0, mid1) and st["meta"]["firstBootState"] == "closed", st
     machine.wait_for_unit("agentos-broker.service")
     machine.wait_until_succeeds("test -f /var/lib/agentos-broker/broker.sqlite", timeout=60)
-    machine.fail(f"journalctl -u agentos-broker --since @{t_fb2} --no-pager | grep -q 'BROKER_IDENTITY_MISMATCH\\|BROKER_HISTORY_MISSING'")
+    machine.fail(f"journalctl -u agentos-broker --since @{t_fb2} --no-pager | tee -p /dev/null | grep -q 'BROKER_IDENTITY_MISMATCH\\|BROKER_HISTORY_MISSING'")

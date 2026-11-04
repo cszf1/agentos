@@ -52,7 +52,7 @@ with subtest("administration without root: root is locked, the administrator has
     # (this test VM carries the NixOS test instrumentation, which gives root a password; the installed release's
     # locked root is checked from its own disk in m19-iso)
     print("root in the test VM:", machine.succeed("passwd -S root"))
-    machine.fail("id -nG alice | grep -qw wheel")
+    machine.fail("id -nG alice | tee -p /dev/null | grep -qw wheel")
     machine.fail("su - alice -c 'sudo -n true' 2>/dev/null")
     p = call(1, [{"methodId": "machine.users.create", "idempotencyKey": str(uuid.uuid4()), "body": {"loginName": "carl", "role": "user", "password": "carl-pw-1"}}], "uc")[0]
     ok = call(1, [{"methodId": "machine.actions.confirm", "idempotencyKey": str(uuid.uuid4()), "body": {"operationId": p["body"]["operationId"], "planHash": p["body"]["planHash"], "password": "alice-pw-1"}}], "ucc")[0]

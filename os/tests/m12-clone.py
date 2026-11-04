@@ -36,7 +36,7 @@ with subtest("source: a code app generated and running before the set is taken (
     b = r.get("body") or {}
     b = b.get("data") or b
     run_k = b["runId"]
-    machine.wait_until_succeeds(f"sqlite3 {osa} \"SELECT status FROM runs WHERE id='{run_k}'\" | grep -qE '^(succeeded|failed|cancelled)$'", timeout=600)
+    machine.wait_until_succeeds(f"sqlite3 {osa} \"SELECT status FROM runs WHERE id='{run_k}'\" | tee -p /dev/null | grep -qE '^(succeeded|failed|cancelled)$'", timeout=600)
     st_k = machine.succeed(f"sqlite3 {osa} \"SELECT status FROM runs WHERE id='{run_k}'\"").strip()
     assert st_k == "succeeded", st_k
     app_k = machine.succeed(f"sqlite3 {osa} \"SELECT target_app_id FROM runs WHERE id='{run_k}'\"").strip()
@@ -75,7 +75,7 @@ machine.copy_from_host(str(source.out_dir / "carry.tar"), "/root/carry.tar")
 machine.succeed("tar -C /root -xf /root/carry.tar")
 
 with subtest("target: the copy is decrypted and verified; a damaged part refuses the whole clone"):
-    machine.succeed(f"agentos-recovery-worker import --in /root/carry/ws-{ws_a}.age --identity /root/carry/c.key --staging /root/cset/ws/{ws_a} | grep -q '\"ok\":true'")
+    machine.succeed(f"agentos-recovery-worker import --in /root/carry/ws-{ws_a}.age --identity /root/carry/c.key --staging /root/cset/ws/{ws_a} | tee -p /dev/null | grep -q '\"ok\":true'")
     machine.succeed("age -d -i /root/carry/c.key -o /root/cset/machine-set.json /root/carry/machine-set.json.age")
     machine.succeed("cp -a /root/cset /root/cbad && f=$(ls /root/cbad/ws/*/data/os.sqlite) && printf 'x' >> $f")
     rc, o = ctl("clone --set /root/cbad --owner bea", ok=False)
@@ -121,13 +121,13 @@ with subtest("clone: new workspace, new execution account under the local owner;
     assert q("SELECT group_concat(user_id) FROM membership_mirror") == bea
     assert q(f"SELECT COUNT(*) FROM membership_mirror WHERE user_id='{alice}'") == "0"
     # the clone's broker on this machine knows only this machine's registration
-    machine.wait_until_succeeds(f"sqlite3 /var/lib/agentos-broker/broker.sqlite \"SELECT COUNT(*) FROM machine_hosts WHERE store_uuid='{store}'\" | grep -qx 1", timeout=60)
+    machine.wait_until_succeeds(f"sqlite3 /var/lib/agentos-broker/broker.sqlite \"SELECT COUNT(*) FROM machine_hosts WHERE store_uuid='{store}'\" | tee -p /dev/null | grep -qx 1", timeout=60)
 
 with subtest("containers on the new UID come from the fixed release images; the source graphroot never travels (M04)"):
     login_n = sql(f"SELECT exec_login FROM workspaces WHERE workspace_id='{ws_n}'")
     assert int(machine.succeed(f"id -u {login_n}").strip()) == uid_n
     # nothing of a Podman store came with the set: the part holds only the workspace data tree
-    machine.fail("find /root/cset -path '*containers*' -o -name 'overlay*' | grep -q .")
+    machine.fail("find /root/cset -path '*containers*' -o -name 'overlay*' | tee -p /dev/null | grep -q .")
     machine.succeed(f"test \"$(find /var/lib/agentos-runtime/{ws_n} ! -uid {uid_n} 2>/dev/null | wc -l)\" = 0")
     machine.wait_until_succeeds(f"test -S /run/user/{uid_n}/podman/podman.sock", timeout=120)
     machine.succeed("ip route del default 2>/dev/null; ip -6 route del default 2>/dev/null; true")

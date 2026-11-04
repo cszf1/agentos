@@ -209,7 +209,7 @@ with subtest("lock: the accepted run's request completes inside its scope; the l
     pre = call(1, [{"methodId": "machine.actions.plan", "idempotencyKey": str(uuid.uuid4()), "body": {"kind": "workspaces.runWhenLoggedOut", "params": {"workspaceId": ws_a, "enabled": True}}}], "i10pre")[0]
     assert pre["status"] == 201, pre
     tty_run(1, "busctl call org.freedesktop.login1 /org/freedesktop/login1/session/auto org.freedesktop.login1.Session SetLockedHint b true", "/tmp/i10l")
-    machine.wait_until_succeeds(f"loginctl show-session {sess} -p LockedHint | grep -q yes")
+    machine.wait_until_succeeds(f"loginctl show-session {sess} -p LockedHint | tee -p /dev/null | grep -q yes")
     out = tty_run(1, f"{RPC} '[{{\"methodId\":\"session.bind\"}}]'", "/tmp/i10b")
     assert '"status": 200' not in out, out                          # no new request from the locked session
     machine.wait_until_succeeds(f"test $(grep -c '\"ev\": \"end\", \"ws\": \"{ws_b}\"' {FM}/log.jsonl) -gt {e0}", timeout=120)
@@ -273,12 +273,12 @@ with subtest("VM power cut with a model request in flight: identity kept, the he
         print("permit after power cut", p, st)
         assert st == "released:unknown", st                           # another boot: the holder is gone; maybe-sent is charged
     assert sql("SELECT COUNT(*) FROM machine_permits WHERE state IN ('reserved','in_use','reconciling')") == "0"
-    machine.succeed("sqlite3 /var/lib/agentos-machine/machine.sqlite 'PRAGMA integrity_check' | grep -qx ok")
+    machine.succeed("sqlite3 /var/lib/agentos-machine/machine.sqlite 'PRAGMA integrity_check' | tee -p /dev/null | grep -qx ok")
     tty_login(1, "alice", "alice-pw-1")
     r = call(1, [{"methodId": "workspaces.list"}], "pcl")[0]
     assert r["status"] == 200, r
     # machined marks the workspaces it still called running (no Host on this boot) stopped, so attach starts them
-    machine.succeed("journalctl -b -u agentos-machine.service -o cat --no-pager | grep -q 'had no Host on this boot'")
+    machine.succeed("journalctl -b -u agentos-machine.service -o cat --no-pager | tee -p /dev/null | grep -q 'had no Host on this boot'")
     for ws, tag in ((ws_a, "pca"), (ws_b, "pcb")):
         r = call(1, [{"methodId": "workspaces.attach", "workspaceId": ws, "idempotencyKey": str(uuid.uuid4()), "body": {}}], tag)[0]
         if r["status"] != 200:
@@ -286,7 +286,7 @@ with subtest("VM power cut with a model request in flight: identity kept, the he
         assert r["status"] == 200, r
     ua = machine.succeed(f"stat -c %u /var/lib/agentos/workspaces/{ws_a}/data").strip()
     machine.wait_until_succeeds(f"pgrep -u {ua} -f packages/host/dist/main.js", timeout=120)
-    machine.succeed(f"runuser -u $(id -nu {ua}) -- sqlite3 /var/lib/agentos/workspaces/{ws_a}/data/os.sqlite 'PRAGMA integrity_check' | grep -qx ok")
+    machine.succeed(f"runuser -u $(id -nu {ua}) -- sqlite3 /var/lib/agentos/workspaces/{ws_a}/data/os.sqlite 'PRAGMA integrity_check' | tee -p /dev/null | grep -qx ok")
     ok = False
     for _ in range(30):
         r = call(1, [fwd(ws_a, "runs.list")], "pcr")[0]

@@ -80,25 +80,25 @@ with subtest("first boot cut off after install.ensure and before closeFirstBoot:
     machine.wait_for_unit("multi-user.target")          # first setup has finished, so boot completes
     assert sql("SELECT first_boot_state FROM machine_meta") == "closed"
     assert sql("SELECT COUNT(*) FROM users WHERE role = 'admin' AND state = 'active'") == "1"
-    machine.succeed("journalctl -b -o cat --no-pager -t agentos-first-setup | grep -q 'first boot completed for administrator alice'")
+    machine.succeed("journalctl -b -o cat --no-pager -t agentos-first-setup | tee -p /dev/null | grep -q 'first boot completed for administrator alice'")
 
 with subtest("no DRM device on QEMU's SVGA II: greetd is not started or retried, tty1 says why, the tty2 text login keeps the console"):
     # If this precondition ever fails (a QEMU that vmwgfx accepts), ReGreet can be checked here instead.
-    machine.succeed("dmesg | grep -q 'vmwgfx.*probe with driver vmwgfx failed'")
+    assert log_has("journalctl -k -b -o cat --no-pager", r"vmwgfx.*probe with driver vmwgfx failed"), "vmwgfx did not fail its probe"
     machine.fail("ls /dev/dri/card*")
     greetd_diag("no DRM device, first boot just closed")
     # The KMS check waits 10 s for a card (as Cage would) before the notice. The tty2 login may take longer than that,
     # so the boot's round can be over before the console is watched: log in, let it finish, then run a round of its
     # own (greetd started again, as the notice does on Enter) while tty2 is watched.
     tty_login(2, "alice", "alice-pw-1")
-    machine.wait_until_succeeds("journalctl -b -o cat --no-pager -t agentos-greeter-fallback | grep -q 'login screen not started'", timeout=120)
+    machine.wait_until_succeeds("journalctl -b -o cat --no-pager -t agentos-greeter-fallback | tee -p /dev/null | grep -q 'login screen not started'", timeout=120)
     greetd_diag("tty2 login done, boot round over")
     assert skips() == 1, skips()
     machine.succeed("systemctl stop agentos-greeter-fallback.service; systemctl start --no-block greetd.service")
     polls = vt_stays(2, lambda: not_started() >= 2, timeout=120)
     print(f"tty2 kept the console for {polls} polls through a KMS check and the notice")
     greetd_diag("second notice shown")
-    machine.succeed("loginctl list-sessions --no-legend | grep -w alice | grep -qw tty2")
+    machine.succeed("loginctl list-sessions --no-legend | grep -w alice | tee -p /dev/null | grep -qw tty2")
     # One check per start, no retry: Restart=always never restarts a skipped ExecCondition (systemd service.c
     # service_shall_restart, SERVICE_SKIP_CONDITION), and greetd's main process (the VT1 switch) never ran.
     assert skips() == 2, skips()
@@ -114,7 +114,7 @@ with subtest("no DRM device on QEMU's SVGA II: greetd is not started or retried,
     assert "restart" not in tty1.split("Last messages")[0], tty1
     machine.send_key("ret")
     # Enter starts greetd again: one more 10 s check, one more notice; back on tty2 the console stays there throughout
-    machine.wait_until_succeeds("journalctl -b -o cat --no-pager -t agentos-greeter-fallback | grep -q 'starting the login screen again'", timeout=30)
+    machine.wait_until_succeeds("journalctl -b -o cat --no-pager -t agentos-greeter-fallback | tee -p /dev/null | grep -q 'starting the login screen again'", timeout=30)
     machine.send_key("alt-f2")
     machine.wait_until_succeeds("grep -qx tty2 /sys/class/tty/tty0/active", timeout=30)
     vt_stays(2, lambda: not_started() >= 3, timeout=120)
@@ -122,7 +122,7 @@ with subtest("no DRM device on QEMU's SVGA II: greetd is not started or retried,
     assert skips() == 3, skips()
     assert machine.succeed("systemctl show -p NRestarts --value greetd.service").strip() == "0"
     assert gave_up() == "0"
-    machine.succeed("loginctl list-sessions --no-legend | grep -w alice | grep -qw tty2")
+    machine.succeed("loginctl list-sessions --no-legend | grep -w alice | tee -p /dev/null | grep -qw tty2")
 
 with subtest("an install from before the first-boot-closed marker: machined restores it before ready, no first boot"):
     machine.succeed(f"rm {MARKER}")
@@ -131,7 +131,7 @@ with subtest("an install from before the first-boot-closed marker: machined rest
     machine.wait_for_unit("agentos-machine.service")
     machine.succeed(f"test -s {MARKER}")
     # greetd is started (not held by first setup); on this VM without a DRM card its KMS check runs and skips it
-    machine.wait_until_succeeds("journalctl -b -o cat --no-pager -t agentos-greeter | grep -q '^no display device'", timeout=300)
+    machine.wait_until_succeeds("journalctl -b -o cat --no-pager -t agentos-greeter | tee -p /dev/null | grep -q '^no display device'", timeout=300)
     greetd_diag("boot with the marker restored")
     assert machine.succeed("systemctl show -p ConditionResult --value agentos-first-setup.service").strip() == "no"
     assert machine.succeed("systemctl show -p ExecMainStartTimestampMonotonic --value agentos-first-setup.service").strip() == "0"

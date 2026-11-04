@@ -1,6 +1,7 @@
 # Native Shell end to end (see m13-native.nix). Results are "KVM VM" evidence; the Shell renders offscreen (no real
 # display), driven through its own pages' buttons, Home intent field and app view (records form/search).
 import contextlib
+import re
 machine.start()
 machine.wait_for_unit("agentos-session-gateway.service")
 fb = json.loads(must("printf 'alice-pw-1' | agentosctl firstboot --admin alice --workspace A"))
@@ -53,7 +54,7 @@ def e2e(phase, timeout, extra_env=""):
         text = machine.execute(f"cat {out}")[1]
         print(text[-12000:])
         print(f"e2e {phase}: {time.time() - t0:.0f} s")
-    if "rc=0" not in text:
+    if not re.search(r"^rc=0$", text, re.M):   # the whole line, not a substring of an E2E step's JSON
         print(machine.execute(f"journalctl --no-pager -n 80 -u agentos-session-gateway; tail -60 /var/lib/agentos/workspaces/{ws}/data/logs/*.log")[1])
         raise Exception(f"agentos-shell-e2e {phase} failed")
     steps = {}
@@ -106,7 +107,7 @@ with item("real session: a query in flight in A, then rapid A→B→A→B switch
 with item("no model: generation visibly unavailable; CRUD, query, version switch and deterministic maintenance still work offline (O03)"):
     machine.succeed("echo AGENTOS_MODEL_MODE=real > /run/agentos-test/model.env")   # real mode, no provider configured
     machine.succeed("ip route del default 2>/dev/null; ip -6 route del default 2>/dev/null; true")
-    machine.fail("ip route | grep -q default")
+    machine.fail("ip route | tee -p /dev/null | grep -q default")
     r = call(1, [{"methodId": "workspaces.stop", "workspaceId": ws, "idempotencyKey": str(uuid.uuid4()), "body": {}}], "stop")[0]
     assert r["status"] == 200, r
     machine.wait_until_fails(f"pgrep -u {uid} -f packages/host/dist/main.js", timeout=60)
@@ -123,7 +124,7 @@ with item("no model: generation visibly unavailable; CRUD, query, version switch
     r = call(1, [fwd(ws, "maintenance.checks.post", {"templateId": "log-cleanup", "target": {"kind": "workspace", "id": "workspace"}}, idem="o3-chk")], "o3c")[0]
     assert r["status"] == 202, r
     job = r["body"]["data"]["jobId"]   # Host answers {data: ...}
-    machine.wait_until_succeeds(f"sqlite3 {OS} \"SELECT state FROM maintenance_jobs WHERE id='{job}'\" | grep -Eqx 'succeeded|no_change|awaiting_approval'", timeout=120)
+    machine.wait_until_succeeds(f"sqlite3 {OS} \"SELECT state FROM maintenance_jobs WHERE id='{job}'\" | tee -p /dev/null | grep -Eqx 'succeeded|no_change|awaiting_approval'", timeout=120)
     show = f"SELECT state || ' ' || COALESCE(outcome_reason,'') || ' run=' || COALESCE(run_id,'') FROM maintenance_jobs WHERE id='{job}'"
     print("O03 maintenance:", hsql(show))
     # spec O03 says authorized maintenance: in suggest mode the owner's approval is the authorization, and the approved
@@ -131,7 +132,7 @@ with item("no model: generation visibly unavailable; CRUD, query, version switch
     if hsql(f"SELECT state FROM maintenance_jobs WHERE id='{job}'") == "awaiting_approval":
         r = call(1, [fwd(ws, "maintenance.jobs.approve.post", {}, params={"id": job}, idem="o3-approve")], "o3a")[0]
         assert r["status"] == 202, r
-        machine.wait_until_succeeds(f"sqlite3 {OS} \"SELECT state FROM maintenance_jobs WHERE id='{job}'\" | grep -Eqx 'succeeded|no_change'", timeout=120)
+        machine.wait_until_succeeds(f"sqlite3 {OS} \"SELECT state FROM maintenance_jobs WHERE id='{job}'\" | tee -p /dev/null | grep -Eqx 'succeeded|no_change'", timeout=120)
         print("O03 maintenance approved:", hsql(show))
     assert hsql("SELECT COUNT(*) FROM runs") == runs_before
 
@@ -185,8 +186,8 @@ with item("machined unreachable: a new build stops before any builder starts and
     machine.succeed("systemctl start agentos-machine.service")
     machine.wait_for_unit("agentos-machine.service")
     # the waiting build gets its slot and leaves the queue; the Host records the recovery
-    machine.wait_until_succeeds(f"sqlite3 {OS} \"SELECT status FROM build_jobs WHERE id='{job[0]}'\" | grep -qv '^queued$'", timeout=300)
-    machine.wait_until_succeeds(f"sqlite3 {OS} \"SELECT COUNT(*) FROM events WHERE kind='machine.reachable'\" | grep -qv '^0$'", timeout=60)
+    machine.wait_until_succeeds(f"sqlite3 {OS} \"SELECT status FROM build_jobs WHERE id='{job[0]}'\" | tee -p /dev/null | grep -qv '^queued$'", timeout=300)
+    machine.wait_until_succeeds(f"sqlite3 {OS} \"SELECT COUNT(*) FROM events WHERE kind='machine.reachable'\" | tee -p /dev/null | grep -qv '^0$'", timeout=60)
     print("S08 build after recovery:", hsql(f"SELECT status || ' ' || COALESCE(error_json,'') FROM build_jobs WHERE id='{job[0]}'"))
 
 assert not failed, failed

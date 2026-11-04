@@ -34,7 +34,7 @@ with subtest("known-good and candidate entries are complete; the default is know
     write_entry(CAND)
     machine.succeed(f"test -s /boot/loader/entries/agentos-{CAND}.conf && test -s /boot/EFI/agentos/{CAND}/linux && test -s /boot/EFI/agentos/{CAND}/initrd")
     # foreign entries (NixOS' own generations) exist and are not registered
-    machine.succeed("ls /boot/loader/entries/ | grep -v '^agentos-' | grep -q .")
+    machine.succeed("ls /boot/loader/entries/ | grep -v '^agentos-' | tee -p /dev/null | grep -q .")
 
 with subtest("first boot into known-good from the persistent default"):
     machine.shutdown()
@@ -49,7 +49,7 @@ with subtest("space or power not met: nothing is armed, entries and default unto
         rc, out = machine.execute(f"{UW} arm --esp /boot --release-id {CAND} --known-good {GOOD} {extra}")
         print(out)
         assert rc != 0 and "UPDATE_PRECONDITION" in out, out
-    machine.fail("bootctl status 2>/dev/null | grep -i 'oneshot' | grep -q agentos-")
+    machine.fail("bootctl status 2>/dev/null | grep -i 'oneshot' | tee -p /dev/null | grep -q agentos-")
     assert machine.succeed("bootctl status 2>/dev/null | grep -iE 'default|oneshot' ; ls -l /boot/loader/entries/").strip() == before
 
 with subtest("one-shot trial boots the candidate exactly once; default unchanged (U08)"):
@@ -251,7 +251,7 @@ with subtest("release verification: tampered manifest/closure/OCI/signature, unk
     assert rc != 0 and "UPDATE_SIGNATURE_INVALID" in o, o
     # nothing above registered a release, and the store keeps require-sigs
     assert machine.succeed("sqlite3 /var/lib/agentos-machine/machine.sqlite 'SELECT COUNT(*) FROM releases' 2>/dev/null || echo 0").strip() == "0"
-    machine.succeed("nix --extra-experimental-features nix-command config show require-sigs 2>/dev/null | grep -qx true || nix show-config 2>/dev/null | grep -q '^require-sigs = true'")
+    machine.succeed("nix --extra-experimental-features nix-command config show require-sigs 2>/dev/null | tee -p /dev/null | grep -qx true || nix show-config 2>/dev/null | tee -p /dev/null | grep -q '^require-sigs = true'")
 
 with subtest("a commit behind a failing health gate leaves the persistent default on known-good (U09)"):
     efi = "/sys/firmware/efi/efivars/LoaderEntryDefault-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f"
@@ -267,7 +267,7 @@ with subtest("a commit behind a failing health gate leaves the persistent defaul
     # still refused and names the broker's own readiness answer
     machine.succeed("systemctl stop agentos-broker.path agentos-broker.service; mkdir -p /root/broker-keep; mv /var/lib/agentos-broker/broker.sqlite* /root/broker-keep/")
     machine.succeed("systemctl start agentos-broker.service")
-    machine.wait_until_succeeds("journalctl -u agentos-broker -b --no-pager | grep -q 'diagnostics-only mode'", timeout=60)
+    machine.wait_until_succeeds("journalctl -u agentos-broker -b --no-pager | tee -p /dev/null | grep -q 'diagnostics-only mode'", timeout=60)
     machine.succeed("systemctl is-active agentos-broker.service && test -S /run/agentos-broker/broker.sock")
     rc, out = machine.execute(f"{UW} commit --release-id {GOOD} --health-gate --state-dir /var/lib/agentos-machine")
     print(out)
@@ -397,7 +397,7 @@ with subtest("commit window: a crash after the intent or after the default resol
         assert booted_release() == rid, booted_release()
         machine.wait_for_unit("agentos-update-reconcile.service")       # the boot unit entered validation
         print(machine.succeed("journalctl -b -o cat --no-pager -u agentos-update-reconcile.service | tail -40"))
-        machine.succeed("journalctl -b -o cat --no-pager -u agentos-update-reconcile.service | grep -q enter_validating")
+        machine.succeed("journalctl -b -o cat --no-pager -u agentos-update-reconcile.service | tee -p /dev/null | grep -q enter_validating")
         r = ctl("reconcile")                                               # running it again changes nothing
         print("reconcile (trial boot, again)", r)
         assert r["action"]["action"] == "none" and r["state"] == "validating", r
@@ -433,7 +433,7 @@ with subtest("commit window: a crash after the intent or after the default resol
     assert booted_release() == CAND, booted_release()
     machine.wait_for_unit("agentos-update-reconcile.service")
     print(machine.succeed("journalctl -b -o cat --no-pager -u agentos-update-reconcile.service | tail -40"))
-    machine.succeed("journalctl -b -o cat --no-pager -u agentos-update-reconcile.service | grep -q resume_commit_set_default")
+    machine.succeed("journalctl -b -o cat --no-pager -u agentos-update-reconcile.service | tee -p /dev/null | grep -q resume_commit_set_default")
     assert mok("updates.get", {"updateId": u1})["state"] == "committed"
     assert default_entry() == f"agentos-{C1}.conf", default_entry()
     committed_once(u1, C1)
@@ -459,7 +459,7 @@ with subtest("commit window: a crash after the intent or after the default resol
     assert booted_release() == C2, booted_release()
     machine.wait_for_unit("agentos-update-reconcile.service")
     print(machine.succeed("journalctl -b -o cat --no-pager -u agentos-update-reconcile.service | tail -40"))
-    machine.succeed("journalctl -b -o cat --no-pager -u agentos-update-reconcile.service | grep -q finish_commit")
+    machine.succeed("journalctl -b -o cat --no-pager -u agentos-update-reconcile.service | tee -p /dev/null | grep -q finish_commit")
     assert mok("updates.get", {"updateId": u2})["state"] == "committed"
     committed_once(u2, C2)
 

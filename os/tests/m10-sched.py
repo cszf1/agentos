@@ -162,7 +162,7 @@ with subtest("machined unreachable: bound sessions degrade (reads, brief writes)
     rid8 = (wr.get("body") or {}).get("data", wr.get("body") or {}).get("runId")
     assert rid8, wr
     # the accepted run sends nothing while machined is away; the Host records why
-    machine.wait_until_succeeds(f"sqlite3 {OSB} \"SELECT COUNT(*) FROM events WHERE kind='machine.unreachable'\" | grep -qv '^0$'", timeout=60)
+    machine.wait_until_succeeds(f"sqlite3 {OSB} \"SELECT COUNT(*) FROM events WHERE kind='machine.unreachable'\" | tee -p /dev/null | grep -qv '^0$'", timeout=60)
     print(machine.succeed(f"sqlite3 {OSB} \"SELECT payload_json FROM events WHERE kind='machine.unreachable' ORDER BY rowid DESC LIMIT 1\""))
     st_run = machine.succeed(f"sqlite3 {OSB} \"SELECT status FROM runs WHERE id='{rid8}'\"").strip()
     assert st_run in ("queued", "running"), st_run                       # waiting, not failed/stopped as 'budget'
@@ -189,7 +189,7 @@ with subtest("machined unreachable: bound sessions degrade (reads, brief writes)
     machine.wait_for_unit("agentos-machine.service")
     # the run accepted during the outage now gets its permit and reaches the model; the Host records the recovery
     machine.wait_until_succeeds(f"test $(grep -c '\"ev\": \"start\"' {FM}/log.jsonl) -gt {n0}", timeout=180)
-    machine.wait_until_succeeds(f"sqlite3 {OSB} \"SELECT COUNT(*) FROM events WHERE kind='machine.reachable'\" | grep -qv '^0$'", timeout=60)
+    machine.wait_until_succeeds(f"sqlite3 {OSB} \"SELECT COUNT(*) FROM events WHERE kind='machine.reachable'\" | tee -p /dev/null | grep -qv '^0$'", timeout=60)
     r = call(1, [{"methodId": "workspaces.list"}, {"methodId": "session.status"}], "s8c")
     assert r[0]["status"] == 200 and r[1]["body"]["machine"]["reachable"] is True, r
 
@@ -207,7 +207,7 @@ with subtest("the machine's 24-hour model budget stops a real Host's run before 
     rid = run(1, ws_a, "做一个预算之外的应用", "day1")
     OSA = f"/var/lib/agentos/workspaces/{ws_a}/data/os.sqlite"
     # the Host is refused at admission (before any attempt row may be written) and ends the run
-    machine.wait_until_succeeds(f"sqlite3 {OSA} \"SELECT status FROM runs WHERE id='{rid}'\" | grep -qE '^(failed|cancelled)$'", timeout=120)
+    machine.wait_until_succeeds(f"sqlite3 {OSA} \"SELECT status FROM runs WHERE id='{rid}'\" | tee -p /dev/null | grep -qE '^(failed|cancelled)$'", timeout=120)
     time.sleep(5)
     att = machine.succeed(f"sqlite3 {OSA} \"SELECT state FROM model_attempts WHERE run_id='{rid}'\"").split()
     print("day-budget run attempts", att, machine.succeed(f"sqlite3 {OSA} \"SELECT status, IFNULL(error_json,'') FROM runs WHERE id='{rid}'\" 2>&1 || true"))
@@ -274,7 +274,7 @@ with subtest("Host SIGKILL with a model permit in use: held until the successor 
     machine.succeed(f"kill -KILL {old}")
     machine.wait_until_fails(f"kill -0 {old}", timeout=30)
     # the successor Host (systemd restart) says hello with a new instance; only then is the slot given up, as unknown
-    machine.wait_until_succeeds(f"pgrep -u {ua} -f packages/host/dist/main.js | grep -vqx {old}", timeout=120)
+    machine.wait_until_succeeds(f"pgrep -u {ua} -f packages/host/dist/main.js | tee -p /dev/null | grep -vqx {old}", timeout=120)
     machine.wait_until_succeeds(f"test \"$(sqlite3 /var/lib/agentos-machine/machine.sqlite \"SELECT state || ':' || usage_status FROM machine_permits WHERE permit_id='{P}'\")\" = released:unknown", timeout=120)
     new_inst = sql(f"SELECT instance_id FROM workspace_instances WHERE workspace_id='{ws_a}' AND state='running'")
     assert new_inst and new_inst != inst_old, (new_inst, inst_old)
@@ -298,7 +298,7 @@ with subtest("background model work: at most one background request on the machi
     convs = {}
     for w, tag, intent in ((ws_a, "bg-a1", "做一个书签应用"), (ws_a, "bg-a2", "做一个菜谱应用"), (ws_b, "bg-b1", "做一个旅行清单"), (ws_b, "bg-b2", "做一个药品提醒")):
         rid = run(1, w, intent, tag)
-        machine.wait_until_succeeds(f"sqlite3 {OSDB(w)} \"SELECT status FROM runs WHERE id='{rid}'\" | grep -qE '^(succeeded|failed|cancelled)$'", timeout=240)
+        machine.wait_until_succeeds(f"sqlite3 {OSDB(w)} \"SELECT status FROM runs WHERE id='{rid}'\" | tee -p /dev/null | grep -qE '^(succeeded|failed|cancelled)$'", timeout=240)
         convs[tag] = wsql(w, f"SELECT conversation_id FROM runs WHERE id='{rid}'")
         assert convs[tag], (tag, rid)
     def compact(w, tag):
@@ -359,7 +359,7 @@ with subtest("background model work: at most one background request on the machi
         bg_new = int(sql("SELECT COUNT(*) FROM machine_permits WHERE resource_class='model' AND priority='background' AND state='reserved'"))
         assert not (fg_q and bg_new), (fg_q, bg_new)                                 # no background reservation while a user task holds/waits
     sample(40, no_bg_with_fg)
-    machine.wait_until_succeeds(f"sqlite3 {OSDB(ws_a)} \"SELECT status FROM runs WHERE id='{fg}'\" | grep -qE '^(succeeded|failed|cancelled)$'", timeout=240)
+    machine.wait_until_succeeds(f"sqlite3 {OSDB(ws_a)} \"SELECT status FROM runs WHERE id='{fg}'\" | tee -p /dev/null | grep -qE '^(succeeded|failed|cancelled)$'", timeout=240)
     machine.wait_until_succeeds(f"test $(python3 -c \"import json;print(sum(1 for l in open('{FM}/log.jsonl').readlines()[{n_log}:] if json.loads(l).get('kind')=='compaction' and json.loads(l)['ev']=='start'))\") -ge 2", timeout=300)
     ev = fm_log()[n_log:]
     print("S07 requests", [(e["ev"], e.get("kind"), e["ws"], round(e["t"], 1)) for e in ev])
@@ -499,7 +499,7 @@ with subtest("F03a: revocation lands while an admitted write waits before its co
     assert ws_sql(ws_a, f"SELECT COUNT(*) FROM revocation_receipts WHERE revocation_id='{rid}'") == "1"
     assert member_view(dave, "f03av2") in ("revoked", "absent")
     # the committed run does not keep running for a revoked member; the replayed key returns the same fact or is refused
-    machine.wait_until_succeeds(f"sqlite3 /var/lib/agentos/workspaces/{ws_a}/data/os.sqlite \"SELECT status FROM runs WHERE initiator_user_id='{dave}'\" | grep -qvE 'queued|running|blocked'", timeout=120)
+    machine.wait_until_succeeds(f"sqlite3 /var/lib/agentos/workspaces/{ws_a}/data/os.sqlite \"SELECT status FROM runs WHERE initiator_user_id='{dave}'\" | tee -p /dev/null | grep -qvE 'queued|running|blocked'", timeout=120)
     r3 = call(4, [fwd(ws_a, "runs.post", body={"intent": "做一个书签应用", "targetAppId": None}, idem="f03a")], "f03a3")[0]
     assert not ok_status(r3), r3
     assert int(ws_sql(ws_a, f"SELECT COUNT(*) FROM runs WHERE initiator_user_id='{dave}'")) == 1

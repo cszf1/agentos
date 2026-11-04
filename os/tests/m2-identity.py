@@ -43,7 +43,7 @@ machine.start()
 machine.wait_for_unit("agentos-machine.service")
 machine.wait_for_unit("agentos-session-gateway.service")
 machine.succeed("test -S /run/agentos/machine/machine.sock && test -S /run/agentos/gateway.sock && test -S /run/agentos/gateway/host.sock")
-machine.succeed("stat -c '%U %a' /run/agentos/gateway | grep -q 'root 755'")
+machine.succeed("stat -c '%U %a' /run/agentos/gateway | tee -p /dev/null | grep -q 'root 755'")
 # No TCP listener for AgentOS (spec §8.1)
 machine.fail("ss -ltnp | grep -E 'agentos|node'")
 
@@ -87,7 +87,7 @@ with subtest("bob's workspace gets its own execution UID, sub-ID range and roots
     ua = machine.succeed(f"stat -c %u /var/lib/agentos/workspaces/{ws_a}/data").strip()
     ub = machine.succeed(f"stat -c %u /var/lib/agentos/workspaces/{ws_b}/data").strip()
     assert ua != ub, (ua, ub)
-    machine.succeed(f"stat -c '%a' /var/lib/agentos/workspaces/{ws_a}/data | grep -q 700")
+    machine.succeed(f"stat -c '%a' /var/lib/agentos/workspaces/{ws_a}/data | tee -p /dev/null | grep -q 700")
     # each execution account cannot read the other's database
     machine.fail(f"setpriv --reuid {ua} --regid {ua} --clear-groups cat /var/lib/agentos/workspaces/{ws_b}/data/os.sqlite")
     machine.fail(f"setpriv --reuid {ub} --regid {ub} --clear-groups cat /var/lib/agentos/workspaces/{ws_a}/data/os.sqlite")
