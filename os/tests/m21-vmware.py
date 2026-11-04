@@ -13,7 +13,10 @@ def started(unit):
 machine.start()
 
 with subtest("VMware SVGA II: vmwgfx comes from udev, and no Load Kernel Modules unit fails (initrd or system)"):
-    machine.wait_for_unit("multi-user.target")
+    # Not multi-user.target: agentos-first-setup (oneshot, WantedBy=multi-user.target, TimeoutStartSec=infinity) holds
+    # it until first boot is answered on tty1. The prompt comes after sysinit, so both Load Kernel Modules runs are over.
+    machine.wait_for_unit("systemd-modules-load.service")
+    machine.wait_until_tty_matches("1", "Administrator login: ", timeout=300)
     machine.succeed("grep -qx 0x15ad /sys/bus/pci/devices/*/vendor")
     machine.succeed("test -d /sys/module/vmwgfx")
     j = machine.succeed("journalctl -b -o cat --no-pager")
@@ -45,6 +48,7 @@ with subtest("first boot cut off after install.ensure and before closeFirstBoot:
     assert sql("SELECT first_boot_state FROM machine_meta") == "open"
     answer_first_boot("alice", "alice-pw-1", "A")
     machine.wait_until_succeeds(f"test -s {MARKER}", timeout=180)
+    machine.wait_for_unit("multi-user.target")          # first setup has finished, so boot completes
     assert sql("SELECT first_boot_state FROM machine_meta") == "closed"
     assert sql("SELECT COUNT(*) FROM users WHERE role = 'admin' AND state = 'active'") == "1"
     machine.succeed("journalctl -b -o cat --no-pager -t agentos-first-setup | grep -q 'first boot completed for administrator alice'")

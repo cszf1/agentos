@@ -12,11 +12,15 @@ def shot(name):
 machine.start()
 
 with subtest("first boot on the console of the released VM system on virtio-gpu"):
-    machine.wait_for_unit("multi-user.target")
+    # Not multi-user.target: agentos-first-setup (oneshot, WantedBy=multi-user.target, TimeoutStartSec=infinity) holds
+    # it until first boot is answered on tty1. The prompt comes after sysinit, so both Load Kernel Modules runs are over.
+    machine.wait_for_unit("systemd-modules-load.service")
+    machine.wait_until_tty_matches("1", "Administrator login: ", timeout=300)
     machine.succeed("grep -qx 0x1af4 /sys/bus/pci/devices/*/vendor && test -d /sys/module/virtio_gpu")
     assert machine.succeed("systemctl show -p Result --value systemd-modules-load.service").strip() == "success"
     answer_first_boot("alice", "alice-pw-1", "A")
     machine.wait_until_succeeds("test -s /var/lib/agentos-machine/first-boot-closed", timeout=180)
+    machine.wait_for_unit("multi-user.target")          # first setup has finished, so boot completes
 
 with subtest("card0 is a seat device of seat0, and ReGreet comes up on it"):
     try:
