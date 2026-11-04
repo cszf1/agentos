@@ -74,28 +74,46 @@ let
         closed && { echo; log "first boot was completed elsewhere"; exit 0; }
       done
     }
+    # a problem stays on screen until it has been read; the next round clears it
+    problem() { echo; echo "$1"; ask "Press Enter to try again. "; }
+    # The login name typed last time (never the password). An attempt cut off after agentosctl created the
+    # administrator account can only finish under that same name, so it is offered again.
+    last=/var/lib/agentos-first-setup/admin-login
+    previous() { [ -s "$last" ] && agentosctl status 2>/dev/null | grep -Eq '"users": *[1-9]' && head -c 32 "$last" | tr -dc 'a-z0-9_-'; }
     while :; do
+      prev=$(previous) || prev=""
       clear 2>/dev/null || true
-      echo "AgentOS 首次设置 / first-boot setup"
-      echo "创建本机管理员和默认工作区。Create the machine administrator and the default workspace."
+      echo "AgentOS first-boot setup"
+      echo "Create the machine administrator and the default workspace."
       echo
-      ask "管理员登录名 / administrator login: "; name=$REPLY
-      if ! printf '%s' "$name" | grep -Eqx '[a-z_][a-z0-9_-]{0,31}'; then echo "登录名只能用小写字母、数字、_ 和 -。"; sleep 3; continue; fi
-      ask "口令 / password: " -s; pw=$REPLY
-      ask "再次输入口令 / password again: " -s; pw2=$REPLY
-      if [ -z "$pw" ] || [ "$pw" != "$pw2" ]; then pw=; pw2=; echo "两次口令不一致或为空。"; sleep 3; continue; fi
-      ask "默认工作区名称 / default workspace name [Home]: "; ws=''${REPLY:-Home}
+      if [ -n "$prev" ]; then
+        echo "An earlier attempt already created the administrator account \"$prev\"."
+        echo "Press Enter to keep that login name and choose its password again."
+        echo
+        ask "Administrator login [$prev]: "; name=''${REPLY:-$prev}
+      else
+        ask "Administrator login: "; name=$REPLY
+      fi
+      if ! printf '%s' "$name" | grep -Eqx '[a-z_][a-z0-9_-]{0,31}'; then
+        problem "The login name may only use lowercase letters, digits, _ and -, and must not start with a digit or -."
+        continue
+      fi
+      ask "Password: " -s; pw=$REPLY
+      ask "Password again: " -s; pw2=$REPLY
+      if [ -z "$pw" ] || [ "$pw" != "$pw2" ]; then pw=; pw2=; problem "The passwords were empty or did not match."; continue; fi
+      ask "Default workspace name [Home]: "; ws=''${REPLY:-Home}
+      (umask 077; printf '%s\n' "$name" > "$last") || log "could not remember the login name in $last"
       if out=$(printf '%s' "$pw" | agentosctl firstboot --admin "$name" --workspace "$ws" 2>&1); then
         pw=; pw2=
         log "first boot completed for administrator $name"
-        echo "完成。正在进入登录界面。Done."
+        echo "Done. Starting the login screen."
         sleep 2
         exit 0
       fi
       pw=; pw2=
       case "$out" in *"first boot is already closed"*) log "first boot is already closed"; exit 0 ;; esac
       log "first boot refused: $(printf '%s' "$out" | tail -1)"
-      echo "失败 / failed: $(printf '%s' "$out" | tail -1)"; sleep 5
+      problem "Setup failed: $(printf '%s' "$out" | tail -1 | LC_ALL=C tr -c '[:print:]\n' '?')"
     done
   '';
   # greetd exits 0 when the greeter dies without starting a session ("greeter exited without creating a session",
@@ -277,6 +295,8 @@ in {
         TTYVHangup = true;
         TTYVTDisallocate = true;
         TimeoutStartSec = "infinity";
+        StateDirectory = "agentos-first-setup";
+        StateDirectoryMode = "0700";
       };
     };
 
