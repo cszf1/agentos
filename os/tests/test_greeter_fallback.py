@@ -79,5 +79,57 @@ class GreeterFallbackTest(unittest.TestCase):
         self.assertIn("starting the login screen again", log)
 
 
+def kms_script():
+    body = NIX.split('greeterNeedsKms = pkgs.writeShellScript "agentos-greeter-kms" \'\'', 1)[1].split("\n  '';", 1)[0]
+    return textwrap.dedent(body).replace("''${", "${")
+
+
+class GreeterKmsGateTest(unittest.TestCase):
+    """greetd switches to VT1 for every greeter it starts; without a DRM card it must not start at all (m21 41894778781:
+    the retries kept pulling the console off the tty2 text login)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.t = Path(self.tmp.name)
+        (self.t / "bin").mkdir()
+        (self.t / "dri").mkdir()
+        unit_path.write_fake(self.t / "bin", "logger", '#!/usr/bin/env bash\nshift 2; echo "$*" >> "$T/log"\n')
+        # each sleep is counted; CARD_AFTER=k makes udev "add" card0 during the k-th wait
+        unit_path.write_fake(self.t / "bin", "sleep", '#!/usr/bin/env bash\necho x >> "$T/sleeps"\n'
+                             '[ -n "$CARD_AFTER" ] && [ $(wc -l < "$T/sleeps") -ge "$CARD_AFTER" ] && touch "$T/dri/card0"\nexit 0\n')
+        body = kms_script()
+        self.assertEqual(body.count("/dev/dri/card*"), 2, body)
+        loop = "for c in /dev/dri/card*;"
+        self.assertEqual(body.count(loop), 1, body)
+        (self.t / "kms.sh").write_text(unit_path.confine(body.replace(loop, f"for c in {self.t}/dri/card*;"), self.t / "bin", self.t / "real", self.t / "missing"))
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def run_gate(self, **env):
+        e = {**os.environ, "T": str(self.t), "HOST_PATH": os.environ["PATH"], "CARD_AFTER": "", **env}
+        p = subprocess.run(["bash", str(self.t / "kms.sh")], capture_output=True, text=True, env=e, timeout=60)
+        read = lambda n: (self.t / n).read_text() if (self.t / n).exists() else ""
+        self.assertEqual(read("missing"), "", "commands the unit's PATH does not provide")
+        return p.returncode, read("log"), read("sleeps").count("x")
+
+    def test_runs_before_greetd_and_its_defaults_as_root(self):
+        self.assertIn('serviceConfig.ExecStartPre = [ "+${greeterNeedsKms}" "+${greeterDefaults}" ];', greetd_block())
+
+    def test_no_card_fails_after_cages_wait_and_says_why(self):
+        rc, log, sleeps = self.run_gate()
+        self.assertEqual(rc, 1)
+        self.assertEqual(sleeps, 20)                      # 20 x 0.5 s: as long as Cage waits for a KMS device
+        self.assertIn("no display device (/dev/dri/card*)", log)
+        self.assertIn("VT1 was not taken", log)
+
+    def test_card_present_or_added_late_lets_greetd_start(self):
+        (self.t / "dri" / "card0").touch()
+        self.assertEqual(self.run_gate()[:2], (0, ""))
+        (self.t / "dri" / "card0").unlink()
+        rc, log, sleeps = self.run_gate(CARD_AFTER="3")
+        self.assertEqual((rc, log, sleeps), (0, "", 3))
+
+
 if __name__ == "__main__":
     unittest.main()

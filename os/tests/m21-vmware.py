@@ -1,5 +1,6 @@
 # m21-vmware: see m21-vmware.nix. Prepended: lib.py (tty_login, answer_first_boot).
 import re
+import time
 
 MD = "/var/lib/agentos-machine"
 MARKER = f"{MD}/first-boot-closed"
@@ -7,8 +8,25 @@ MARKER = f"{MD}/first-boot-closed"
 def sql(q):
     return machine.succeed(f"sqlite3 {MD}/machine.sqlite \"{q}\"").strip()
 
-def started(unit):
-    return int(machine.succeed(f"journalctl -b -o cat --no-pager -u {unit} | grep -c '^Started {unit}' || true").strip() or 0)
+def starts(unit):
+    # start attempts: systemd logs "Starting <unit>" for the first start and for every restart job it runs. Without a
+    # DRM card greetd's ExecStartPre fails, so these never reach "Started".
+    return int(machine.succeed(f"journalctl -b -o cat --no-pager -u {unit} | grep -c '^Starting {unit}' || true").strip() or 0)
+
+def gave_up():
+    return machine.succeed("journalctl -b -o cat --no-pager -t agentos-greeter-fallback | grep -c 'login screen gave up' || true").strip()
+
+def vt_stays(n, until, timeout):
+    # The text login must keep the console: poll the active VT until `until()` holds, it must be tty<n> every time.
+    deadline = time.monotonic() + timeout
+    polls = 0
+    while not until():
+        active = machine.succeed("cat /sys/class/tty/tty0/active").strip()
+        assert active == f"tty{n}", f"the console was pulled to {active} while greetd retried (poll {polls})"
+        polls += 1
+        assert time.monotonic() < deadline, "timed out watching the console"
+        time.sleep(1)
+    return polls
 
 machine.start()
 
@@ -53,25 +71,42 @@ with subtest("first boot cut off after install.ensure and before closeFirstBoot:
     assert sql("SELECT COUNT(*) FROM users WHERE role = 'admin' AND state = 'active'") == "1"
     machine.succeed("journalctl -b -o cat --no-pager -t agentos-first-setup | grep -q 'first boot completed for administrator alice'")
 
-with subtest("no DRM device on QEMU's SVGA II: greetd gives up after bounded retries, tty1 says so, text login works"):
+with subtest("no DRM device on QEMU's SVGA II: the tty2 text login keeps the console while greetd retries, then tty1 says it gave up"):
     # If this precondition ever fails (a QEMU that vmwgfx accepts), ReGreet can be checked here instead.
     machine.succeed("dmesg | grep -q 'vmwgfx.*probe with driver vmwgfx failed'")
     machine.fail("ls /dev/dri/card*")
-    machine.wait_until_succeeds("journalctl -b -o cat --no-pager -t agentos-greeter-fallback | grep -q 'login screen gave up'", timeout=600)
-    print(machine.succeed("journalctl -b -o cat --no-pager -t agentos-greeter | tail -20"))
-    # systemd (service.c, service_enter_restart) counts NRestarts when it queues the restart job, and the start limit
-    # refuses that job later (service_test_startable). With StartLimitBurst=N, greetd starts N times, the Nth restart
-    # job is refused, and NRestarts is N when OnFailure runs the notice.
     burst = int(machine.succeed("systemctl show -p StartLimitBurst --value greetd.service"))
     assert burst >= 2, burst
+    # The notice on tty1 points at Ctrl+Alt+F2; the user goes there while greetd is still retrying (first boot just
+    # closed, so the retries have only begun).
+    tty_login(2, "alice", "alice-pw-1")
+    s0 = starts("greetd.service")
+    assert gave_up() == "0" and s0 < burst, f"greetd was no longer retrying when the tty2 login finished ({s0} starts)"
+    polls = vt_stays(2, lambda: gave_up() != "0", timeout=600)
+    assert starts("greetd.service") > s0, "no greetd retry ran while the console was watched"
+    print(f"tty2 kept the console for {polls} polls across {starts('greetd.service') - s0} greetd retries")
+    machine.succeed("loginctl list-sessions --no-legend | grep -w alice | grep -qw tty2")
+    print(machine.succeed("journalctl -b -o cat --no-pager -t agentos-greeter | tail -20"))
+    # greetd itself never ran: its KMS check failed first, so nothing took VT1 for a greeter
+    machine.succeed("journalctl -b -o cat --no-pager -t agentos-greeter | grep -q 'no display device (/dev/dri/card\\*)'")
+    assert machine.succeed("systemctl show -p ExecMainStartTimestampMonotonic --value greetd.service").strip() == "0"
+    # systemd (service.c, service_enter_restart) counts NRestarts when it queues the restart job, and the start limit
+    # refuses that job later (service_test_startable). With StartLimitBurst=N, greetd starts N times, the Nth restart
+    # job is refused, and NRestarts is N when OnFailure runs the notice. A failing ExecStartPre counts like a failing
+    # greeter: Restart=always restarts it and each attempt counts towards the limit.
     machine.succeed(f"journalctl -b -o cat --no-pager -t agentos-greeter-fallback | grep -q 'result=start-limit-hit restarts={burst}$'")
-    n = started("greetd.service")
+    n = starts("greetd.service")
     assert n == burst, f"greetd started {n} times before the fallback, StartLimitBurst={burst}"
     machine.succeed("chvt 1")
     machine.wait_until_tty_matches("1", "Press Enter to start the login screen again", timeout=60)
     machine.send_key("ret")
-    machine.wait_until_succeeds(f"test $(journalctl -b -o cat --no-pager -u greetd.service | grep -c '^Started greetd') -gt {n}", timeout=60)
-    tty_login(2, "alice", "alice-pw-1")
+    machine.wait_until_succeeds(f"test $(journalctl -b -o cat --no-pager -u greetd.service | grep -c '^Starting greetd') -gt {n}", timeout=60)
+    # Enter started a new round of retries; back on tty2, the console stays there through more of them
+    machine.send_key("alt-f2")
+    machine.wait_until_succeeds("grep -qx tty2 /sys/class/tty/tty0/active", timeout=30)
+    s1 = starts("greetd.service")
+    vt_stays(2, lambda: starts("greetd.service") >= s1 + 2, timeout=300)
+    machine.succeed("loginctl list-sessions --no-legend | grep -w alice | grep -qw tty2")
 
 with subtest("an install from before the first-boot-closed marker: machined restores it before ready, no first boot"):
     machine.succeed(f"rm {MARKER}")
@@ -79,6 +114,7 @@ with subtest("an install from before the first-boot-closed marker: machined rest
     machine.start()
     machine.wait_for_unit("agentos-machine.service")
     machine.succeed(f"test -s {MARKER}")
-    machine.wait_until_succeeds("journalctl -b -o cat --no-pager -u greetd.service | grep -q '^Started greetd'", timeout=300)
+    # greetd is started (not held by first setup); on this VM without a DRM card that is a start attempt
+    machine.wait_until_succeeds("journalctl -b -o cat --no-pager -u greetd.service | grep -q '^Starting greetd'", timeout=300)
     assert machine.succeed("systemctl show -p ConditionResult --value agentos-first-setup.service").strip() == "no"
     assert machine.succeed("systemctl show -p ExecMainStartTimestampMonotonic --value agentos-first-setup.service").strip() == "0"

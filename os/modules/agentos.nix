@@ -120,6 +120,20 @@ let
   # greetd 0.10 context.rs), so a Cage/ReGreet crash used to loop through Restart=on-success into start-limit-hit
   # and leave VT1 black. greetd now retries a bounded number of times; when it gives up, this runs on VT1: it logs
   # why, shows the last greeter lines, and starts the login screen again on Enter.
+  # greetd opens VT1 and switches to it ([terminal] vt = 1, switch defaults to true) for every greeter it starts. With
+  # no KMS device Cage cannot start, so each bounded retry pulled the console back to VT1 and the text login on
+  # Ctrl+Alt+F2 was unusable until greetd gave up (m21 41894778781). Root runs this before greetd itself: without a
+  # DRM card greetd is never started, the VT stays where the user put it, and the failure still counts towards
+  # the start limit and the notice below. It waits as long as Cage would (10 s) for a card that udev adds late.
+  greeterNeedsKms = pkgs.writeShellScript "agentos-greeter-kms" ''
+    export PATH=${lib.makeBinPath [ pkgs.coreutils pkgs.util-linux ]}
+    for _ in $(seq 20); do
+      for c in /dev/dri/card*; do [ -e "$c" ] && exit 0; done
+      sleep 0.5
+    done
+    logger -t agentos-greeter "no display device (/dev/dri/card*): the login screen was not started and VT1 was not taken"
+    exit 1
+  '';
   greeterFallback = pkgs.writeShellScript "agentos-greeter-fallback" ''
     export PATH=${lib.makeBinPath [ pkgs.systemd pkgs.coreutils pkgs.util-linux ]}
     log() { logger -t agentos-greeter-fallback "$*"; }
@@ -253,7 +267,7 @@ in {
     }) workerDefs // {
     # also as root before greetd itself starts (m5 41205165186: the greeter-side run left no state.toml behind)
     greetd = lib.mkIf cfg.graphical {
-      serviceConfig.ExecStartPre = [ "+${greeterDefaults}" ];
+      serviceConfig.ExecStartPre = [ "+${greeterNeedsKms}" "+${greeterDefaults}" ];
       # bounded retry: a crashing greeter restarts every 2 s, at most 5 starts in 5 min, then the fallback below. Cage
       # alone waits 10 s for a KMS device before it gives up, so one failed start can take 20 s or more: a 2 min window
       # would let such a greeter restart forever.
