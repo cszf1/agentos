@@ -98,6 +98,27 @@ let
       echo "失败 / failed: $(printf '%s' "$out" | tail -1)"; sleep 5
     done
   '';
+  # greetd exits 0 when the greeter dies without starting a session ("greeter exited without creating a session",
+  # greetd 0.10 context.rs), so a Cage/ReGreet crash used to loop through Restart=on-success into start-limit-hit
+  # and leave VT1 black. greetd now retries a bounded number of times; when it gives up, this runs on VT1: it logs
+  # why, shows the last greeter lines, and starts the login screen again on Enter.
+  greeterFallback = pkgs.writeShellScript "agentos-greeter-fallback" ''
+    export PATH=${lib.makeBinPath [ pkgs.systemd pkgs.coreutils pkgs.util-linux ]}
+    log() { logger -t agentos-greeter-fallback "$*"; }
+    r=$(systemctl show -p Result --value greetd.service)
+    n=$(systemctl show -p NRestarts --value greetd.service)
+    log "login screen gave up: greetd result=$r restarts=$n"
+    clear
+    echo "AgentOS: the login screen failed to start (greetd: $r, $n restarts)."
+    echo "Last messages from the login screen:"
+    journalctl -b -o cat --no-pager -t agentos-greeter -n 8 | cut -c1-150
+    echo
+    echo "Press Enter to start the login screen again. A text login is on Ctrl+Alt+F2."
+    read -r _ || sleep 30
+    log "starting the login screen again"
+    systemctl reset-failed greetd.service
+    systemctl --no-block start greetd.service
+  '';
   session = pkgs.writeShellScriptBin "agentos-session" ''
     # Started by greetd after PAM (a real logind session on seat0). Nothing here comes from the network or a model.
     export XDG_CURRENT_DESKTOP=sway XDG_SESSION_TYPE=wayland QT_QPA_PLATFORM=wayland QT_IM_MODULE=fcitx XMODIFIERS=@im=fcitx
@@ -213,7 +234,30 @@ in {
       } // w.extra;
     }) workerDefs // {
     # also as root before greetd itself starts (m5 41205165186: the greeter-side run left no state.toml behind)
-    greetd.serviceConfig.ExecStartPre = lib.mkIf cfg.graphical [ "+${greeterDefaults}" ];
+    greetd = lib.mkIf cfg.graphical {
+      serviceConfig.ExecStartPre = [ "+${greeterDefaults}" ];
+      # bounded retry: a crashing greeter restarts every 2 s, at most 5 starts in 2 min, then the fallback below
+      serviceConfig.Restart = lib.mkForce "always";
+      serviceConfig.RestartSec = 2;
+      unitConfig.StartLimitIntervalSec = 120;
+      unitConfig.StartLimitBurst = 5;
+      unitConfig.OnFailure = [ "agentos-greeter-fallback.service" ];
+    };
+    agentos-greeter-fallback = lib.mkIf cfg.graphical {
+      description = "AgentOS login screen failure notice on VT1";
+      conflicts = [ "getty@tty1.service" ];
+      serviceConfig = {
+        Type = "oneshot";
+        ExecStart = greeterFallback;
+        StandardInput = "tty";
+        StandardOutput = "tty";
+        StandardError = "journal";
+        TTYPath = "/dev/tty1";
+        TTYReset = true;
+        TTYVHangup = true;
+        TimeoutStartSec = "infinity";
+      };
+    };
     agentos-first-setup = lib.mkIf cfg.graphical {
       description = "AgentOS first-boot setup on the local console";
       wantedBy = [ "multi-user.target" ];
