@@ -1,4 +1,5 @@
 # U06: download that survives a link loss. Prepended with lib.py.
+import re
 
 machine.start()
 machine.wait_for_unit("agentos-session-gateway.service")
@@ -37,7 +38,7 @@ NIX""")
     for p in closure:
         machine.fail(f"nix-store --check-validity {p}")
     machine.succeed("""cat > /root/serve.py <<'PY'
-import http.server, os, re, sys, time
+import http.server, os, sys, time
 ROOT, LOG = "/srv/cache", sys.argv[1]
 class H(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a): pass

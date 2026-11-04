@@ -109,6 +109,8 @@ jobs:
           python3 -B os/tests/test_first_setup.py
           python3 -B os/tests/test_greeter_fallback.py
           python3 -B os/tests/test_unit_path.py
+          # pyflakes from the flake's nixpkgs: the runner's python3 has none
+          nix shell --inputs-from ./os nixpkgs#python3Packages.pyflakes -c python3 -B os/tests/test_vm_scripts_lint.py
 
       - name: Build test driver
         if: ${{ !startsWith(matrix.test, 'build-') }}
