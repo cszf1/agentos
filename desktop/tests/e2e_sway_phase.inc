@@ -107,6 +107,22 @@ void E2E::sway() {
     });
     return hit;
   };
+  // the names of the options in combo's open popup, once as many delegates as the combo has rows are on screen
+  auto openOptions = [&](QQuickItem* combo) -> QStringList {
+    QStringList names;
+    QQuickItem* list = nullptr;
+    if (QObject* popup = combo ? combo->property("popup").value<QObject*>() : nullptr) list = popup->property("contentItem").value<QQuickItem*>();
+    const int rows = combo ? combo->property("count").toInt() : 0;
+    QTest::qWaitFor([&] {
+      names.clear();
+      if (!list) return false;
+      walkItems(list, [&](QQuickItem* i) {
+        if (i->inherits("QQuickItemDelegate") && reallyVisible(i)) names << accessibleName(i);
+      });
+      return names.size() >= rows && rows > 0;
+    }, 5000);
+    return names;
+  };
   // choose an option of a combo box by real clicks: open it, then click the delegate with that label in its popup
   auto choose = [&](QQuickItem* comboRaw, const QString& optionLabel) -> bool {
     // a Repeater may recreate the combo box while we work (filters follow every record change): keep a guarded pointer
@@ -119,6 +135,13 @@ void E2E::sway() {
     }
     for (int attempt = 0; attempt < 2 && combo; ++attempt) {
       click(combo);
+      const QStringList shown = openOptions(combo);
+      if (shown.contains(QString())) {
+        // every option a user can see names something: a blank one is a product bug, never a click target
+        std::printf("E2E-DIAG combo '%s': blank option among [%s]\n", qPrintable(combo->property("label").toString()), qPrintable(shown.join(QStringLiteral("|"))));
+        keys({QStringLiteral("esc")});
+        return false;
+      }
       QQuickItem* opt = nullptr;
       QTest::qWaitFor([&] {
         walkItems(cur->contentItem(), [&](QQuickItem* i) {
@@ -747,6 +770,15 @@ void E2E::sway() {
   for (int i = 0; i < r.model(r.shell->workspaces())->count(); ++i)
     if (r.model(r.shell->workspaces())->at(i).get(QStringLiteral("workspaceId")).str() == wsB) wsBName = r.model(r.shell->workspaces())->at(i).get(QStringLiteral("displayName")).str();
   QVERIFY2(!wsBName.isEmpty(), qPrintable(QStringLiteral("workspace B is not offered: ") + workspacesDump()));
+  {
+    // right after D11's Host stop/reattach cycles: the open switcher names every workspace, A and B among them, and nothing blank
+    QQuickItem* sw = byName(QStringLiteral("workspaceSwitcher"));
+    QVERIFY(click(sw) >= 0);
+    const QStringList shown = openOptions(sw);
+    keys({QStringLiteral("esc")});
+    QVERIFY2(!shown.isEmpty() && !shown.contains(QString()) && shown.contains(wsAName) && shown.contains(wsBName),
+             qPrintable(QStringLiteral("switcher after reattach [%1]: ").arg(shown.join(QStringLiteral("|"))) + workspacesDump()));
+  }
   QVERIFY2(choose(byName(QStringLiteral("workspaceSwitcher")), wsBName), "workspace B not chosen by real clicks");
   QTRY_VERIFY_WITH_TIMEOUT(r.shell->workspaceId() == wsB && r.shell->hostAvailable(), 90000);
   QTest::qWait(1500);

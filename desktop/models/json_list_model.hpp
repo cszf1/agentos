@@ -21,7 +21,11 @@ class JsonListModel : public QAbstractListModel {
   QString updatedAt() const { return updatedAt_.isValid() ? updatedAt_.toString(QStringLiteral("HH:mm:ss")) : QString(); }
   void setItems(const JValue& array);
   void clear();
-  const JValue& at(int i) const { return items_[size_t(i)]; }
+  // out of range reads as missing, never past the end: m20 D11's old by-index read of a row that was not there came back ''
+  const JValue& at(int i) const {
+    static const JValue none;
+    return i >= 0 && i < int(items_.size()) ? items_[size_t(i)] : none;
+  }
   Q_INVOKABLE QVariantMap get(int i) const;
   JValue toJson() const { return JValue::array(items_); }
 

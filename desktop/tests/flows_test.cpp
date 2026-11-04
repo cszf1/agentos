@@ -1133,6 +1133,51 @@ class FlowsTest : public QObject {
     QVERIFY(!h.shell->readOnly());
   }
 
+  void workspaceSwitcherNamesEveryWorkspaceAcrossHostStopAndReattach() {
+    Harness h;
+    QVERIFY(h.up());
+    QQuickItem* sw = h.find(QStringLiteral("workspaceSwitcher"));
+    QVERIFY(sw);
+    auto labels = [&] {
+      QStringList o;
+      for (const QVariant& v : sw->property("options").toList()) o << v.toMap().value(QStringLiteral("label")).toString();
+      return o;
+    };
+    const QStringList both{QString::fromUtf8("家庭"), QString::fromUtf8("工作")};
+    QTRY_COMPARE(labels(), both);
+    // Host down, a refused list, then reattach to B and back to A: the rows and their names stay whole
+    h.be.hostDown = true;
+    h.shell->refreshPage();
+    QTRY_VERIFY_WITH_TIMEOUT(!h.shell->hostAvailable(), 20000);
+    h.gw->gw->setHandler([&](const JValue& r) {
+      if (r.get(QStringLiteral("methodId")).str() == QLatin1String("workspaces.list")) return Backend::err(QStringLiteral("HOST_UNAVAILABLE"));
+      return h.be.handle(r);
+    });
+    h.shell->setCurrentPage(QStringLiteral("workspaces"));
+    QTest::qWait(300);
+    QCOMPARE(labels(), both);
+    h.gw->gw->setHandler([&](const JValue& r) { return h.be.handle(r); });
+    h.be.hostDown = false;
+    h.shell->switchWorkspace(WS_B);
+    QTRY_VERIFY_WITH_TIMEOUT(h.shell->workspaceId() == WS_B && h.shell->hostAvailable(), 5000);
+    QCOMPARE(labels(), both);
+    h.shell->switchWorkspace(WS_A);
+    QTRY_VERIFY_WITH_TIMEOUT(h.shell->workspaceId() == WS_A, 5000);
+    QCOMPARE(labels(), both);
+    // a row without a name is offered by its id, never as a blank option
+    h.gw->gw->setHandler([&](const JValue& r) {
+      if (r.get(QStringLiteral("methodId")).str() == QLatin1String("workspaces.list"))
+        return JValue::object({{QStringLiteral("items"), JValue::array({JValue::object({{QStringLiteral("workspaceId"), WS_A}, {QStringLiteral("displayName"), QString()}, {QStringLiteral("role"), QStringLiteral("owner")}})})}});
+      return h.be.handle(r);
+    });
+    h.shell->setCurrentPage(QStringLiteral("workspaces"));
+    h.shell->refreshPage();
+    QTRY_COMPARE(labels(), QStringList{WS_A});
+    // and the model reads past its end as missing, not as whatever is left in memory
+    auto* m = static_cast<JsonListModel*>(h.shell->workspaces());
+    QVERIFY(m->at(m->count()).isMissing() && m->at(-1).isMissing());
+  }
+
   void nativeWorkspaceStateReportsBrokerAndModelIndependently() {
     Harness h;
     h.be.nativeStatusShape = true;
