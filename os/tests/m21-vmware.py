@@ -20,13 +20,13 @@ with subtest("VMware SVGA II: vmwgfx comes from udev, and no Load Kernel Modules
     machine.succeed("grep -qx 0x15ad /sys/bus/pci/devices/*/vendor")
     machine.succeed("test -d /sys/module/vmwgfx")
     j = machine.succeed("journalctl -b -o cat --no-pager")
-    bad = re.findall(r".*Failed to start .*Load Kernel Modules.*|.*systemd-modules-load\.service: (?:Failed|Main process exited, code=exited, status=[1-9]).*", j)
+    bad = re.findall(r".*Failed to start .*Load Kernel Modules.*|.*systemd-modules-load\.service: (?:Failed|Main process exited, code=exited, status=[1-9]).*|.*Failed to insert module.*", j)
     assert not bad, bad
     assert machine.succeed("systemctl show -p Result --value systemd-modules-load.service").strip() == "success"
     ml = machine.succeed("journalctl -b -o cat --no-pager -t systemd-modules-load")
     print(ml)
-    # D: the GPU drivers of the other hypervisors are not forced in by name any more
-    assert not re.search(r"vmwgfx|vboxvideo|hyperv_drm", ml), ml
+    # D and the hv_* follow-up: no platform driver of another hypervisor is forced in by name any more
+    assert not re.search(r"vmwgfx|vboxvideo|hyperv_drm|hv_|vmw_pvscsi", ml), ml
 
 with subtest("first boot cut off after install.ensure and before closeFirstBoot: the console asks again and completes"):
     machine.wait_until_tty_matches("1", "Administrator login: ", timeout=300)

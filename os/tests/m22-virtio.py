@@ -1,5 +1,5 @@
 # m22-virtio: see m22-virtio.nix. Prepended: PNGTOPNM, lib.py (answer_first_boot), pnm.py (pnm_rgb, greeter_login_button).
-import os, subprocess, time
+import os, re, subprocess, time
 
 def seat_diag():
     print(machine.execute("loginctl seat-status seat0 --no-pager; udevadm info /dev/dri/card0; ls -la /dev/dri; "
@@ -18,6 +18,10 @@ with subtest("first boot on the console of the released VM system on virtio-gpu"
     machine.wait_until_tty_matches("1", "Administrator login: ", timeout=300)
     machine.succeed("grep -qx 0x1af4 /sys/bus/pci/devices/*/vendor && test -d /sys/module/virtio_gpu")
     assert machine.succeed("systemctl show -p Result --value systemd-modules-load.service").strip() == "success"
+    # the initrd's run is only in the journal: no platform driver may be force-loaded there (vm-drivers.nix)
+    j = machine.succeed("journalctl -b -o cat --no-pager")
+    bad = re.findall(r".*Failed to start .*Load Kernel Modules.*|.*systemd-modules-load\.service: (?:Failed|Main process exited, code=exited, status=[1-9]).*|.*Failed to insert module.*", j)
+    assert not bad, bad
     answer_first_boot("alice", "alice-pw-1", "A")
     machine.wait_until_succeeds("test -s /var/lib/agentos-machine/first-boot-closed", timeout=180)
     machine.wait_for_unit("multi-user.target")          # first setup has finished, so boot completes
