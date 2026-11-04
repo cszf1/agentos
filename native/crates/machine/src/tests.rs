@@ -20,6 +20,7 @@ impl System for Fake {
     fn pw_by_uid(&self, _: u32) -> Option<PwEntry> { None }
     fn subid_overlaps(&self, _: u32, _: u32) -> bool { false }
     fn create_login_user(&mut self, _: &str, _: u32, _: &str, _: bool) -> R<()> { Ok(()) }
+    fn set_gecos(&mut self, _: &str, _: &str) -> R<()> { Ok(()) }
     fn set_password(&mut self, _: &str, _: &[u8]) -> R<()> { Ok(()) }
     fn lock_user(&mut self, _: &str) -> R<()> { Ok(()) }
     fn terminate_user(&mut self, _: u32) -> R<()> { Ok(()) }
@@ -325,6 +326,7 @@ impl System for Accounts {
     fn pw_by_uid(&self, u: u32) -> Option<PwEntry> { self.users.lock().unwrap().iter().find(|e| e.uid == u).cloned() }
     fn subid_overlaps(&self, _: u32, _: u32) -> bool { false }
     fn create_login_user(&mut self, _: &str, _: u32, _: &str, _: bool) -> R<()> { Ok(()) }
+    fn set_gecos(&mut self, _: &str, _: &str) -> R<()> { Ok(()) }
     fn set_password(&mut self, _: &str, _: &[u8]) -> R<()> { Ok(()) }
     fn lock_user(&mut self, _: &str) -> R<()> { Ok(()) }
     fn terminate_user(&mut self, _: u32) -> R<()> { Ok(()) }
@@ -1038,5 +1040,76 @@ fn first_boot_interrupted_after_ensure_resumes_and_once_closed_never_reopens() {
     assert_eq!(m.status().unwrap()["meta"]["firstBootState"], "closed");
     m.mark_first_boot_closed().unwrap();
     assert!(marker.exists(), "machined start restores the marker of a committed close");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Login accounts in a fake /etc/passwd, to read the GECOS that AccountsService (and ReGreet's User field) shows.
+#[derive(Clone, Default)]
+struct Passwd(Arc<Mutex<Vec<PwEntry>>>);
+
+impl System for Passwd {
+    fn pw_by_name(&self, n: &str) -> Option<PwEntry> { self.0.lock().unwrap().iter().find(|e| e.name == n).cloned() }
+    fn pw_by_uid(&self, u: u32) -> Option<PwEntry> { self.0.lock().unwrap().iter().find(|e| e.uid == u).cloned() }
+    fn subid_overlaps(&self, _: u32, _: u32) -> bool { false }
+    fn create_login_user(&mut self, n: &str, uid: u32, gecos: &str, _: bool) -> R<()> {
+        self.0.lock().unwrap().push(PwEntry { name: n.into(), uid, gecos: gecos.into(), home: format!("/home/{n}") });
+        Ok(())
+    }
+    fn set_gecos(&mut self, n: &str, gecos: &str) -> R<()> {
+        self.0.lock().unwrap().iter_mut().find(|e| e.name == n).expect("account exists").gecos = gecos.into();
+        Ok(())
+    }
+    fn set_password(&mut self, _: &str, _: &[u8]) -> R<()> { Ok(()) }
+    fn lock_user(&mut self, _: &str) -> R<()> { Ok(()) }
+    fn terminate_user(&mut self, _: u32) -> R<()> { Ok(()) }
+    fn create_exec_user(&mut self, _: &str, _: u32, _: &str, _: &Path, _: u32, _: u32) -> R<()> { Ok(()) }
+    fn ensure_workspace_dirs(&mut self, _: &Paths, _: &str, _: u32) -> R<()> { Ok(()) }
+    fn enable_linger(&mut self, _: &str) -> R<()> { Ok(()) }
+    fn disable_linger(&mut self, _: &str) -> R<()> { Ok(()) }
+    fn init_workspace(&mut self, _: &Paths, _: &str, _: &str, _: u32, _: &str) -> R<()> { Ok(()) }
+    fn start_workspace(&mut self, _: &str, _: u32) -> R<()> { Ok(()) }
+    fn stop_workspace(&mut self, _: &str, _: u32) -> R<()> { Ok(()) }
+    fn exec_cgroup_busy(&self, _: u32) -> bool { false }
+    fn kill_exec_cgroup(&mut self, _: u32) -> R<()> { Ok(()) }
+    fn remove_workspace_roots(&mut self, _: &Paths, _: &str) -> R<()> { Ok(()) }
+    fn storage(&self, _: &Path) -> (u64, bool) { (u64::MAX, false) }
+}
+
+/// What AccountsService takes as RealName (user.c user_update_from_pwent): the text before the first comma.
+fn real_name(gecos: &str) -> &str { gecos.split(',').next().unwrap_or("") }
+
+#[test]
+fn login_account_gecos_shows_the_login_name_and_keeps_the_marker() {
+    let dir = std::env::temp_dir().join(format!("agentos-gecos-{}", uuid()));
+    let paths = Paths { machine_dir: dir.join("machine"), workspaces_dir: dir.join("ws"), runtime_dir: dir.join("rt"), run_dir: dir.join("run"), snapshots_dir: dir.join("snap") };
+    let mut pw = Passwd::default();
+    let mut m = Machine::open(paths.clone(), Box::new(pw.clone())).unwrap();
+    m.ensure_install(&uuid()).unwrap();
+    let pid = uuid();
+    let u = m.provision_user(&pid, "alice", "admin").unwrap();
+    let e = pw.pw_by_name("alice").unwrap();
+    assert_eq!(e.gecos, format!("alice,,,,agentos-user {pid}"));
+    assert_eq!(real_name(&e.gecos), "alice");
+    assert!(!real_name(&e.gecos).contains(&pid));
+    // the same provisioning id is idempotent on the new form: same user, one account, no takeover error
+    let again = m.provision_user(&pid, "alice", "admin").unwrap();
+    assert_eq!(again["userId"], u["userId"]);
+    assert_eq!(pw.0.lock().unwrap().len(), 1);
+
+    // upgrade: an account written before the fix carries the bare marker; machined start relabels only its own
+    let legacy = uuid();
+    m.provision_user(&legacy, "bob", "user").unwrap();
+    pw.set_gecos("bob", &format!("agentos-user {legacy}")).unwrap();
+    pw.0.lock().unwrap().push(PwEntry { name: "carol".into(), uid: 4242, gecos: "Carol Local".into(), home: "/home/carol".into() });
+    drop(m);
+    let mut m = Machine::open(paths, Box::new(pw.clone())).unwrap();
+    assert_eq!(m.relabel_login_accounts().unwrap(), 1);
+    assert_eq!(pw.pw_by_name("bob").unwrap().gecos, format!("bob,,,,agentos-user {legacy}"));
+    assert_eq!(pw.pw_by_name("alice").unwrap().gecos, format!("alice,,,,agentos-user {pid}"));
+    assert_eq!(pw.pw_by_name("carol").unwrap().gecos, "Carol Local");
+    assert_eq!(m.relabel_login_accounts().unwrap(), 0, "idempotent");
+    // a foreign account with the login name is still never taken over
+    let e = m.provision_user(&uuid(), "carol", "user").unwrap_err();
+    assert_eq!(e.code, "CONFLICT");
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -57,7 +57,8 @@ pub trait System: Send {
     fn pw_by_name(&self, name: &str) -> Option<PwEntry>;
     fn pw_by_uid(&self, uid: u32) -> Option<PwEntry>;
     fn subid_overlaps(&self, start: u32, size: u32) -> bool;
-    fn create_login_user(&mut self, name: &str, uid: u32, marker: &str, admin: bool) -> R<()>;
+    fn create_login_user(&mut self, name: &str, uid: u32, gecos: &str, admin: bool) -> R<()>;
+    fn set_gecos(&mut self, name: &str, gecos: &str) -> R<()>;
     fn set_password(&mut self, name: &str, password: &[u8]) -> R<()>;
     fn lock_user(&mut self, name: &str) -> R<()>;
     fn terminate_user(&mut self, uid: u32) -> R<()>;
@@ -176,10 +177,13 @@ impl System for HostSystem {
         let end = start as u64 + size as u64;
         subid_lines("/etc/subuid").into_iter().chain(subid_lines("/etc/subgid")).any(|(_, s, n)| (s as u64) < end && start as u64 > 0 && (s as u64 + n as u64) > start as u64)
     }
-    fn create_login_user(&mut self, name: &str, uid: u32, marker: &str, _admin: bool) -> R<()> {
+    fn create_login_user(&mut self, name: &str, uid: u32, gecos: &str, _admin: bool) -> R<()> {
         // Admins are machine administrators of AgentOS only: no sudo/wheel, no Nix trusted-users (spec §7.2).
-        run(Command::new("useradd").args(["-m", "-u", &uid.to_string(), "-U", "-c", marker, "-s", "/run/current-system/sw/bin/bash", name]).env("PATH", std::env::var("PATH").unwrap_or_default()))?;
+        run(Command::new("useradd").args(["-m", "-u", &uid.to_string(), "-U", "-c", gecos, "-s", "/run/current-system/sw/bin/bash", name]).env("PATH", std::env::var("PATH").unwrap_or_default()))?;
         run(Command::new("passwd").args(["-l", name])).map(|_| ())
+    }
+    fn set_gecos(&mut self, name: &str, gecos: &str) -> R<()> {
+        run(Command::new("usermod").args(["-c", gecos, name])).map(|_| ())
     }
     fn set_password(&mut self, name: &str, password: &[u8]) -> R<()> {
         if password.is_empty() || password.contains(&b':') || password.contains(&b'\n') {

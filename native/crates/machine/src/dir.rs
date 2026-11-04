@@ -369,7 +369,7 @@ impl Machine {
             let mut uid = LOGIN_UID_START;
             loop {
                 let used = opt_i64(c, "SELECT 1 FROM users WHERE login_uid = ?1", [uid])?.is_some();
-                let taken = self.sys.pw_by_uid(uid).map(|e| e.gecos != marker).unwrap_or(false);
+                let taken = self.sys.pw_by_uid(uid).map(|e| !owns_login(&e.gecos, login_name, &marker)).unwrap_or(false);
                 if !used && !taken {
                     break;
                 }
@@ -391,11 +391,15 @@ impl Machine {
         if !account_done {
             self.tx(|c| Self::step_intent(c, provisioning_id, "account", "user", login_name, &intent))?;
             match self.sys.pw_by_name(login_name) {
-                Some(e) if e.gecos == marker && e.uid == uid => {}
+                Some(e) if owns_login(&e.gecos, login_name, &marker) && e.uid == uid => {
+                    if e.gecos != login_gecos(login_name, &marker) {
+                        self.sys.set_gecos(login_name, &login_gecos(login_name, &marker))?;
+                    }
+                }
                 Some(_) => {
                     return Err(MErr::new("CONFLICT", "a Linux account with this name already exists and is not ours; it is never taken over"));
                 }
-                None => self.sys.create_login_user(login_name, uid, &marker, role == "admin")?,
+                None => self.sys.create_login_user(login_name, uid, &login_gecos(login_name, &marker), role == "admin")?,
             }
             self.tx(|c| Self::step_finish(c, provisioning_id, "account", &json!({ "loginUid": uid })))?;
         }
@@ -410,6 +414,27 @@ impl Machine {
             Ok(())
         })?;
         self.user(&user_id)
+    }
+
+    /// Accounts provisioned before the GECOS fix carry the bare marker, which AccountsService shows as the full name
+    /// (ReGreet's User field read "agentos-user <uuid>"). Rewrite only accounts that carry their own marker and UID.
+    pub fn relabel_login_accounts(&mut self) -> R<usize> {
+        let rows: Vec<(String, u32, String)> = {
+            let mut st = self.c.prepare("SELECT login_name, login_uid, provisioning_id FROM users WHERE state != 'disabled' AND provisioning_id IS NOT NULL")?;
+            let v = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.collect::<Result<_, _>>()?;
+            v
+        };
+        let mut n = 0;
+        for (login, uid, pid) in rows {
+            let marker = format!("agentos-user {pid}");
+            if let Some(e) = self.sys.pw_by_name(&login) {
+                if e.uid == uid && e.gecos == marker {
+                    self.sys.set_gecos(&login, &login_gecos(&login, &marker))?;
+                    n += 1;
+                }
+            }
+        }
+        Ok(n)
     }
 
     pub fn set_password(&mut self, user_id: &str, password: &[u8]) -> R<()> {
@@ -1348,4 +1373,15 @@ pub fn write_private(p: &std::path::Path, bytes: &[u8]) -> R<()> {
         }
     }
     Ok(())
+}
+
+/// GECOS of a login account. AccountsService takes the text before the first comma as the real name, and ReGreet shows
+/// that name in its User field, so it is the login name; the ownership marker sits in the last ("other") field.
+pub(crate) fn login_gecos(login: &str, marker: &str) -> String {
+    format!("{login},,,,{marker}")
+}
+
+/// A login account is ours when its GECOS is the current form or the bare marker written before the fix.
+fn owns_login(gecos: &str, login: &str, marker: &str) -> bool {
+    gecos == marker || gecos == login_gecos(login, marker)
 }

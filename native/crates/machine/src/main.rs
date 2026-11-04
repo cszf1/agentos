@@ -60,6 +60,11 @@ fn main() {
         if let Err(e) = m.mark_first_boot_closed() {
             eprintln!("first-boot marker: {e}");
         }
+        match m.relabel_login_accounts() {
+            Ok(n) if n > 0 => eprintln!("relabelled {n} login accounts to the GECOS form ReGreet shows"),
+            Err(e) => eprintln!("login account relabel: {e}"),
+            _ => {}
+        }
         match m.resume_creations() {
             Ok(v) if !v.is_empty() => eprintln!("resumed {} workspace creations", v.len()),
             _ => {}

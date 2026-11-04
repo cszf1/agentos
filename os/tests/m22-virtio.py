@@ -46,6 +46,25 @@ with subtest("card0 is a seat device of seat0, and ReGreet comes up on it"):
                     raise
                 time.sleep(2)
         assert machine.succeed("systemctl show -p NRestarts --value greetd.service").strip() == "0"
+        # The User field: ReGreet 0.3 lists AccountsService users by RealName (username when empty), and
+        # AccountsService takes RealName from the GECOS text before the first comma. It used to read
+        # "agentos-user <provisioning uuid>", the bare ownership marker machined wrote as GECOS.
+        UUID = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
+        gecos = machine.succeed("getent passwd alice").strip().split(":")[4]
+        assert re.fullmatch(r"alice,,,,agentos-user " + UUID.pattern, gecos), gecos     # name first, marker last
+        path = machine.succeed("busctl call org.freedesktop.Accounts /org/freedesktop/Accounts org.freedesktop.Accounts FindUserByName s alice").split()[-1].strip('"')
+        real = machine.succeed(f"busctl get-property org.freedesktop.Accounts {path} org.freedesktop.Accounts.User RealName").strip()
+        assert real == 's "alice"', real
+        end = time.time() + 60
+        while True:
+            texts = machine.get_screen_text_variants()
+            seen = [t for t in texts if re.search(r"\balice\b", t)]
+            leak = [t for t in texts if UUID.search(t) or "agentos-user" in t]
+            if seen and not leak:
+                break
+            if time.time() > end:
+                raise AssertionError(f"the User field does not show alice without a UUID; OCR: {texts!r}")
+            time.sleep(2)
         machine.fail("journalctl -b -o cat --no-pager -t agentos-greeter-fallback | grep -q 'login screen gave up'")
     except BaseException:
         seat_diag()

@@ -5,7 +5,7 @@
 { pkgs, modules }:
 pkgs.testers.runNixOSTest {
   name = "agentos-m22-virtio";
-  enableOCR = false;
+  enableOCR = true;   # the ReGreet User field must read the login name (alice), not the account's marker
   nodes.machine = {
     imports = [ (import ./vm-release-node.nix { inherit pkgs modules; }) ];
     virtualisation.qemu.options = [ "-vga none -device virtio-gpu-pci" ];
