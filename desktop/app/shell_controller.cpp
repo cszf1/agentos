@@ -174,7 +174,8 @@ void ShellController::sendNative(const ShellRequest& r, const QString& key, std:
   c.idempotencyKey = r.write ? (key.isEmpty() ? uuid() : key) : QString();
   const Scope s = scope();
   const bool fromHost = r.methodId == QLatin1String("workspace.forward");
-  rpc_->call(c, [this, s, scoped, fromHost, done = std::move(done)](const RpcReply& rep) {
+  const quint64 seq = ++sendSeq_;
+  rpc_->call(c, [this, s, scoped, fromHost, seq, done = std::move(done)](const RpcReply& rep) {
     if (scoped && !inScope(s)) {
       lateDropped_++;  // a reply for a workspace/epoch/store we have left: never applied
       emit transportChanged();
@@ -183,7 +184,10 @@ void ShellController::sendNative(const ShellRequest& r, const QString& key, std:
     if (fromHost && rep.ok() && !rep.local) {
       cachedAt_ = QDateTime::currentDateTime();
     }
+    const quint64 outer = replySeq_;
+    replySeq_ = seq;  // Host-health evidence from this reply is ordered by when its request was sent (markHostDown)
     if (done) done(rep);
+    replySeq_ = outer;
   });
 }
 
@@ -197,7 +201,7 @@ void ShellController::request(const QString& name, const JValue& args, std::func
   }
   const bool needsHost = r.methodId == QLatin1String("workspace.forward");
   sendNative(r, QString(), [this, done, needsHost](const RpcReply& rep) {
-    if (needsHost && rep.ok() && !rep.local && !hostAvailable_) markHostDown(false);
+    if (needsHost && rep.ok() && !rep.local) markHostDown(false);
     if (!rep.ok()) reportError(rep.errorCode);
     if (done) done(rep);
   }, scoped);
@@ -212,7 +216,7 @@ void ShellController::sendForward(const ForwardRequest& f, std::function<void(co
   r.write = true;
   sendNative(r, f.idempotencyKey.startsWith(QLatin1String("q:")) || f.idempotencyKey == QLatin1String("read") ? QStringLiteral("read:") + uuid() : f.idempotencyKey,
              [this, done](const RpcReply& rep) {
-               if (rep.ok() && !rep.local && !hostAvailable_) markHostDown(false);
+               if (rep.ok() && !rep.local) markHostDown(false);
                if (done) done(rep);
              });
 }
@@ -247,6 +251,13 @@ void ShellController::reportError(const QString& code) {
 }
 
 void ShellController::markHostDown(bool down) {
+  // A HOST_UNAVAILABLE answer to a request sent while the Host was stopped can arrive after a newer request has already
+  // proven the restarted Host up; applying it puts the read-only banner back for a moment (the likely cause of m20 D11
+  // run 41917407780: the home cards moved 38px under a click). Evidence older than what is applied is stale, not an outage.
+  if (replySeq_) {
+    if (replySeq_ < hostEvidenceSeq_) return;
+    hostEvidenceSeq_ = replySeq_;
+  }
   if (hostAvailable_ == !down) return;
   hostAvailable_ = !down;
   for (auto* v : views_) v->setDisabled(readOnly() || writesStopped_);
@@ -731,7 +742,7 @@ void ShellController::trackReply(const QString& id, const RpcReply& rep) {
     actions_->setState(id, rep.errorCode == QLatin1String("EFFECT_UNKNOWN") ? QStringLiteral("unknown") : QStringLiteral("failed"), describeError(rep.errorCode, rep.errorMessage));
     return;
   }
-  if (actionReqs_.value(id).methodId == QLatin1String("workspace.forward") && !rep.local && !hostAvailable_) markHostDown(false);
+  if (actionReqs_.value(id).methodId == QLatin1String("workspace.forward") && !rep.local) markHostDown(false);
   JValue b = rep.body;
   if (b.get(QStringLiteral("state")).isNullish() && b.get(QStringLiteral("phase")).isNullish() && b.get(QStringLiteral("status")).isString()) b.set(QStringLiteral("state"), b.get(QStringLiteral("status")));
   QString st = displayState(b);

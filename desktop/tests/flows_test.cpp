@@ -1106,6 +1106,33 @@ class FlowsTest : public QObject {
     QTRY_VERIFY_WITH_TIMEOUT(h.shell->hostAvailable(), 5000);
   }
 
+  // A refusal that answers a request sent while the Host was down must not undo newer proof that it is back.
+  void staleHostRefusalAfterRecoveryKeepsTheHostAvailable() {
+    Harness h;
+    QVERIFY(h.up());
+    h.be.hostDown = true;
+    h.shell->refreshPage();
+    QTRY_VERIFY_WITH_TIMEOUT(!h.shell->hostAvailable(), 20000);
+    const int before = h.sent(QStringLiteral("workspace.forward")).size();
+    h.gw->gw->setHandler([&](const JValue& r) {
+      if (r.get(QStringLiteral("methodId")).str() == QLatin1String("workspace.forward")) return JValue::missing();  // held
+      return h.be.handle(r);
+    });
+    h.shell->refreshPage();
+    QTRY_VERIFY(h.sent(QStringLiteral("workspace.forward")).size() > before);
+    QTest::qWait(100);  // the whole refresh is in flight and held
+    QVector<QString> held;
+    for (const auto& r : h.sent(QStringLiteral("workspace.forward")).mid(before)) held << r.get(QStringLiteral("requestId")).str();
+    h.gw->gw->setHandler([&](const JValue& r) { return h.be.handle(r); });
+    h.be.hostDown = false;
+    h.shell->refreshPage();
+    QTRY_VERIFY_WITH_TIMEOUT(h.shell->hostAvailable(), 5000);
+    for (const auto& id : held) h.gw->run([&] { h.gw->gw->reply(id, Backend::err(QStringLiteral("HOST_UNAVAILABLE"))); });
+    QTest::qWait(300);
+    QVERIFY2(h.shell->hostAvailable(), qPrintable(QStringLiteral("held=%1 banner=%2").arg(held.size()).arg(h.shell->banner())));
+    QVERIFY(!h.shell->readOnly());
+  }
+
   void nativeWorkspaceStateReportsBrokerAndModelIndependently() {
     Harness h;
     h.be.nativeStatusShape = true;

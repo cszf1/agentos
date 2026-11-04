@@ -33,7 +33,18 @@ void E2E::sway() {
     ClickCounter cc;
     const bool sig = i->metaObject()->indexOfSignal("clicked()") >= 0;
     if (sig) QObject::connect(i, SIGNAL(clicked()), &cc, SLOT(hit()));
-    const QPointF c = centerOf(i);
+    // Click where the target has come to rest: a banner appearing or hiding reflows the page by 38px
+    // (m20 D11 run 41917407780: "打开" computed at y=593, at y=555 when the click landed).
+    QPointF c = centerOf(i);
+    QTest::qWaitFor([&] {
+      QTest::qWait(100);
+      if (!target) return true;
+      const QPointF n = centerOf(target);
+      const bool still = n == c;
+      c = n;
+      return still;
+    }, 3000);
+    if (!target) return -1;
     A.ask(dbl ? QStringLiteral("dblclick") : QStringLiteral("click"), {{QStringLiteral("x"), qRound(c.x())}, {QStringLiteral("y"), qRound(c.y())}});
     QTest::qWait(500);
     // A real click can unload the page and destroy i (Home's "打开" is one such button).
@@ -101,6 +112,11 @@ void E2E::sway() {
     // a Repeater may recreate the combo box while we work (filters follow every record change): keep a guarded pointer
     QPointer<QQuickItem> combo(comboRaw);
     if (!combo) return false;
+    if (optionLabel.isEmpty()) {
+      // an empty label matches any unnamed delegate: m20 D11 rerun clicked one and switched the workspace itself
+      std::printf("E2E-DIAG combo '%s': empty option label requested\n", qPrintable(combo->property("label").toString()));
+      return false;
+    }
     for (int attempt = 0; attempt < 2 && combo; ++attempt) {
       click(combo);
       QQuickItem* opt = nullptr;
@@ -718,10 +734,19 @@ void E2E::sway() {
   QCOMPARE(targetValue(), todo);
   QVERIFY2(draftAndCopy(), "draft/clipboard not set by real keys");
   const QString wsB = envOr("AGENTOS_E2E_WS_B", QString());
+  auto workspacesDump = [&]() {
+    QStringList o;
+    for (int i = 0; i < r.model(r.shell->workspaces())->count(); ++i) o << r.model(r.shell->workspaces())->at(i).stringify();
+    return QStringLiteral("current=%1 workspaces=[%2]").arg(r.shell->workspaceId(), o.join(QStringLiteral(",")));
+  };
+  QString wsAName;  // keyed by workspaceId before leaving A, not by list position afterwards
+  for (int i = 0; i < r.model(r.shell->workspaces())->count(); ++i)
+    if (r.model(r.shell->workspaces())->at(i).get(QStringLiteral("workspaceId")).str() == ws) wsAName = r.model(r.shell->workspaces())->at(i).get(QStringLiteral("displayName")).str();
+  QVERIFY2(!wsAName.isEmpty(), qPrintable(QStringLiteral("workspace A has no name: ") + workspacesDump()));
   QString wsBName;
   for (int i = 0; i < r.model(r.shell->workspaces())->count(); ++i)
     if (r.model(r.shell->workspaces())->at(i).get(QStringLiteral("workspaceId")).str() == wsB) wsBName = r.model(r.shell->workspaces())->at(i).get(QStringLiteral("displayName")).str();
-  QVERIFY2(!wsBName.isEmpty(), "workspace B is not offered");
+  QVERIFY2(!wsBName.isEmpty(), qPrintable(QStringLiteral("workspace B is not offered: ") + workspacesDump()));
   QVERIFY2(choose(byName(QStringLiteral("workspaceSwitcher")), wsBName), "workspace B not chosen by real clicks");
   QTRY_VERIFY_WITH_TIMEOUT(r.shell->workspaceId() == wsB && r.shell->hostAvailable(), 90000);
   QTest::qWait(1500);
@@ -734,9 +759,7 @@ void E2E::sway() {
   for (int i = 0; i < notesB; ++i) notesLeak = notesLeak || r.model(r.shell->notifications())->at(i).stringify().contains(todoTitle);
   QVERIFY2(onOutput(QStringLiteral("workspace-b"), win) >= 0.9, "workspace B not on the output");
   // back to A, draft + copy again, then lock: cleared
-  QVERIFY(choose(byName(QStringLiteral("workspaceSwitcher")), r.model(r.shell->workspaces())->at(0).get(QStringLiteral("workspaceId")).str() == wsB
-                                                                   ? r.model(r.shell->workspaces())->at(1).get(QStringLiteral("displayName")).str()
-                                                                   : r.model(r.shell->workspaces())->at(0).get(QStringLiteral("displayName")).str()));
+  QVERIFY2(choose(byName(QStringLiteral("workspaceSwitcher")), wsAName), qPrintable(QStringLiteral("workspace A not chosen: ") + workspacesDump()));
   QTRY_VERIFY_WITH_TIMEOUT(r.shell->workspaceId() == ws && r.shell->hostAvailable(), 90000);
   QVERIFY(page(QStringLiteral("home")));
   QVERIFY(choose(byLabel(QStringLiteral("目标应用")), r.appById(todo).get(QStringLiteral("title")).stringOr(todoTitle)));

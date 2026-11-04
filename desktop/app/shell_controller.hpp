@@ -228,6 +228,7 @@ class ShellController : public QObject, public RequestSink {
   int scopeGen_ = 0;
   quint64 membershipGen_ = 0;
   int lateDropped_ = 0;
+  quint64 sendSeq_ = 0, replySeq_ = 0, hostEvidenceSeq_ = 0;  // send order of requests; Host-health evidence applies newest-sent first
   int eventsSeen_ = 0;    // diagnostics: every event frame, and those for another workspace
   int eventsOther_ = 0;
   QString lastEventType_;
