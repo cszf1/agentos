@@ -50,7 +50,7 @@ PageFrame {
                 id: versionRow; anchors.fill: parent; anchors.margins: Theme.s3; spacing: Theme.s2
                 PText { text: (row.title || row.revisionId) + (row.isActive ? "（当前）" : ""); Layout.fillWidth: true; bold: !!row.isActive }
                 PText { text: row.createdAt || ""; tone: "muted"; variant: "caption" }
-                AButton { label: "切换到此版本"; enabled: !row.isActive && !!root.app
+                AButton { objectName: "switchToVersion"; label: "切换到此版本"; enabled: !row.isActive && !!root.app
                     onConfirmed: if (root.app) shell.act("app.deploy", {appId:root.app.appId, revisionId:row.revisionId, appEpoch:root.app.appEpoch}, "切换版本") }
             }
         }

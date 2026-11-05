@@ -22,120 +22,56 @@ Item {
 
     ScrollView {
         id: scrollView
+        objectName: "pageScroll"
         anchors.fill: parent
         clip: true
         contentWidth: availableWidth
+        ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
 
-        ColumnLayout {
+        // Explicit content height: a bare ColumnLayout can be given the viewport
+        // height by ScrollView, which then clips tall pages (AppDetail with SlotCanvas
+        // + version cards) instead of scrolling them into reach.
+        Item {
             width: scrollView.availableWidth
-            spacing: Theme.s4
+            height: pageColumn.implicitHeight
 
-            // Page Header Row
-            RowLayout {
-                Layout.fillWidth: true
-                Layout.topMargin: Theme.s4
-                Layout.leftMargin: Theme.s5
-                Layout.rightMargin: Theme.s5
-                spacing: Theme.s3
+            ColumnLayout {
+                id: pageColumn
+                width: parent.width
+                spacing: Theme.s4
 
-                ColumnLayout {
+                // Page Header Row
+                RowLayout {
                     Layout.fillWidth: true
-                    spacing: Theme.s1
+                    Layout.topMargin: Theme.s4
+                    Layout.leftMargin: Theme.s5
+                    Layout.rightMargin: Theme.s5
+                    spacing: Theme.s3
 
-                    PText {
-                        text: root.title
-                        variant: "display"
-                        bold: true
-                    }
-
-                    PText {
-                        visible: root.subtitle !== ""
-                        text: root.subtitle
-                        variant: "body"
-                        tone: "secondary"
+                    ColumnLayout {
                         Layout.fillWidth: true
-                    }
-                }
+                        spacing: Theme.s1
 
-                AButton {
-                    visible: root.showRefreshButton
-                    label: Strings.common.refresh
-                    iconName: "refresh"
-                    variant: "secondary"
-                    onConfirmed: {
-                        if (typeof shell !== "undefined" && shell) {
-                            shell.refreshPage()
+                        PText {
+                            text: root.title
+                            variant: "display"
+                            bold: true
                         }
-                    }
-                }
-            }
 
-            // 1px Divider
-            Rectangle {
-                Layout.fillWidth: true
-                Layout.leftMargin: Theme.s5
-                Layout.rightMargin: Theme.s5
-                height: Theme.borderThin
-                color: Theme.border
-            }
-
-            // Standardized List States: Loading / Error / Empty
-            Rectangle {
-                visible: root.listState !== "normal"
-                Layout.fillWidth: true
-                Layout.leftMargin: Theme.s5
-                Layout.rightMargin: Theme.s5
-                Layout.preferredHeight: Theme.px(240)
-                radius: Theme.radiusCard
-                color: Theme.bgSurface
-                border.width: Theme.borderThin
-                border.color: root.listState === "error" ? Theme.dangerBorder : Theme.border
-
-                ColumnLayout {
-                    anchors.centerIn: parent
-                    width: Math.min(parent.width - Theme.s5, Theme.px(420))
-                    spacing: Theme.s2
-
-                    Rectangle {
-                        Layout.alignment: Qt.AlignHCenter
-                        width: Theme.px(40)
-                        height: Theme.px(40)
-                        radius: Theme.px(20)
-                        color: root.listState === "error" ? Theme.dangerSubtle : (root.listState === "loading" ? Theme.accentSubtle : Theme.bgSubtle)
-
-                        Image {
-                            anchors.centerIn: parent
-                            source: Theme.iconSource(
-                                root.listState === "error" ? "incidents" : (root.listState === "loading" ? "refresh" : "apps"),
-                                (root.listState === "error" ? Theme.danger : (root.listState === "loading" ? Theme.accent : Theme.textSecondary)).toString()
-                            )
-                            sourceSize.width: Theme.iconMd
-                            sourceSize.height: Theme.iconMd
+                        PText {
+                            visible: root.subtitle !== ""
+                            text: root.subtitle
+                            variant: "body"
+                            tone: "secondary"
+                            Layout.fillWidth: true
                         }
-                    }
-
-                    PText {
-                        Layout.alignment: Qt.AlignHCenter
-                        text: root.listState === "loading" ? Strings.common.loadingTitle : (root.listState === "error" ? root.errorTitle : root.emptyTitle)
-                        variant: "subhead"
-                        bold: true
-                        tone: root.listState === "error" ? "danger" : "primary"
-                    }
-
-                    PText {
-                        Layout.fillWidth: true
-                        horizontalAlignment: Text.AlignHCenter
-                        text: root.listState === "loading" ? Strings.common.loadingDesc : (root.listState === "error" ? root.errorDesc : root.emptyDesc)
-                        variant: "body"
-                        tone: "secondary"
                     }
 
                     AButton {
-                        visible: root.listState === "error" || root.listState === "empty"
-                        Layout.alignment: Qt.AlignHCenter
-                        Layout.topMargin: Theme.s1
-                        label: root.listState === "error" ? Strings.common.retry : "刷新数据"
-                        variant: root.listState === "error" ? "primary" : "secondary"
+                        visible: root.showRefreshButton
+                        label: Strings.common.refresh
+                        iconName: "refresh"
+                        variant: "secondary"
                         onConfirmed: {
                             if (typeof shell !== "undefined" && shell) {
                                 shell.refreshPage()
@@ -143,17 +79,92 @@ Item {
                         }
                     }
                 }
-            }
 
-            // Main Page Content Container
-            ColumnLayout {
-                id: contentColumn
-                visible: root.listState === "normal"
-                Layout.fillWidth: true
-                Layout.leftMargin: Theme.s5
-                Layout.rightMargin: Theme.s5
-                Layout.bottomMargin: Theme.s5
-                spacing: Theme.s4
+                // 1px Divider
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.leftMargin: Theme.s5
+                    Layout.rightMargin: Theme.s5
+                    height: Theme.borderThin
+                    color: Theme.border
+                }
+
+                // Standardized List States: Loading / Error / Empty
+                Rectangle {
+                    visible: root.listState !== "normal"
+                    Layout.fillWidth: true
+                    Layout.leftMargin: Theme.s5
+                    Layout.rightMargin: Theme.s5
+                    Layout.preferredHeight: Theme.px(240)
+                    radius: Theme.radiusCard
+                    color: Theme.bgSurface
+                    border.width: Theme.borderThin
+                    border.color: root.listState === "error" ? Theme.dangerBorder : Theme.border
+
+                    ColumnLayout {
+                        anchors.centerIn: parent
+                        width: Math.min(parent.width - Theme.s5, Theme.px(420))
+                        spacing: Theme.s2
+
+                        Rectangle {
+                            Layout.alignment: Qt.AlignHCenter
+                            width: Theme.px(40)
+                            height: Theme.px(40)
+                            radius: Theme.px(20)
+                            color: root.listState === "error" ? Theme.dangerSubtle : (root.listState === "loading" ? Theme.accentSubtle : Theme.bgSubtle)
+
+                            Image {
+                                anchors.centerIn: parent
+                                source: Theme.iconSource(
+                                    root.listState === "error" ? "incidents" : (root.listState === "loading" ? "refresh" : "apps"),
+                                    (root.listState === "error" ? Theme.danger : (root.listState === "loading" ? Theme.accent : Theme.textSecondary)).toString()
+                                )
+                                sourceSize.width: Theme.iconMd
+                                sourceSize.height: Theme.iconMd
+                            }
+                        }
+
+                        PText {
+                            Layout.alignment: Qt.AlignHCenter
+                            text: root.listState === "loading" ? Strings.common.loadingTitle : (root.listState === "error" ? root.errorTitle : root.emptyTitle)
+                            variant: "subhead"
+                            bold: true
+                            tone: root.listState === "error" ? "danger" : "primary"
+                        }
+
+                        PText {
+                            Layout.fillWidth: true
+                            horizontalAlignment: Text.AlignHCenter
+                            text: root.listState === "loading" ? Strings.common.loadingDesc : (root.listState === "error" ? root.errorDesc : root.emptyDesc)
+                            variant: "body"
+                            tone: "secondary"
+                        }
+
+                        AButton {
+                            visible: root.listState === "error" || root.listState === "empty"
+                            Layout.alignment: Qt.AlignHCenter
+                            Layout.topMargin: Theme.s1
+                            label: root.listState === "error" ? Strings.common.retry : "刷新数据"
+                            variant: root.listState === "error" ? "primary" : "secondary"
+                            onConfirmed: {
+                                if (typeof shell !== "undefined" && shell) {
+                                    shell.refreshPage()
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Main Page Content Container
+                ColumnLayout {
+                    id: contentColumn
+                    visible: root.listState === "normal"
+                    Layout.fillWidth: true
+                    Layout.leftMargin: Theme.s5
+                    Layout.rightMargin: Theme.s5
+                    Layout.bottomMargin: Theme.s5
+                    spacing: Theme.s4
+                }
             }
         }
     }

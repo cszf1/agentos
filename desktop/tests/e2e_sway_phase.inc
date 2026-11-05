@@ -93,6 +93,22 @@ void E2E::sway() {
     return hit;
   };
   auto byLabel = [&](const QString& label) { return byLabelIn(cur, label); };
+  // Scroll with real QMP wheel until the labeled control's rect is inside the window.
+  // Writing Flickable.contentY also moves ComboBox popups past their bounds (see paging history).
+  auto labelInView = [&](const QString& label) -> QQuickItem* {
+    for (int attempt = 0; attempt < 24; ++attempt) {
+      QQuickItem* item = byLabel(label);
+      if (!item) return nullptr;
+      const QRectF rect = item->mapRectToScene(item->boundingRect());
+      if (QRectF(1, 1, cur->width() - 2, cur->height() - 2).contains(rect)) return item;
+      if (rect.left() < 1 || rect.right() >= cur->width() - 1) return nullptr;
+      A.ask(QStringLiteral("wheel"), {{QStringLiteral("x"), cur->width() - 100}, {QStringLiteral("y"), cur->height() / 2},
+                                    {QStringLiteral("down"), rect.top() >= 1}, {QStringLiteral("n"), 3}});
+      QTest::qWait(300);
+    }
+    std::printf("E2E-DIAG label '%s' did not enter the viewport after real wheel input\n", qPrintable(label));
+    return nullptr;
+  };
   auto byName = [&](const QString& name) -> QQuickItem* {
     QQuickItem* hit = nullptr;
     walkItems(cur->contentItem(), [&](QQuickItem* i) {
@@ -375,7 +391,7 @@ void E2E::sway() {
   // back to the first version from the app detail page: priority becomes a hidden field, records stay
   r.go(QStringLiteral("app"));
   QTRY_VERIFY_WITH_TIMEOUT(r.model(r.shell->revisions())->count() >= 2, 20000);
-  QCOMPARE(click(byLabel(QStringLiteral("切换到此版本"))), 1);
+  QCOMPARE(click(labelInView(QStringLiteral("切换到此版本"))), 1);
   QTRY_VERIFY_WITH_TIMEOUT(r.actionState(QStringLiteral("app.deploy")) == QLatin1String("reconciled") || r.actionState(QStringLiteral("app.deploy")) == QLatin1String("failed"), 120000);
   QCOMPARE(r.actionState(QStringLiteral("app.deploy")), QStringLiteral("reconciled"));
   v = openTodo();
@@ -386,7 +402,7 @@ void E2E::sway() {
   // and forward again to the newest version
   r.go(QStringLiteral("app"));
   QTRY_VERIFY_WITH_TIMEOUT(byLabel(QStringLiteral("切换到此版本")) != nullptr, 20000);
-  QCOMPARE(click(byLabel(QStringLiteral("切换到此版本"))), 1);
+  QCOMPARE(click(labelInView(QStringLiteral("切换到此版本"))), 1);
   QTRY_VERIFY_WITH_TIMEOUT(r.action(QStringLiteral("app.deploy")).get(QStringLiteral("state")).str() == QLatin1String("reconciled"), 120000);
   v = openTodo();
   QVERIFY(v);
@@ -423,26 +439,11 @@ void E2E::sway() {
   QVERIFY(total(v) >= 26);
   QTRY_VERIFY_WITH_TIMEOUT(rows(v) == 20, 20000);
   const QString page1 = st("pageText").toString();
-  // The 20-row table extends below the output. Scroll the actual page with QMP wheel input, not by writing
-  // Flickable.contentY in every click (that also scrolled ComboBox popups beyond their content bounds).
-  auto pagingButton = [&](const QString& label) -> QQuickItem* {
-    for (int attempt = 0; attempt < 24; ++attempt) {
-      QQuickItem* item = byLabel(label);
-      if (!item) return nullptr;
-      const QRectF rect = item->mapRectToScene(item->boundingRect());
-      if (QRectF(1, 1, cur->width() - 2, cur->height() - 2).contains(rect)) return item;
-      if (rect.left() < 1 || rect.right() >= cur->width() - 1) return nullptr;
-      A.ask(QStringLiteral("wheel"), {{QStringLiteral("x"), cur->width() - 100}, {QStringLiteral("y"), cur->height() / 2},
-                                    {QStringLiteral("down"), rect.top() >= 1}, {QStringLiteral("n"), 3}});
-      QTest::qWait(300);
-    }
-    std::printf("E2E-DIAG paging button '%s' did not enter the viewport after real wheel input\n", qPrintable(label));
-    return nullptr;
-  };
-  QCOMPARE(click(pagingButton(QStringLiteral("下一页"))), 1);
+  // The 20-row table extends below the output; labelInView wheels the page ScrollView into place.
+  QCOMPARE(click(labelInView(QStringLiteral("下一页"))), 1);
   QTRY_VERIFY_WITH_TIMEOUT(st("pageText").toString() != page1 && rows(v) == total(v) - 20, 20000);
   QVERIFY(byLabel(QStringLiteral("上一页")) != nullptr);
-  QCOMPARE(click(pagingButton(QStringLiteral("上一页"))), 1);
+  QCOMPARE(click(labelInView(QStringLiteral("上一页"))), 1);
   QTRY_VERIFY_WITH_TIMEOUT(rows(v) == 20, 20000);
   report(QStringLiteral("paging"), {{QStringLiteral("total"), total(v)}, {QStringLiteral("page1"), page1}});
 
