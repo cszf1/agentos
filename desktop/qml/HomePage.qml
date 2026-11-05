@@ -6,35 +6,50 @@ PageFrame {
     title: "首页"
     subtitle: "原生应用画布 · 连接与权限由可信 Shell 管理"
     property string targetApp: ""
-    RowLayout {
-        Layout.fillWidth: true; spacing: Theme.s3
-        AField { id: intent; objectName: "intentInput"; label: "意图输入"; Layout.fillWidth: true
-            placeholder: shell.modelAvailable ? "想做什么？例如：做一个记账应用" : "模型暂不可用"
-            boundValue: shell.intentDraft; enterSubmits: true; enabled: shell.modelAvailable && !shell.readOnly
-            onTextEdited: shell.intentDraft = text
-            onSubmitted: function(v) { if (!shell.readOnly && shell.modelAvailable) shell.submitIntent(v, root.targetApp) }
-        }
-        ASelect { id: intentTarget; label: "目标应用"; value: root.targetApp
-            options: {
-                var options = [{value:"",label:"新应用"}]
-                for (var i = 0; i < shell.apps.count; ++i) {
-                    var a = shell.apps.get(i)
-                    options.push({value:a.appId, label:a.title || a.appId})
+    Rectangle {
+        Layout.fillWidth: true
+        implicitHeight: intentCol.implicitHeight + Theme.s4 * 2
+        radius: Theme.radiusCard
+        color: Theme.bgSurface
+        border.color: Theme.border
+        border.width: Theme.borderThin
+        ColumnLayout {
+            id: intentCol
+            anchors.fill: parent
+            anchors.margins: Theme.s4
+            spacing: Theme.s2
+            PText { text: "快速意图与生成"; variant: "caption"; tone: "secondary"; bold: true }
+            RowLayout {
+                Layout.fillWidth: true; spacing: Theme.s3
+                AField { id: intent; objectName: "intentInput"; label: "意图输入"; Layout.fillWidth: true
+                    placeholder: shell.modelAvailable ? "想做什么？例如：做一个记账应用" : "模型暂不可用"
+                    boundValue: shell.intentDraft; enterSubmits: true; enabled: shell.modelAvailable && !shell.readOnly
+                    onTextEdited: shell.intentDraft = text
+                    onSubmitted: function(v) { if (!shell.readOnly && shell.modelAvailable) shell.submitIntent(v, root.targetApp) }
                 }
-                return options
+                ASelect { id: intentTarget; label: "目标应用"; value: root.targetApp
+                    options: {
+                        var options = [{value:"",label:"新应用"}]
+                        for (var i = 0; i < shell.apps.count; ++i) {
+                            var a = shell.apps.get(i)
+                            options.push({value:a.appId, label:a.title || a.appId})
+                        }
+                        return options
+                    }
+                    onChosen: function(v) { root.targetApp = v }
+                }
+                AButton { objectName: "intentSubmit"; label: "提交"; variant: "primary"; writeAction: true
+                    enabled: shell.modelAvailable && !shell.readOnly
+                    onConfirmed: shell.submitIntent(intent.boundValue, root.targetApp) }
             }
-            onChosen: function(v) { root.targetApp = v }
         }
-        AButton { objectName: "intentSubmit"; label: "提交"; variant: "primary"; writeAction: true
-            enabled: shell.modelAvailable && !shell.readOnly
-            onConfirmed: shell.submitIntent(intent.boundValue, root.targetApp) }
     }
     Connections { target: shell; function onScopeCleared(reason) { root.targetApp = "" } }
     RowLayout {
         Layout.fillWidth: true; spacing: Theme.s4
         Rectangle {
             Layout.fillWidth: true; implicitHeight: healthCol.implicitHeight + Theme.s4 * 2
-            radius: Theme.radiusCard; color: Theme.bgSurface; border.color: Theme.border
+            radius: Theme.radiusCard; color: Theme.bgSurface; border.color: Theme.border; border.width: Theme.borderThin
             ColumnLayout {
                 id: healthCol; anchors.fill: parent; anchors.margins: Theme.s4; spacing: Theme.s2
                 PText { text: "系统状态"; variant: "subhead"; bold: true }
@@ -46,7 +61,7 @@ PageFrame {
         }
         Rectangle {
             Layout.fillWidth: true; implicitHeight: tasksCol.implicitHeight + Theme.s4 * 2
-            radius: Theme.radiusCard; color: Theme.bgSurface; border.color: Theme.border
+            radius: Theme.radiusCard; color: Theme.bgSurface; border.color: Theme.border; border.width: Theme.borderThin
             ColumnLayout {
                 id: tasksCol; anchors.fill: parent; anchors.margins: Theme.s4; spacing: Theme.s2
                 PText { text: "最近任务"; variant: "subhead"; bold: true }
@@ -75,6 +90,7 @@ PageFrame {
                 implicitHeight: cardCol.implicitHeight + Theme.s3 * 2; height: implicitHeight
                 radius: Theme.radiusCard; color: Theme.bgSurface
                 border.color: pinned ? Theme.accent : Theme.borderStrong; border.width: Theme.borderThin
+                Behavior on border.color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
                 ColumnLayout {
                     id: cardCol; anchors.fill: parent; anchors.margins: Theme.s3; spacing: Theme.s2
                     RowLayout {
@@ -97,9 +113,24 @@ PageFrame {
             }
         }
     }
-    PText { text: "通知"; variant: "subhead"; bold: true }
-    Repeater { model: shell.notifications
-        delegate: PText { objectName: "notification:" + row.id; visible: index < 4; Layout.fillWidth: true
-            text: (row.title || "") + (row.count > 1 ? "（" + row.count + " 次）" : ""); color: row.severity === "critical" || row.severity === "error" ? "#a01515" : Theme.textSecondary } }
+    Rectangle {
+        Layout.fillWidth: true
+        implicitHeight: notifCol.implicitHeight + Theme.s4 * 2
+        radius: Theme.radiusCard
+        color: Theme.bgSurface
+        border.color: Theme.border
+        border.width: Theme.borderThin
+        ColumnLayout {
+            id: notifCol
+            anchors.fill: parent
+            anchors.margins: Theme.s4
+            spacing: Theme.s2
+            PText { text: "通知"; variant: "subhead"; bold: true }
+            Repeater { model: shell.notifications
+                delegate: PText { objectName: "notification:" + row.id; visible: index < 4; Layout.fillWidth: true
+                    text: (row.title || "") + (row.count > 1 ? "（" + row.count + " 次）" : ""); color: row.severity === "critical" || row.severity === "error" ? "#a01515" : Theme.textSecondary } }
+            PText { visible: shell.notifications.count === 0; text: "暂无系统通知"; tone: "muted"; variant: "caption" }
+        }
+    }
     ActionsList { }
 }

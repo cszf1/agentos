@@ -15,14 +15,16 @@ TextField {
     echoMode: sensitive ? TextInput.Password : TextInput.Normal
     onTextChanged: if (boundValue !== text) boundValue = text
     onAccepted: if (enterSubmits) submitted(text)
-    leftPadding: Theme.s2
-    rightPadding: Theme.s2
+    leftPadding: Theme.px(12)
+    rightPadding: Theme.px(12)
     focusPolicy: Qt.StrongFocus
     Accessible.name: label
     Accessible.role: Accessible.EditableText
     font.family: Theme.fontFamily
     font.pixelSize: Theme.textBody
     color: Theme.textPrimary
+    placeholderTextColor: Theme.textMuted
+    verticalAlignment: TextInput.AlignVCenter
     selectByMouse: true
     onBoundValueChanged: if (text !== boundValue) text = boundValue
     Component.onCompleted: text = boundValue
@@ -33,5 +35,5 @@ TextField {
         ignoreUnknownSignals: true
         function onScopeCleared(reason) { ime.discard(f); f.boundValue = ""; f.text = "" }
     }
-    background: FocusRing { implicitWidth: 200; implicitHeight: Theme.px(36); on: f.activeFocus; color: Theme.bgSurface }
+    background: FocusRing { implicitWidth: 200; implicitHeight: Theme.px(38); on: f.activeFocus; hovered: f.hovered; color: f.enabled ? Theme.bgSurface : Theme.bgSubtle }
 }

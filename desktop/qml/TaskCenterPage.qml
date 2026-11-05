@@ -10,10 +10,10 @@ PageFrame {
         model: shell.runs
         delegate: Rectangle {
             Layout.fillWidth: true; implicitHeight: r.implicitHeight + Theme.s3 * 2
-            radius: Theme.radiusCard; color: Theme.bgSurface; border.color: Theme.border
+            radius: Theme.radiusCard; color: Theme.bgSurface; border.color: Theme.border; border.width: Theme.borderThin
             RowLayout {
                 id: r; anchors.fill: parent; anchors.margins: Theme.s3; spacing: Theme.s2
-                PText { text: row.intent || row.runId; Layout.fillWidth: true }
+                PText { text: row.intent || row.runId; Layout.fillWidth: true; bold: true }
                 PText { text: row.status || row.state || ""; tone: "secondary" }
                 AButton { objectName: "cancelRun"; property string runId: row.runId || ""; label: "取消任务"; writeAction: true
                     enabled: ["queued", "running", "accepted", "planning", "building"].indexOf(row.status || row.state) >= 0
@@ -24,12 +24,28 @@ PageFrame {
             }
         }
     }
-    PText { text: "维护作业"; variant: "subhead"; bold: true }
-    Repeater { model: shell.jobs
-        delegate: PText { Layout.fillWidth: true; text: (row.templateId || row.jobId) + " — " + (row.state || ""); tone: "secondary" } }
-    PText { text: "系统操作"; variant: "subhead"; bold: true }
-    Repeater { model: shell.operations
-        delegate: PText { Layout.fillWidth: true; text: (row.actionId || "") + " — " + (row.state || row.phase || ""); tone: "secondary" } }
-    AArea { Layout.fillWidth: true; readOnly: true; monospace: true; areaHeight: Theme.px(200); boundValue: shell.transcriptText }
+    Rectangle {
+        Layout.fillWidth: true
+        implicitHeight: opsCol.implicitHeight + Theme.s4 * 2
+        radius: Theme.radiusCard
+        color: Theme.bgSurface
+        border.color: Theme.border
+        border.width: Theme.borderThin
+        ColumnLayout {
+            id: opsCol
+            anchors.fill: parent
+            anchors.margins: Theme.s4
+            spacing: Theme.s2
+            PText { text: "维护作业"; variant: "subhead"; bold: true }
+            Repeater { model: shell.jobs
+                delegate: PText { Layout.fillWidth: true; text: (row.templateId || row.jobId) + " — " + (row.state || ""); tone: "secondary" } }
+            PText { visible: shell.jobs.count === 0; text: "暂无维护作业"; tone: "muted"; variant: "caption" }
+            PText { text: "系统操作"; variant: "subhead"; bold: true; Layout.topMargin: Theme.s2 }
+            Repeater { model: shell.operations
+                delegate: PText { Layout.fillWidth: true; text: (row.actionId || "") + " — " + (row.state || row.phase || ""); tone: "secondary" } }
+            PText { visible: shell.operations.count === 0; text: "暂无系统操作"; tone: "muted"; variant: "caption" }
+        }
+    }
+    AArea { Layout.fillWidth: true; label: "任务输出记录"; readOnly: true; monospace: true; areaHeight: Theme.px(200); boundValue: shell.transcriptText }
     ActionsList { }
 }

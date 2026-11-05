@@ -6,11 +6,25 @@ PageFrame {
     title: "应用与版本"
     subtitle: "管理应用内容、运行状态与版本"
     readonly property var app: shell.currentApp
-    PText { visible: !root.app; text: "从首页选择应用后查看"; tone: "muted" }
+    Rectangle {
+        visible: !root.app
+        Layout.fillWidth: true
+        implicitHeight: emptyAppCol.implicitHeight + Theme.s4 * 2
+        radius: Theme.radiusCard
+        color: Theme.bgSurface
+        border.color: Theme.border
+        border.width: Theme.borderThin
+        ColumnLayout {
+            id: emptyAppCol
+            anchors.fill: parent
+            anchors.margins: Theme.s4
+            PText { text: "从首页选择应用后查看"; tone: "muted" }
+        }
+    }
     Rectangle {
         visible: !!root.app; Layout.fillWidth: true
         implicitHeight: content.implicitHeight + Theme.s4 * 2
-        color: Theme.bgSurface; radius: Theme.radiusCard; border.color: Theme.border
+        color: Theme.bgSurface; radius: Theme.radiusCard; border.color: Theme.border; border.width: Theme.borderThin
         ColumnLayout {
             id: content; anchors.fill: parent; anchors.margins: Theme.s4; spacing: Theme.s3
             PText { text: root.app ? root.app.title : ""; variant: "subhead"; bold: true }
@@ -30,11 +44,11 @@ PageFrame {
     Repeater {
         model: shell.revisions
         delegate: Rectangle {
-            Layout.fillWidth: true; implicitHeight: versionRow.implicitHeight + Theme.s2 * 2
-            radius: Theme.radiusControl; color: Theme.bgSurface; border.color: Theme.border
+            Layout.fillWidth: true; implicitHeight: versionRow.implicitHeight + Theme.s3 * 2
+            radius: Theme.radiusCard; color: Theme.bgSurface; border.color: Theme.border; border.width: Theme.borderThin
             RowLayout {
-                id: versionRow; anchors.fill: parent; anchors.margins: Theme.s2
-                PText { text: (row.title || row.revisionId) + (row.isActive ? "（当前）" : ""); Layout.fillWidth: true }
+                id: versionRow; anchors.fill: parent; anchors.margins: Theme.s3; spacing: Theme.s2
+                PText { text: (row.title || row.revisionId) + (row.isActive ? "（当前）" : ""); Layout.fillWidth: true; bold: !!row.isActive }
                 PText { text: row.createdAt || ""; tone: "muted"; variant: "caption" }
                 AButton { label: "切换到此版本"; enabled: !row.isActive && !!root.app
                     onConfirmed: if (root.app) shell.act("app.deploy", {appId:root.app.appId, revisionId:row.revisionId, appEpoch:root.app.appEpoch}, "切换版本") }

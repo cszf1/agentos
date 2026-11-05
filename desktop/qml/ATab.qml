@@ -41,6 +41,9 @@ TabButton {
         y: root.fullWidth ? Theme.s1 : parent.height - Theme.px(2)
         radius: Theme.px(2)
         color: root.active ? Theme.accent : Theme.textMuted
+        Behavior on color {
+            ColorAnimation { duration: Theme.animFast; easing.type: Easing.OutCubic }
+        }
     }
 
     FocusRing {

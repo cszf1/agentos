@@ -9,8 +9,9 @@ TextArea {
     property bool monospace: false
     property int areaHeight: Theme.px(110)
     placeholderText: placeholder || label
+    placeholderTextColor: Theme.textMuted
     implicitHeight: areaHeight
-    padding: Theme.s2
+    padding: Theme.px(12)
     textFormat: TextEdit.PlainText
     focusPolicy: Qt.StrongFocus
     Accessible.name: label
@@ -31,5 +32,5 @@ TextArea {
         ignoreUnknownSignals: true
         function onScopeCleared(reason) { ime.discard(a); a.text = "" }
     }
-    background: FocusRing { implicitWidth: 240; implicitHeight: 72; on: a.activeFocus; color: Theme.bgSurface }
+    background: FocusRing { implicitWidth: 240; implicitHeight: 72; on: a.activeFocus; hovered: a.hovered; color: a.readOnly ? Theme.bgCode : Theme.bgSurface }
 }

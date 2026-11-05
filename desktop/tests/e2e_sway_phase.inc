@@ -313,6 +313,7 @@ void E2E::sway() {
   QTRY_VERIFY_WITH_TIMEOUT(rows(v) == 1, 20000);
   QCOMPARE(click(byLabel(QStringLiteral("删除"))), 1);
   QTRY_VERIFY_WITH_TIMEOUT(st("hasDelete").toBool(), 5000);
+  QVERIFY(byName(QStringLiteral("recordDeleteCancel")) != nullptr);
   QCOMPARE(click(byLabel(QStringLiteral("确认删除"))), 1);
   QTRY_VERIFY_WITH_TIMEOUT(rows(v) == 0, 20000);
   // The confirmation button took focus; Ctrl+A/Backspace alone would leave the search at dup-2.

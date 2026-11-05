@@ -20,7 +20,8 @@ ComboBox {
     currentIndex: { for (var i = 0; i < options.length; ++i) if (String(options[i].value) === value) return i; return options.length > 0 ? 0 : -1 }
     onActivated: function(i) { if (i >= 0 && i < options.length) chosen(String(options[i].value)) }
     contentItem: Text {
-        leftPadding: 8
+        leftPadding: Theme.px(12)
+        rightPadding: Theme.px(28)
         color: Theme.textPrimary
         text: s.displayText
         textFormat: Text.PlainText
@@ -28,11 +29,39 @@ ComboBox {
         verticalAlignment: Text.AlignVCenter
         elide: Text.ElideRight
     }
-    delegate: ItemDelegate {
-        width: s.width
-        Accessible.name: modelData.label
-        contentItem: Text { color: Theme.textPrimary; text: modelData.label; textFormat: Text.PlainText; font: s.font }
-        highlighted: s.highlightedIndex === index
+    indicator: Text {
+        x: s.width - width - Theme.px(10)
+        y: (s.availableHeight - height) / 2
+        text: "▾"
+        textFormat: Text.PlainText
+        font.family: Theme.fontFamily
+        font.pixelSize: Theme.textCaption
+        color: Theme.textSecondary
+        verticalAlignment: Text.AlignVCenter
     }
-    background: FocusRing { implicitWidth: 160; implicitHeight: Theme.px(36); on: s.activeFocus; color: Theme.bgSurface }
+    delegate: ItemDelegate {
+        id: optDel
+        width: s.width
+        implicitHeight: Theme.px(34)
+        Accessible.name: modelData.label
+        highlighted: s.highlightedIndex === index
+        contentItem: Text {
+            leftPadding: Theme.px(10)
+            rightPadding: Theme.px(10)
+            color: optDel.highlighted ? Theme.accent : Theme.textPrimary
+            text: modelData.label
+            textFormat: Text.PlainText
+            font.family: s.font.family
+            font.pixelSize: s.font.pixelSize
+            font.weight: optDel.highlighted ? Font.DemiBold : Font.Normal
+            verticalAlignment: Text.AlignVCenter
+            elide: Text.ElideRight
+        }
+        background: Rectangle {
+            radius: Theme.radiusSm
+            color: optDel.highlighted ? Theme.accentSubtle : (optDel.hovered ? Theme.bgHover : "transparent")
+            Behavior on color { ColorAnimation { duration: Theme.animFast } }
+        }
+    }
+    background: FocusRing { implicitWidth: 164; implicitHeight: Theme.px(s.compact ? 32 : 36); on: s.activeFocus; hovered: s.hovered; color: Theme.bgSurface }
 }

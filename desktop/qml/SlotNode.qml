@@ -64,10 +64,12 @@ Item {
     Component { id: textC
         PText { width: root.width; text: root.d.text; variant: root.d.variant } }
     Component { id: alertC
-        Rectangle { width: root.width; implicitHeight: at.implicitHeight + 16; radius: 4
+        Rectangle { width: root.width; implicitHeight: at.implicitHeight + 20; radius: Theme.radiusControl
             color: root.d.status === "error" ? Theme.dangerSubtle : root.d.status === "warning" ? Theme.warningSubtle : root.d.status === "success" ? Theme.successSubtle : Theme.accentSubtle
+            border.width: Theme.borderThin
+            border.color: root.d.status === "error" ? Theme.dangerBorder : root.d.status === "warning" ? Theme.warningBorder : root.d.status === "success" ? Theme.successBorder : Theme.accentBorder
             Accessible.role: Accessible.AlertMessage; Accessible.name: root.d.text
-            PText { id: at; x: 8; y: 8; width: parent.width - 16; text: root.d.text } } }
+            PText { id: at; x: 10; y: 10; width: parent.width - 20; text: root.d.text } } }
     Component { id: metricC
         Column { width: root.width
             PText { text: root.d.label; variant: "muted" }
@@ -92,20 +94,20 @@ Item {
     Component { id: kanbanC
         Flow { width: root.width; spacing: 10
             Repeater { model: root.d.columns
-                delegate: Rectangle { width: Math.max(180, (root.width - 20) / Math.max(1, root.d.columns.length) - 10); implicitHeight: kc.implicitHeight + 12; height: implicitHeight; color: Theme.bgSubtle; radius: 6
+                delegate: Rectangle { width: Math.max(180, (root.width - 20) / Math.max(1, root.d.columns.length) - 10); implicitHeight: kc.implicitHeight + 16; height: implicitHeight; color: Theme.bgSubtle; border.color: Theme.border; border.width: Theme.borderThin; radius: Theme.radiusCard
                     Accessible.role: Accessible.List; Accessible.name: modelData.label
-                    Column { id: kc; x: 6; y: 6; width: parent.width - 12; spacing: 6
+                    Column { id: kc; x: 8; y: 8; width: parent.width - 16; spacing: 8
                         PText { text: modelData.label + "  " + modelData.count; font.bold: true }
                         Repeater { model: modelData.cards
-                            delegate: Rectangle { width: kc.width; implicitHeight: cc.implicitHeight + 10; height: implicitHeight; radius: 4; color: modelData.selected ? Theme.accentSubtle : Theme.bgSurface; border.color: Theme.borderStrong
-                                Column { id: cc; x: 5; y: 5; width: parent.width - 10
+                            delegate: Rectangle { width: kc.width; implicitHeight: cc.implicitHeight + 14; height: implicitHeight; radius: Theme.radiusControl; color: modelData.selected ? Theme.accentSubtle : Theme.bgSurface; border.color: modelData.selected ? Theme.accent : Theme.borderStrong; border.width: Theme.borderThin
+                                Column { id: cc; x: 7; y: 7; width: parent.width - 14; spacing: 4
                                     ACheck { visible: !!root.d.selectionId; label: "选择 " + modelData.title; checked: modelData.selected; onToggled: root.view.toggle(root.d.selectionId, modelData.id, checked) }
                                     PText { width: parent.width; text: modelData.title; font.bold: true }
                                     Repeater { model: modelData.fields; delegate: PText { width: cc.width; text: modelData; variant: "small" } } } } } } } } } }
     Component { id: formC
-        Rectangle { width: root.width; implicitHeight: fc.implicitHeight + 16; color: Theme.bgSubtle; border.color: Theme.border; radius: 6
+        Rectangle { width: root.width; implicitHeight: fc.implicitHeight + 20; color: Theme.bgSubtle; border.color: Theme.border; border.width: Theme.borderThin; radius: Theme.radiusCard
             Accessible.role: Accessible.Form; Accessible.name: root.d.title || root.d.formId
-            Column { id: fc; x: 8; y: 8; width: parent.width - 16; spacing: 8
+            Column { id: fc; x: 10; y: 10; width: parent.width - 20; spacing: 10
                 PText { visible: !!root.d.title; text: root.d.title || ""; font.bold: true }
                 Repeater { model: root.node.kids; delegate: SlotChild { width: fc.width; n: modelData; v: root.view } } } } }
     Component { id: textInputC
@@ -203,7 +205,7 @@ Item {
             }
             PText { visible: !!root.d.more; text: root.d.more || ""; variant: "small" } } }
     Component { id: errorC
-        Rectangle { width: root.width; implicitHeight: ec.implicitHeight + 16; color: Theme.dangerSubtle; radius: 4
+        Rectangle { width: root.width; implicitHeight: ec.implicitHeight + 16; color: Theme.dangerSubtle; border.color: Theme.dangerBorder; border.width: Theme.borderThin; radius: Theme.radiusControl
             Column { id: ec; x: 8; y: 8; width: parent.width - 16
                 PText { width: parent.width; text: root.d.text ? root.d.text : ("未知组件 " + (root.node ? root.node.type : "")) } } } }
 }

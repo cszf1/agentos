@@ -31,10 +31,12 @@ QtObject {
     readonly property int s5: px(32)
     readonly property int s6: px(48)
 
-    // Border radius tokens (Controls 6px, Cards 10px, Modals 12px)
-    readonly property int radiusControl: px(6)
-    readonly property int radiusCard: px(10)
-    readonly property int radiusModal: px(12)
+    // Border radius tokens (modern rounded minimalist geometry)
+    readonly property int radiusSm: px(6)
+    readonly property int radiusControl: px(10)
+    readonly property int radiusCard: px(14)
+    readonly property int radiusModal: px(18)
+    readonly property int radiusPill: px(999)
 
     // Border & Focus metrics
     readonly property int borderThin: Math.max(1, Math.round(1 * theme.scale))
@@ -99,6 +101,7 @@ QtObject {
     // Status & Danger colors (#DC2626, #D97706, #16A34A)
     readonly property color danger:         "#DC2626"
     readonly property color dangerHover:    "#B91C1C"
+    readonly property color dangerPressed:  "#991B1B"
     readonly property color dangerSubtle:   dark ? "#450A0A" : "#FEF2F2"
     readonly property color dangerBorder:   dark ? "#7F1D1D" : "#FECACA"
 

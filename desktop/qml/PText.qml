@@ -42,4 +42,7 @@ Text {
     textFormat: Text.PlainText
     wrapMode: Text.Wrap
     renderType: Text.QtRendering
+    Behavior on color {
+        ColorAnimation { duration: Theme.animFast; easing.type: Easing.OutCubic }
+    }
 }

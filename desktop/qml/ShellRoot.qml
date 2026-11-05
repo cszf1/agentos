@@ -7,7 +7,10 @@ FocusScope {
     id: root
     objectName: "shellRoot"
     property Item sureFor: null
-    function askSure(btn) { sureFor = btn }
+    function askSure(btn) {
+        sureFor = btn
+        sureNo.forceActiveFocus()
+    }
     Connections { target: root.shellRef
         function onScopeCleared(reason) { root.sureFor = null }
         function onPageChanged() { root.sureFor = null }
@@ -81,10 +84,13 @@ FocusScope {
                         required property var modelData
                         implicitWidth: pillRow.implicitWidth + Theme.s2 * 2
                         implicitHeight: Theme.px(24)
-                        radius: Theme.px(12)
+                        radius: Theme.radiusPill
                         color: modelData.ok ? Theme.successSubtle : Theme.dangerSubtle
                         border.width: Theme.borderThin
                         border.color: modelData.ok ? Theme.successBorder : Theme.dangerBorder
+
+                        Behavior on color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
+                        Behavior on border.color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
 
                         RowLayout {
                             id: pillRow
@@ -413,7 +419,7 @@ FocusScope {
                                 Rectangle {
                                     implicitWidth: roleTag.implicitWidth + Theme.s2
                                     implicitHeight: Theme.px(20)
-                                    radius: Theme.px(4)
+                                    radius: Theme.radiusSm
                                     color: (root.shellRef && root.shellRef.role === "viewer") ? Theme.warningSubtle : Theme.accentSubtle
 
                                     PText {
@@ -489,18 +495,67 @@ FocusScope {
         objectName: "dangerSure"
         anchors.fill: parent; z: 850; visible: root.sureFor !== null; color: Theme.scrimModal
         Accessible.role: Accessible.Dialog; Accessible.name: "确认危险操作"
-        MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons; hoverEnabled: true; onWheel: function(w) { w.accepted = true } }
+        MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons; hoverEnabled: true; onWheel: function(w) { w.accepted = true }; onClicked: root.sureFor = null }
         onVisibleChanged: if (visible) sureNo.forceActiveFocus()
         Keys.onEscapePressed: root.sureFor = null
         Rectangle {
-            anchors.centerIn: parent; width: Math.min(parent.width - 40, 420 * Theme.scale); height: sureCol.implicitHeight + 32
-            radius: 8; color: Theme.bgSurface; border.color: Theme.danger; border.width: 1
-            Column { id: sureCol; x: 16; y: 16; width: parent.width - 32; spacing: 10
-                PText { objectName: "dangerSureText"; width: parent.width; variant: "title"; text: "确定要" + (root.sureFor ? root.sureFor.label : "") + "吗？" }
-                PText { width: parent.width; variant: "muted"; text: "这是危险操作，请再确认一次。" }
-                Row { spacing: 10
-                    AButton { objectName: "dangerSureAccept"; label: "确定"; askSure: false; onClicked: { var t = root.sureFor; root.sureFor = null; if (t) t.confirmed() } }
-                    AButton { id: sureNo; objectName: "dangerSureCancel"; label: "取消"; onClicked: root.sureFor = null } } }
+            anchors.centerIn: parent
+            width: Math.min(parent.width - Theme.s6, Theme.px(440))
+            height: sureCol.implicitHeight + Theme.s5 * 2
+            radius: Theme.radiusModal
+            color: Theme.bgSurface
+            border.color: Theme.dangerBorder
+            border.width: Theme.focusWidth
+            MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons }
+            ColumnLayout {
+                id: sureCol
+                anchors.fill: parent
+                anchors.margins: Theme.s5
+                spacing: Theme.s3
+                Rectangle {
+                    implicitWidth: dangerBadgeText.implicitWidth + Theme.s3
+                    implicitHeight: Theme.px(24)
+                    radius: Theme.radiusPill
+                    color: Theme.dangerSubtle
+                    border.width: Theme.borderThin
+                    border.color: Theme.dangerBorder
+                    PText {
+                        id: dangerBadgeText
+                        anchors.centerIn: parent
+                        text: "危险操作二次确认"
+                        variant: "caption"
+                        tone: "danger"
+                        bold: true
+                    }
+                }
+                PText { objectName: "dangerSureText"; Layout.fillWidth: true; variant: "title"; bold: true; text: "确定要" + (root.sureFor ? root.sureFor.label : "") + "吗？" }
+                PText { Layout.fillWidth: true; variant: "body"; tone: "secondary"; text: "这是危险操作，请再确认一次。默认焦点位于“取消”以防误触。" }
+                RowLayout {
+                    Layout.fillWidth: true
+                    Layout.topMargin: Theme.s1
+                    spacing: Theme.s3
+                    AButton {
+                        id: sureNo
+                        objectName: "dangerSureCancel"
+                        label: "取消"
+                        variant: "secondary"
+                        KeyNavigation.tab: sureYes
+                        KeyNavigation.backtab: sureYes
+                        onConfirmed: root.sureFor = null
+                    }
+                    Item { Layout.fillWidth: true }
+                    AButton {
+                        id: sureYes
+                        objectName: "dangerSureAccept"
+                        label: "确定"
+                        variant: "danger"
+                        askSure: false
+                        KeyNavigation.tab: sureNo
+                        KeyNavigation.backtab: sureNo
+                        onConfirmed: { var t = root.sureFor; root.sureFor = null; if (t) t.confirmed() }
+                    }
+                }
+            }
         }
     }
     AppConfirm {

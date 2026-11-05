@@ -47,6 +47,35 @@ PageFrame {
                     focusPolicy: Qt.StrongFocus
                     Accessible.name: "音量"
                     onMoved: volSend.restart()
+                    background: Rectangle {
+                        x: vol.leftPadding
+                        y: vol.topPadding + vol.availableHeight / 2 - height / 2
+                        implicitWidth: Theme.px(180)
+                        implicitHeight: Theme.px(6)
+                        width: vol.availableWidth
+                        height: implicitHeight
+                        radius: Theme.radiusPill
+                        color: Theme.bgSubtle
+                        border.width: Theme.borderThin
+                        border.color: Theme.border
+                        Rectangle {
+                            width: vol.visualPosition * parent.width
+                            height: parent.height
+                            radius: Theme.radiusPill
+                            color: Theme.accent
+                        }
+                    }
+                    handle: Rectangle {
+                        x: vol.leftPadding + vol.visualPosition * (vol.availableWidth - width)
+                        y: vol.topPadding + vol.availableHeight / 2 - height / 2
+                        implicitWidth: Theme.px(18)
+                        implicitHeight: Theme.px(18)
+                        radius: Theme.radiusPill
+                        color: vol.pressed ? Theme.accentPressed : (vol.hovered ? Theme.accentHover : Theme.accent)
+                        border.width: Theme.px(2)
+                        border.color: Theme.bgSurface
+                        Behavior on color { ColorAnimation { duration: Theme.animFast } }
+                    }
                 }
                 Timer { id: volSend; interval: 250; onTriggered: if (root.shellRef) root.shellRef.hardware("audio.volume.set", { percent: Math.round(vol.value) }) }
                 ACheck { objectName: "muteCheck"; label: "静音"; checked: !!root.audio.muted

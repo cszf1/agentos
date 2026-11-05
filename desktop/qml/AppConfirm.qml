@@ -24,17 +24,50 @@ FocusScope {
         height: content.implicitHeight + Theme.s5 * 2
         radius: Theme.radiusModal; color: Theme.bgSurface
         border.width: Theme.borderThin; border.color: Theme.borderStrong
+        MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons }
         ColumnLayout {
             id: content
             anchors.fill: parent; anchors.margins: Theme.s5; spacing: Theme.s3
+            Rectangle {
+                implicitWidth: appBadgeTxt.implicitWidth + Theme.s3
+                implicitHeight: Theme.px(24)
+                radius: Theme.radiusPill
+                color: Theme.bgSubtle
+                border.width: Theme.borderThin
+                border.color: Theme.border
+                PText {
+                    id: appBadgeTxt
+                    anchors.centerIn: parent
+                    text: "应用内普通确认"
+                    variant: "caption"
+                    tone: "secondary"
+                    bold: true
+                }
+            }
             PText { text: "「" + (root.c.app || "应用") + "」请求确认"; variant: "title"; bold: true }
             PText { objectName: "appConfirmText"; Layout.fillWidth: true; text: root.c.text || "" }
             PText { Layout.fillWidth: true; variant: "caption"; tone: "muted"; text: "以上文字来自应用，不是系统确认，也不授予系统权限。" }
             RowLayout {
                 Layout.fillWidth: true; spacing: Theme.s3
-                AButton { id: reject; objectName: "appConfirmReject"; label: "拒绝"; onConfirmed: if (root.shellRef) root.shellRef.appConfirmAnswer(false) }
+                AButton {
+                    id: reject
+                    objectName: "appConfirmReject"
+                    label: "拒绝"
+                    KeyNavigation.tab: accept
+                    KeyNavigation.backtab: accept
+                    onConfirmed: if (root.shellRef) root.shellRef.appConfirmAnswer(false)
+                }
                 Item { Layout.fillWidth: true }
-                AButton { objectName: "appConfirmAccept"; label: "继续"; variant: "primary"; onConfirmed: if (root.shellRef) root.shellRef.appConfirmAnswer(true) }
+                AButton {
+                    id: accept
+                    objectName: "appConfirmAccept"
+                    label: "继续"
+                    variant: "primary"
+                    enterActivates: false
+                    KeyNavigation.tab: reject
+                    KeyNavigation.backtab: reject
+                    onConfirmed: if (root.shellRef) root.shellRef.appConfirmAnswer(true)
+                }
             }
         }
     }

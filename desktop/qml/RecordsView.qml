@@ -18,9 +18,9 @@ Column {
     PText { visible: !!r.st.error; width: r.width; text: r.st.error || ""; color: Theme.danger }
     Rectangle {
         visible: !!r.st.formOpen
-        width: r.width; implicitHeight: fc.implicitHeight + 16; height: visible ? implicitHeight : 0; color: Theme.bgSubtle; border.color: Theme.borderStrong; radius: 6
+        width: r.width; implicitHeight: fc.implicitHeight + 20; height: visible ? implicitHeight : 0; color: Theme.bgSubtle; border.color: Theme.borderStrong; border.width: Theme.borderThin; radius: Theme.radiusCard
         Accessible.role: Accessible.Dialog; Accessible.name: r.st.formMode === "create" ? "新建记录" : "编辑记录"
-        Column { id: fc; x: 8; y: 8; width: parent.width - 16; spacing: 6
+        Column { id: fc; x: 10; y: 10; width: parent.width - 20; spacing: 8
             PText { text: r.st.formMode === "create" ? "新建记录" : "编辑记录"; font.bold: true }
             Row { visible: !!r.st.formStale; spacing: 6
                 PText { text: "应用版本已切换，表单已停用。你的输入已保留。"; color: Theme.warning }
@@ -59,11 +59,12 @@ Column {
         AButton { label: "上一页"; enabled: !!r.st.hasPrev; onClicked: r.view.pageBy(-1) }
         PText { text: r.st.pageText || "" }
         AButton { label: "下一页"; enabled: !!r.st.hasNext; onClicked: r.view.pageBy(1) } }
-    Rectangle { visible: !!r.st.hasDelete; width: r.width; implicitHeight: dc.implicitHeight + 12; height: visible ? implicitHeight : 0; color: Theme.warningSubtle; radius: 4
+    Rectangle { visible: !!r.st.hasDelete; width: r.width; implicitHeight: dc.implicitHeight + 16; height: visible ? implicitHeight : 0; color: Theme.dangerSubtle; border.color: Theme.dangerBorder; border.width: Theme.borderThin; radius: Theme.radiusControl
         Accessible.role: Accessible.AlertMessage; Accessible.name: "确认删除"
-        Column { id: dc; x: 6; y: 6; width: parent.width - 12; spacing: 4
+        onVisibleChanged: if (visible) cancelDelBtn.forceActiveFocus()
+        Column { id: dc; x: 8; y: 8; width: parent.width - 16; spacing: 6
             PText { width: parent.width; text: "删除“" + (r.st.deleteAsk || "") + "”？删除是永久的，切换应用版本不会恢复它（只能从备份恢复）。" }
             Row { spacing: 8
-                AButton { label: "确认删除"; variant: "danger"; askSure: false; onClicked: r.view.confirmDelete(true) }
-                AButton { label: "取消"; onClicked: r.view.confirmDelete(false) } } } }
+                AButton { id: cancelDelBtn; objectName: "recordDeleteCancel"; label: "取消"; onClicked: r.view.confirmDelete(false) }
+                AButton { objectName: "recordDeleteConfirm"; label: "确认删除"; variant: "danger"; askSure: false; onClicked: r.view.confirmDelete(true) } } } }
 }

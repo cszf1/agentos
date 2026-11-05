@@ -34,7 +34,7 @@ FocusScope {
             Rectangle {
                 implicitWidth: badgeTxt.implicitWidth + Theme.s3
                 implicitHeight: Theme.px(24)
-                radius: Theme.px(4)
+                radius: Theme.radiusPill
                 color: Theme.dangerSubtle
                 border.width: Theme.borderThin
                 border.color: Theme.dangerBorder

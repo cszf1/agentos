@@ -1425,6 +1425,88 @@ class FlowsTest : public QObject {
     QTRY_VERIFY(h.shell->writesStopped());
     QVERIFY(!h.shell->canWrite(false));
   }
+
+  void roundedSolidStyleAndDangerConfirmDefaultCancelFocus() {
+    Harness h;
+    QVERIFY(h.up());
+    h.view->view.requestActivate();
+    // 1. Modern minimalist rounded solid style: no blur/shader effects anywhere, rounded controls/cards/modals
+    int blurEffects = 0;
+    walkItems(h.view->root(), [&](QQuickItem* item) {
+      const QString cls = QString::fromLatin1(item->metaObject()->className());
+      if (cls.contains(QLatin1String("ShaderEffect")) || cls.contains(QLatin1String("MultiEffect")) || cls.contains(QLatin1String("Blur"))) ++blurEffects;
+    });
+    QCOMPARE(blurEffects, 0);
+    QQuickItem* submitBtn = h.find(QStringLiteral("intentSubmit"));
+    QVERIFY(submitBtn);
+    if (QObject* bg = submitBtn->property("background").value<QObject*>()) {
+      QVERIFY(bg->property("radius").toDouble() >= 10.0);
+      QCOMPARE(bg->property("color").value<QColor>().alpha(), 255);
+    }
+    const QImage homeShot = h.view->shot(QStringLiteral("rounded-solid-home.png"));
+    const auto nearRgb = [](const QColor& a, int r, int g, int b, int d = 6) {
+      return std::abs(a.red() - r) <= d && std::abs(a.green() - g) <= d && std::abs(a.blue() - b) <= d;
+    };
+    QVERIFY(nearRgb(homeShot.pixelColor(homeShot.width() - 4, 3), 255, 255, 255));
+    QVERIFY(nearRgb(homeShot.pixelColor(homeShot.width() - 12, 12), 255, 255, 255));
+    int navW = 0;
+    while (navW < 500 && nearRgb(homeShot.pixelColor(navW, homeShot.height() - 6), 255, 255, 255)) ++navW;
+    QVERIFY2(navW >= 180 && navW <= 340, qPrintable(QString::number(navW)));
+    int railButtons = 0, railY = 36;
+    while (railY < homeShot.height() - 20) {
+      const auto isRail = [&](int y) {
+        const QColor c = homeShot.pixelColor(17, y);
+        return nearRgb(homeShot.pixelColor(3, y), 255, 255, 255) && (nearRgb(c, 0x94, 0xa3, 0xb8, 28) || nearRgb(c, 0x25, 0x63, 0xeb, 28));
+      };
+      if (isRail(railY)) {
+        int top = railY;
+        while (railY < homeShot.height() - 20 && isRail(railY)) ++railY;
+        if (railY - top >= 18 && railY - top <= 80) ++railButtons;
+      } else {
+        ++railY;
+      }
+    }
+    QVERIFY2(railButtons >= 11, qPrintable(QString::number(railButtons)));
+
+    // 2. Red danger button requires secondary confirmation with default focus on "取消"; Enter on default focus cancels
+    h.click(QStringLiteral("nav:hardware"));
+    QTRY_VERIFY(h.find(QStringLiteral("powerReboot")) && h.find(QStringLiteral("powerReboot"))->isEnabled());
+    const int plansBefore = h.sent(QStringLiteral("machine.actions.plan")).size();
+    h.click(QStringLiteral("powerReboot"));
+    QQuickItem* sure = h.find(QStringLiteral("dangerSure"));
+    QQuickItem* sureCancel = h.find(QStringLiteral("dangerSureCancel"));
+    QQuickItem* sureAccept = h.find(QStringLiteral("dangerSureAccept"));
+    QVERIFY(sure && sureCancel && sureAccept && reallyVisible(sure));
+    QTRY_COMPARE(h.view->view.activeFocusItem(), sureCancel);
+    // Pressing Return when default focus is on "取消" dismisses the modal without planning the action
+    QTest::keyClick(&h.view->view, Qt::Key_Return);
+    QTRY_VERIFY(!sure->isVisible());
+    QCOMPARE(h.sent(QStringLiteral("machine.actions.plan")).size(), plansBefore);
+
+    // 3. Inline record delete confirmation also places default focus on "取消"
+    auto* rec = qobject_cast<AppViewModel*>(h.shell->appView(QStringLiteral("rec-app")));
+    QVERIFY(rec);
+    QTRY_COMPARE(rec->mode(), QStringLiteral("records"));
+    h.gw->gw->setHandler([&](const JValue& r) {
+      if (r.get(QStringLiteral("body")).get(QStringLiteral("routeId")).str() == QLatin1String("apps.records.list")) {
+        const auto row = JValue::object({{QStringLiteral("id"), QStringLiteral("r-del-1")}, {QStringLiteral("recordVersion"), 1},
+                                        {QStringLiteral("data"), JValue::object({{QStringLiteral("title"), QStringLiteral("to-delete")}})}});
+        return JValue::object({{QStringLiteral("items"), JValue::array({row})}, {QStringLiteral("total"), 1}});
+      }
+      return h.be.handle(r);
+    });
+    h.shell->openApp(QStringLiteral("rec-app"));
+    QTRY_COMPARE(h.shell->currentPage(), QStringLiteral("app"));
+    rec->setSearch(QString());
+    QTRY_COMPARE(static_cast<RecordsModel*>(rec->records())->rows(), 1);
+    rec->askDelete(0);
+    QTRY_VERIFY(rec->recordState().value(QStringLiteral("hasDelete")).toBool());
+    QQuickItem* recCancel = h.find(QStringLiteral("recordDeleteCancel"));
+    QVERIFY(recCancel && reallyVisible(recCancel));
+    QTRY_COMPARE(h.view->view.activeFocusItem(), recCancel);
+    QTest::keyClick(&h.view->view, Qt::Key_Return);
+    QTRY_VERIFY(!rec->recordState().value(QStringLiteral("hasDelete")).toBool());
+  }
 };
 
 QTEST_MAIN(FlowsTest)
