@@ -12,6 +12,7 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QtEndian>
+#include <QWheelEvent>
 #include <QTemporaryDir>
 #include <atomic>
 #include <cstring>
@@ -363,6 +364,43 @@ class FlowsTest : public QObject {
     QTRY_COMPARE(h.shell->currentPage(), QStringLiteral("app"));
     QTest::qWait(300);
     QVERIFY(imageLooksRendered(h.view->shot(QStringLiteral("page-app-records.png"))));
+    QVERIFY2(g_qmlWarnings.isEmpty(), qPrintable(g_qmlWarnings.join(QLatin1Char('\n'))));
+  }
+
+  // m20 run 41996575284: PageFrame's ScrollView reported contentHeight -1, so real wheel input never moved
+  // the app detail page and its version section stayed below the fold. A short viewport forces overflow.
+  void appDetailPageScrollsToItsVersionSectionWithRealWheel() {
+    Harness h;
+    h.view = std::make_unique<View>(h.shell.get(), QSize(1280, 420));
+    QVERIFY(h.up());
+    h.shell->openApp(QStringLiteral("rec-app"));
+    QTRY_COMPARE(h.shell->currentPage(), QStringLiteral("app"));
+    QTest::qWait(300);
+    QQuickItem* scroll = h.find(QStringLiteral("pageScroll"));
+    QVERIFY(scroll && reallyVisible(scroll));
+    QObject* flick = scroll->property("contentItem").value<QObject*>();
+    QVERIFY(flick);
+    QQuickItem* heading = nullptr;
+    for (QQuickItem* t : itemsOfClass(h.view->root(), "QQuickText"))
+      if (!heading && reallyVisible(t) && t->property("text").toString() == QString::fromUtf8("版本")) heading = t;
+    QVERIFY(heading);
+    const double viewport = flick->property("height").toDouble();
+    QTRY_VERIFY2(flick->property("contentHeight").toDouble() > viewport,
+                 qPrintable(QStringLiteral("contentHeight %1 viewport %2").arg(flick->property("contentHeight").toDouble()).arg(viewport)));
+    const QRectF area = scroll->mapRectToScene(scroll->boundingRect());
+    const QPointF at(area.right() - 24, area.center().y());
+    const QRectF window(0, 0, h.view->view.width(), h.view->view.height());
+    for (int n = 0; n < 40 && !window.contains(heading->mapRectToScene(heading->boundingRect())); ++n) {
+      QWheelEvent wheel(at, h.view->view.mapToGlobal(at), QPoint(), QPoint(0, -120), Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+      wheel.setTimestamp(ulong(1000 + 100 * n));  // a real device stamps each notch; unstamped repeats stalled Flickable at contentY 72 here
+      QGuiApplication::sendEvent(&h.view->view, &wheel);
+      QTest::qWait(60);
+    }
+    QTRY_VERIFY2(window.contains(heading->mapRectToScene(heading->boundingRect())),
+                 qPrintable(QStringLiteral("contentY %1 contentHeight %2 viewport %3 heading %4,%5")
+                               .arg(flick->property("contentY").toDouble()).arg(flick->property("contentHeight").toDouble()).arg(viewport)
+                               .arg(heading->mapRectToScene(heading->boundingRect()).x()).arg(heading->mapRectToScene(heading->boundingRect()).y())));
+    QVERIFY(flick->property("contentY").toDouble() > 0);
     QVERIFY2(g_qmlWarnings.isEmpty(), qPrintable(g_qmlWarnings.join(QLatin1Char('\n'))));
   }
 

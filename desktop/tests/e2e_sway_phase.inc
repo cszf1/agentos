@@ -95,18 +95,35 @@ void E2E::sway() {
   auto byLabel = [&](const QString& label) { return byLabelIn(cur, label); };
   // Scroll with real QMP wheel until the labeled control's rect is inside the window.
   // Writing Flickable.contentY also moves ComboBox popups past their bounds (see paging history).
+  // The wheel is aimed inside the page's own ScrollView (objectName "pageScroll"), near its right edge,
+  // so it reaches the PageFrame that has to move rather than whatever sits at the window centre.
   auto labelInView = [&](const QString& label) -> QQuickItem* {
+    QQuickItem* scroll = nullptr;
+    walkItems(cur->contentItem(), [&](QQuickItem* i) {
+      if (!scroll && i->objectName() == QLatin1String("pageScroll") && reallyVisible(i)) scroll = i;
+    });
+    QObject* flick = scroll ? scroll->property("contentItem").value<QObject*>() : nullptr;
+    auto contentY = [&] { return flick ? flick->property("contentY").toDouble() : -1.0; };
+    QRectF lastRect;
+    double firstY = contentY();
     for (int attempt = 0; attempt < 24; ++attempt) {
       QQuickItem* item = byLabel(label);
       if (!item) return nullptr;
       const QRectF rect = item->mapRectToScene(item->boundingRect());
+      lastRect = rect;
       if (QRectF(1, 1, cur->width() - 2, cur->height() - 2).contains(rect)) return item;
       if (rect.left() < 1 || rect.right() >= cur->width() - 1) return nullptr;
-      A.ask(QStringLiteral("wheel"), {{QStringLiteral("x"), cur->width() - 100}, {QStringLiteral("y"), cur->height() / 2},
+      const QRectF area = scroll ? scroll->mapRectToScene(scroll->boundingRect()).intersected(QRectF(0, 0, cur->width(), cur->height()))
+                                 : QRectF(0, 0, cur->width(), cur->height());
+      A.ask(QStringLiteral("wheel"), {{QStringLiteral("x"), qRound(area.right() - 24)}, {QStringLiteral("y"), qRound(area.center().y())},
                                     {QStringLiteral("down"), rect.top() >= 1}, {QStringLiteral("n"), 3}});
       QTest::qWait(300);
     }
-    std::printf("E2E-DIAG label '%s' did not enter the viewport after real wheel input\n", qPrintable(label));
+    std::printf("E2E-DIAG label '%s' did not enter the viewport after real wheel input: pageScroll %s contentY %.0f -> %.0f, "
+                "contentHeight %.0f, viewport %.0f, button rect %.0f,%.0f %.0fx%.0f in %dx%d\n",
+                qPrintable(label), scroll ? "found" : "missing", firstY, contentY(),
+                flick ? flick->property("contentHeight").toDouble() : -1.0, flick ? flick->property("height").toDouble() : -1.0,
+                lastRect.x(), lastRect.y(), lastRect.width(), lastRect.height(), cur->width(), cur->height());
     return nullptr;
   };
   auto byName = [&](const QString& name) -> QQuickItem* {

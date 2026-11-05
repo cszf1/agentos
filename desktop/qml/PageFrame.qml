@@ -28,12 +28,13 @@ Item {
         contentWidth: availableWidth
         ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
 
-        // Explicit content height: a bare ColumnLayout can be given the viewport
-        // height by ScrollView, which then clips tall pages (AppDetail with SlotCanvas
-        // + version cards) instead of scrolling them into reach.
+        // ScrollView sizes its content from the single child's *implicit* size. A plain
+        // `height:` leaves implicitHeight 0, so contentHeight stays -1 and wheel input never
+        // moves contentY (m20 run 41996575284: 24 wheels, 「切换到此版本」 stayed below the fold).
         Item {
             width: scrollView.availableWidth
             height: pageColumn.implicitHeight
+            implicitHeight: pageColumn.implicitHeight
 
             ColumnLayout {
                 id: pageColumn
