@@ -821,7 +821,25 @@ void E2E::sway() {
   }
   QVERIFY2(choose(byName(QStringLiteral("workspaceSwitcher")), wsBName), "workspace B not chosen by real clicks");
   QTRY_VERIFY_WITH_TIMEOUT(r.shell->workspaceId() == wsB && r.shell->hostAvailable(), 90000);
-  QTest::qWait(1500);
+  // B's Host reports hostAvailable before its own "ready" (modelAvailable) lands, so the model-unavailable banner and
+  // status chips are still due to flip. Shoot only once B is what Home shows and the banner has held still and cleared.
+  auto bShown = [&] {
+    return r.shell->workspaceId() == wsB && r.shell->workspaceName() == wsBName && r.shell->hostAvailable() &&
+           r.shell->modelAvailable() && textShown(wsBName, true) && !textShown(todoTitle);
+  };
+  auto bDiag = [&](const char* when) {
+    std::printf("E2E-DIAG workspace-b %s: workspaceId=%s (B=%s) workspaceName='%s' (B='%s') hostAvailable=%d modelAvailable=%d "
+                "banner='%s' page=%s homeShowsB=%d todoTitleShown=%d apps=%d\n",
+                when, qPrintable(r.shell->workspaceId()), qPrintable(wsB), qPrintable(r.shell->workspaceName()), qPrintable(wsBName),
+                int(r.shell->hostAvailable()), int(r.shell->modelAvailable()), qPrintable(r.shell->banner()),
+                qPrintable(r.shell->currentPage()), int(textShown(wsBName, true)), int(textShown(todoTitle)), r.appCount());
+  };
+  const bool bVisible = QTest::qWaitFor(bShown, 90000);
+  if (!bVisible) bDiag("not shown");
+  QVERIFY2(bVisible, "workspace B never became the visible, model-available Home");
+  const bool bBannerSettled = bannerSettled(true);
+  if (!bBannerSettled) bDiag("banner not settled");
+  QVERIFY2(bBannerSettled, "workspace B banner did not settle empty");
   QCOMPARE(targetValue(), QString());
   const QString clipAfterSwitch = QGuiApplication::clipboard()->text();
   const JValue clipDriver1 = doDriver(QStringLiteral("clipboard"));
@@ -829,7 +847,17 @@ void E2E::sway() {
   int notesB = r.model(r.shell->notifications())->count();
   bool notesLeak = false;
   for (int i = 0; i < notesB; ++i) notesLeak = notesLeak || r.model(r.shell->notifications())->at(i).stringify().contains(todoTitle);
-  QVERIFY2(onOutput(QStringLiteral("workspace-b"), win) >= 0.9, "workspace B not on the output");
+  // a frame still in flight between Qt and Sway may differ once; retry a bounded number of times while B stays settled
+  double bRatio = 0;
+  for (int attempt = 0; attempt < 3 && bRatio < 0.9; ++attempt) {
+    if (attempt > 0) {
+      bDiag("shot mismatch, retrying");
+      QVERIFY2(QTest::qWaitFor(bShown, 10000) && bannerSettled(true), "workspace B left its settled state between shots");
+    }
+    bRatio = onOutput(QStringLiteral("workspace-b"), win);
+  }
+  if (bRatio < 0.9) bDiag("shot failed");
+  QVERIFY2(bRatio >= 0.9, "workspace B not on the output");
   // back to A, draft + copy again, then lock: cleared
   QVERIFY2(choose(byName(QStringLiteral("workspaceSwitcher")), wsAName), qPrintable(QStringLiteral("workspace A not chosen: ") + workspacesDump()));
   QTRY_VERIFY_WITH_TIMEOUT(r.shell->workspaceId() == ws && r.shell->hostAvailable(), 90000);
