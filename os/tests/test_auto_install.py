@@ -36,6 +36,7 @@ class AutoInstallTest(unittest.TestCase):
         self.m.cmd_confirm = lambda a: self.calls.append(("confirm", a)) or {"state": "confirmed"}
         self.m.cmd_run = lambda a: self.calls.append(("run", a)) or {"state": "installed", "installId": "i"}
         self.m.disk_has_data = lambda d: bool(d["partitions"])
+        self.m.esp_read = lambda dev: ({"state": "installed", "installId": "i", "planHash": "h"}, None)
         cmdline = tempfile.NamedTemporaryFile("w", delete=False)
         cmdline.write("init=/x console=ttyS0\n")
         cmdline.close()
@@ -115,6 +116,41 @@ class AutoInstallTest(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertIn("The install stopped: cryptsetup failed: boom", out)
         self.assertIn("sudo agentos-install inspect", out)
+
+
+class InterruptedInstallTest(unittest.TestCase):
+    setUp = AutoInstallTest.setUp
+    auto = AutoInstallTest.auto
+    wrote = AutoInstallTest.wrote
+    def test_partition_labels_never_prove_installation(self):
+        self.m.esp_read = lambda dev: (None, None)
+        rc, output = self.auto([disk(parts=["agentos-esp", "agentos-luks"])])
+        self.assertEqual(rc, 1)
+        self.assertNotIn("already installed", output)
+        self.assertIn("Keep the ISO attached", output)
+        self.assertEqual(self.wrote(), [])
+
+    def test_partitioning_checkpoint_is_not_resumed_or_reformatted(self):
+        m = load()
+        m.load = lambda: {"state": "partitioning"}
+        m.sh = mock.Mock()
+        with self.assertRaisesRegex(m.Refuse, "LUKS or the filesystem may already be initialized"):
+            m.cmd_run({})
+        m.sh.assert_not_called()
+        m.find = lambda p: disk()
+        m.esp_read = lambda dev: ({"installId": "i"}, {"kind": "agentos-install-state", "state": "partitioning"})
+        with self.assertRaisesRegex(m.Refuse, "NEW destructive plan"):
+            m.cmd_recover({"--disk": "/dev/disk/by-id/virtio-A1", "--resume": True})
+        m.sh.assert_not_called()
+
+    def test_early_power_cut_has_explicit_non_success_message(self):
+        self.m.esp_read = lambda dev: ({"installId": "i"}, {"state": "partitioning"})
+        rc, output = self.auto([disk(parts=["agentos-esp", "agentos-luks"])])
+        self.assertEqual(rc, 1)
+        self.assertIn("NOT a completed installation", output)
+        self.assertIn("will not reformat", output)
+        self.assertNotIn("Disconnect this ISO", output)
+        self.assertEqual(self.wrote(), [])
 
 
 class DiskDetectorTest(unittest.TestCase):

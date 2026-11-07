@@ -390,10 +390,20 @@ def resume_check(st):
         subprocess.run(["umount", "/run/agentos-install/esp"])
 
 
+PARTITIONING_INTERRUPTED = (
+    "installation was interrupted during partitioning; it is NOT a completed installation. "
+    "Automatic resume is unsafe because LUKS or the filesystem may already be initialized. "
+    "Keep the ISO attached. Use recover --disk <disk> to inspect without writing. "
+    "Preserve any needed data before explicitly making and confirming a NEW destructive plan; "
+    "run will not reformat this checkpoint automatically.")
+
+
 def cmd_run(args):
     st = load()
     if st["state"] not in ("confirmed", "partitioning", "copying", "configuring", "verifying"):
         raise Refuse(f"state is {st['state']}; plan and confirm first")
+    if st["state"] == "partitioning":
+        raise Refuse(PARTITIONING_INTERRUPTED)
     if st["plan"].get("quick") and "--passphrase-stdin" not in args:
         with open(TEMPLATE_KEY, "rb") as f:
             pw = f.read().rstrip(b"\n")
@@ -506,8 +516,20 @@ def cmd_run(args):
             raise Refuse("verification failed: " + "; ".join(problems))
         if st["plan"].get("template"):
             normalize_template_esp(dev)
-        elif os.path.exists(f"{MNT}/boot/{ESP_STATE}"):
-            os.remove(f"{MNT}/boot/{ESP_STATE}")
+        else:
+            marker_path = f"{MNT}/boot/EFI/agentos/install.json"
+            with open(marker_path + ".tmp", "w") as f:
+                json.dump(dict(esp_marker(st), state="installed"), f)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(marker_path + ".tmp", marker_path)
+            fd = os.open(os.path.dirname(marker_path), os.O_RDONLY)
+            try:
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+            if os.path.exists(f"{MNT}/boot/{ESP_STATE}"):
+                os.remove(f"{MNT}/boot/{ESP_STATE}")
         sh("sync")
         step(st, "installed")
     return {"state": "installed", "installId": st["plan"]["installId"], "hardwareConfigHash": st.get("hardwareConfigHash")}
@@ -553,6 +575,8 @@ def cmd_recover(args):
         return {"recover": found, "readOnly": True}
     if not marker or not st or st.get("kind") != "agentos-install-state":
         raise Refuse("no interrupted AgentOS install on this disk (no install state on its ESP); start a new plan")
+    if st.get("state") == "partitioning":
+        raise Refuse(PARTITIONING_INTERRUPTED)
     if st.get("state") not in ("copying", "configuring", "verifying"):
         raise Refuse(f"the install state on this disk is {st.get('state')}; nothing to resume")
     if marker.get("installId") != st["plan"]["installId"] or marker.get("planHash") != st.get("planHash"):
@@ -699,10 +723,21 @@ def cmd_auto(args):
         return 1
     d = ds[0]
     if "agentos-luks" in d["partitions"]:
-        say(f"AgentOS is already installed on {d['path']}. Nothing was changed.")
-        say("Disconnect this ISO from the VM's CD/DVD drive and restart the VM to start AgentOS.")
-        kmsg("stopped: AgentOS already installed")
-        return 0
+        marker, state = esp_read(d["path"])
+        if marker and marker.get("state") == "installed" and marker.get("installId") and marker.get("planHash"):
+            say(f"AgentOS is already installed on {d['path']}. Nothing was changed.")
+            say("Disconnect this ISO from the VM's CD/DVD drive and restart the VM to start AgentOS.")
+            kmsg("stopped: AgentOS already installed")
+            return 0
+        say(f"AgentOS partitions found on {d['path']}, but a completed installation is not proven. Nothing was changed.")
+        if state and state.get("state") == "partitioning":
+            say(PARTITIONING_INTERRUPTED)
+        else:
+            say("Keep the ISO attached. Inspect the interrupted or existing installation with:")
+            say(f"  sudo agentos-install recover --disk {d['path']}")
+            say("For copying/configuring/verifying checkpoints, recover --resume can adopt the saved state.")
+        kmsg("stopped: AgentOS install incomplete or unverified")
+        return 1
     if d["problems"]:
         say(f"The disk {d['path']} ({gib(d['sizeBytes'])}) cannot be used: {'; '.join(d['problems'])}.")
         if any(p.startswith("smaller") for p in d["problems"]):
