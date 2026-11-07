@@ -355,8 +355,9 @@ with subtest("background model work: at most one background request on the machi
     def no_bg_with_fg():
         st = fm_state()
         assert st["kinds"]["compaction"] <= 1, st
-        fg_q = int(sql("SELECT COUNT(*) FROM machine_permits WHERE resource_class='model' AND priority='foreground' AND state IN ('queued','reserved','in_use','reconciling')"))
-        bg_new = int(sql("SELECT COUNT(*) FROM machine_permits WHERE resource_class='model' AND priority='background' AND state='reserved'"))
+        # one read (one statement, one snapshot): two separate reads let the user task end and B's compaction be
+        # reserved between them, which looked like both at once (run 42330560737, "(1, 1)")
+        fg_q, bg_new = (int(x) for x in sql("SELECT (SELECT COUNT(*) FROM machine_permits WHERE resource_class='model' AND priority='foreground' AND state IN ('queued','reserved','in_use','reconciling')) || '|' || (SELECT COUNT(*) FROM machine_permits WHERE resource_class='model' AND priority='background' AND state='reserved')").split("|"))
         assert not (fg_q and bg_new), (fg_q, bg_new)                                 # no background reservation while a user task holds/waits
     sample(40, no_bg_with_fg)
     machine.wait_until_succeeds(f"sqlite3 {OSDB(ws_a)} \"SELECT status FROM runs WHERE id='{fg}'\" | tee -p /dev/null | grep -qE '^(succeeded|failed|cancelled)$'", timeout=240)

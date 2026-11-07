@@ -234,13 +234,16 @@ with subtest("machine directory lost: recovery mode, then an explicit new identi
     machine.succeed("systemctl start agentos-broker.path")
     machine.succeed("systemctl restart agentos-broker.service || true")
     machine.succeed("sleep 2; test \"$(systemctl show -p ActiveState --value agentos-broker.service)\" = inactive")
-    t_fb = machine.succeed("date +%s").strip()                                 # only broker lines after this count
+    # a journal cursor, not `date +%s`: --since @<seconds> also took the earlier BROKER_HISTORY_MISSING line logged in
+    # the same second (run 42330560737); only broker lines written after this point count
+    t_fb = machine.succeed("journalctl -n 1 --show-cursor --no-pager -q | sed -n 's/^-- cursor: //p'").strip()
+    assert t_fb, "no journal cursor"                                 # only broker lines after this count
     machine.execute("printf 'eve-pw-1' | agentosctl firstboot --admin eve --workspace E")
     st = ctl("status")
     assert st["meta"]["machineInstallId"] != mid0 and st["meta"]["firstBootState"] == "closed", st   # a new installation identity
     machine.wait_for_unit("agentos-broker.service")
     machine.succeed("test -f /var/lib/agentos-broker/broker.sqlite")
-    machine.fail(f"journalctl -u agentos-broker --since @{t_fb} --no-pager | tee -p /dev/null | grep -q 'BROKER_IDENTITY_MISMATCH\\|BROKER_HISTORY_MISSING'")
+    machine.fail(f"journalctl -u agentos-broker --after-cursor '{t_fb}' --no-pager | tee -p /dev/null | grep -q 'BROKER_IDENTITY_MISMATCH\\|BROKER_HISTORY_MISSING'")
 
 with subtest("only the broker log lost, machine directory intact: refused without authorization, recovery mode, explicit new identity (R11, review F07)"):
     mid1 = ctl("status")["meta"]["machineInstallId"]
@@ -272,10 +275,13 @@ with subtest("only the broker log lost, machine directory intact: refused withou
     newest = machine.succeed("ls -dt /var/lib/agentos-machine/lost-*/ | head -1").strip()
     machine.succeed(f"test -f {newest}machine.sqlite && grep -q BROKER_HISTORY_MISSING {newest}README")   # old state kept as evidence
     machine.fail("test -e /var/lib/agentos-machine/recovery-required")
-    t_fb2 = machine.succeed("date +%s").strip()
+    # a journal cursor, not `date +%s`: --since @<seconds> also took the earlier BROKER_HISTORY_MISSING line logged in
+    # the same second (run 42330560737); only broker lines written after this point count
+    t_fb2 = machine.succeed("journalctl -n 1 --show-cursor --no-pager -q | sed -n 's/^-- cursor: //p'").strip()
+    assert t_fb2, "no journal cursor"
     machine.execute("printf 'fay-pw-1' | agentosctl firstboot --admin fay --workspace F")
     st = ctl("status")
     assert st["meta"]["machineInstallId"] not in (mid0, mid1) and st["meta"]["firstBootState"] == "closed", st
     machine.wait_for_unit("agentos-broker.service")
     machine.wait_until_succeeds("test -f /var/lib/agentos-broker/broker.sqlite", timeout=60)
-    machine.fail(f"journalctl -u agentos-broker --since @{t_fb2} --no-pager | tee -p /dev/null | grep -q 'BROKER_IDENTITY_MISMATCH\\|BROKER_HISTORY_MISSING'")
+    machine.fail(f"journalctl -u agentos-broker --after-cursor '{t_fb2}' --no-pager | tee -p /dev/null | grep -q 'BROKER_IDENTITY_MISMATCH\\|BROKER_HISTORY_MISSING'")
