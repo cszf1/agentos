@@ -4,6 +4,26 @@ import contextlib
 tmp = os.environ.get("TMPDIR", "/tmp")
 append = open(os.path.join(ISO_DIR, "append")).read().strip()
 PW = "auto-iso-pw-1"
+GREETER = r"(?im)(welcome back|^\W*login\W*$)"   # ReGreet; never a boot status line ("User Login Management")
+
+
+def wait_greeter(m, timeout):
+    """ReGreet is up: its rendered Login button (pnm.py, as m19 clicks it) or its words on a line of their own."""
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        m.screenshot("greeter-poll")
+        raw = subprocess.run([PNGTOPNM, os.path.join(m.out_dir, "greeter-poll.png")], check=True, capture_output=True).stdout
+        try:
+            greeter_login_button(pnm_rgb(raw))
+            return
+        except AssertionError:
+            pass
+        if any(re.search(GREETER, t) for t in screen_text(m)):
+            return
+        if m.process is not None and m.process.poll() is not None:
+            raise AssertionError("the VM exited while waiting for the login screen")
+        time.sleep(5)
+    raise AssertionError("the login screen did not come up")
 
 disk = os.path.join(tmp, "auto.qcow2")
 subprocess.run([QEMU_IMG, "create", "-f", "qcow2", disk, "64G"], check=True)
@@ -153,8 +173,10 @@ with subtest("first start of the installed disk: one password, typed twice, then
     keyed(target, PW + "\n")
     wait_screen(target, r"(?i)repeat the password", timeout=120)
     keyed(target, PW + "\n")
-    # re-encryption with a fresh volume key and growing to the disk, then machined, first setup and the greeter
-    wait_screen(target, r"(?i)(Welcome back|Login)", timeout=2400)
+    # re-encryption with a fresh volume key (16 GiB: several minutes on CI) and growing to the disk, then machined,
+    # first setup and the greeter. "Login" alone on a line: boot status lines name "User Login Management"
+    # (run 42355442891 matched one and went on before the re-key had finished)
+    wait_greeter(target, timeout=3000)
     target.screenshot("auto-greeter")
     operator_login(target, "admin", PW)
     target.send_chars("id -nG; echo ADMIN-$(id -un)-OK\n", delay=0.03)
@@ -168,7 +190,7 @@ with subtest("next start: the same password once at the disk unlock, then the lo
     wait_screen(target, r"(?i)passphrase", timeout=900)
     time.sleep(2)
     keyed(target, PW + "\n")
-    wait_screen(target, r"(?i)(Welcome back|Login)", timeout=900)
+    wait_greeter(target, timeout=900)
     target.screenshot("auto-second-boot")
     target.send_monitor_command("system_powerdown")
     if not powered_off(target, 300):
