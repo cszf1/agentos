@@ -146,7 +146,7 @@ with subtest("first start of the installed disk: one password, typed twice, then
     target = create_machine(common, name="installed")
     extra.append(target)
     target.start()
-    wait_screen(target, r"(?i)choose your agentos password", timeout=900)
+    wait_screen(target, r"(?i)choose your agent[o0]s password"  # OCR reads the O as 0 (run 42352756464), timeout=900)
     target.screenshot("auto-first-password")
     time.sleep(2)
     keyed(target, PW + "\n")
