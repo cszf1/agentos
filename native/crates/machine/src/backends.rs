@@ -491,7 +491,7 @@ impl Executor for RealExecutor {
                 Some(st["state"] == 100 && st["activeConnection"].as_str() == p["ssid"].as_str())
             }
             "network.device.disconnect" | "network.wifi.forget" | "network.wifi.disconnect" => nm_device_state(p["device"].as_str()?).ok().map(|s| s["state"].as_u64().unwrap_or(0) < 40),
-            "workspaces.modelCredential.set" => Some(dispatched["written"] == true),
+            "workspaces.modelCredential.set" => dispatched["written"].as_bool().filter(|written| *written),
             "network.device.connect" => nm_device_state(p["device"].as_str()?).ok().map(|s| s["state"] == 100),
             "time.timezone.set" => timezone().ok().map(|z| Some(z.as_str()) == p["zone"].as_str()),
             "time.ntp.enable" => Some(true),
@@ -599,6 +599,18 @@ fn write_model_credential(ws: &str, uid: u32, p: &Value, key: &[u8]) -> R<()> {
 #[cfg(test)]
 mod wifi_tests {
     use super::*;
+
+    #[test]
+    fn credential_recovery_without_publication_evidence_is_unknown() {
+        let mut executor = RealExecutor {
+            secrets: Default::default(),
+            drain: Box::new(|_, _| Ok(Value::Null)),
+        };
+        for result in [Value::Null, json!({}), json!({"written": false})] {
+            assert_eq!(executor.reconcile("workspaces.modelCredential.set", &Value::Null, &result), None);
+        }
+        assert_eq!(executor.reconcile("workspaces.modelCredential.set", &Value::Null, &json!({"written": true})), Some(true));
+    }
 
     #[test]
     fn i11_personal_networks_only_and_sae_when_psk_is_absent() {
