@@ -33,6 +33,7 @@ impl SecretStore {
         if !matches!(kind, "password" | "wifi-psk" | "provider-key") || value.is_empty() || value.len() > 512 {
             return Err(MErr::new("INVALID_REQUEST", "bad secret"));
         }
+        if kind == "password" { crate::sys::validate_password(value)?; }
         let id = format!("secret:{}", uuid());
         self.items.insert(id.clone(), (kind.to_string(), value.to_vec(), now_ms() + 120_000));
         Ok(id)

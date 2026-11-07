@@ -25,6 +25,10 @@ case "$1" in
   status) if [ -e "$T/status" ]; then cat "$T/status"; else echo "agentosctl: MIGRATION_REQUIRED: machine is not installed" >&2; exit 1; fi ;;
   firstboot)
     cat > "$T/password"
+    bytes=$(wc -c < "$T/password")
+    if [ "$bytes" -eq 0 ] || [ "$bytes" -gt 512 ] || grep -q ':' "$T/password"; then
+      echo "agentosctl: INVALID_REQUEST: unsupported password" >&2; exit 1
+    fi
     if [ -e "$T/provision-then-refuse" ]; then   # the account was created, then the attempt broke off
       sed -i 's/"users": 0/"users": 1/' "$T/status"; rm "$T/provision-then-refuse"
       echo "agentosctl: CONFLICT: provisioningId reused with a different request" >&2; exit 1
@@ -127,6 +131,25 @@ class FirstSetupTest(unittest.TestCase):
         self.assertIn("quick start", log)
         self.assertNotIn("quick-pw-1", p.stdout + log)
         self.assertTrue(p.stdout.isascii(), p.stdout)
+
+    def test_quick_start_never_truncates_overlong_passwords(self):
+        original = "x" * 513
+        (self.t / "run/password").write_text(original)
+        p, calls, log = self.run_setup("\nbea\npw-2\npw-2\n\n")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn("Quick setup failed", p.stdout)
+        self.assertIn("firstboot --admin bea", calls)
+        self.assertNotIn(original, p.stdout + log)
+        self.assertFalse((self.t / "run/password").exists())
+
+    def test_quick_start_preserves_512_bytes(self):
+        original = "界" * 170 + "ab"
+        self.assertEqual(len(original.encode()), 512)
+        (self.t / "run/password").write_text(original)
+        p, calls, log = self.run_setup("")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual((self.t / "password").read_text(), original)
+        self.assertNotIn(original, p.stdout + log)
 
     def test_quick_start_refused_falls_back_to_the_console_and_drops_the_password(self):
         (self.t / "run/password").write_text("quick-pw-1")

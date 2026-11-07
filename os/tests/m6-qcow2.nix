@@ -4,9 +4,18 @@
 # each must replace the template disk key before machined starts, and first boot gives each its own identity.
 { pkgs, mkSystem, releaseModules, nixpkgs }:
 let
+  rekeyFaultTool = pkgs.writeShellScriptBin "cryptsetup" ''
+    set -e
+    ${pkgs.cryptsetup}/bin/cryptsetup "$@"
+    if [ "''${1:-}" = config ] && [ "''${2:-}" = --label ] && [ "''${3:-}" = agentos-rekey-grow ] && [ -e /run/rekey-pause ]; then
+      touch /run/rekey-paused
+      echo "agentos: rekey checkpoint paused before grow"
+      while [ -e /run/rekey-pause ]; do sleep 0.1; done
+    fi
+  '';
   installed = mkSystem (releaseModules ++ [
     "${nixpkgs}/nixos/modules/testing/test-instrumentation.nix"
-    ({ lib, ... }: { agentos.graphical = lib.mkForce false; boot.kernelParams = [ "console=ttyS0" ]; users.users.root.hashedPasswordFile = lib.mkForce null; })
+    ({ lib, ... }: { systemd.services.agentos-disk-rekey.path = lib.mkBefore [ rekeyFaultTool ]; agentos.graphical = lib.mkForce false; boot.kernelParams = [ "console=ttyS0" ]; users.users.root.hashedPasswordFile = lib.mkForce null; })
   ]);
   top = installed.config.system.build.toplevel;
   installer = pkgs.callPackage ./../packages/installer.nix { system = top; };
@@ -162,6 +171,13 @@ pkgs.testers.runNixOSTest {
                 m.crash()
                 m.start()
                 feed(m, "clone-pass-2", "resuming the interrupted disk re-encryption")
+            if n == 1:
+                m.succeed("touch /run/rekey-pause")
+                feed(m, "clone-pass-1", "rekey checkpoint paused before grow")
+                m.succeed("test -e /run/rekey-paused")
+                assert "agentos-rekey-grow" in m.succeed(f"cryptsetup luksDump {LUKS}")
+                m.crash()
+                m.start()
             feed(m, "clone-pass-" + str(n), "disk passphrase set")
             m.wait_for_unit("agentos-machine.service", timeout=600)
             # machined started only after the rekey finished
@@ -199,6 +215,16 @@ pkgs.testers.runNixOSTest {
             m.succeed("jq -e '.template == true' /etc/agentos/install.json || grep -q '\"template\":true' /etc/agentos/install.json")
             rc, o = m.execute("agentosctl status 2>&1")   # unregistered: no identity before first boot
             assert rc != 0 and "not installed" in o, o
+            if n == 1:
+                m.succeed("test ! -e /var/lib/agentos-machine/first-boot-closed")
+                m.crash()
+                m.start()
+                unlock_existing(m, "clone-pass-1")
+                m.wait_for_unit("agentos-machine.service", timeout=900)
+                m.succeed("test ! -e /var/lib/agentos-machine/first-boot-closed")
+                rc, o = m.execute("agentosctl status 2>&1")
+                assert rc != 0 and "not installed" in o, o
+                assert "online-reencrypt" not in m.succeed(f"cryptsetup luksDump {LUKS}")
             out = json.loads(m.succeed("printf 'admin-pw-1' | agentosctl firstboot --admin alice --workspace Home"))
             ids.append(out["machineInstallId"])
             m.fail("ss -ltn | grep -vE '^State' | grep -q .")

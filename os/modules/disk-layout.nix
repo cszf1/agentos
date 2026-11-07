@@ -54,12 +54,17 @@ in {
         else
           ask1="New AgentOS disk passphrase (at least 8 characters):"; ask2="Repeat the disk passphrase:"
         fi
+        valid_account_password() {
+          [ -n "$1" ] && [ "$(printf '%s' "$1" | wc -c)" -le 512 ] || return 1
+          case "$1" in *:*|*$'\n'*) return 1 ;; esac
+        }
+        echo "agentos: passwords must be at most 512 UTF-8 bytes; colon and newline are not supported."
         new=""
         for i in 1 2 3 4 5; do
           a=$(systemd-ask-password --timeout=0 --no-tty "$ask1") || continue
           b=$(systemd-ask-password --timeout=0 --no-tty "$ask2") || continue
-          if [ "$a" = "$b" ] && [ ''${#a} -ge 8 ]; then new=$a; break; fi
-          echo "agentos: passphrases differ or are shorter than 8 characters"
+          if [ "$a" = "$b" ] && [ ''${#a} -ge 8 ] && valid_account_password "$a"; then new=$a; break; fi
+          echo "agentos: passphrases differ, are shorter than 8 characters, exceed 512 bytes, or contain unsupported colon/newline"
         done
         [ -n "$new" ] || { echo "agentos: no disk passphrase set; machined stays stopped"; exit 1; }
         printf '%s' "$new" > "$f"

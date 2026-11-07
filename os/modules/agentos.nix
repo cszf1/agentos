@@ -88,7 +88,7 @@ let
     # password and left it here (root, 0700 dir, tmpfs). It becomes the administrator "admin"'s password, with the
     # default workspace; nothing more is asked. It is read once and removed whatever happens next.
     if [ -s "$handoff" ]; then
-      pw=$(head -c 512 "$handoff"); consume
+      pw=$(cat "$handoff"); consume
       printf '\033c'
       echo "AgentOS"
       echo "Setting up this machine with the password you just chose. One moment."

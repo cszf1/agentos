@@ -219,6 +219,13 @@ pub fn user_unit_ctl(uid: u32, args: &[&str]) -> R<String> {
         .env("PATH", std::env::var("PATH").unwrap_or_else(|_| "/run/current-system/sw/bin:/usr/bin:/bin".into())))
 }
 
+pub fn validate_password(password: &[u8]) -> R<()> {
+    if password.is_empty() || password.len() > 512 || password.iter().any(|b| matches!(*b, b':' | b'\n' | 0)) {
+        return Err(MErr::new("INVALID_REQUEST", "password must be 1..512 bytes without colon, newline or NUL"));
+    }
+    Ok(())
+}
+
 /// Real Linux implementation used by the daemon.
 pub struct HostSystem {
     /// Fixed workspace initialiser (agentos-admin from the release closure), run as the execution UID.
@@ -245,9 +252,7 @@ impl System for HostSystem {
         run(Command::new("usermod").args(["-c", gecos, name])).map(|_| ())
     }
     fn set_password(&mut self, name: &str, password: &[u8]) -> R<()> {
-        if password.is_empty() || password.contains(&b':') || password.contains(&b'\n') {
-            return Err(MErr::new("INVALID_REQUEST", "password is empty or contains a separator"));
-        }
+        validate_password(password)?;
         let mut child = Command::new("chpasswd").stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::piped()).spawn().map_err(|e| MErr::new("SYSTEM_FAILED", format!("chpasswd: {e}")))?;
         {
             let mut stdin = child.stdin.take().expect("piped");
@@ -389,6 +394,16 @@ impl System for HostSystem {
 #[cfg(test)]
 mod secure_directory_tests {
     use super::*;
+    #[test]
+    fn password_contract_counts_bytes_and_rejects_separators() {
+        for value in [vec![], vec![b'a'; 513], b"safe:password".to_vec(), b"safe\npassword".to_vec(), b"safe\0password".to_vec(), "界".repeat(171).into_bytes()] {
+            assert!(validate_password(&value).is_err());
+        }
+        for value in [vec![b'a'; 511], vec![b'a'; 512], "界".repeat(170).into_bytes()] {
+            assert!(validate_password(&value).is_ok());
+        }
+    }
+
     #[test]
     fn refuses_symlink_components_without_changing_the_target() {
         use std::os::unix::fs::{symlink, PermissionsExt};
