@@ -15,6 +15,11 @@ on:
         type: boolean
         required: true
         default: false
+      upload_vm_image:
+        description: "Upload the ready-installed qcow2 disk, its checksum and the Windows starter as a 3-day artifact (only for build-qcow2)"
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -34,7 +39,7 @@ jobs:
         env:
           WANT: ${{ github.event.inputs.test || 'all' }}
         run: |
-          ALL='["m2-identity","m3-members","m5-desktop","m6-install","m6-qcow2","m7-update","m8-backup","m9-restore","m10-sched","m11-ops","m12-clone","m13-native","m14-create","m15-wifi","m16-fetch","m17-shared","m18-o09","m19-iso","m20-sway","m21-vmware","m22-virtio","build-release","build-audit","build-iso","build-qcow2","build-shell","build-oci","build-repro","build-physical","build-vm-images"]'
+          ALL='["m2-identity","m3-members","m5-desktop","m6-install","m6-qcow2","m7-update","m8-backup","m9-restore","m10-sched","m11-ops","m12-clone","m13-native","m14-create","m15-wifi","m16-fetch","m17-shared","m18-o09","m19-iso","m20-sway","m21-vmware","m22-virtio","m23-quickstart","build-release","build-audit","build-iso","build-qcow2","build-shell","build-oci","build-repro","build-physical","build-vm-images"]'
           if [ "$WANT" = all ]; then echo "tests=$ALL" >> "$GITHUB_OUTPUT";
           else echo "$ALL" | jq -e --arg t "$WANT" 'index($t) != null' >/dev/null || { echo "unknown test $WANT"; exit 1; }
                echo "tests=[\"$WANT\"]" >> "$GITHUB_OUTPUT"; fi
@@ -91,7 +96,7 @@ jobs:
           use-flakehub: false
 
       - name: VM helper regressions
-        if: ${{ contains(fromJSON('["m5-desktop","m6-qcow2","m9-restore","m19-iso","m20-sway","m21-vmware","m22-virtio"]'), matrix.test) }}
+        if: ${{ contains(fromJSON('["m5-desktop","m6-qcow2","m9-restore","m19-iso","m20-sway","m21-vmware","m22-virtio","m23-quickstart"]'), matrix.test) }}
         run: |
           python3 -B os/tests/test_pnm.py
           python3 -B os/tests/test_navigation_pixels.py
@@ -223,6 +228,26 @@ jobs:
         with:
           name: agentos-test-iso
           path: ${{ runner.temp }}/agentos-test-iso/
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 0
+
+      - name: Prepare VM disk artifact
+        if: ${{ matrix.test == 'build-qcow2' && inputs.upload_vm_image }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/agentos-vm"
+          cp --reflink=auto -L "$RUNNER_TEMP"/out-agentos-qcow2/agentos.qcow2 "$RUNNER_TEMP/agentos-vm/agentos.qcow2"
+          cp deploy/windows/Start-AgentOS.ps1 docs/VM_QUICKSTART.md "$RUNNER_TEMP/agentos-vm/"
+          cd "$RUNNER_TEMP/agentos-vm"
+          sha256sum agentos.qcow2 > SHA256SUMS
+          printf 'commit %s\n' "$GITHUB_SHA" > SOURCE.txt
+
+      - name: Upload VM disk
+        if: ${{ matrix.test == 'build-qcow2' && inputs.upload_vm_image }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: agentos-vm-qcow2
+          path: ${{ runner.temp }}/agentos-vm/
           if-no-files-found: error
           retention-days: 3
           compression-level: 0

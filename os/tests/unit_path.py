@@ -11,7 +11,7 @@ from pathlib import Path
 # What each package in those PATH lines puts in bin/ (only the commands that matter for the scripts)
 PROVIDES = {
     "coreutils": {"basename", "cat", "chmod", "cp", "cut", "date", "dirname", "echo", "env", "false", "head", "id", "ln",
-                  "ls", "mkdir", "mv", "printf", "readlink", "rm", "seq", "sleep", "sort", "stat", "sync", "tail", "tee",
+                  "ls", "mkdir", "mv", "printf", "readlink", "rm", "seq", "shred", "sleep", "sort", "stat", "sync", "tail", "tee",
                   "test", "timeout", "touch", "tr", "true", "uniq", "wc"},
     "util-linux": {"agetty", "findmnt", "flock", "logger", "lsblk", "mount", "script", "setsid", "umount"},
     "systemd": {"journalctl", "loginctl", "systemctl", "systemd-cat", "systemd-run", "udevadm"},

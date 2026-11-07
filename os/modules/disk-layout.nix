@@ -46,15 +46,27 @@ in {
       trap 'shred -u "$f" 2>/dev/null || rm -f "$f"' EXIT
       if [ "$tpl" = 1 ]; then
         echo "agentos: template disk detected; a new disk passphrase is required"
+        # Quick start (graphical VM images): this one password also becomes the administrator's (agentos-first-setup)
+        handoff=0; [ -e /etc/agentos/first-setup-handoff ] && handoff=1
+        if [ "$handoff" = 1 ]; then
+          echo "agentos: welcome. Choose the password for this machine: it unlocks the disk at boot and signs you in as admin."
+          ask1="Choose your AgentOS password (at least 8 characters):"; ask2="Repeat the password:"
+        else
+          ask1="New AgentOS disk passphrase (at least 8 characters):"; ask2="Repeat the disk passphrase:"
+        fi
         new=""
         for i in 1 2 3 4 5; do
-          a=$(systemd-ask-password --timeout=0 --no-tty "New AgentOS disk passphrase (at least 8 characters):") || continue
-          b=$(systemd-ask-password --timeout=0 --no-tty "Repeat the disk passphrase:") || continue
+          a=$(systemd-ask-password --timeout=0 --no-tty "$ask1") || continue
+          b=$(systemd-ask-password --timeout=0 --no-tty "$ask2") || continue
           if [ "$a" = "$b" ] && [ ''${#a} -ge 8 ]; then new=$a; break; fi
           echo "agentos: passphrases differ or are shorter than 8 characters"
         done
         [ -n "$new" ] || { echo "agentos: no disk passphrase set; machined stays stopped"; exit 1; }
         printf '%s' "$new" > "$f"
+        if [ "$handoff" = 1 ]; then
+          install -d -m 0700 /run/agentos-first-setup
+          (umask 077; printf '%s' "$new" > /run/agentos-first-setup/password)
+        fi
         new=""; a=""; b=""
         cryptsetup config --label agentos-rekey-pending "$real"
         cryptsetup luksAddKey --batch-mode --key-file="$key" "$real" "$f"
@@ -68,6 +80,11 @@ in {
           echo "agentos: that passphrase does not open the disk"
         done
         [ "$ok" = 1 ] || { echo "agentos: disk re-key not finished; machined stays stopped"; exit 1; }
+        # quick start after a power cut: the same password still becomes the administrator's (first boot is open)
+        if [ -e /etc/agentos/first-setup-handoff ] && [ ! -e /var/lib/agentos-machine/first-boot-closed ]; then
+          install -d -m 0700 /run/agentos-first-setup
+          (umask 077; cp "$f" /run/agentos-first-setup/password)
+        fi
       fi
       if [ "$(cryptsetup luksDump "$real" | sed -n 's/^Label:[[:space:]]*//p')" != agentos-rekey-grow ]; then
         if [ "$reenc" = 1 ]; then

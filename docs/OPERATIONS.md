@@ -78,8 +78,11 @@ file channels (VirtualBox guest control, VMware guest operations and customizati
 
 ### Importing a disk image
 
-Each image is the qcow2 template: the first boot asks for a disk passphrase, replaces the public template key,
-re-encrypts and grows the disk to its full size before the first-boot administrator is created. Check the file against
+Each image is the qcow2 template, an installed system: the first boot asks for **one password** (twice), replaces the
+public template key with it, re-encrypts and grows the disk to its full size, and then creates the administrator
+`admin` with that same password and the default workspace, with no further question (quick start,
+[VM_QUICKSTART.md](VM_QUICKSTART.md); the ISO install keeps the full console setup). For QEMU on Windows with WHPX,
+`deploy/windows/Start-AgentOS.ps1` starts the qcow2 with the settings above. Check the file against
 `SHA256SUMS` first. Grow the virtual disk before the first boot if it should be larger than 64 GiB.
 
 - VirtualBox: create a VM (Linux, Other Linux 64-bit) with the settings above, then attach `agentos.vdi` to the SATA

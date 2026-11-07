@@ -97,6 +97,8 @@
         m3-members = test "m3" ./tests/m3-members.nix { };
         m6-install = import ./tests/m6-install.nix { inherit pkgs releaseModules nixpkgs; mkSystem = mk; };
         m6-qcow2 = import ./tests/m6-qcow2.nix { inherit pkgs releaseModules nixpkgs; mkSystem = mk; };
+        # quick start on the VM images: one password on first boot, nothing else
+        m23-quickstart = import ./tests/m23-quickstart.nix { inherit pkgs releaseModules nixpkgs; mkSystem = mk; };
         m7-update = test "m7" ./tests/m7-update.nix { older = olderAgentos; };
         m8-backup = test "m8" ./tests/m8-backup.nix { };
         m9-restore = test "m9" ./tests/m9-restore.nix { };

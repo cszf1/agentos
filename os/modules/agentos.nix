@@ -53,6 +53,10 @@ let
     export PATH=${lib.makeBinPath [ native pkgs.coreutils pkgs.util-linux pkgs.gnugrep ]}
     log() { logger -t agentos-first-setup "$*"; }
     closed() { test -e /var/lib/agentos-machine/first-boot-closed; }
+    # quick start's handed-over password (see below): removed on every way out of this script
+    handoff=/run/agentos-first-setup/password
+    consume() { [ -e "$handoff" ] && { shred -u "$handoff" 2>/dev/null || rm -f "$handoff"; }; return 0; }
+    trap consume EXIT
     o=""
     for i in $(seq 120); do
       closed && exit 0
@@ -80,6 +84,29 @@ let
     # administrator account can only finish under that same name, so it is offered again.
     last=/var/lib/agentos-first-setup/admin-login
     previous() { [ -s "$last" ] && agentosctl status 2>/dev/null | grep -Eq '"users": *[1-9]' && head -c 32 "$last" | tr -dc 'a-z0-9_-'; }
+    # Quick start (VM disk images): the template-disk re-key (agentos-disk-rekey, disk-layout.nix) asked for one
+    # password and left it here (root, 0700 dir, tmpfs). It becomes the administrator "admin"'s password, with the
+    # default workspace; nothing more is asked. It is read once and removed whatever happens next.
+    if [ -s "$handoff" ]; then
+      pw=$(head -c 512 "$handoff"); consume
+      printf '\033c'
+      echo "AgentOS"
+      echo "Setting up this machine with the password you just chose. One moment."
+      # the default workspace is named in UTF-8 bytes: this script stays ASCII (the VT font has no CJK glyphs)
+      ws=$(printf '\346\210\221\347\232\204\345\267\245\344\275\234\345\214\272')   # "wo de gong zuo qu"
+      if out=$(printf '%s' "$pw" | agentosctl firstboot --admin admin --workspace "$ws" 2>&1); then
+        pw=
+        log "first boot completed for administrator admin (quick start)"
+        echo
+        echo "Done. Sign in as \"admin\" with that password."
+        sleep 2
+        exit 0
+      fi
+      pw=
+      case "$out" in *"first boot is already closed"*) log "first boot is already closed"; exit 0 ;; esac
+      log "quick start refused: $(printf '%s' "$out" | tail -1)"
+      problem "Quick setup failed: $(printf '%s' "$out" | tail -1 | LC_ALL=C tr -c '[:print:]\n' '?'). Set up the administrator by hand."
+    fi
     while :; do
       prev=$(previous) || prev=""
       printf '\033c'   # RIS: the VT clears itself (no ncurses clear in this PATH)
@@ -253,6 +280,9 @@ in {
       "d /var/lib/agentos-managed 0755 agentos-file agentos-file -"
     ];
 
+    # Quick start: on a template disk (the VM images) the first-boot re-key asks for ONE password and hands it to
+    # agentos-first-setup (graphical systems only; a headless system has no console setup to hand it to).
+    environment.etc."agentos/first-setup-handoff" = lib.mkIf cfg.graphical { text = "quick start: the disk re-key hands its password to agentos-first-setup\n"; };
     # A real root-owned file (not a store symlink): the broker refuses a policy it cannot prove root-only.
     environment.etc."agentos/broker/policy.json".mode = "0444";
     environment.etc."agentos/broker/policy.json".text = builtins.toJSON {

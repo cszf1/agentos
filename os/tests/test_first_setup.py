@@ -41,7 +41,8 @@ def script(machine_dir, setup_dir):
     body = textwrap.dedent(body).replace("''${", "${")
     rest = unit_path.EXPORT.sub("", body)
     assert "${lib" not in rest and "${pkgs" not in rest, "unexpected Nix interpolation in the setup script"
-    return body.replace("/var/lib/agentos-machine", str(machine_dir)).replace("/var/lib/agentos-first-setup", str(setup_dir))
+    return (body.replace("/var/lib/agentos-machine", str(machine_dir)).replace("/var/lib/agentos-first-setup", str(setup_dir))
+            .replace("/run/agentos-first-setup", str(setup_dir.parent / "run")))
 
 
 def status(state, users=0):
@@ -61,6 +62,7 @@ class FirstSetupTest(unittest.TestCase):
                            "logger": '#!/usr/bin/env bash\nshift 2; echo "$*" >> "$T/log"\n'}.items():
             unit_path.write_fake(bin_, name, text)
         (self.t / "setup").mkdir()
+        (self.t / "run").mkdir(mode=0o700)
         body = script(self.t / "machine", self.t / "setup")
         (self.t / "setup.sh").write_text(unit_path.confine(body, bin_, self.t / "real", self.t / "missing"))
 
@@ -111,6 +113,46 @@ class FirstSetupTest(unittest.TestCase):
         self.assertEqual(len(waits), 8, waits)
         for w in waits:
             self.assertRegex(p.stdout, w)
+
+    def test_quick_start_uses_the_handed_over_password_and_asks_nothing(self):
+        # VM images: the disk re-key asked for one password and left it in /run; first setup creates "admin" with it
+        (self.t / "run/password").write_text("quick-pw-1")
+        p, calls, log = self.run_setup("")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertNotIn("Administrator login", p.stdout)
+        self.assertNotIn("Password", p.stdout)
+        self.assertIn("firstboot --admin admin --workspace \u6211\u7684\u5de5\u4f5c\u533a", calls)
+        self.assertEqual((self.t / "password").read_text(), "quick-pw-1")
+        self.assertFalse((self.t / "run/password").exists(), "the handed-over password was not removed")
+        self.assertIn("quick start", log)
+        self.assertNotIn("quick-pw-1", p.stdout + log)
+        self.assertTrue(p.stdout.isascii(), p.stdout)
+
+    def test_quick_start_refused_falls_back_to_the_console_and_drops_the_password(self):
+        (self.t / "run/password").write_text("quick-pw-1")
+        (self.t / "status").write_text(status("open"))
+        (self.t / "refuse-once").write_text("agentosctl: CONFLICT: something\n")
+        p, calls, log = self.run_setup("\nbea\npw-2\npw-2\n\n")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertFalse((self.t / "run/password").exists())
+        self.assertIn("Quick setup failed", p.stdout)
+        self.assertIn("Administrator login", p.stdout)
+        self.assertIn("firstboot --admin bea --workspace Home", calls)
+        self.assertEqual((self.t / "password").read_text(), "pw-2")
+
+    def test_quick_start_on_a_closed_machine_still_drops_the_password(self):
+        (self.t / "run/password").write_text("quick-pw-1")
+        (self.t / f"machine/{MARKER}").write_text("closed\n")
+        p, calls, _ = self.run_setup("")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(calls, "")
+        self.assertFalse((self.t / "run/password").exists())
+
+    def test_disk_rekey_hands_the_password_over_only_on_graphical_systems(self):
+        layout = (ROOT / "os/modules/disk-layout.nix").read_text()
+        self.assertEqual(layout.count("/run/agentos-first-setup/password"), 2)   # fresh template and resumed re-key
+        self.assertIn("[ -e /etc/agentos/first-setup-handoff ]", layout)
+        self.assertIn('environment.etc."agentos/first-setup-handoff" = lib.mkIf cfg.graphical', NIX)
 
     def test_closed_marker_never_shows_the_entry(self):
         (self.t / "machine/machine.secret").write_text("s")
