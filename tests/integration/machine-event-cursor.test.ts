@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { MachineMode } from "../../packages/host/src/machine-mode.js";
+import { MachineCallError, MachineMode } from "../../packages/host/src/machine-mode.js";
 
 // Actual MachineMode UDS framing/replay with scripted HTTP and registry peers, NOT a Host authorization test.
 type Frame = Record<string, unknown>;
@@ -58,6 +58,7 @@ describe("machine gateway event watermarks", () => {
     gateway.listen(socket);
     await once(gateway, "listening");
     const rt = {
+      config: { dataDir: dir },
       core: { store: {
         get: () => ({ workspace_id: WS, store_uuid: STORE }),
         tx: (fn: () => unknown) => fn(), run: () => {},
@@ -95,6 +96,54 @@ describe("machine gateway event watermarks", () => {
     peer?.destroy();
     if (gateway?.listening) await new Promise<void>((resolve) => gateway.close(() => resolve()));
     if (dir) fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("retries the same completed permit after release during an outage", async () => {
+    if (!mode) throw new Error("mode not started");
+    const running = mode;
+    const original = running.link.call.bind(running.link);
+    let offline = false;
+    let releases = 0;
+    running.link.call = (async (op: string, args: unknown) => {
+      if (op === "permits.release") {
+        releases++;
+        expect(args).toEqual({ permitId: "completed-permit", usage: "used" });
+        if (offline) throw new MachineCallError("STORE_UNAVAILABLE", "machined stopped");
+        return { permitId: "completed-permit", state: "released" };
+      }
+      if (offline) throw new MachineCallError("STORE_UNAVAILABLE", "machined stopped");
+      return original(op, args);
+    }) as typeof running.link.call;
+    offline = true;
+    running.gate().release("completed-permit", "used");
+    await vi.waitFor(() => expect(releases).toBeGreaterThan(0));
+    expect(fs.existsSync(path.join(dir, "machine-permit-releases.sqlite"))).toBe(true);
+    offline = false;
+    running.link.connectionGeneration++;
+    await vi.waitFor(() => expect(releases).toBeGreaterThan(1));
+  });
+
+  it("reports live attempts on reconnect and never releases them at the request deadline", async () => {
+    if (!mode) throw new Error("mode not started");
+    const running = mode;
+    const original = running.link.call.bind(running.link);
+    const reports: unknown[] = [];
+    let releases = 0;
+    running.link.call = (async (op: string, args: unknown) => {
+      if (op === "permits.request") return { permitId: "live-permit", state: "reserved" };
+      if (op === "permits.use") return { permitId: "live-permit", state: "in_use" };
+      if (op === "permits.report") { reports.push(args); return { permitId: "live-permit", state: "in_use" }; }
+      if (op === "permits.release") { releases++; throw new Error("live work must not be released"); }
+      return original(op, args);
+    }) as typeof running.link.call;
+    const gate = running.gate();
+    expect(await gate.acquire({ ownerKind: "run", ownerId: "live-run", executionEpoch: 1, attemptId: "attempt", background: false,
+      userId: "test-user", memberVersion: 1, deadlineMs: Date.now() + 10, bodyHash: "sha256:faux" })).toEqual({ ok: true, permitId: "live-permit" });
+    expect(await gate.use("live-permit", 1)).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    running.link.connectionGeneration++;
+    await vi.waitFor(() => expect(reports).toContainEqual({ permitId: "live-permit", holderState: "in_use" }));
+    expect(releases).toBe(0);
   });
 
   it("captures the wire watermark before an asynchronous snapshot, not the later cursor or Store eventSeq", async () => {

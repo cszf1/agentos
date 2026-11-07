@@ -252,12 +252,39 @@ with subtest("machined SIGKILL while permits are reserved/in use: nothing is fre
     assert dup == "0", dup
     # the held requests finish: their Hosts release them with the real usage, and only then the waiter starts
     machine.wait_until_succeeds(f"test $(grep -c '\"ev\": \"start\"' {FM}/log.jsonl) -gt {n_start0 + 2}", timeout=240)
+    original_ids = ",".join("'" + h.split(':')[0] + "'" for h in held)
+    machine.wait_until_succeeds("test $(sqlite3 /var/lib/agentos-machine/machine.sqlite \"SELECT COUNT(*) FROM machine_permits WHERE permit_id IN (" + original_ids + ") AND state='released' AND usage_status IN ('used','unknown')\") = 2", timeout=120)
     fin = sql("SELECT permit_id || ':' || state || ':' || IFNULL(usage_status,'') FROM machine_permits WHERE permit_id IN (" + ",".join("'" + h.split(':')[0] + "'" for h in held) + ")").split()
     print("held permits at the end", fin)
-    assert all(f.split(":")[1] in ("released", "reconciling", "in_use") and f.split(":")[2] != "unused" for f in fin), fin   # never handed back as unused
+    assert len(fin) == 2 and all(f.split(":")[1] == "released" and f.split(":")[2] in ("used", "unknown") for f in fin), fin   # never handed back as unused
     assert fm_state()["peak"]["total"] <= 2, fm_state()
     for rid, ws in ((s1, ws_a), (s2, ws_b), (s3, ws_a)):
         call(1, [fwd(ws, "runs.cancel.post", params={"runId": rid}, idem="s5c-" + rid)], "s5x" + rid[:6])
+
+with subtest("completed requests release DURING machined shutdown, persist, then settle after reconnect"):
+    machine.wait_until_succeeds(f"python3 -c \"import json,sys;sys.exit(sum(json.load(open('{FM}/state.json'))['inflight'].values()))\"", timeout=240)
+    machine.succeed(f"echo 0 > {FM}/hold; touch {FM}/block")
+    first = run(1, ws_a, "做一个停机释放测试应用", "release-down-a")
+    second = run(1, ws_b, "做一个重连释放测试应用", "release-down-b")
+    machine.wait_until_succeeds(f"test \"$(python3 -c \"import json;print(sum(json.load(open('{FM}/state.json'))['inflight'].values()))\")\" = 2", timeout=180)
+    ids = sql(f"SELECT permit_id FROM machine_permits WHERE owner_id IN ('{first}','{second}') AND state='in_use'").split()
+    assert len(ids) == 2, ids
+    machine.succeed("systemctl stop agentos-machine.service")
+    machine.fail("systemctl is-active agentos-machine.service")
+    machine.succeed(f"rm {FM}/block")
+    machine.wait_until_succeeds(f"python3 -c \"import json,sys;sys.exit(sum(json.load(open('{FM}/state.json'))['inflight'].values()))\"", timeout=120)
+    for w, run_id in ((ws_a, first), (ws_b, second)):
+        outbox = f"/var/lib/agentos/workspaces/{w}/data/machine-permit-releases.sqlite"
+        permit_id = sql(f"SELECT permit_id FROM machine_permits WHERE owner_id='{run_id}' AND state='in_use'")
+        assert permit_id in ids, (permit_id, ids)
+        machine.wait_until_succeeds(f"test $(sqlite3 {outbox} \"SELECT COUNT(*) FROM releases WHERE permit_id='{permit_id}' AND usage IN ('used','unknown')\") = 1", timeout=120)
+    machine.fail("systemctl is-active agentos-machine.service")
+    quoted = ",".join("'" + p + "'" for p in ids)
+    assert sql(f"SELECT COUNT(*) FROM machine_permits WHERE permit_id IN ({quoted}) AND state='in_use'") == "2"
+    machine.succeed("systemctl start agentos-machine.service")
+    machine.wait_for_unit("agentos-machine.service")
+    machine.wait_until_succeeds("test $(sqlite3 /var/lib/agentos-machine/machine.sqlite \"SELECT COUNT(*) FROM machine_permits WHERE permit_id IN (" + quoted + ") AND state='released' AND usage_status IN ('used','unknown')\") = 2", timeout=120)
+    assert fm_state()["peak"]["total"] <= 2, fm_state()
 
 with subtest("Host SIGKILL with a model permit in use: held until the successor Host says hello, then charged unknown, never handed back unused (S05 Host, S06)"):
     machine.succeed(f"echo 60 > {FM}/hold")

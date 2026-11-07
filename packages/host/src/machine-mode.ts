@@ -9,6 +9,8 @@
  */
 import net from "node:net";
 import fs from "node:fs";
+import path from "node:path";
+import { PermitReleaseOutbox, type PermitUsage } from "./permit-release-outbox.js";
 import { randomUUID, randomBytes, createHash } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { identityContext, pauseAsync, readBootId, type BuildGate, type Core, type MachineGate, type WorkspaceIdentity } from "@agentos/core";
@@ -77,6 +79,7 @@ export class MachineCallError extends Error {
 /** Serialized request/response client of machined (one request in flight per connection). */
 export class MachineLink {
   #conn: FrameConn | null = null;
+  connectionGeneration = 0;
   #queue: { op: string; args: unknown; res: (v: unknown) => void; rej: (e: Error) => void }[] = [];
   #busy = false;
   #waiting: { res: (v: unknown) => void; rej: (e: Error) => void } | null = null;
@@ -103,6 +106,7 @@ export class MachineLink {
       this.#pump();
     };
     this.#conn = c;
+    this.connectionGeneration++;
     return c;
   }
 
@@ -243,6 +247,9 @@ export class MachineMode {
   #gw: FrameConn | null = null;
   #stopped = false;
   #lastEventSeq = 0;
+  #releaseOutbox: PermitReleaseOutbox | null = null;
+  #activePermits = new Map<string, "reserved" | "in_use">();
+  #permitConnection = 0;
   #ring: { seq: number; frame: Record<string, unknown> }[] = [];
 
   constructor(
@@ -303,6 +310,7 @@ export class MachineMode {
         // test-only race window (review F03): the registry change is applied (mirror, fences, receipt), ack not sent
         if (last) await pauseAsync("registry.before_ack");
         if (last) await this.link.call("registry.ack", { registrySeq: last });
+        await this.#reconcilePermits();
       } catch (e) {
         log.warn("machine registry unavailable", { error: (e as Error).message });
       }
@@ -497,7 +505,8 @@ export class MachineMode {
   ): Promise<{ ok: true; permit: { permitId: string; state: string } } | { ok: false; reason: string; code: "MACHINE_CAPACITY" | "MEMBERSHIP_REVOKED" | "DEADLINE" }> {
     for (;;) {
       try {
-        const p = await this.link.call<{ permitId: string; state: string }>("permits.request", { ...args, deadlineMs: Math.max(1000, deadlineMs - Date.now()) });
+        let p = await this.link.call<{ permitId: string; state: string }>("permits.request", { ...args, deadlineMs: Math.max(1000, deadlineMs - Date.now()) });
+        if (p.state === "reconciling") p = await this.link.call("permits.report", { permitId: p.permitId, holderState: "reserved" });
         this.#machineState(true, String(args.resourceClass), runId);
         return { ok: true, permit: p };
       } catch (e) {
@@ -510,6 +519,32 @@ export class MachineMode {
         await new Promise((r) => setTimeout(r, 1000));
       }
     }
+  }
+
+  #release(permitId: string, usage: PermitUsage, usageJson?: unknown): void {
+    this.#releaseOutbox ??= new PermitReleaseOutbox(path.join(this.rt.config.dataDir, "machine-permit-releases.sqlite"), this.cfg.workspaceId);
+    this.#releaseOutbox.put(permitId, usage, usageJson);
+    this.#activePermits.delete(permitId);
+    void this.#flushReleases();
+  }
+
+  async #flushReleases(): Promise<void> {
+    try {
+      await this.#releaseOutbox?.flush((op, args) => this.link.call(op, args));
+    } catch {
+      // The durable row is retried by the registry loop until a terminal acknowledgement arrives.
+    }
+  }
+
+  async #reconcilePermits(): Promise<void> {
+    this.#releaseOutbox ??= new PermitReleaseOutbox(path.join(this.rt.config.dataDir, "machine-permit-releases.sqlite"), this.cfg.workspaceId);
+    await this.#flushReleases();
+    if (this.#permitConnection === this.link.connectionGeneration) return;
+    for (const [permitId, holderState] of this.#activePermits) {
+      if (!this.#activePermits.has(permitId)) continue;
+      await this.link.call("permits.report", { permitId, holderState });
+    }
+    this.#permitConnection = this.link.connectionGeneration;
   }
 
   /** Machine build slot for one build job (spec §13.1: one compile/Prepare slot per machine). */
@@ -529,12 +564,13 @@ export class MachineMode {
         let p = r.permit;
         while (p.state === "queued") {
           if (Date.now() > deadlineMs) {
-            link.call("permits.release", { permitId: p.permitId, usage: "unused" }).catch(() => {});
+            this.#release(p.permitId, "unused");
             return { ok: false, reason: "no machine build slot before the deadline", code: "DEADLINE" };
           }
           await new Promise((res) => setTimeout(res, 200));
           try {
             p = await link.call("permits.get", { permitId: p.permitId });
+            if (p.state === "reconciling") p = await link.call("permits.report", { permitId: p.permitId, holderState: "reserved" });
           } catch {
             /* machined restarting: keep waiting until the deadline */
           }
@@ -543,13 +579,14 @@ export class MachineMode {
         try {
           await link.call("permits.use", { permitId: p.permitId, memberVersion: owner?.v ?? 0 });
         } catch (e) {
-          link.call("permits.release", { permitId: p.permitId, usage: "unused" }).catch(() => {});
+          this.#release(p.permitId, "unused");
           return { ok: false, reason: (e as Error).message, code: "MACHINE_CAPACITY" };
         }
+        this.#activePermits.set(p.permitId, "in_use");
         return { ok: true, permitId: p.permitId };
       },
       release: (permitId) => {
-        link.call("permits.release", { permitId, usage: "used" }).catch(() => {});
+        this.#release(permitId, "used");
       },
     };
   }
@@ -571,29 +608,32 @@ export class MachineMode {
         // Wait without holding anything else (spec §13.2): queued → reserved, or revoked / deadline.
         while (p.state === "queued") {
           if (signal?.aborted || Date.now() > req.deadlineMs) {
-            link.call("permits.release", { permitId: p.permitId, usage: "unused" }).catch(() => {});
+            this.#release(p.permitId, "unused");
             return { ok: false, reason: "no machine permit before the deadline", code: "DEADLINE" };
           }
           await new Promise((r) => setTimeout(r, 100));
           try {
             p = await link.call("permits.get", { permitId: p.permitId });
+            if (p.state === "reconciling") p = await link.call("permits.report", { permitId: p.permitId, holderState: "reserved" });
           } catch {
             /* machined restarting: keep waiting until the deadline */
           }
         }
         if (p.state !== "reserved") return { ok: false, reason: `machine permit ${p.state}`, code: p.state === "revoked" ? "MEMBERSHIP_REVOKED" : "MACHINE_CAPACITY" };
+        this.#activePermits.set(p.permitId, "reserved");
         return { ok: true, permitId: p.permitId };
       },
       use: async (permitId, memberVersion) => {
         try {
           await link.call("permits.use", { permitId, memberVersion });
+          this.#activePermits.set(permitId, "in_use");
           return true;
         } catch {
           return false;
         }
       },
       release: (permitId, usage, usageJson) => {
-        link.call("permits.release", { permitId, usage, usage_json: usageJson ?? null }).catch(() => {});
+        this.#release(permitId, usage, usageJson);
       },
     };
   }

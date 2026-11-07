@@ -59,6 +59,11 @@ class H(BaseHTTPRequestHandler):
             log({"ev": "start", "ws": ws, "kind": kind, "t": t0, "inflight": dict(inflight), "kinds": dict(kinds), "auth": auth})
             snapshot()
         try:
+            end = time.monotonic() + 180
+            while os.path.exists(f"{D}/block"):
+                if time.monotonic() > end:
+                    raise TimeoutError("test endpoint was never explicitly released")
+                time.sleep(0.05)
             time.sleep(hold())
             text = "这是测试端点，不生成应用。"
             if body.get("stream"):
