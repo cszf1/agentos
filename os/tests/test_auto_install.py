@@ -32,7 +32,7 @@ class AutoInstallTest(unittest.TestCase):
         self.m.logger = lambda msg: None
         self.m.kmsg = lambda msg: self.calls.append(("kmsg", msg))
         self.m.time.sleep = lambda s: None
-        self.m.cmd_plan = lambda a: self.calls.append(("plan", a)) or {"planHash": "h", "plan": {"confirmToken": "A1"}}
+        self.m.cmd_plan = lambda a: self.calls.append(("plan", a)) or {"planHash": "h", "plan": {"confirmToken": "A1", "identity": self.m.identity(disk())}}
         self.m.cmd_confirm = lambda a: self.calls.append(("confirm", a)) or {"state": "confirmed"}
         self.m.cmd_run = lambda a: self.calls.append(("run", a)) or {"state": "installed", "installId": "i"}
         self.m.disk_has_data = lambda d: bool(d["partitions"])
@@ -115,6 +115,65 @@ class AutoInstallTest(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertIn("The install stopped: cryptsetup failed: boom", out)
         self.assertIn("sudo agentos-install inspect", out)
+
+
+class DiskDetectorTest(unittest.TestCase):
+    def setUp(self):
+        self.m = load()
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.path = Path(self.tmp.name, "disk")
+        with self.path.open("wb") as f:
+            f.truncate(24 * 1024**2)
+        self.d = disk(str(self.path), self.path.stat().st_size)
+        self.probe = mock.patch.object(self.m.subprocess, "run", return_value=mock.Mock(returncode=2))
+        self.probe.start()
+        self.addCleanup(self.probe.stop)
+
+    def test_interior_data_is_not_blank(self):
+        self.assertFalse(self.m.disk_has_data(self.d))
+        with self.path.open("r+b") as f:
+            f.seek(8 * 1024**2 + 13)
+            f.write(b"EXISTING RAW DATA")
+        self.assertTrue(self.m.disk_has_data(self.d))
+
+    def test_short_read_unreadable_or_probe_failure_refuses(self):
+        self.d["sizeBytes"] += 1
+        self.assertTrue(self.m.disk_has_data(self.d))
+        self.path.unlink()
+        self.assertTrue(self.m.disk_has_data(self.d))
+        with mock.patch.object(self.m.subprocess, "run", return_value=mock.Mock(returncode=4)):
+            self.assertTrue(self.m.disk_has_data(self.d))
+
+    def test_countdown_mutation_is_rejected_by_real_detector(self):
+        self.m.disks = lambda: [self.d]
+        self.m.logger = lambda msg: None
+        self.m.kmsg = lambda msg: None
+        self.m.cmd_plan = mock.Mock()
+        real_open = open
+        self.m.open = lambda p, *a, **kw: io.StringIO("") if p == "/proc/cmdline" else real_open(p, *a, **kw)
+        def mutate(n):
+            with self.path.open("r+b") as f:
+                f.seek(12 * 1024**2)
+                f.write(b"written during countdown")
+            return True
+        self.m.countdown = mutate
+        with redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(self.m.cmd_auto({}), 1)
+        self.m.cmd_plan.assert_not_called()
+        self.assertIn("after the countdown", output.getvalue())
+
+    def test_identity_change_after_countdown_is_refused(self):
+        self.m.disks = mock.Mock(side_effect=[[self.d], [dict(self.d, serial="replacement")]])
+        self.m.logger = lambda msg: None
+        self.m.kmsg = lambda msg: None
+        self.m.cmd_plan = mock.Mock()
+        self.m.countdown = lambda n: True
+        real_open = open
+        self.m.open = lambda p, *a, **kw: io.StringIO("") if p == "/proc/cmdline" else real_open(p, *a, **kw)
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(self.m.cmd_auto({}), 1)
+        self.m.cmd_plan.assert_not_called()
 
 
 class QuickPlanTest(unittest.TestCase):

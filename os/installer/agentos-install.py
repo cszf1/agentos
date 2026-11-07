@@ -615,20 +615,28 @@ def gib(n):
 
 
 def disk_has_data(d):
-    """Anything on the disk at all: a partition, a signature blkid knows, or a non-zero byte at either end."""
+    """Only a complete zero scan proves blankness. Unknown, unreadable, or short reads refuse auto."""
     if d["partitions"]:
         return True
     if subprocess.run(["blkid", "-p", d["path"]], capture_output=True).returncode != 2:
         return True
-    mib = 1024**2
+    chunk = 8 * 1024**2
+    zeros = bytes(chunk)
+    remaining = d["sizeBytes"]
+    if remaining <= 0:
+        return True
+    progress(f"checking all {remaining} bytes of {d['path']} for existing data")
     try:
-        with open(d["path"], "rb") as f:
-            head = f.read(mib)
-            f.seek(max(0, d["sizeBytes"] - mib))
-            tail = f.read(mib)
+        with open(d["path"], "rb", buffering=0) as f:
+            while remaining:
+                n = min(chunk, remaining)
+                data = f.read(n)
+                if len(data) != n or data != zeros[:n]:
+                    return True
+                remaining -= n
     except OSError:
         return True
-    return bool(head.strip(b"\0") or tail.strip(b"\0"))
+    return False
 
 
 def countdown(seconds):
@@ -718,6 +726,12 @@ def cmd_auto(args):
             say(line)
         kmsg("cancelled")
         return 1
+    current = [x for x in disks() if "install medium" not in x["problems"]]
+    if (len(current) != 1 or current[0]["path"] != d["path"] or identity(current[0]) != identity(d)
+            or current[0]["problems"] or disk_has_data(current[0])):
+        say("The target changed or is no longer provably empty after the countdown. Nothing was changed.")
+        kmsg("stopped: target changed after countdown")
+        return 1
     ids = [x for x in d["byId"] if not x.startswith("wwn-")] + [x for x in d["byId"] if x.startswith("wwn-")]
     if ids:
         target = "/dev/disk/by-id/" + ids[0]
@@ -727,6 +741,8 @@ def cmd_auto(args):
     tz = os.environ.get("AGENTOS_INSTALL_TIMEZONE", "UTC")
     try:
         p = cmd_plan({"--disk": target, "--quick": True, "--timezone": tz})
+        if p["plan"]["identity"] != identity(d):
+            raise Refuse("the target changed while planning; nothing was written")
         cmd_confirm({"--plan-hash": p["planHash"], "--serial": p["plan"]["confirmToken"]})
         say("Installing. This takes a few minutes; the progress lines below are normal.")
         kmsg("installing")

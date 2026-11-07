@@ -162,3 +162,11 @@ assertion. Manifest expiry, support limit, signature, content and sequence check
 
 Root-only forms of the same subcommands (`agentosctl backup|restore|clone|import-v04|import-set|update …`) are the
 helpers the actions above run; they are used directly only from the recovery medium.
+
+## Automatic install blank-disk proof
+
+Automatic installation scans every advertised byte twice, before and after the cancellable countdown. It stops at the first nonzero byte. An unreadable disk, a short read, a signature-probe error, or a changed disk identity refuses automatic installation. A manual plan still requires explicit destructive confirmation.
+
+The scanner compares 8 MiB blocks rather than iterating over individual bytes. Full scans take time proportional to disk size and read speed. They have no fixed timeout that could turn an incomplete scan into permission to erase. Run `python3 os/tests/measure_disk_scan.py` to measure a harmless 64 GiB sparse file and verify the number of bytes read.
+
+A single sandbox run on 2026-11-08 in Asia/Shanghai read all 68,719,476,736 bytes in 12.640 seconds. Interior data at 8 MiB caused rejection after 16,777,216 bytes and 0.012 seconds. The sandbox had four vCPUs, with other verification work running. This measures sparse-file reads and comparisons, not physical disk throughput or VM installation time. A real disk can be slower.
