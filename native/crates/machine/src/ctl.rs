@@ -555,18 +555,14 @@ fn clone(c: &mut Client, a: &[String]) {
         if v["ok"] != true {
             die(&format!("clone of {old} into {ws} failed: {} (run the same command again to resume)", v["error"]));
         }
-        let marker = format!("{root}/data/clone-reconcile-pending");
         let body = json!({ "workspaceId": ws, "sourceWorkspaceId": old, "sourceMachineInstallId": src_mid, "setId": set_id }).to_string();
         // a resumed run writes the marker only while the Host has not started since the swap (the restore marker is
         // still there); a clone the Host already reconciled is never reconciled twice
         if v["result"]["resumed"] != true || std::path::Path::new(&format!("{root}/data/restore-reconcile-pending")).exists() {
-            agentos_machine::dir::write_private(std::path::Path::new(&marker), body.as_bytes()).unwrap_or_else(|e| die(&e.to_string()));
-            unsafe {
-                let cpath = std::ffi::CString::new(marker.clone()).unwrap();
-                if libc::chown(cpath.as_ptr(), uid as u32, uid as u32) != 0 {
-                    die("cannot hand the clone marker to the execution UID");
-                }
-            }
+            agentos_machine::sys::write_workspace_file(
+                std::path::Path::new("/var/lib/agentos/workspaces"),
+                &std::path::Path::new(&ws).join("data"), "clone-reconcile-pending", uid as u32, body.as_bytes(),
+            ).unwrap_or_else(|e| die(&format!("cannot publish clone marker: {e}")));
         }
         report.push(json!({ "sourceWorkspaceId": old, "workspaceId": ws, "executionUid": uid, "storeUUID": p["storeUUID"], "owner": owner_login }));
     }

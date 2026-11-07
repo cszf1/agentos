@@ -574,31 +574,45 @@ pub fn model_credential_text(p: &Value, key: &[u8]) -> R<String> {
 }
 
 fn write_model_credential(ws: &str, uid: u32, p: &Value, key: &[u8]) -> R<()> {
-    use std::io::Write;
-    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
     let mut text = model_credential_text(p, key)?;
-    let root = std::path::Path::new("/var/lib/agentos/workspaces").join(ws);
-    let tmp = root.join(".model.env.tmp");
-    let _ = std::fs::remove_file(&tmp);
-    let res = (|| -> std::io::Result<()> {
-        let mut f = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&tmp)?;
-        f.write_all(text.as_bytes())?;
-        f.sync_all()?;
-        std::os::unix::fs::chown(&tmp, Some(uid), Some(uid))?;
-        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))?;
-        std::fs::rename(&tmp, root.join("model.env"))?;
-        std::fs::File::open(&root)?.sync_all()
-    })();
+    let res = publish_model_credential(std::path::Path::new("/var/lib/agentos/workspaces"), ws, uid, text.as_bytes());
     unsafe { text.as_bytes_mut().iter_mut().for_each(|b| *b = 0) };
-    res.map_err(|e| {
-        let _ = std::fs::remove_file(&tmp);
-        MErr::new("SYSTEM_FAILED", format!("model credential: {e}"))
-    })
+    res.map_err(|e| MErr::new("SYSTEM_FAILED", format!("model credential: {e}")))
+}
+
+fn publish_model_credential(parent: &std::path::Path, ws: &str, uid: u32, text: &[u8]) -> std::io::Result<()> {
+    if !crate::util::is_uuid(ws) { return Err(std::io::Error::other("invalid workspace")); }
+    crate::sys::write_workspace_file(parent, std::path::Path::new(ws), "model.env", uid, text)
 }
 
 #[cfg(test)]
 mod wifi_tests {
     use super::*;
+
+    #[test]
+    fn credential_publication_replaces_links_without_touching_targets() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        let parent = std::env::temp_dir().join(format!("agentos-secure-{}", crate::util::uuid()));
+        std::fs::create_dir(&parent).unwrap();
+        std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let ws = "00000000-0000-4000-8000-000000000001";
+        let root = parent.as_path().join(ws);
+        std::fs::create_dir(&root).unwrap();
+        let sentinel = parent.as_path().join("sentinel");
+        std::fs::write(&sentinel, b"unchanged").unwrap();
+        std::fs::set_permissions(&sentinel, std::fs::Permissions::from_mode(0o644)).unwrap();
+        symlink(&sentinel, root.join("model.env")).unwrap();
+        let uid = unsafe { libc::geteuid() };
+        publish_model_credential(parent.as_path(), ws, uid, b"faux").unwrap();
+        assert_eq!(std::fs::read(root.join("model.env")).unwrap(), b"faux");
+        assert_eq!(std::fs::read(&sentinel).unwrap(), b"unchanged");
+        assert_eq!(std::fs::metadata(&sentinel).unwrap().permissions().mode() & 0o777, 0o644);
+        std::fs::remove_file(root.join("model.env")).unwrap();
+        std::fs::remove_dir(&root).unwrap();
+        symlink(parent.as_path(), &root).unwrap();
+        assert!(publish_model_credential(parent.as_path(), ws, uid, b"faux").is_err());
+        std::fs::remove_dir_all(parent).unwrap();
+    }
 
     #[test]
     fn credential_recovery_without_publication_evidence_is_unknown() {

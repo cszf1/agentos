@@ -124,27 +124,86 @@ fn subid_lines(file: &str) -> Vec<(String, u32, u32)> {
         .collect()
 }
 
-fn chown_mode(p: &Path, uid: u32, gid: u32, mode: u32) -> R<()> {
+pub(crate) fn open_dir_nofollow(path: &Path) -> std::io::Result<std::fs::File> {
+    if !path.is_absolute() { return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "absolute directory required")); }
+    use std::os::fd::{AsRawFd, FromRawFd};
+    use std::os::unix::ffi::OsStrExt;
+    let mut dir = std::fs::File::open("/")?;
+    for part in path.components() {
+        let name = match part {
+            std::path::Component::RootDir => continue,
+            std::path::Component::Normal(name) => std::ffi::CString::new(name.as_bytes())?,
+            _ => return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "absolute normal path required")),
+        };
+        let fd = unsafe { libc::openat(dir.as_raw_fd(), name.as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC) };
+        if fd < 0 { return Err(std::io::Error::last_os_error()); }
+        dir = unsafe { std::fs::File::from_raw_fd(fd) };
+    }
+    Ok(dir)
+}
+
+pub(crate) fn fd_owner_mode(file: &std::fs::File, uid: u32, gid: u32, mode: u32) -> std::io::Result<()> {
+    use std::os::fd::AsRawFd;
     use std::os::unix::fs::PermissionsExt;
-    std::os::unix::fs::chown(p, Some(uid), Some(gid)).map_err(|e| MErr::new("SYSTEM_FAILED", format!("chown {}: {e}", p.display())))?;
-    std::fs::set_permissions(p, std::fs::Permissions::from_mode(mode)).map_err(|e| MErr::new("SYSTEM_FAILED", format!("chmod {}: {e}", p.display())))
+    if unsafe { libc::fchown(file.as_raw_fd(), uid, gid) } != 0 { return Err(std::io::Error::last_os_error()); }
+    file.set_permissions(std::fs::Permissions::from_mode(mode))
+}
+
+fn chown_mode(p: &Path, uid: u32, gid: u32, mode: u32) -> R<()> {
+    open_dir_nofollow(p).and_then(|f| fd_owner_mode(&f, uid, gid, mode))
+        .map_err(|e| MErr::new("SYSTEM_FAILED", format!("directory {}: {e}", p.display())))
 }
 
 fn mkdir(p: &Path, uid: u32, gid: u32, mode: u32) -> R<()> {
-    use std::os::unix::fs::MetadataExt;
-    match std::fs::symlink_metadata(p) {
-        Ok(m) => {
-            if !m.is_dir() || m.file_type().is_symlink() {
-                return Err(MErr::new("SYSTEM_FAILED", format!("{} exists and is not a directory", p.display())));
-            }
-            // An existing directory owned by an unexpected account is never adopted (spec §7.2: no takeover).
-            if m.uid() != uid && m.uid() != 0 {
-                return Err(MErr::new("SYSTEM_FAILED", format!("{} is owned by uid {}", p.display(), m.uid())));
-            }
+    use std::os::fd::{AsRawFd, FromRawFd};
+    use std::os::unix::{ffi::OsStrExt, fs::MetadataExt};
+    let effect = || -> std::io::Result<()> {
+        let parent = open_dir_nofollow(p.parent().ok_or_else(|| std::io::Error::other("missing parent"))?)?;
+        let name = std::ffi::CString::new(p.file_name().ok_or_else(|| std::io::Error::other("missing name"))?.as_bytes())?;
+        if unsafe { libc::mkdirat(parent.as_raw_fd(), name.as_ptr(), mode) } != 0 {
+            let err = std::io::Error::last_os_error();
+            if err.kind() != std::io::ErrorKind::AlreadyExists { return Err(err); }
         }
-        Err(_) => std::fs::create_dir(p).map_err(|e| MErr::new("SYSTEM_FAILED", format!("mkdir {}: {e}", p.display())))?,
+        let fd = unsafe { libc::openat(parent.as_raw_fd(), name.as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC) };
+        if fd < 0 { return Err(std::io::Error::last_os_error()); }
+        let file = unsafe { std::fs::File::from_raw_fd(fd) };
+        let owner = file.metadata()?.uid();
+        if owner != uid && owner != 0 { return Err(std::io::Error::other("unexpected directory owner")); }
+        fd_owner_mode(&file, uid, gid, mode)
+    };
+    effect().map_err(|e| MErr::new("SYSTEM_FAILED", format!("mkdir {}: {e}", p.display())))
+}
+
+pub fn write_workspace_file(parent: &Path, directory: &Path, name: &str, uid: u32, text: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::fd::{AsRawFd, FromRawFd};
+    use std::os::unix::fs::MetadataExt;
+    if directory.as_os_str().is_empty() || directory.components().any(|c| !matches!(c, std::path::Component::Normal(_))) || name.is_empty() || matches!(name, "." | "..") || name.contains('/') {
+        return Err(std::io::Error::other("invalid workspace destination"));
     }
-    chown_mode(p, uid, gid, mode)
+    let parent_fd = open_dir_nofollow(parent)?;
+    let meta = parent_fd.metadata()?;
+    if meta.uid() != unsafe { libc::geteuid() } || meta.mode() & 0o022 != 0 {
+        return Err(std::io::Error::other("credential staging directory is not trusted"));
+    }
+    let destination = open_dir_nofollow(&parent.join(directory))?;
+    let tmp = std::ffi::CString::new(format!(".workspace-{}.tmp", crate::util::uuid())).unwrap();
+    let target = std::ffi::CString::new(name)?;
+    let fd = unsafe { libc::openat(parent_fd.as_raw_fd(), tmp.as_ptr(), libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_CLOEXEC, 0o600) };
+    if fd < 0 { return Err(std::io::Error::last_os_error()); }
+    let mut file = unsafe { std::fs::File::from_raw_fd(fd) };
+    let res = (|| {
+        file.write_all(text)?;
+        fd_owner_mode(&file, uid, uid, 0o600)?;
+        file.sync_all()?;
+        if unsafe { libc::renameat(parent_fd.as_raw_fd(), tmp.as_ptr(), destination.as_raw_fd(), target.as_ptr()) } != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        destination.sync_all()?;
+        parent_fd.sync_all()
+    })();
+    if res.is_err() { unsafe { libc::unlinkat(parent_fd.as_raw_fd(), tmp.as_ptr(), 0); } }
+    res
 }
 
 pub fn user_unit_ctl(uid: u32, args: &[&str]) -> R<String> {
@@ -324,5 +383,28 @@ impl System for HostSystem {
     fn kill_exec_cgroup(&mut self, uid: u32) -> R<()> {
         let _ = run(Command::new("systemctl").args(["kill", "--signal=SIGKILL", &format!("user-{uid}.slice")]));
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod secure_directory_tests {
+    use super::*;
+    #[test]
+    fn refuses_symlink_components_without_changing_the_target() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        let tmp = std::env::temp_dir().join(format!("agentos-secure-{}", crate::util::uuid()));
+        std::fs::create_dir(&tmp).unwrap();
+        let target = tmp.as_path().join("target");
+        std::fs::create_dir(&target).unwrap();
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let link = tmp.as_path().join("link");
+        symlink(&target, &link).unwrap();
+        let uid = unsafe { libc::geteuid() };
+        assert!(open_dir_nofollow(Path::new("relative")).is_err());
+        assert!(mkdir(&link, uid, uid, 0o700).is_err());
+        assert!(mkdir(&link.join("child"), uid, uid, 0o700).is_err());
+        assert_eq!(std::fs::metadata(&target).unwrap().permissions().mode() & 0o777, 0o755);
+        assert!(!target.join("child").exists());
+        std::fs::remove_dir_all(tmp).unwrap();
     }
 }
