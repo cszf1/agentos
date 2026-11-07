@@ -26,7 +26,7 @@ changed identity and a disk below 64 GiB are refused. After a crash `run` inspec
 on the ESP; it never re-formats a different disk with the same name. The system closure is copied from the ISO's
 own store (no network). The LUKS passphrase is read from stdin only, never from argv, and is not written anywhere.
 """
-import hashlib, json, os, subprocess, sys, time, uuid
+import hashlib, json, os, re, subprocess, sys, time, uuid
 
 STATE_DIR = "/run/agentos-install"
 STATE = f"{STATE_DIR}/state.json"
@@ -699,6 +699,34 @@ MANUAL = ["To install by hand, use the shell on this screen (press Enter):",
           "Or power off, leave exactly one empty disk of at least 64 GB attached, and start again."]
 
 
+def ensure_firmware_entry(dev):
+    loader = r"\EFI\systemd\systemd-bootx64.efi"
+    guid = sh("blkid", "-s", "PARTUUID", "-o", "value", part(dev, 1)).strip().lower()
+    try:
+        uuid.UUID(guid)
+    except ValueError:
+        raise Refuse("cannot identify target ESP GUID; firmware entries were not changed")
+    listing = subprocess.run(["efibootmgr", "-v"], capture_output=True)
+    if listing.returncode != 0:
+        raise Refuse("cannot read firmware entries; firmware entries were not changed")
+    output = listing.stdout.decode(errors="replace")
+    for line in output.splitlines():
+        entry = re.match(r"Boot([0-9A-Fa-f]{4})\*?\s", line)
+        device = re.search(r"HD\(1,GPT,([0-9a-f-]+),[^)]*\)/File\(([^)]*)\)", line, re.I)
+        if not entry or not device or device[1].lower() != guid or device[2].replace("/", "\\").lower() != loader.lower():
+            continue
+        boot = entry[1].upper()
+        sh("efibootmgr", "-b", boot, "-a")
+        order = re.search(r"^BootOrder:\s*([0-9A-Fa-f,]+)", output, re.M)
+        if not order:
+            raise Refuse("firmware BootOrder unavailable; existing entry was activated but not reordered")
+        rest = [x.upper() for x in order[1].split(",") if x.upper() != boot]
+        sh("efibootmgr", "-o", ",".join([boot] + rest))
+        return "updated"
+    sh("efibootmgr", "-q", "-c", "-d", dev, "-p", "1", "-L", "AgentOS", "-l", loader)
+    return "created"
+
+
 def cmd_auto(args):
     with open("/proc/cmdline") as f:
         off = "agentos.autoinstall=0" in f.read().split()
@@ -799,9 +827,10 @@ def cmd_auto(args):
     # again then stops at "already installed".
     if loader and os.path.isdir("/sys/firmware/efi/efivars"):
         dev = os.path.realpath(target)
-        r2 = subprocess.run(["efibootmgr", "-q", "-c", "-d", dev, "-p", "1", "-L", "AgentOS", "-l", "\\EFI\\systemd\\systemd-bootx64.efi"],
-                            capture_output=True)
-        logger(f"firmware boot entry: rc={r2.returncode}")
+        try:
+            logger(f"firmware boot entry: {ensure_firmware_entry(dev)}")
+        except Refuse as e:
+            say(f"Firmware boot entry unchanged or incomplete: {e}")
     say("")
     say("AgentOS is installed. Restarting in 5 s.")
     say("If the VM starts this installer again, disconnect the ISO from its CD/DVD drive.")

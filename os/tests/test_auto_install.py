@@ -212,6 +212,39 @@ class DiskDetectorTest(unittest.TestCase):
         self.m.cmd_plan.assert_not_called()
 
 
+class FirmwareEntryTest(unittest.TestCase):
+    def setUp(self):
+        self.m = load()
+        self.guid = "11111111-2222-4333-8444-555555555555"
+        self.m.sh = mock.Mock(return_value=self.guid)
+
+    def test_same_label_on_other_esp_or_loader_is_untouched(self):
+        listing = ("BootOrder: 0001,0002,0003\n"
+                   "Boot0001* AgentOS HD(1,GPT,aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee,0x1,0x2)/File(\\EFI\\systemd\\systemd-bootx64.efi)\n"
+                   f"Boot0002* AgentOS HD(1,GPT,{self.guid},0x1,0x2)/File(\\EFI\\other.efi)\n"
+                   f"Boot0003* Old name HD(1,GPT,{self.guid},0x1,0x2)/File(\\EFI\\systemd\\systemd-bootx64.efi)\n")
+        with mock.patch.object(self.m.subprocess, "run", return_value=mock.Mock(returncode=0, stdout=listing.encode())):
+            self.assertEqual(self.m.ensure_firmware_entry("/dev/nvme0n1"), "updated")
+        self.assertEqual(self.m.sh.call_args_list, [
+            mock.call("blkid", "-s", "PARTUUID", "-o", "value", "/dev/nvme0n1p1"),
+            mock.call("efibootmgr", "-b", "0003", "-a"),
+            mock.call("efibootmgr", "-o", "0003,0001,0002")])
+
+    def test_missing_target_creates_without_deleting_any_entry(self):
+        with mock.patch.object(self.m.subprocess, "run", return_value=mock.Mock(returncode=0, stdout=b"BootOrder: 0001\n")):
+            self.assertEqual(self.m.ensure_firmware_entry("/dev/vda"), "created")
+        calls = self.m.sh.call_args_list
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[1].args[:3], ("efibootmgr", "-q", "-c"))
+        self.assertFalse(any("-B" in call.args for call in calls))
+
+    def test_unreadable_firmware_never_creates(self):
+        with mock.patch.object(self.m.subprocess, "run", return_value=mock.Mock(returncode=1)):
+            with self.assertRaises(self.m.Refuse):
+                self.m.ensure_firmware_entry("/dev/vda")
+        self.assertEqual(self.m.sh.call_count, 1)
+
+
 class QuickPlanTest(unittest.TestCase):
     def test_quick_plan_is_template_style_with_its_own_install_id(self):
         m = load()
