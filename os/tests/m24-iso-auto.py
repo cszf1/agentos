@@ -180,7 +180,7 @@ with subtest("first start of the installed disk: one password, typed twice, then
     target.screenshot("auto-greeter")
     operator_login(target, "admin", PW)
     target.send_chars("id -nG; echo ADMIN-$(id -un)-OK\n", delay=0.03)
-    wait_screen(target, r"ADMIN-admin-OK", timeout=60)
+    wait_screen(target, r"ADMIN-admin-[O0]K", timeout=60)   # OCR: O or 0 (run 42357964358)
     target.send_monitor_command("system_powerdown")
     if not powered_off(target, 300):
         target.crash()
