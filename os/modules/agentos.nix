@@ -283,6 +283,10 @@ in {
     # Quick start: on a template disk (the VM images) the first-boot re-key asks for ONE password and hands it to
     # agentos-first-setup (graphical systems only; a headless system has no console setup to hand it to).
     environment.etc."agentos/first-setup-handoff" = lib.mkIf cfg.graphical { text = "quick start: the disk re-key hands its password to agentos-first-setup\n"; };
+    # Boot status lines ("[ OK ] Started ...") kept printing on tty1 between the two password prompts and scrolled
+    # "Repeat the password" off the screen (run 42368922447). Graphical systems show only failures there; every
+    # line stays in the journal.
+    boot.kernelParams = lib.mkIf cfg.graphical [ "systemd.show_status=error" "rd.systemd.show_status=error" ];
     # A real root-owned file (not a store symlink): the broker refuses a policy it cannot prove root-only.
     environment.etc."agentos/broker/policy.json".mode = "0444";
     environment.etc."agentos/broker/policy.json".text = builtins.toJSON {
