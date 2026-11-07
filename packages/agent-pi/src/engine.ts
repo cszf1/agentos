@@ -88,7 +88,7 @@ export class PiAgentEngine implements AgentEngine {
   get modelDiagnostic(): string | null {
     return this.#built?.diagnostic ?? null;
   }
-  get modelRef(): { provider: string; modelId: string } | null {
+  get modelRef(): BuiltModels["ref"] | null {
     return this.#built?.available ? this.#built.ref : null;
   }
   get agentFileExisted(): boolean {

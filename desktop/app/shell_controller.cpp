@@ -545,6 +545,7 @@ void ShellController::applyAvailability(const JValue& state) {
     if (m.isObject()) {
       mi.insert(QStringLiteral("provider"), m.get(QStringLiteral("provider")).stringOr(QString()));
       mi.insert(QStringLiteral("modelId"), m.get(QStringLiteral("modelId")).stringOr(QString()));
+      mi.insert(QStringLiteral("baseUrl"), m.get(QStringLiteral("baseUrl")).stringOr(QString()));
       mi.insert(QStringLiteral("mode"), m.get(QStringLiteral("mode")).stringOr(QString()));
     }
     mi.insert(QStringLiteral("diagnostic"), state.get(QStringLiteral("agentDiagnostic")).stringOr(QString()));

@@ -14,6 +14,20 @@ PageFrame {
     readonly property bool owner: shell.role === "owner"
     readonly property string provider: "openai-compatible"
 
+    property bool fieldsReady: false
+    property bool prefilling: false
+    property bool urlEdited: false
+    property bool idEdited: false
+    function prefill() {
+        if (!fieldsReady || info.provider !== provider) return
+        prefilling = true
+        if (!urlEdited) baseUrl.boundValue = info.baseUrl || ""
+        if (!idEdited) modelId.boundValue = info.modelId || ""
+        prefilling = false
+    }
+    onInfoChanged: prefill()
+    Component.onCompleted: { fieldsReady = true; prefill() }
+
     // the same checks machined applies (backends.rs model_credential_params / model_credential_text)
     function okChars(v, max, extra) {
         if (v.length === 0 || v.length > max) return false
@@ -82,14 +96,15 @@ PageFrame {
             Layout.fillWidth: true
             spacing: Theme.s1
             PText { text: "接口地址"; variant: "caption"; tone: "secondary" }
-            AField { id: baseUrl; objectName: "modelBaseUrl"; label: "接口地址"; placeholder: "https://api.example.com/v1"; Layout.fillWidth: true; enabled: root.owner }
+            AField { id: baseUrl; objectName: "modelBaseUrl"; label: "接口地址"; placeholder: "https://api.example.com/v1"; Layout.fillWidth: true; enabled: root.owner
+                onBoundValueChanged: if (root.fieldsReady && !root.prefilling) root.urlEdited = true }
         }
         ColumnLayout {
             Layout.fillWidth: true
             spacing: Theme.s1
             PText { text: "模型 ID"; variant: "caption"; tone: "secondary" }
             AField { id: modelId; objectName: "modelIdField"; label: "模型 ID"; placeholder: "例如 gpt-4.1-mini"; Layout.fillWidth: true; enabled: root.owner
-                Component.onCompleted: if (root.info.provider === root.provider && root.info.modelId) boundValue = root.info.modelId }
+                onBoundValueChanged: if (root.fieldsReady && !root.prefilling) root.idEdited = true }
         }
         ColumnLayout {
             Layout.fillWidth: true

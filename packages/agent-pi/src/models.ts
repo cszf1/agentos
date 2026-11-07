@@ -73,9 +73,20 @@ export interface BuiltModels {
   /** the real provider and model every route forwards to */
   inner: Provider | null;
   real: Model<string> | null;
-  ref: { provider: string; modelId: string };
+  ref: { provider: string; modelId: string; baseUrl?: string };
   available: boolean;
   diagnostic: string | null;
+}
+
+export function publicModelEndpoint(baseUrl: string | undefined): { baseUrl?: string } {
+  if (!baseUrl) return {};
+  try {
+    const url = new URL(baseUrl);
+    if (url.username || url.password || url.search || url.hash) return {};
+    return { baseUrl };
+  } catch {
+    return {};
+  }
 }
 
 export async function buildModels(cfg: ModelConfig | null, faux?: { contextWindow?: number }): Promise<BuiltModels> {
@@ -111,5 +122,5 @@ export async function buildModels(cfg: ModelConfig | null, faux?: { contextWindo
     configured = cfg.mode === "faux";
   }
   if (!configured) return { ...none(cfg, `no credentials for provider "${cfg.provider}"`), inner, real };
-  return { models, inner, real, ref: { provider: real.provider, modelId: real.id }, available: true, diagnostic: null };
+  return { models, inner, real, ref: { provider: real.provider, modelId: real.id, ...publicModelEndpoint(cfg.baseUrl) }, available: true, diagnostic: null };
 }

@@ -26,7 +26,7 @@ import type { Logger } from "./log.js";
 export interface ModelInfo {
   available: boolean;
   diagnostic: string | null;
-  ref: { provider: string; modelId: string } | null;
+  ref: { provider: string; modelId: string; baseUrl?: string } | null;
   mode: "real" | "faux";
 }
 

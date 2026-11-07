@@ -233,7 +233,7 @@ struct Backend {
     if (hostDown) return err(QStringLiteral("HOST_UNAVAILABLE"));
     if (route == QLatin1String("state.list"))
       return JValue::object({{QStringLiteral("modelAvailable"), !modelDown}, {QStringLiteral("brokerReady"), !brokerDown},
-                             {QStringLiteral("model"), modelDown ? JValue() : JValue::object({{QStringLiteral("provider"), QStringLiteral("openai-compatible")}, {QStringLiteral("modelId"), QStringLiteral("fake-model-1")}, {QStringLiteral("mode"), QStringLiteral("real")}})},
+                             {QStringLiteral("model"), modelDown ? JValue() : JValue::object({{QStringLiteral("provider"), QStringLiteral("openai-compatible")}, {QStringLiteral("modelId"), QStringLiteral("fake-model-1")}, {QStringLiteral("baseUrl"), QStringLiteral("https://model.example.test/v1")}, {QStringLiteral("mode"), QStringLiteral("real")}})},
                              {QStringLiteral("agentDiagnostic"), modelDown ? JValue(QStringLiteral("AGENTOS_MODEL_PROVIDER / AGENTOS_MODEL_ID are not configured")) : JValue()},
                              {QStringLiteral("apps"), JValue::array({
                                  JValue::object({{QStringLiteral("appId"), kanban.get(QStringLiteral("app")).get(QStringLiteral("appId"))}, {QStringLiteral("title"), QString::fromUtf8("待办看板")}, {QStringLiteral("appEpoch"), 3}}),
@@ -750,6 +750,8 @@ class FlowsTest : public QObject {
     QQuickItem* save = h.find(QStringLiteral("modelSave"));
     QVERIFY(url && id && key && save);
     QCOMPARE(id->property("text").toString(), QStringLiteral("fake-model-1"));   // prefilled from what runs
+    QCOMPARE(url->property("text").toString(), QStringLiteral("https://model.example.test/v1"));
+    QCOMPARE(key->property("text").toString(), QString());
     QCOMPARE(key->property("echoMode").toInt(), 2);  // TextInput.Password
     QVERIFY(!save->isEnabled());
     url->setProperty("text", QStringLiteral("not a url"));
@@ -779,6 +781,50 @@ class FlowsTest : public QObject {
     for (const auto& v : h.shell->confirm()) QVERIFY(!v.toString().contains(QStringLiteral("sk-model")));
     h.shell->confirmReject();
     QVERIFY2(g_qmlWarnings.isEmpty(), qPrintable(g_qmlWarnings.join(QLatin1Char('\n'))));
+  }
+
+  void modelPagePrefillsAsyncInfoWithoutOverwritingEdits() {
+    Harness h;
+    h.be.modelDown = true;
+    QVERIFY(h.up());
+    h.click(QStringLiteral("nav:model"));
+    QTRY_VERIFY(h.find(QStringLiteral("modelBaseUrl")));
+    auto* url = h.find(QStringLiteral("modelBaseUrl"));
+    auto* id = h.find(QStringLiteral("modelIdField"));
+    auto* key = h.find(QStringLiteral("modelApiKey"));
+    QCOMPARE(url->property("text").toString(), QString());
+    id->setProperty("text", QStringLiteral("user-model"));
+    h.be.modelDown = false;
+    h.shell->refreshPage();
+    QTRY_COMPARE(url->property("text").toString(), QStringLiteral("https://model.example.test/v1"));
+    QCOMPARE(id->property("text").toString(), QStringLiteral("user-model"));
+    QCOMPARE(key->property("text").toString(), QString());
+    url->setProperty("text", QStringLiteral("https://mine.example.test/v1"));
+    h.be.modelDown = true;
+    h.shell->refreshPage();
+    QTRY_VERIFY(!h.shell->modelAvailable());
+    h.be.modelDown = false;
+    h.shell->refreshPage();
+    QTRY_VERIFY(h.shell->modelAvailable());
+    QCOMPARE(url->property("text").toString(), QStringLiteral("https://mine.example.test/v1"));
+    QCOMPARE(id->property("text").toString(), QStringLiteral("user-model"));
+    QCOMPARE(key->property("text").toString(), QString());
+    h.be.modelDown = true;
+    h.shell->refreshPage();
+    QTRY_VERIFY(!h.shell->modelAvailable());
+    h.click(QStringLiteral("nav:home"));
+    h.click(QStringLiteral("nav:model"));
+    QTRY_VERIFY(h.find(QStringLiteral("modelIdField")));
+    url = h.find(QStringLiteral("modelBaseUrl"));
+    id = h.find(QStringLiteral("modelIdField"));
+    key = h.find(QStringLiteral("modelApiKey"));
+    QCOMPARE(id->property("text").toString(), QString());
+    url->setProperty("text", QStringLiteral("https://edited.example.test/v1"));
+    h.be.modelDown = false;
+    h.shell->refreshPage();
+    QTRY_COMPARE(id->property("text").toString(), QStringLiteral("fake-model-1"));
+    QCOMPARE(url->property("text").toString(), QStringLiteral("https://edited.example.test/v1"));
+    QCOMPARE(key->property("text").toString(), QString());
   }
 
   void modelMissingIsSaidOnTheDesktopWithTheWayToConnect() {
