@@ -138,6 +138,7 @@ with subtest("the ISO alone, untouched: countdown, install to the one empty disk
     assert "agentos-auto-install: failed" not in iso.get_console_log(), iso.get_console_log()[-3000:]
     iso.screenshot("auto-installed")
     # the installer restarts the VM; -no-reboot turns that into QEMU exiting
+    assert iso.process is not None, "the ISO VM has no QEMU process"
     assert iso.process.wait(timeout=300) == 0, "the installer did not restart the VM"
     iso.wait_for_shutdown()
 
