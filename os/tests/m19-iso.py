@@ -254,11 +254,28 @@ def keyed(m, text):
     for ch in text:
         m.send_key(names.get(ch, ("shift-" + ch.lower()) if ch.isupper() else ch), delay=0.15)
 
+def cancel_auto_install(m, timeout=600):
+    """The ISO installs by itself to the one empty disk after a 10 s countdown on its screen (tty1); any key cancels
+    it. This drill installs by hand, so it presses Space on that screen until the installer reports the cancel (its
+    kernel-console line reaches the serial log) and checks that nothing was planned."""
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        log = m.get_console_log()
+        assert "agentos-auto-install: installing" not in log, "the automatic install started; the cancel was not seen"
+        if "agentos-auto-install: cancelled" in log:
+            return
+        m.send_key("spc", delay=0.1)
+        time.sleep(0.4)
+    raise AssertionError("the automatic install countdown was never cancelled; tail: " + m.get_console_log()[-2000:])
+
 def install_iso(cmd, name, serial):
     iso = create_machine(iso_command(cmd), name=name)
     extra.append(iso)
     iso.start()
+    cancel_auto_install(iso)
     iso_root_shell(iso)
+    rc, log = run(iso, "agentos-install status | tail -n1 | sed 's/^/AUTOSTATE:/'", "autostate")
+    assert last_json(log, "AUTOSTATE").get("state") == "inspecting", log[-1500:]   # nothing planned, nothing written
     rc, log = run(iso, "test -e /etc/agentos-install-medium.json && ! ip route | tee -p /dev/null | grep -q default && echo MEDIUM-OK", "env")
     assert rc == 0 and "MEDIUM-OK" in log, log[-2000:]
     rc, log = run(iso, "agentos-install inspect | tail -n1 | sed 's/^/INSPECT:/'", "inspect")
@@ -373,6 +390,8 @@ with subtest("evidence from the installed disk, read by a second ISO boot: unloc
     iso2 = create_machine(iso_cmd, name="iso2")
     extra.append(iso2)
     iso2.start()
+    # AgentOS is on the only disk: the automatic install stops by itself and changes nothing
+    wait_console(iso2, r"agentos-auto-install: stopped: AgentOS already installed", timeout=900)
     iso_root_shell(iso2)
     rc, log = run(iso2, f"printf '%s' '{PASS}' | cryptsetup open --readonly /dev/disk/by-partlabel/agentos-luks agentos-root - && mkdir -p /ev && mount -o ro,subvol=@root /dev/mapper/agentos-root /ev && echo OPEN-OK", "open")
     assert rc == 0 and "OPEN-OK" in log, log[-2000:]

@@ -116,7 +116,10 @@ pkgs.testers.runNixOSTest {
         st = json.loads(m.succeed("agentosctl status"))
         print("workspaces", st.get("workspaceList"))
         assert len(st["workspaceList"]) == 1, st["workspaceList"]
-        assert st["workspaceList"][0].get("displayName") == "\u6211\u7684\u5de5\u4f5c\u533a", st["workspaceList"]
+        # the status list carries no names (machine/src/dir.rs); `workspace list` does, with the owner
+        wl = json.loads(m.succeed("agentosctl workspace list"))["workspaces"]
+        print("workspace list", wl)
+        assert [(w.get("displayName"), w.get("owner")) for w in wl] == [("\u6211\u7684\u5de5\u4f5c\u533a", "admin")], wl
         m.succeed("getent passwd admin")
         # the account was made from the handed-over password (agentosctl firstboot read it on stdin: see
         # test_first_setup.py); the same password unlocks the disk

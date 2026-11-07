@@ -52,6 +52,31 @@
           networking.wireless.enable = lib.mkForce false;
           nix.settings.substituters = lib.mkForce [ ];
           boot.supportedFilesystems = [ "btrfs" "vfat" ];
+          # The ISO installs by itself (docs/VM_QUICKSTART.md): on its screen (tty1) at boot, to the one empty disk
+          # after a 10 s countdown any key cancels; with no disk, several disks, a disk with data or AgentOS already on
+          # it, it says so and changes nothing. Then the console autologin shell, as before. agentos.autoinstall=0 on
+          # the kernel command line turns it off.
+          systemd.services.agentos-auto-install = {
+            description = "AgentOS automatic install to the one empty disk";
+            wantedBy = [ "multi-user.target" ];
+            after = [ "systemd-udev-settle.service" "systemd-user-sessions.service" "local-fs.target" ];
+            wants = [ "systemd-udev-settle.service" ];
+            before = [ "getty@tty1.service" ];
+            path = [ installerPkg ];
+            serviceConfig = {
+              Type = "oneshot";
+              ExecStart = "${installerPkg}/bin/agentos-install auto";
+              StandardInput = "tty";
+              StandardOutput = "tty";
+              StandardError = "tty";
+              TTYPath = "/dev/tty1";
+              TTYReset = true;
+              TTYVHangup = true;
+              TimeoutStartSec = "infinity";
+              SuccessExitStatus = [ 1 ];   # a stop it explained on screen is not a failed unit
+            };
+          };
+          systemd.services."getty@tty1".after = [ "agentos-auto-install.service" ];
         })
       ];
       # qcow2: the SAME release toplevel installed by the SAME installer onto a blank template disk (spec §19.1).
@@ -133,6 +158,8 @@
         '';
         # review F11: the release ISO as the only install entry, through first unlock, first boot, ReGreet and the Shell
         m19-iso = import ./tests/m19-iso.nix { inherit pkgs release; iso = installerSystem.config.system.build.isoImage; };
+        # the ISO installs by itself to the one empty disk; first start asks one password (docs/VM_QUICKSTART.md)
+        m24-iso-auto = import ./tests/m24-iso-auto.nix { inherit pkgs; iso = installerSystem.config.system.build.isoImage; };
         m5-desktop = import ./tests/m5-desktop.nix { inherit pkgs; modules = [ ./modules/base.nix ./modules/graphics.nix ./modules/agentos.nix ]; };
         m20-sway = import ./tests/m20-sway.nix { inherit pkgs; modules = [ ./modules/base.nix ./modules/graphics.nix ./modules/agentos.nix ]; };
         m21-vmware = import ./tests/m21-vmware.nix { inherit pkgs; modules = [ ./modules/base.nix ./modules/graphics.nix ./modules/agentos.nix ]; };

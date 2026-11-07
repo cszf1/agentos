@@ -81,7 +81,12 @@ file channels (VirtualBox guest control, VMware guest operations and customizati
 Each image is the qcow2 template, an installed system: the first boot asks for **one password** (twice), replaces the
 public template key with it, re-encrypts and grows the disk to its full size, and then creates the administrator
 `admin` with that same password and the default workspace, with no further question (quick start,
-[VM_QUICKSTART.md](VM_QUICKSTART.md); the ISO install keeps the full console setup). For QEMU on Windows with WHPX,
+[VM_QUICKSTART.md](VM_QUICKSTART.md)). The ISO installs the same way by itself: at boot it installs to the one
+empty disk of at least 64 GiB after a 10 s countdown on its screen that any key cancels (`agentos-install auto`;
+`--quick` layout: small LUKS behind the template key, grown and re-keyed at first boot), restarts, and the first boot
+asks the one password. No disk, several disks, a disk with data or AgentOS already on it: it explains on screen and
+writes nothing; `agentos.autoinstall=0` turns it off. The manual `plan`/`confirm`/`run` without `--quick` keeps the
+full console setup (disk passphrase at install, administrator and workspace asked at first boot; `m19-iso`). For QEMU on Windows with WHPX,
 `deploy/windows/Start-AgentOS.ps1` starts the qcow2 with the settings above. Check the file against
 `SHA256SUMS` first. Grow the virtual disk before the first boot if it should be larger than 64 GiB.
 

@@ -9,10 +9,13 @@ identity (serial or WWN; for a disk without either, model + size + the install i
 carrying that id) still matches. major:minor numbers are never used as an identity across boots.
 
   agentos-install inspect                                  candidate disks (JSON)
-  agentos-install plan --disk /dev/disk/by-id/X [--timezone Asia/Taipei]
+  agentos-install plan --disk /dev/disk/by-id/X [--timezone Asia/Taipei] [--quick]
   agentos-install confirm --plan-hash H --serial SERIAL    the local user types the disk serial (or WWN) shown
   agentos-install run --passphrase-stdin                   partition → copy → configure → verify → installed
   agentos-install status
+  agentos-install auto                                     the ISO's own console (tty1) at boot: install to the one
+                                                           blank disk after a 10 s countdown any key cancels; stop
+                                                           without writing on 0 or 2+ disks or a disk with data
   agentos-install recover --disk /dev/disk/by-id/X [--resume]   after a power cut: read the install state kept on
                                                            the target's ESP (read-only); --resume adopts it so `run`
                                                            continues (review F05)
@@ -30,6 +33,10 @@ STATE = f"{STATE_DIR}/state.json"
 MIN_BYTES = 64 * 1024**3
 SYSTEM = os.environ.get("AGENTOS_SYSTEM", "@SYSTEM@")  # base release toplevel (substituted at build time)
 RELEASE = os.environ.get("AGENTOS_RELEASE_FILE", "@RELEASE@")
+# The public template key (os/modules/template-disk.key). A quick install (--quick, and `auto`) opens LUKS with it like
+# the qcow2 template does; the installed system's first boot (agentos-disk-rekey) asks the one password, replaces this
+# slot and re-encrypts with a fresh volume key before anything is written, exactly as on a template disk.
+TEMPLATE_KEY = os.environ.get("AGENTOS_TEMPLATE_KEY_FILE", "@TEMPLATE_KEY@")
 MNT = "/mnt"
 SUBVOLS = ["@root", "@nix", "@home", "@machine", "@broker", "@snapshots"]
 MOUNTS = [("@nix", "nix"), ("@home", "home"), ("@machine", "var/lib/agentos-machine"), ("@broker", "var/lib/agentos-broker"), ("@snapshots", "var/lib/agentos-snapshots")]
@@ -119,7 +126,7 @@ def disks():
     media = install_medium_disks()
     res = []
     for d in j["blockdevices"]:
-        if d["type"] != "disk" or d["path"].startswith("/dev/zram") or d["path"].startswith("/dev/loop") or d["path"].startswith("/dev/sr"):
+        if d["type"] != "disk" or d["path"].startswith(("/dev/zram", "/dev/loop", "/dev/sr", "/dev/fd")):
             continue
         name = d["name"]
         holders = os.listdir(f"/sys/block/{name}/holders") if os.path.isdir(f"/sys/block/{name}/holders") else []
@@ -217,6 +224,17 @@ def cmd_plan(args):
         if not 4 <= gib <= 60:
             raise Refuse("template LUKS size must be 4..60 GiB")
         plan["layout"] = dict(plan["layout"], luks2=f"{gib} GiB (template; grown to the disk at first boot)")
+        plan["templateLuksGiB"] = gib
+    elif "--quick" in args:
+        # quick install from the ISO: a template-style disk (small LUKS behind the public template key) with this
+        # machine's own random identifiers; the first boot asks the one password (see TEMPLATE_KEY)
+        if not os.path.exists(TEMPLATE_KEY):
+            raise Refuse("this install medium carries no template key; --quick is unavailable")
+        gib = int(os.environ.get("AGENTOS_TEMPLATE_LUKS_GIB", "16"))
+        if not 4 <= gib <= 60:
+            raise Refuse("template LUKS size must be 4..60 GiB")
+        plan["quick"] = True
+        plan["layout"] = dict(plan["layout"], luks2=f"{gib} GiB (password set and grown to the disk at first boot)")
         plan["templateLuksGiB"] = gib
     st = {"state": "plan_ready", "plan": plan, "planHash": phash(plan), "updatedAt": time.time()}
     save(st)
@@ -376,7 +394,11 @@ def cmd_run(args):
     st = load()
     if st["state"] not in ("confirmed", "partitioning", "copying", "configuring", "verifying"):
         raise Refuse(f"state is {st['state']}; plan and confirm first")
-    pw = sys.stdin.buffer.read().rstrip(b"\n") if "--passphrase-stdin" in args else b""
+    if st["plan"].get("quick") and "--passphrase-stdin" not in args:
+        with open(TEMPLATE_KEY, "rb") as f:
+            pw = f.read().rstrip(b"\n")
+    else:
+        pw = sys.stdin.buffer.read().rstrip(b"\n") if "--passphrase-stdin" in args else b""
     if len(pw) < 8:
         raise Refuse("a LUKS passphrase of at least 8 characters is required on stdin")
     dev = os.path.realpath(st["plan"]["disk"])
@@ -386,7 +408,8 @@ def cmd_run(args):
         sh("wipefs", "-a", dev)
         sh("sgdisk", "--zap-all", dev)
         ids = ["-U", tpl_uuid("disk"), "-u", f"1:{tpl_uuid('esp')}", "-u", f"2:{tpl_uuid('luks')}"] if st["plan"].get("template") else []
-        luks_end = f"+{int(st['plan']['templateLuksGiB'])}GiB" if st["plan"].get("template") else "0"
+        small = st["plan"].get("template") or st["plan"].get("quick")
+        luks_end = f"+{int(st['plan']['templateLuksGiB'])}GiB" if small else "0"
         sh("sgdisk", "-n1:1MiB:+2GiB", "-t1:ef00", "-c1:agentos-esp", f"-n2:0:{luks_end}", "-t2:8309", "-c2:agentos-luks", *ids, dev)
         sh("partprobe", dev, check=False)
         sh("udevadm", "settle")
@@ -404,7 +427,7 @@ def cmd_run(args):
         sh("umount", "/run/agentos-install/esp")
         esp_write_state(st)
         kdf = ["--pbkdf", "argon2id"]
-        if st["plan"].get("template"):
+        if st["plan"].get("template") or st["plan"].get("quick"):
             # the template key is public and first boot replaces this slot: no benchmark (fixed small cost) so the
             # build VM never spends its time or memory on it
             kdf += ["--pbkdf-force-iterations", "4", "--pbkdf-memory", "65536", "--pbkdf-parallel", "1"]
@@ -444,7 +467,7 @@ def cmd_run(args):
         release = json.load(open(RELEASE)) if os.path.exists(RELEASE) else {}
         tpl = bool(st["plan"].get("template"))
         hw = {"formatVersion": 1, "installId": None if tpl else st["plan"]["installId"], "timezone": st["plan"]["timezone"],
-              "disk": None if tpl else st["plan"]["identity"], "template": tpl,
+              "disk": None if tpl else st["plan"]["identity"], "template": tpl, "quick": bool(st["plan"].get("quick")),
               "baseReleaseId": release.get("releaseId"), "baseClosurePath": SYSTEM}
         body = canon(hw)
         hw_hash = "sha256:" + hashlib.sha256(body.encode()).hexdigest()
@@ -565,6 +588,179 @@ def cmd_recover(args):
     return {"recover": found, "readOnly": False, "state": st["state"], "next": "agentos-install run --passphrase-stdin"}
 
 
+# ---- auto: the ISO's console at boot (os/flake.nix, agentos-auto-install.service on tty1) ----
+# Output is for a person at the VM's screen: plain ASCII (the VT font has no CJK glyphs), no JSON.
+
+def say(msg=""):
+    print(msg, flush=True)
+    logger(msg)
+
+
+def logger(msg):
+    if msg:
+        subprocess.run(["logger", "-t", "agentos-auto-install", msg], check=False)
+
+
+def kmsg(msg):
+    """One line on the kernel console too (a serial-console boot shows it; tests wait for these)."""
+    try:
+        with open("/dev/kmsg", "w") as f:
+            f.write(f"<2>agentos-auto-install: {msg}\n")
+    except OSError:
+        pass
+
+
+def gib(n):
+    return f"{n / 1024**3:.0f} GiB"
+
+
+def disk_has_data(d):
+    """Anything on the disk at all: a partition, a signature blkid knows, or a non-zero byte at either end."""
+    if d["partitions"]:
+        return True
+    if subprocess.run(["blkid", "-p", d["path"]], capture_output=True).returncode != 2:
+        return True
+    mib = 1024**2
+    try:
+        with open(d["path"], "rb") as f:
+            head = f.read(mib)
+            f.seek(max(0, d["sizeBytes"] - mib))
+            tail = f.read(mib)
+    except OSError:
+        return True
+    return bool(head.strip(b"\0") or tail.strip(b"\0"))
+
+
+def countdown(seconds):
+    """True when it ran out; False when a key was pressed. Without a keyboard tty it cannot be cancelled."""
+    import select, termios, tty
+    fd = sys.stdin.fileno()
+    interactive = os.isatty(fd)
+    old = None
+    if interactive:
+        old = termios.tcgetattr(fd)
+        tty.setcbreak(fd)
+        termios.tcflush(fd, termios.TCIFLUSH)   # keys typed during boot do not count
+    try:
+        for i in range(seconds, 0, -1):
+            sys.stdout.write(f"\r  Installing in {i:2d} s.  Press any key to cancel. ")
+            sys.stdout.flush()
+            if interactive:
+                if select.select([fd], [], [], 1)[0]:
+                    os.read(fd, 64)
+                    sys.stdout.write("\n")
+                    return False
+            else:
+                time.sleep(1)
+        sys.stdout.write("\n")
+        return True
+    finally:
+        if old is not None:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+
+MANUAL = ["To install by hand, use the shell on this screen (press Enter):",
+          "  sudo agentos-install inspect",
+          "  sudo agentos-install plan --disk /dev/disk/by-id/<disk> --quick",
+          "  sudo agentos-install confirm --plan-hash <hash> --serial <token>",
+          "  sudo agentos-install run",
+          "Or power off, leave exactly one empty disk of at least 64 GB attached, and start again."]
+
+
+def cmd_auto(args):
+    with open("/proc/cmdline") as f:
+        off = "agentos.autoinstall=0" in f.read().split()
+    if off:
+        logger("disabled on the kernel command line")
+        return 0
+    say("")
+    say("AgentOS installer")
+    say("=================")
+    ds = [d for d in disks() if "install medium" not in d["problems"]]
+    if not ds:
+        say("No disk to install to. Add a virtual disk of at least 64 GB to this VM and start it again.")
+        kmsg("stopped: no disk")
+        return 1
+    if len(ds) > 1:
+        say("More than one disk is attached, so nothing is installed automatically and nothing was changed:")
+        for d in ds:
+            say(f"  {d['path']}  {gib(d['sizeBytes'])}  {d['model'] or ''}")
+        for line in MANUAL:
+            say(line)
+        kmsg(f"stopped: {len(ds)} disks")
+        return 1
+    d = ds[0]
+    if "agentos-luks" in d["partitions"]:
+        say(f"AgentOS is already installed on {d['path']}. Nothing was changed.")
+        say("Disconnect this ISO from the VM's CD/DVD drive and restart the VM to start AgentOS.")
+        kmsg("stopped: AgentOS already installed")
+        return 0
+    if d["problems"]:
+        say(f"The disk {d['path']} ({gib(d['sizeBytes'])}) cannot be used: {'; '.join(d['problems'])}.")
+        if any(p.startswith("smaller") for p in d["problems"]):
+            say("AgentOS needs a disk of at least 64 GB. Enlarge the VM's disk and start again.")
+        kmsg("stopped: disk refused")
+        return 1
+    if disk_has_data(d):
+        say(f"The disk {d['path']} ({gib(d['sizeBytes'])}) is not empty, so it is not erased automatically.")
+        say("Nothing was changed.")
+        for line in MANUAL:
+            say(line)
+        kmsg("stopped: disk has data")
+        return 1
+    say(f"AgentOS will be installed on the empty disk {d['path']} ({gib(d['sizeBytes'])} {d['model'] or ''}).")
+    say("After the install the VM restarts; on its first start you choose one password, and that is all.")
+    say("")
+    kmsg("countdown")
+    if not countdown(10):
+        say("Cancelled. Nothing was changed.")
+        for line in MANUAL:
+            say(line)
+        kmsg("cancelled")
+        return 1
+    ids = [x for x in d["byId"] if not x.startswith("wwn-")] + [x for x in d["byId"] if x.startswith("wwn-")]
+    if ids:
+        target = "/dev/disk/by-id/" + ids[0]
+    else:
+        os.environ["AGENTOS_INSTALL_ALLOW_PATH"] = "1"   # e.g. a SCSI disk with no serial: no by-id name exists
+        target = d["path"]
+    tz = os.environ.get("AGENTOS_INSTALL_TIMEZONE", "UTC")
+    try:
+        p = cmd_plan({"--disk": target, "--quick": True, "--timezone": tz})
+        cmd_confirm({"--plan-hash": p["planHash"], "--serial": p["plan"]["confirmToken"]})
+        say("Installing. This takes a few minutes; the progress lines below are normal.")
+        kmsg("installing")
+        r = cmd_run({})
+    except Refuse as e:
+        say("")
+        say(f"The install stopped: {e}")
+        for line in MANUAL:
+            say(line)
+        kmsg(f"failed: {e}")
+        return 1
+    loader = os.path.exists(f"{MNT}/boot/EFI/systemd/systemd-bootx64.efi")
+    subprocess.run(["sync"], check=False)
+    subprocess.run(["umount", "-R", MNT], check=False)
+    subprocess.run(["cryptsetup", "close", "agentos-root"], check=False)
+    # Start from the disk next time even with the ISO still in the drive: a firmware boot entry for the installed
+    # loader, first in the boot order (efibootmgr puts a new entry first). The CD is not ejected: the running
+    # installer's own store is on it. Without EFI variables the firmware's own order decides; booting this ISO
+    # again then stops at "already installed".
+    if loader and os.path.isdir("/sys/firmware/efi/efivars"):
+        dev = os.path.realpath(target)
+        r2 = subprocess.run(["efibootmgr", "-q", "-c", "-d", dev, "-p", "1", "-L", "AgentOS", "-l", "\\EFI\\systemd\\systemd-bootx64.efi"],
+                            capture_output=True)
+        logger(f"firmware boot entry: rc={r2.returncode}")
+    say("")
+    say("AgentOS is installed. Restarting in 5 s.")
+    say("If the VM starts this installer again, disconnect the ISO from its CD/DVD drive.")
+    kmsg(f"installed {r.get('installId')}")
+    time.sleep(5)
+    if "--no-reboot" not in args:
+        subprocess.run(["systemctl", "reboot"], check=False)
+    return 0
+
+
 def main():
     a = sys.argv[1:]
     cmd = a[0] if a else "status"
@@ -578,6 +774,8 @@ def main():
                 continue
             args[a[i]] = True
         i += 1
+    if cmd == "auto":
+        sys.exit(cmd_auto(args))
     try:
         if cmd == "inspect":
             out = {"disks": disks(), "medium": medium_identity()}
