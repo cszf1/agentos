@@ -4698,6 +4698,22 @@
   {
    "name": "machine.plan",
    "args": {
+    "actionKind": "workspaces.modelCredential.set",
+    "params": {}
+   },
+   "request": {
+    "methodId": "machine.actions.plan",
+    "params": {},
+    "body": {
+     "actionKind": "workspaces.modelCredential.set",
+     "params": {}
+    },
+    "write": true
+   }
+  },
+  {
+   "name": "machine.plan",
+   "args": {
     "actionKind": "admin.update",
     "params": {
      "step": "activate",

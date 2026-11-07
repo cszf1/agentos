@@ -3,8 +3,8 @@ import QtQuick.Layouts
 
 PageFrame {
     id: root
-    title: "任务中心"
-    subtitle: "真实任务、维护作业与异步操作状态"
+    title: "任务"
+    subtitle: "生成、修改与维护的进度"
     PText { text: "运行任务"; variant: "subhead"; bold: true }
     Repeater {
         model: shell.runs

@@ -7,6 +7,7 @@ ComboBox {
     property var options: []
     property string value: ""
     property bool compact: false
+    // ComboBox.flat (built in): no box until hovered or focused, for selectors in bars and composed surfaces
     signal chosen(string value)
     model: options
     textRole: "label"
@@ -63,5 +64,7 @@ ComboBox {
             Behavior on color { ColorAnimation { duration: Theme.animFast } }
         }
     }
-    background: FocusRing { implicitWidth: 164; implicitHeight: Theme.px(s.compact ? 32 : 36); on: s.activeFocus; hovered: s.hovered; color: Theme.bgSurface }
+    background: FocusRing { implicitWidth: s.flat ? 0 : 164; implicitHeight: Theme.px(s.compact ? 30 : 36); on: s.activeFocus; hovered: s.hovered
+        color: s.flat ? (s.hovered || s.pressed ? Theme.bgMuted : "transparent") : Theme.bgSurface
+        border.width: s.flat && !s.activeFocus ? 0 : (focusOn ? Theme.focusWidth : Theme.borderThin) }
 }

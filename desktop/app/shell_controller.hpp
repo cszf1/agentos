@@ -44,6 +44,8 @@ class ShellController : public QObject, public RequestSink {
   Q_PROPERTY(bool hostAvailable READ hostAvailable NOTIFY statusChanged)
   Q_PROPERTY(bool modelAvailable READ modelAvailable NOTIFY statusChanged)
   Q_PROPERTY(bool brokerAvailable READ brokerAvailable NOTIFY statusChanged)
+  /** The workspace Host's own model view (/api/state): {provider, modelId, mode} or empty, plus `diagnostic`. No key. */
+  Q_PROPERTY(QVariantMap modelInfo READ modelInfo NOTIFY statusChanged)
   Q_PROPERTY(bool readOnly READ readOnly NOTIFY statusChanged)
   Q_PROPERTY(bool writesStopped READ writesStopped NOTIFY statusChanged)
   Q_PROPERTY(QString cachedAt READ cachedAt NOTIFY statusChanged)
@@ -105,6 +107,7 @@ class ShellController : public QObject, public RequestSink {
   bool hostAvailable() const { return hostAvailable_; }
   bool modelAvailable() const { return modelAvailable_; }
   bool brokerAvailable() const { return brokerAvailable_; }
+  QVariantMap modelInfo() const { return modelInfo_; }
   bool readOnly() const { return !connected_ || !hostAvailable_ || locked_; }
   bool writesStopped() const { return writesStopped_; }
   QString cachedAt() const { return cachedAt_.isValid() ? cachedAt_.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")) : QString(); }
@@ -250,6 +253,7 @@ class ShellController : public QObject, public RequestSink {
   QTimer statusPoll_, displayRevert_;
   int displayRevertLeft_ = 0;
   JValue session_ = JValue::object();
+  QVariantMap modelInfo_;
   QString layoutDir_;
   QHash<QString, QString> actionKeys_;
   QHash<QString, ShellRequest> actionReqs_;

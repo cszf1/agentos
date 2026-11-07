@@ -46,9 +46,9 @@ FocusScope {
         Rectangle { anchors.top: parent.top; width: parent.width; height: Theme.px(3); color: Theme.warning }
         RowLayout {
             anchors.fill: parent; anchors.leftMargin: Theme.s4; anchors.rightMargin: Theme.s4; spacing: Theme.s3
-            Image { source: Theme.iconSource("shield", Theme.textOnAccent.toString()); sourceSize.width: Theme.iconMd; sourceSize.height: Theme.iconMd }
-            PText { text: "AgentOS 系统确认 · 应用无法修改此框"; tone: "onAccent"; bold: true; Layout.fillWidth: true }
-            PText { text: root.needsPassword ? "需管理员身份复核" : "受信任系统操作"; tone: "onAccent"; variant: "caption" }
+            Image { source: Theme.iconSource("shield", "white"); sourceSize.width: Theme.iconMd; sourceSize.height: Theme.iconMd }
+            PText { text: "AgentOS 系统确认 · 应用无法修改此框"; color: Theme.textOnDark; bold: true; Layout.fillWidth: true }
+            PText { text: root.needsPassword ? "需管理员身份复核" : "受信任系统操作"; color: Theme.textOnDark; variant: "caption" }
         }
     }
     Rectangle {

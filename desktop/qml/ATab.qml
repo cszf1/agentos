@@ -23,8 +23,8 @@ TabButton {
     background: Rectangle {
         anchors.fill: parent
         radius: Theme.radiusControl
-        color: root.active ? Theme.accentSubtle : (root.hovered ? Theme.bgHover : "transparent")
-        border.width: root.active ? Theme.borderThin : 0
+        color: root.active ? Theme.bgMuted : (root.hovered ? Theme.bgHover : "transparent")
+        border.width: 0
         border.color: Theme.accentBorder
 
         Behavior on color {
@@ -34,7 +34,7 @@ TabButton {
 
     // Active left/bottom indicator bar
     Rectangle {
-        visible: root.fullWidth || root.active
+        visible: !root.fullWidth && root.active
         width: root.fullWidth ? Theme.px(3) : parent.width - Theme.s3
         height: root.fullWidth ? parent.height - Theme.s2 : Theme.px(2)
         x: root.fullWidth ? 0 : Theme.s2 / 2
@@ -60,7 +60,7 @@ TabButton {
 
         Image {
             visible: root.iconName !== ""
-            source: root.iconName !== "" ? Theme.iconSource(root.iconName, (root.active ? Theme.accent : Theme.textSecondary).toString()) : ""
+            source: root.iconName !== "" ? Theme.iconSource(root.iconName, root.active ? "primary" : "secondary") : ""
             sourceSize.width: Theme.iconSm
             sourceSize.height: Theme.iconSm
             Layout.preferredWidth: Theme.iconSm
@@ -72,7 +72,7 @@ TabButton {
             text: root.label
             variant: "body"
             bold: root.active
-            tone: root.active ? "accent" : "primary"
+            tone: root.active ? "primary" : "secondary"
         }
 
         Rectangle {

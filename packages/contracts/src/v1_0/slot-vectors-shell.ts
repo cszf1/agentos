@@ -36,6 +36,8 @@ export const HARDWARE_ACTIONS = [
   "power.reboot",
   "power.poweroff",
   "workspaces.runWhenLoggedOut",
+  // the workspace's model (Settings → 模型): owner only; the key rides in the plan's secret field, never in params
+  "workspaces.modelCredential.set",
   // administrator update step (update page: activate), confirmed with the administrator's password
   "admin.update",
 ] as const;

@@ -4,7 +4,7 @@ import QtQuick.Layouts
 PageFrame {
     id: root
     title: "系统更新"
-    subtitle: "A/B 原子更新、试启动与自动回滚状态"
+    subtitle: "原子更新：先试启动，失败自动回到旧版本"
     readonly property var u: shell.updateStatus
     readonly property var stateText: ({ none: "没有进行中的更新", discovered: "已发现", verified: "已验证", downloading: "下载中", staged: "已就绪，可以激活",
         waiting_confirmation: "等待确认", quiescing: "正在暂停工作区", armed: "等待重启试启动", trial_boot: "试启动中", validating: "验证中",

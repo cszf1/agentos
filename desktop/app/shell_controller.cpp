@@ -415,6 +415,10 @@ void ShellController::clearScopeState(const QString& reason) {
   currentApp_ = nullptr;
   emit currentAppChanged();
   for (auto* m : {members_, apps_, runs_, policies_, jobs_, incidents_, proposals_, notifications_, backups_, revisions_, operations_}) m->clear();
+  if (!modelInfo_.isEmpty()) {
+    modelInfo_.clear();
+    emit statusChanged();
+  }
   actions_->clearAll();
   actionKeys_.clear();
   actionReqs_.clear();
@@ -533,6 +537,21 @@ void ShellController::applyAvailability(const JValue& state) {
     qInfo("shell health component=model source=state available=%d", int(ma.toBool()));
     modelAvailable_ = ma.toBool();
     emit statusChanged();
+  }
+  // What the Host runs (provider/model id, never a key) and why it cannot, for the model settings page.
+  if (state.has(QStringLiteral("model")) || state.has(QStringLiteral("agentDiagnostic"))) {
+    QVariantMap mi;
+    const JValue& m = state.get(QStringLiteral("model"));
+    if (m.isObject()) {
+      mi.insert(QStringLiteral("provider"), m.get(QStringLiteral("provider")).stringOr(QString()));
+      mi.insert(QStringLiteral("modelId"), m.get(QStringLiteral("modelId")).stringOr(QString()));
+      mi.insert(QStringLiteral("mode"), m.get(QStringLiteral("mode")).stringOr(QString()));
+    }
+    mi.insert(QStringLiteral("diagnostic"), state.get(QStringLiteral("agentDiagnostic")).stringOr(QString()));
+    if (mi != modelInfo_) {
+      modelInfo_ = mi;
+      emit statusChanged();
+    }
   }
   const JValue& br = state.get(QStringLiteral("brokerReady"));
   if (br.isBool() && br.toBool() != brokerAvailable_) {
@@ -1005,6 +1024,7 @@ PlanFacts planFacts(const QString& kind) {
       {QStringLiteral("time.ntp.enable"), {"开启自动对时", "低：系统时间会按网络时间校准", "可以"}},
       {QStringLiteral("power.reboot"), {"重启这台机器", "高：所有会话断开，没保存的内容会丢失", "不能撤销"}},
       {QStringLiteral("power.poweroff"), {"关闭这台机器", "高：所有会话断开，没保存的内容会丢失", "不能撤销"}},
+      {QStringLiteral("workspaces.modelCredential.set"), {"更换这个工作区的模型", "低：工作区服务会重启，进行中的生成会中断", "可以：再换回原来的模型"}},
       {QStringLiteral("workspaces.runWhenLoggedOut"), {"更改注销后是否继续运行", "中：注销后这个工作区的应用仍会运行", "可以：再改回来"}},
       {QStringLiteral("users.create"), {"创建用户", "中：新用户可以登录这台机器", "可以：停用这个用户"}},
       {QStringLiteral("users.disable"), {"停用用户", "高：这个用户立即无法登录，会话会结束", "需要管理员重新处理"}},

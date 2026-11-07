@@ -20,7 +20,9 @@ def near(c, ref, tol=8):
 def hexc(c):
     return "#%02x%02x%02x" % c
 
-TOPBAR, NAVBG, PRIMARY, BUTTON = (0xff, 0xff, 0xff), (0xff, 0xff, 0xff), (0xef, 0xf6, 0xff), (0xff, 0xff, 0xff)
+# The Shell's desktop colours (desktop/qml/Theme.qml, light): desktop/top bar, dock, current place, hover tint.
+DESK, DOCKBG, DOCKON, DOCKHOVER = (0xf3, 0xf3, 0xf1), (0xff, 0xff, 0xff), (0xea, 0xea, 0xe7), (0xf1, 0xf1, 0xee)
+DOCK_ITEMS = 4      # 桌面 应用 任务 设置
 
 def click(x, y, w, h):
     """A left click at a screen pixel through the USB tablet (absolute pointer, as a real mouse/touchpad reaches Sway)."""
@@ -32,37 +34,41 @@ def click(x, y, w, h):
     time.sleep(0.15)
     qsend("input-send-event", {"events": [{"type": "btn", "data": {"down": False, "button": "left"}}]})
 
-def nav_buttons(img):
-    """Find the 12 sidebar tabs by their full-height navigation rails, excluding toolbar controls."""
+def dock(img):
+    """The Shell's dock (desktop/qml/Dock.qml), or None: {top, bottom, scale, width, centers, y, active}.
+    The column through the screen centre crosses the 4 px gap between the 2nd and 3rd of the four equal places, so it
+    is dock white from just under the dock's top border to just over its bottom one: 56 px at 100 % (two 1 px
+    borders, 6 px padding, 44 px places 4 px apart, 200 px wide). Each place is sampled 3 px under its top edge: the
+    current one is filled DOCKON, the others are dock white (or the hover tint under the pointer)."""
     w, h, _ = img
-    # ATab's 3 px rail is muted (#94a3b8), accent (#2563eb) for the current page.
-    # x=17 crosses the rail but lies outside label/icon text and the workspace selector's border.
-    rows = [y for y in range(h) if near(px(img, 3, y), NAVBG) and (
-        near(px(img, 17, y), (0x94, 0xa3, 0xb8), 3)
-        or near(px(img, 17, y), (0x25, 0x63, 0xeb), 3))]
-    lines = []
-    for r in rows:
-        if lines and r - lines[-1][1] <= 1: lines[-1][1] = r
-        else: lines.append([r, r])
-    return [(top, bot) for top, bot in lines if 18 <= bot - top <= 80]
-
-
-def nav_width(img):
-    w, h, _ = img
-    y = h - 6
-    x = 0
-    while x < w and near(px(img, x, y), NAVBG, 3): x += 1
-    return x
+    best = None
+    for x in (w // 2 - 1, w // 2, w // 2 + 1):
+        y = h - 1
+        while y > h // 2 and not near(px(img, x, y), DOCKBG, 3): y -= 1
+        bot = y
+        while y > h // 2 and near(px(img, x, y - 1), DOCKBG, 3): y -= 1
+        if bot > h // 2 and (best is None or bot - y > best[1] - best[0]): best = (y, bot)
+    if best is None: return None
+    top, bot = best
+    s = (bot - top + 3) / 56.0
+    if not 0.6 <= s <= 2.2 or h - bot > 80 * s: return None
+    left = w / 2 - 100 * s
+    centers = [round(left + (28 + 48 * i) * s) for i in range(DOCK_ITEMS)]
+    yy = round(top - 1 + 9 * s)
+    on = [i for i, c in enumerate(centers) if near(px(img, c, yy), DOCKON, 3)]
+    off = [i for i, c in enumerate(centers) if near(px(img, c, yy), DOCKBG, 3) or near(px(img, c, yy), DOCKHOVER, 3)]
+    if len(on) != 1 or len(on) + len(off) != DOCK_ITEMS: return None
+    return {"top": top, "bottom": bot, "scale": round(s, 3), "width": round(200 * s), "centers": centers, "y": round((top + bot) / 2), "active": on[0]}
 
 def shell_frame(name, timeout=90):
-    """Wait until the Shell's frame is on the real output: light top bar, sidebar navigation column, 12 nav buttons."""
+    """Wait until the Shell's frame is on the real output: the desktop-coloured top bar and corners, and the dock."""
     end = time.time() + timeout
     while True:
         img = shot(name)
         w, h, _ = img
-        ok = near(px(img, w - 4, 3), TOPBAR) and near(px(img, 3, h - 6), NAVBG) and len(nav_buttons(img)) == 12
+        ok = near(px(img, w - 4, 3), DESK) and near(px(img, 3, h - 6), DESK) and dock(img) is not None
         if ok or time.time() > end:
-            print(name, "top", hexc(px(img, w - 4, 3)), "nav", hexc(px(img, 3, h - 6)), "buttons", nav_buttons(img), "navWidth", nav_width(img))
+            print(name, "top", hexc(px(img, w - 4, 3)), "corner", hexc(px(img, 3, h - 6)), "dock", dock(img))
             assert ok, "the Shell frame is not on the output"
             return img
         time.sleep(3)
@@ -199,30 +205,30 @@ with subtest("ReGreet: a wrong password is refused and the greeter recovers; the
 with subtest("real output and input (review F12): the Shell frame in Sway's pixels; a tablet click changes the page; Ctrl+= / Ctrl+0 rescale"):
     img = shell_frame("shell")
     w, h, _ = img
-    btns = nav_buttons(img)
-    inner = lambda im, b: px(im, 24, (b[0] + b[1]) // 2)
-    assert near(inner(img, btns[0]), PRIMARY), [hexc(inner(img, b)) for b in btns]    # 首页 is the current page
-    assert near(inner(img, btns[3]), BUTTON, 6), hexc(inner(img, btns[3]))
-    click(75, (btns[3][0] + btns[3][1]) // 2, w, h)                                       # 任务中心
+    d = dock(img)
+    assert d["active"] == 0, d                                                            # 桌面 is the current place
+    click(d["centers"][2], d["y"], w, h)                                                  # 任务
     end = time.time() + 30
     while True:
         img2 = shot("shell-after-click")
-        b2 = nav_buttons(img2)
-        if (len(b2) == 12 and near(inner(img2, b2[3]), PRIMARY) and not near(inner(img2, b2[0]), PRIMARY)) or time.time() > end:
+        d2 = dock(img2)
+        if (d2 and d2["active"] == 2) or time.time() > end:
             break
         time.sleep(2)
-    print("after click", [hexc(inner(img2, b)) for b in b2])
-    assert len(b2) == 12 and near(inner(img2, b2[3]), PRIMARY) and not near(inner(img2, b2[0]), PRIMARY), "the click did not reach the Shell"
-    nw0 = nav_width(img2)
+    print("after click", d2)
+    assert d2 and d2["active"] == 2, "the click did not reach the Shell"
+    nw0 = d2["width"]
     machine.send_key("ctrl-equal")
     time.sleep(3)
-    nw1 = nav_width(shot("shell-zoomed"))
+    dz = dock(shot("shell-zoomed"))
     machine.send_key("ctrl-0")
     time.sleep(3)
-    nw2 = nav_width(shot("shell-zoom-reset"))
-    print("navigation width", nw0, nw1, nw2)
+    dr = dock(shot("shell-zoom-reset"))
+    print("dock width", nw0, dz, dr)
+    assert dz and dr, (dz, dr)
+    nw1, nw2 = dz["width"], dr["width"]
     assert nw1 > nw0 + 10 and abs(nw2 - nw0) <= 2, (nw0, nw1, nw2)
-    click(75, (b2[0][0] + b2[0][1]) // 2, w, h)                                           # back to 首页
+    click(dr["centers"][0], dr["y"], w, h)                                                # back to 桌面
 
 with subtest("Shell SIGKILL: the session agent brings it back within 5 s (O06 part, D11 part)"):
     old = machine.succeed("pgrep -u alice -f bin/agentos-shell | head -1").strip()
@@ -330,7 +336,7 @@ with subtest("lock from the Shell (Ctrl+Alt+L): swaylock confirms, logind Locked
     print("F08 focus before", machine.succeed(tree))
     frame = shell_frame("before-lock")
     w, h, _ = frame
-    assert near(px(frame, w - 12, 12), TOPBAR), "focus click is not on the empty top bar"
+    assert near(px(frame, w - 12, 12), DESK), "focus click is not on the empty top bar"
     click(w - 12, 12, w, h)
     time.sleep(0.3)
     print("F08 focus after", machine.succeed(tree))
@@ -344,7 +350,7 @@ with subtest("lock from the Shell (Ctrl+Alt+L): swaylock confirms, logind Locked
         log_failure_screen(machine, "lock-failure")
         raise
     lk = shot("locked")
-    assert not near(px(lk, lk[0] - 4, 3), TOPBAR), "the Shell frame is still visible while locked"
+    assert not near(px(lk, lk[0] - 4, 3), DESK), "the Shell frame is still visible while locked"
     s_locked = scope("locked")
     assert s_locked == s_unlocked, (s_unlocked, s_locked)            # locking neither widens nor changes anything
     time.sleep(2)                                                    # swaylock has its surfaces mapped

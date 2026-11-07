@@ -32,4 +32,16 @@ ActionsList 1.0 ActionsList.qml
 HealthCanvas 1.0 HealthCanvas.qml
 TrustedConfirm 1.0 TrustedConfirm.qml
 AppConfirm 1.0 AppConfirm.qml
+TopBar 1.0 TopBar.qml
+BarButton 1.0 BarButton.qml
+Dock 1.0 Dock.qml
+DockItem 1.0 DockItem.qml
+ControlCenter 1.0 ControlCenter.qml
+MenuRow 1.0 MenuRow.qml
+Segmented 1.0 Segmented.qml
+NotificationsPanel 1.0 NotificationsPanel.qml
+SettingsPage 1.0 SettingsPage.qml
+ModelPage 1.0 ModelPage.qml
+LinkButton 1.0 LinkButton.qml
+IconButton 1.0 IconButton.qml
 Strings 1.0 Strings.js

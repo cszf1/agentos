@@ -41,13 +41,13 @@ Button {
         spacing: Theme.px(6)
         Image {
             visible: root.iconName !== ""
-            source: visible ? Theme.iconSource(root.iconName, (root.variant === "secondary" ? Theme.textPrimary : Theme.textOnAccent).toString()) : ""
+            source: visible ? Theme.iconSource(root.iconName, root.variant === "secondary" ? "primary" : (root.variant === "danger" ? "white" : "onaccent")) : ""
             sourceSize.width: Theme.iconSm; sourceSize.height: Theme.iconSm
             Layout.preferredWidth: Theme.iconSm; Layout.preferredHeight: Theme.iconSm
         }
         Text {
             text: root.label; textFormat: Text.PlainText; font: root.font
-            color: root.variant === "secondary" ? Theme.textPrimary : Theme.textOnAccent
+            color: root.variant === "secondary" ? Theme.textPrimary : (root.variant === "danger" ? Theme.textOnDanger : Theme.textOnAccent)
             horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
             elide: Text.ElideRight; Layout.fillWidth: true
         }

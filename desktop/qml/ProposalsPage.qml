@@ -2,8 +2,8 @@ import QtQuick
 import QtQuick.Layouts
 
 PageFrame {
-    title: "候选提议"
-    subtitle: "核对提议内容后批准或拒绝"
+    title: "变更提案"
+    subtitle: "核对提案内容后批准或拒绝"
     Repeater {
         model: shell.proposals
         delegate: Rectangle {

@@ -4,7 +4,7 @@ import QtQuick.Layouts
 PageFrame {
     id: root
     title: "备份与恢复"
-    subtitle: "工作区快照备份、U 盘导出与恢复计划"
+    subtitle: "快照备份、导出到 U 盘与恢复"
     Rectangle {
         Layout.fillWidth: true
         implicitHeight: backupToolbar.implicitHeight + Theme.s4 * 2

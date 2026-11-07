@@ -454,6 +454,7 @@
   "power.reboot",
   "power.poweroff",
   "workspaces.runWhenLoggedOut",
+  "workspaces.modelCredential.set",
   "admin.update"
  ],
  "displayRevertSeconds": 15,

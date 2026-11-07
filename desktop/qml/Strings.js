@@ -1,7 +1,7 @@
 .pragma library
 
 var app = {
-    title: "AgentOS 原生工作台",
+    title: "AgentOS",
     systemTag: "AgentOS // NixOS",
     waylandTag: "Sway 单窗口 · 软件渲染"
 }
@@ -223,8 +223,8 @@ var update = {
 }
 
 var hardware = {
-    title: "硬件外设与电源控制",
-    subtitle: "管理声音、显示分辨率与系统电源；新显示设置可自动回退",
+    title: "硬件与网络",
+    subtitle: "声音、显示、网络、时间与电源；新的显示设置会在 15 秒内自动回退，除非你保留它",
     audioTitle: "音频输出控制",
     volumeLabel: "主输出音量",
     muteLabel: "静音输出 (Mute)",

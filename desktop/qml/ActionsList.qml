@@ -7,14 +7,14 @@ ColumnLayout {
     property int limit: 6
     Layout.fillWidth: true
     spacing: Theme.s2
-    PText { text: "操作状态"; variant: "subhead"; bold: true }
+    PText { visible: shell.actions.count > 0; text: "操作状态"; variant: "caption"; tone: "muted" }
     Repeater {
         model: shell.actions
         delegate: Rectangle {
             readonly property bool shown: !!row && (root.prefix === "" || String(row.name).indexOf(root.prefix) === 0) && index < root.limit
             visible: shown; Layout.fillWidth: true
             implicitHeight: shown ? dataRow.implicitHeight + Theme.s3 * 2 : 0
-            color: Theme.bgSurface; radius: Theme.radiusCard; border.color: Theme.border; border.width: Theme.borderThin
+            color: Theme.bgSurface; radius: Theme.radiusControl; border.color: Theme.border; border.width: Theme.borderThin
             RowLayout {
                 id: dataRow; anchors.fill: parent; anchors.margins: Theme.s3; spacing: Theme.s2
                 PText { text: row ? row.label || row.name : ""; Layout.preferredWidth: Theme.px(220); elide: Text.ElideRight }

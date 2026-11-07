@@ -1,7 +1,43 @@
 # Native QML UI integration
 
-The supplied `agentos-ui-integration-candidate.zip` supplies the new page layouts,
-Theme singleton, Chinese strings and 175 raster icons. `shell.cmake` embeds all of
+## Desktop structure
+
+The Shell is a desktop, not a settings console. Principles: minimal, quiet and
+restrained; warm neutrals, one ink accent, solid fills, no decoration that does not
+carry state.
+
+- **Top bar** (`TopBar.qml`): workspace selector (`workspaceSwitcher`, borderless)
+  on the left, date and time in the centre, and on the right a health chip that
+  only appears when something is wrong (`healthChip`), notifications (`bell`) and
+  the control centre (`controlCenterButton`: appearance, scale, lock, settings,
+  model). The right-most 20 px stay empty (the VM checks' focus click).
+- **Desktop** (`HomePage.qml`): greeting, the composer (`intentInput`,
+  `intentTarget`, `intentSubmit`), "connect a model" when none is available
+  (`configureModel`), the run in progress, app tiles (`card:<appId>`; a tile opens
+  the app, `cardMenu:<appId>` holds widget / pin / move / width) and live widgets
+  (expanded cards render the real `AppViewModel`).
+- **Dock** (`Dock.qml`): four places, `nav:home` 桌面, `nav:app` 应用, `nav:tasks`
+  任务, `nav:settings` 设置. Its geometry is read by the VM pixel checks
+  (`os/tests` `dock()`, regression `test_navigation_pixels.py`): white box, 1 px
+  border, 6 px padding, 44 px places 4 px apart, current place filled `#EAEAE7`.
+  Change both together.
+- **Settings** (`SettingsPage.qml`): every system page in one window, entries
+  `nav:<page>` for model, workspaces, login, proposals, policies, incidents,
+  hardware, update, backup and diagnostics. `currentPage` keeps the old page ids.
+- **Model** (`ModelPage.qml`, new): what the workspace Host runs
+  (`ShellController.modelInfo`, from `/api/state` `model` and `agentDiagnostic`,
+  never a key) and a form for an OpenAI-compatible endpoint. Saving sends the
+  machine action `workspaces.modelCredential.set` with the key only in the plan's
+  `secret` field (as Wi-Fi), through the trusted confirmation; machined writes the
+  workspace's `model.env` (0600, outside `data/`) and restarts its Host. Owner only.
+
+Icons are tinted from alpha masks in `icons-src/` by `icons-src/gen.py` into
+`qml/icons/<name>_<tone>[_dark].png` (light and dark palettes, see `Theme.iconSource`).
+
+## Origin
+
+The supplied `agentos-ui-integration-candidate.zip` supplied the first page layouts,
+Theme singleton, Chinese strings and raster icons. `shell.cmake` embeds all of
 these in `/agentos/qml/`; no filesystem or data-URL loading is needed. The archive
 contains no font binaries. The existing Nix package supplies Noto Sans CJK SC and
 DejaVu Sans Mono through fontconfig; Theme uses those family names.
@@ -48,12 +84,12 @@ cmake --build desktop/build
 ctest --test-dir desktop/build --output-on-failure
 ```
 
-The existing desktop assertions are retained. A new 1280×800 regression checks
-all 12 navigation controls, a long administrator plan, password clearing and
-Enter behavior. The m5/m19/m20 pixel helpers follow the new palette, navigation
-rails and page order, retaining real clicks, page-state checks, all 12 controls,
-zoom and lock assertions. Their helper regression also checks that toolbar
-controls cannot be mistaken for navigation.
+The existing desktop assertions are retained. The 1280×800 regression checks
+the four dock places and every Settings entry, a long administrator plan, password
+clearing and Enter behavior. The m5/m19/m20 pixel helpers find the dock and its
+current place, retaining real clicks, page-state checks, zoom and lock assertions.
+Their helper regression also checks that top-bar controls and the hover tint cannot
+be mistaken for the dock or its current place.
 
 Run software-rendered Wayland checks under Sway at 1280×800. KVM checks run only
 in GitHub Actions, against the pushed main commit:

@@ -2,8 +2,8 @@ import QtQuick
 import QtQuick.Layouts
 
 PageFrame {
-    title: "事件"
-    subtitle: "系统与工作区异常事件及诊断证据"
+    title: "异常事件"
+    subtitle: "系统与工作区的异常，以及诊断证据"
     Repeater {
         model: shell.incidents
         delegate: Rectangle {

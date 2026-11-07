@@ -2,8 +2,8 @@ import QtQuick
 import QtQuick.Layouts
 
 PageFrame {
-    title: "登录与首次设置"
-    subtitle: "会话绑定与系统初始化状态概览"
+    title: "账户与会话"
+    subtitle: "当前登录会话与首次设置的状态"
     Rectangle {
         Layout.fillWidth: true
         implicitHeight: sessionCol.implicitHeight + Theme.s4 * 2

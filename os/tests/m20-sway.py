@@ -25,7 +25,9 @@ def px(img, x, y):
 def near(c, ref, tol=8):
     return all(abs(a - b) <= tol for a, b in zip(c, ref))
 
-TOPBAR, NAVBG = (0xff, 0xff, 0xff), (0xff, 0xff, 0xff)
+# The Shell's desktop colours (desktop/qml/Theme.qml, light): desktop/top bar, dock, current place, hover tint.
+DESK, DOCKBG, DOCKON, DOCKHOVER = (0xf3, 0xf3, 0xf1), (0xff, 0xff, 0xff), (0xea, 0xea, 0xe7), (0xf1, 0xf1, 0xee)
+DOCK_ITEMS = 4      # 桌面 应用 任务 设置
 SCREEN = [0, 0]
 
 def qsend(cmd, args):
@@ -107,27 +109,38 @@ def regreet_login(pw):
                 continue
             raise
 
-def nav_buttons(img):
-    """Find the 12 sidebar tabs by their full-height navigation rails, excluding toolbar controls."""
+def dock(img):
+    """The Shell's dock (desktop/qml/Dock.qml), or None: {top, bottom, scale, width, centers, y, active}.
+    The column through the screen centre crosses the 4 px gap between the 2nd and 3rd of the four equal places, so it
+    is dock white from just under the dock's top border to just over its bottom one: 56 px at 100 % (two 1 px
+    borders, 6 px padding, 44 px places 4 px apart, 200 px wide). Each place is sampled 3 px under its top edge: the
+    current one is filled DOCKON, the others are dock white (or the hover tint under the pointer)."""
     w, h, _ = img
-    # ATab's 3 px rail is muted (#94a3b8), accent (#2563eb) for the current page.
-    # x=17 crosses the rail but lies outside label/icon text and the workspace selector's border.
-    rows = [y for y in range(h) if near(px(img, 3, y), NAVBG) and (
-        near(px(img, 17, y), (0x94, 0xa3, 0xb8), 3)
-        or near(px(img, 17, y), (0x25, 0x63, 0xeb), 3))]
-    lines = []
-    for r in rows:
-        if lines and r - lines[-1][1] <= 1: lines[-1][1] = r
-        else: lines.append([r, r])
-    return [(top, bot) for top, bot in lines if 18 <= bot - top <= 80]
-
+    best = None
+    for x in (w // 2 - 1, w // 2, w // 2 + 1):
+        y = h - 1
+        while y > h // 2 and not near(px(img, x, y), DOCKBG, 3): y -= 1
+        bot = y
+        while y > h // 2 and near(px(img, x, y - 1), DOCKBG, 3): y -= 1
+        if bot > h // 2 and (best is None or bot - y > best[1] - best[0]): best = (y, bot)
+    if best is None: return None
+    top, bot = best
+    s = (bot - top + 3) / 56.0
+    if not 0.6 <= s <= 2.2 or h - bot > 80 * s: return None
+    left = w / 2 - 100 * s
+    centers = [round(left + (28 + 48 * i) * s) for i in range(DOCK_ITEMS)]
+    yy = round(top - 1 + 9 * s)
+    on = [i for i, c in enumerate(centers) if near(px(img, c, yy), DOCKON, 3)]
+    off = [i for i, c in enumerate(centers) if near(px(img, c, yy), DOCKBG, 3) or near(px(img, c, yy), DOCKHOVER, 3)]
+    if len(on) != 1 or len(on) + len(off) != DOCK_ITEMS: return None
+    return {"top": top, "bottom": bot, "scale": round(s, 3), "width": round(200 * s), "centers": centers, "y": round((top + bot) / 2), "active": on[0]}
 
 def shell_frame(name, timeout=120):
     end = time.time() + timeout
     while True:
         img = shot(name)
         w, h, _ = img
-        ok = near(px(img, w - 4, 3), TOPBAR) and near(px(img, 3, h - 6), NAVBG) and len(nav_buttons(img)) == 12
+        ok = near(px(img, w - 4, 3), DESK) and near(px(img, 3, h - 6), DESK) and dock(img) is not None
         if ok or time.time() > end:
             assert ok, f"{name}: the Shell frame is not on the output"
             return img

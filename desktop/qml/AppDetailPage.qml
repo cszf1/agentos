@@ -1,25 +1,17 @@
 import QtQuick
 import QtQuick.Layouts
 
+// An app, full size: its own view first; management and versions below it.
 PageFrame {
     id: root
-    title: "应用与版本"
-    subtitle: "管理应用内容、运行状态与版本"
     readonly property var app: shell.currentApp
-    Rectangle {
+    title: root.app ? "" : "应用"
+    subtitle: root.app ? "" : "从桌面打开一个应用。"
+
+    RowLayout {
         visible: !root.app
-        Layout.fillWidth: true
-        implicitHeight: emptyAppCol.implicitHeight + Theme.s4 * 2
-        radius: Theme.radiusCard
-        color: Theme.bgSurface
-        border.color: Theme.border
-        border.width: Theme.borderThin
-        ColumnLayout {
-            id: emptyAppCol
-            anchors.fill: parent
-            anchors.margins: Theme.s4
-            PText { text: "从首页选择应用后查看"; tone: "muted" }
-        }
+        spacing: Theme.s2
+        LinkButton { text: "回到桌面"; onClicked: shell.currentPage = "home" }
     }
     Rectangle {
         visible: !!root.app; Layout.fillWidth: true
@@ -27,33 +19,52 @@ PageFrame {
         color: Theme.bgSurface; radius: Theme.radiusCard; border.color: Theme.border; border.width: Theme.borderThin
         ColumnLayout {
             id: content; anchors.fill: parent; anchors.margins: Theme.s4; spacing: Theme.s3
-            PText { text: root.app ? root.app.title : ""; variant: "subhead"; bold: true }
-            RowLayout {
-                Layout.fillWidth: true; spacing: Theme.s2
-                AButton { label: "归档此应用"; onConfirmed: if (root.app) shell.act("app.archive", {appId: root.app.appId, appEpoch:root.app.appEpoch}, "归档应用") }
-                AButton { label: "恢复此应用"; onConfirmed: if (root.app) shell.act("app.restore", {appId:root.app.appId}, "恢复应用") }
-                AButton { label: "启动运行时"; onConfirmed: if (root.app) shell.act("app.runtime", {appId:root.app.appId, action:"start", appEpoch:root.app.appEpoch}, "启动应用") }
-                AButton { label: "停止运行时"; variant: "danger"; onConfirmed: if (root.app) shell.act("app.runtime", {appId:root.app.appId, action:"stop", appEpoch:root.app.appEpoch}, "停止应用") }
-                AButton { label: "重启运行时"; onConfirmed: if (root.app) shell.act("app.runtime", {appId:root.app.appId, action:"restart", appEpoch:root.app.appEpoch}, "重启应用") }
-            }
             // Keep the live C++ app view: the new mock SlotCanvas would bypass renderer validation and app forms.
             SlotCanvas { Layout.fillWidth: true; visible: !!root.app; view: root.app; width: content.width }
         }
     }
-    PText { text: "版本"; variant: "subhead"; bold: true }
-    Repeater {
-        model: shell.revisions
-        delegate: Rectangle {
-            Layout.fillWidth: true; implicitHeight: versionRow.implicitHeight + Theme.s3 * 2
-            radius: Theme.radiusCard; color: Theme.bgSurface; border.color: Theme.border; border.width: Theme.borderThin
-            RowLayout {
-                id: versionRow; anchors.fill: parent; anchors.margins: Theme.s3; spacing: Theme.s2
-                PText { text: (row.title || row.revisionId) + (row.isActive ? "（当前）" : ""); Layout.fillWidth: true; bold: !!row.isActive }
-                PText { text: row.createdAt || ""; tone: "muted"; variant: "caption" }
-                AButton { objectName: "switchToVersion"; label: "切换到此版本"; enabled: !row.isActive && !!root.app
-                    onConfirmed: if (root.app) shell.act("app.deploy", {appId:root.app.appId, revisionId:row.revisionId, appEpoch:root.app.appEpoch}, "切换版本") }
+
+    PText { visible: !!root.app; text: "管理"; variant: "caption"; tone: "muted"; Layout.topMargin: Theme.s2 }
+    Flow {
+        visible: !!root.app
+        Layout.fillWidth: true
+        spacing: Theme.s2
+        AButton { compact: true; label: "启动运行时"; onConfirmed: if (root.app) shell.act("app.runtime", {appId:root.app.appId, action:"start", appEpoch:root.app.appEpoch}, "启动应用") }
+        AButton { compact: true; label: "重启运行时"; onConfirmed: if (root.app) shell.act("app.runtime", {appId:root.app.appId, action:"restart", appEpoch:root.app.appEpoch}, "重启应用") }
+        AButton { compact: true; label: "停止运行时"; variant: "danger"; onConfirmed: if (root.app) shell.act("app.runtime", {appId:root.app.appId, action:"stop", appEpoch:root.app.appEpoch}, "停止应用") }
+        AButton { compact: true; label: "归档此应用"; onConfirmed: if (root.app) shell.act("app.archive", {appId: root.app.appId, appEpoch:root.app.appEpoch}, "归档应用") }
+        AButton { compact: true; label: "恢复此应用"; onConfirmed: if (root.app) shell.act("app.restore", {appId:root.app.appId}, "恢复应用") }
+    }
+
+    PText { text: "版本"; variant: "caption"; tone: "muted"; Layout.topMargin: Theme.s2 }
+    Rectangle {
+        Layout.fillWidth: true
+        visible: shell.revisions.count > 0
+        implicitHeight: versions.implicitHeight + Theme.px(8)
+        radius: Theme.radiusCard; color: Theme.bgSurface; border.color: Theme.border; border.width: Theme.borderThin
+        ColumnLayout {
+            id: versions
+            anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
+            anchors.margins: Theme.px(4)
+            spacing: 0
+            Repeater {
+                model: shell.revisions
+                delegate: Item {
+                    Layout.fillWidth: true
+                    implicitHeight: versionRow.implicitHeight + Theme.s2 * 2
+                    Rectangle { visible: index > 0; anchors.top: parent.top; anchors.left: parent.left; anchors.right: parent.right; anchors.leftMargin: Theme.s3; anchors.rightMargin: Theme.s3; height: Theme.borderThin; color: Theme.border }
+                    RowLayout {
+                        id: versionRow; anchors.fill: parent; anchors.leftMargin: Theme.s3; anchors.rightMargin: Theme.s2; spacing: Theme.s2
+                        Rectangle { width: Theme.px(6); height: Theme.px(6); radius: Theme.px(3); color: row.isActive ? Theme.success : "transparent" }
+                        PText { text: (row.title || row.revisionId) + (row.isActive ? "（当前）" : ""); Layout.fillWidth: true; bold: !!row.isActive; elide: Text.ElideRight; wrapMode: Text.NoWrap }
+                        PText { text: row.createdAt || ""; tone: "muted"; variant: "caption"; mono: true }
+                        AButton { objectName: "switchToVersion"; compact: true; label: "切换到此版本"; enabled: !row.isActive && !!root.app
+                            onConfirmed: if (root.app) shell.act("app.deploy", {appId:root.app.appId, revisionId:row.revisionId, appEpoch:root.app.appEpoch}, "切换版本") }
+                    }
+                }
             }
         }
     }
+    PText { visible: shell.revisions.count === 0; text: "暂无版本记录"; tone: "muted" }
     ActionsList { prefix: "app." }
 }

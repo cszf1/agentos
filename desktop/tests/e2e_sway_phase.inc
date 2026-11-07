@@ -233,6 +233,13 @@ void E2E::sway() {
   };
   auto page = [&](const QString& id) -> bool {
     QQuickItem* b = byName(QStringLiteral("nav:") + id);
+    // a system page's entry is inside Settings: open Settings from the dock with the pointer first
+    if ((!b || !reallyVisible(b)) && id != QLatin1String("settings")) {
+      if (click(byName(QStringLiteral("nav:settings"))) < 1) return false;
+      if (!QTest::qWaitFor([&] { QQuickItem* x = byName(QStringLiteral("nav:") + id); return x && reallyVisible(x); }, 10000)) return false;
+      QTest::qWait(200);
+      b = byName(QStringLiteral("nav:") + id);
+    }
     if (click(b) < 1) return false;
     return QTest::qWaitFor([&] { return r.shell->currentPage() == id; }, 10000);
   };
@@ -770,9 +777,14 @@ void E2E::sway() {
   // ---- D12: layout keeps positions/IDs only; switching and locking leave no draft, clipboard or notification text ----
   QVERIFY(page(QStringLiteral("home")));
   QTest::qWait(1000);
+  // a card's layout actions are in its menu (the ··· in its corner)
+  QCOMPARE(click(byName(QStringLiteral("cardMenu:") + todo)), 1);
+  QTest::qWait(400);
   QVERIFY(click(byLabel(QStringLiteral("固定"))) == 1 || click(byLabel(QStringLiteral("取消固定"))) == 1);
   QTest::qWait(500);
-  click(byLabel(QStringLiteral("→")));
+  QCOMPARE(click(byName(QStringLiteral("cardMenu:") + todo)), 1);
+  QTest::qWait(400);
+  click(byLabel(QStringLiteral("后移")));
   QTest::qWait(1000);
   QFile lf(r.shell->layoutFile());
   QVERIFY2(lf.open(QIODevice::ReadOnly), qPrintable(r.shell->layoutFile()));

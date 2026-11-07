@@ -5,7 +5,7 @@ import QtQuick.Controls.Basic
 PageFrame {
     id: root
     title: "工作区与成员"
-    subtitle: "工作区角色仅有 viewer / editor / owner"
+    subtitle: "每个工作区有自己的应用、数据和模型；成员角色为查看者、编辑者或所有者"
     Rectangle {
         Layout.fillWidth: true
         implicitHeight: topCardCol.implicitHeight + Theme.s4 * 2

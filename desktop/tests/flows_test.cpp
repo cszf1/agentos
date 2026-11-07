@@ -232,7 +232,10 @@ struct Backend {
     const JValue& fp = b.get(QStringLiteral("params"));
     if (hostDown) return err(QStringLiteral("HOST_UNAVAILABLE"));
     if (route == QLatin1String("state.list"))
-      return JValue::object({{QStringLiteral("modelAvailable"), !modelDown}, {QStringLiteral("brokerReady"), !brokerDown}, {QStringLiteral("apps"), JValue::array({
+      return JValue::object({{QStringLiteral("modelAvailable"), !modelDown}, {QStringLiteral("brokerReady"), !brokerDown},
+                             {QStringLiteral("model"), modelDown ? JValue() : JValue::object({{QStringLiteral("provider"), QStringLiteral("openai-compatible")}, {QStringLiteral("modelId"), QStringLiteral("fake-model-1")}, {QStringLiteral("mode"), QStringLiteral("real")}})},
+                             {QStringLiteral("agentDiagnostic"), modelDown ? JValue(QStringLiteral("AGENTOS_MODEL_PROVIDER / AGENTOS_MODEL_ID are not configured")) : JValue()},
+                             {QStringLiteral("apps"), JValue::array({
                                  JValue::object({{QStringLiteral("appId"), kanban.get(QStringLiteral("app")).get(QStringLiteral("appId"))}, {QStringLiteral("title"), QString::fromUtf8("待办看板")}, {QStringLiteral("appEpoch"), 3}}),
                                  JValue::object({{QStringLiteral("appId"), console.get(QStringLiteral("app")).get(QStringLiteral("appId"))}, {QStringLiteral("title"), QString::fromUtf8("系统控制台")}, {QStringLiteral("appEpoch"), 3}}),
                                  JValue::object({{QStringLiteral("appId"), QStringLiteral("rec-app")}, {QStringLiteral("title"), QString::fromUtf8("记录")}, {QStringLiteral("appEpoch"), 3}})})}});
@@ -304,6 +307,13 @@ struct Harness {
   QQuickItem* find(const QString& n) const { return findByObjectName(view->root(), n); }
   void click(const QString& n) {
     QQuickItem* b = find(n);
+    if (n.startsWith(QLatin1String("nav:")) && n != QLatin1String("nav:settings") && (!b || !reallyVisible(b))) {
+      QQuickItem* settings = find(QStringLiteral("nav:settings"));
+      QVERIFY2(settings, "nav:settings");
+      QMetaObject::invokeMethod(settings, "clicked");
+      QTRY_VERIFY2(find(n) && reallyVisible(find(n)), qPrintable(n));
+      b = find(n);
+    }
     QVERIFY2(b, qPrintable(n));
     QVERIFY2(b->isEnabled(), qPrintable(n + QStringLiteral(" disabled")));
     QMetaObject::invokeMethod(b, "clicked");
@@ -341,7 +351,7 @@ class FlowsTest : public QObject {
         QVERIFY(!r.get(QStringLiteral("idempotencyKey")).str().isEmpty());
       }
     }
-    for (const QString& p : {QStringLiteral("home"), QStringLiteral("login"), QStringLiteral("workspaces"), QStringLiteral("tasks"), QStringLiteral("policies"), QStringLiteral("incidents"),
+    for (const QString& p : {QStringLiteral("home"), QStringLiteral("model"), QStringLiteral("login"), QStringLiteral("workspaces"), QStringLiteral("tasks"), QStringLiteral("policies"), QStringLiteral("incidents"),
                              QStringLiteral("proposals"), QStringLiteral("diagnostics"), QStringLiteral("backup"), QStringLiteral("update"), QStringLiteral("hardware")}) {
       h.click(QStringLiteral("nav:") + p);
       QTRY_COMPARE(h.shell->currentPage(), p);
@@ -416,7 +426,17 @@ class FlowsTest : public QObject {
     h.shell->submitIntent(QStringLiteral("viewport outage check"), QString());
     QVERIFY(!h.shell->notice().isEmpty());
     const QRectF viewport(0, 0, 1280, 800);
-    for (const char* page : {"home", "login", "workspaces", "app", "tasks", "policies", "incidents", "proposals", "diagnostics", "backup", "update", "hardware"}) {
+    const auto reachable = [&](const char* page) {
+      QQuickItem* nav = h.find(QStringLiteral("nav:") + QString::fromLatin1(page));
+      QVERIFY2(nav && reallyVisible(nav), page);
+      QVERIFY2(viewport.contains(nav->mapRectToScene(nav->boundingRect())), page);
+      for (QQuickItem* parent = nav->parentItem(); parent; parent = parent->parentItem())
+        if (parent->clip()) QVERIFY2(parent->boundingRect().contains(nav->mapRectToItem(parent, nav->boundingRect())), page);
+    };
+    for (const char* page : {"home", "app", "tasks", "settings"}) reachable(page);
+    h.click(QStringLiteral("nav:settings"));
+    QTRY_VERIFY(h.find(QStringLiteral("settings")));
+    for (const char* page : {"model", "login", "workspaces", "policies", "incidents", "proposals", "diagnostics", "backup", "update", "hardware"}) {
       QQuickItem* nav = h.find(QStringLiteral("nav:") + QString::fromLatin1(page));
       QVERIFY(nav && reallyVisible(nav));
       QVERIFY2(viewport.contains(nav->mapRectToScene(nav->boundingRect())), page);
@@ -715,6 +735,99 @@ class FlowsTest : public QObject {
     QVERIFY(h.sent(QStringLiteral("machine.actions.plan")).last().get(QStringLiteral("body")).get(QStringLiteral("secret")).isNullish());
   }
 
+  void modelPageConnectsAModelWithTheKeyOnlyInTheSecretField() {
+    // The model page: shows what the Host runs, and connects a model through workspaces.modelCredential.set with the
+    // key only in the plan's secret field (never params, never kept, the field emptied), as the owner only.
+    Harness h;
+    QVERIFY(h.up());
+    h.click(QStringLiteral("nav:model"));
+    QTRY_COMPARE(h.shell->currentPage(), QStringLiteral("model"));
+    QTRY_COMPARE(h.shell->modelInfo().value(QStringLiteral("modelId")).toString(), QStringLiteral("fake-model-1"));
+    QTRY_COMPARE(h.find(QStringLiteral("modelCurrentId"))->property("text").toString(), QStringLiteral("fake-model-1"));
+    QQuickItem* url = h.find(QStringLiteral("modelBaseUrl"));
+    QQuickItem* id = h.find(QStringLiteral("modelIdField"));
+    QQuickItem* key = h.find(QStringLiteral("modelApiKey"));
+    QQuickItem* save = h.find(QStringLiteral("modelSave"));
+    QVERIFY(url && id && key && save);
+    QCOMPARE(id->property("text").toString(), QStringLiteral("fake-model-1"));   // prefilled from what runs
+    QCOMPARE(key->property("echoMode").toInt(), 2);  // TextInput.Password
+    QVERIFY(!save->isEnabled());
+    url->setProperty("text", QStringLiteral("not a url"));
+    key->setProperty("text", QStringLiteral("sk-model-5e1d77"));
+    QTRY_VERIFY(h.find(QStringLiteral("modelFormHint"))->isVisible());
+    QVERIFY(!save->isEnabled());
+    url->setProperty("text", QStringLiteral("https://llm.example.test/v1"));
+    id->setProperty("text", QStringLiteral("qwen3.8-flash"));
+    QTRY_VERIFY(save->isEnabled());
+    QVERIFY(imageLooksRendered(h.view->shot(QStringLiteral("page-model-filled.png"))));
+    const int before = h.sent(QStringLiteral("machine.actions.plan")).size();
+    h.click(QStringLiteral("modelSave"));
+    QTRY_VERIFY2(h.sent(QStringLiteral("machine.actions.plan")).size() == before + 1, qPrintable(h.shell->notice()));
+    const JValue req = h.sent(QStringLiteral("machine.actions.plan")).last();
+    const JValue& body = req.get(QStringLiteral("body"));
+    QCOMPARE(body.get(QStringLiteral("actionKind")).str(), QStringLiteral("workspaces.modelCredential.set"));
+    QCOMPARE(body.get(QStringLiteral("secret")).str(), QStringLiteral("sk-model-5e1d77"));
+    const JValue& params = body.get(QStringLiteral("params"));
+    QCOMPARE(params.get(QStringLiteral("workspaceId")).str(), h.shell->workspaceId());
+    QCOMPARE(params.get(QStringLiteral("provider")).str(), QStringLiteral("openai-compatible"));
+    QCOMPARE(params.get(QStringLiteral("modelId")).str(), QStringLiteral("qwen3.8-flash"));
+    QCOMPARE(params.get(QStringLiteral("baseUrl")).str(), QStringLiteral("https://llm.example.test/v1"));
+    QVERIFY(!params.stringify().contains(QStringLiteral("sk-model")));
+    QVERIFY(!h.shell->lastPlanSentForTest().contains(QStringLiteral("sk-model")));
+    QVERIFY(key->property("text").toString().isEmpty());
+    QTRY_VERIFY(h.shell->confirm().value(QStringLiteral("visible")).toBool());
+    for (const auto& v : h.shell->confirm()) QVERIFY(!v.toString().contains(QStringLiteral("sk-model")));
+    h.shell->confirmReject();
+    QVERIFY2(g_qmlWarnings.isEmpty(), qPrintable(g_qmlWarnings.join(QLatin1Char('\n'))));
+  }
+
+  void modelMissingIsSaidOnTheDesktopWithTheWayToConnect() {
+    Harness h;
+    h.be.modelDown = true;
+    QVERIFY(h.up());
+    h.click(QStringLiteral("nav:home"));
+    QTRY_VERIFY(!h.shell->modelAvailable());
+    QTRY_VERIFY(h.find(QStringLiteral("configureModel")) && reallyVisible(h.find(QStringLiteral("configureModel"))));
+    QVERIFY(!h.find(QStringLiteral("intentSubmit"))->isEnabled());
+    QVERIFY(reallyVisible(h.find(QStringLiteral("healthChip"))));
+    h.click(QStringLiteral("configureModel"));
+    QTRY_COMPARE(h.shell->currentPage(), QStringLiteral("model"));
+    QTRY_VERIFY(h.find(QStringLiteral("modelState")));
+    QCOMPARE(h.find(QStringLiteral("modelState"))->property("text").toString(), QString::fromUtf8("未连接"));
+    QVERIFY(imageLooksRendered(h.view->shot(QStringLiteral("page-model-missing.png"))));
+  }
+
+  void controlCenterSwitchesToDarkAndBackWithoutWarnings() {
+    Harness h;
+    h.view = std::make_unique<View>(h.shell.get(), QSize(1280, 800));
+    QVERIFY(h.up());
+    h.click(QStringLiteral("controlCenterButton"));
+    QTRY_VERIFY(reallyVisible(h.find(QStringLiteral("controlCenter"))));
+    QVERIFY(imageLooksRendered(h.view->shot(QStringLiteral("control-center.png"))));
+    QQuickItem* dark = nullptr;
+    QQuickItem* light = nullptr;
+    walkItems(h.view->root(), [&](QQuickItem* i) {
+      if (!reallyVisible(i) || !i->inherits("QQuickAbstractButton")) return;
+      if (i->property("text").toString() == QString::fromUtf8("深色")) dark = i;
+      if (i->property("text").toString() == QString::fromUtf8("浅色")) light = i;
+    });
+    QVERIFY(dark && light);
+    QMetaObject::invokeMethod(dark, "clicked");
+    h.click(QStringLiteral("controlCenterButton"));   // close the popover
+    QTest::qWait(300);
+    const QImage d = h.view->shot(QStringLiteral("desktop-dark.png"));
+    QVERIFY(imageLooksRendered(d));
+    QVERIFY2(d.pixelColor(d.width() - 4, 3).lightness() < 40, qPrintable(d.pixelColor(d.width() - 4, 3).name()));
+    h.click(QStringLiteral("nav:model"));
+    QTest::qWait(300);
+    QVERIFY(imageLooksRendered(h.view->shot(QStringLiteral("model-dark.png"))));
+    h.click(QStringLiteral("controlCenterButton"));
+    QTRY_VERIFY(reallyVisible(h.find(QStringLiteral("controlCenter"))));
+    QMetaObject::invokeMethod(light, "clicked");
+    QTest::qWait(200);
+    QVERIFY2(g_qmlWarnings.isEmpty(), qPrintable(g_qmlWarnings.join(QLatin1Char('\n'))));
+  }
+
   void sessionSettingsGoToTheSessionAgentNotAMachinePlan() {
     QTemporaryDir rt;
     const QByteArray oldRt = qgetenv("XDG_RUNTIME_DIR");
@@ -899,7 +1012,7 @@ class FlowsTest : public QObject {
     QTRY_VERIFY(h.find(QStringLiteral("notification:n-disk")));
     QQuickItem* n = h.find(QStringLiteral("notification:n-disk"));
     QCOMPARE(n->property("text").toString(), QString::fromUtf8("磁盘空间不足（3 次）"));
-    QCOMPARE(n->property("color").value<QColor>(), QColor(QStringLiteral("#a01515")));
+    QCOMPARE(n->property("color").value<QColor>(), QColor(QStringLiteral("#c03a2b")));  // Theme.danger (light)
   }
 
   void updateActivationUsesTheBackendStatesAndAnAdminPlan() {
@@ -1485,26 +1598,29 @@ class FlowsTest : public QObject {
     const auto nearRgb = [](const QColor& a, int r, int g, int b, int d = 6) {
       return std::abs(a.red() - r) <= d && std::abs(a.green() - g) <= d && std::abs(a.blue() - b) <= d;
     };
-    QVERIFY(nearRgb(homeShot.pixelColor(homeShot.width() - 4, 3), 255, 255, 255));
-    QVERIFY(nearRgb(homeShot.pixelColor(homeShot.width() - 12, 12), 255, 255, 255));
-    int navW = 0;
-    while (navW < 500 && nearRgb(homeShot.pixelColor(navW, homeShot.height() - 6), 255, 255, 255)) ++navW;
-    QVERIFY2(navW >= 180 && navW <= 340, qPrintable(QString::number(navW)));
-    int railButtons = 0, railY = 36;
-    while (railY < homeShot.height() - 20) {
-      const auto isRail = [&](int y) {
-        const QColor c = homeShot.pixelColor(17, y);
-        return nearRgb(homeShot.pixelColor(3, y), 255, 255, 255) && (nearRgb(c, 0x94, 0xa3, 0xb8, 28) || nearRgb(c, 0x25, 0x63, 0xeb, 28));
-      };
-      if (isRail(railY)) {
-        int top = railY;
-        while (railY < homeShot.height() - 20 && isRail(railY)) ++railY;
-        if (railY - top >= 18 && railY - top <= 80) ++railButtons;
-      } else {
-        ++railY;
-      }
+    // The desktop frame the VM pixel checks read (os/tests m5/m19/m20 dock()): the top bar is the desktop colour
+    // (#F3F3F1) with an empty right edge; a white dock sits centred at the bottom with four equal places, the
+    // current one (桌面) filled #EAEAE7 near its top edge.
+    QVERIFY(nearRgb(homeShot.pixelColor(homeShot.width() - 4, 3), 0xf3, 0xf3, 0xf1));
+    QVERIFY(nearRgb(homeShot.pixelColor(homeShot.width() - 12, 12), 0xf3, 0xf3, 0xf1));
+    QVERIFY(nearRgb(homeShot.pixelColor(3, homeShot.height() - 6), 0xf3, 0xf3, 0xf1));
+    QQuickItem* dock = h.find(QStringLiteral("dock"));
+    QVERIFY(dock && reallyVisible(dock));
+    const QRectF dr = dock->mapRectToScene(dock->boundingRect());
+    QVERIFY2(std::abs(dr.center().x() - homeShot.width() / 2.0) <= 2 && dr.bottom() > homeShot.height() - 40, qPrintable(QStringLiteral("%1,%2 %3x%4").arg(dr.x()).arg(dr.y()).arg(dr.width()).arg(dr.height())));
+    QVERIFY(nearRgb(homeShot.pixelColor(int(dr.center().x()), int(dr.top()) + 3), 255, 255, 255));
+    int places = 0;
+    for (const char* n : {"nav:home", "nav:app", "nav:tasks", "nav:settings"}) {
+      QQuickItem* it = h.find(QString::fromLatin1(n));
+      QVERIFY2(it && reallyVisible(it), n);
+      const QRectF r = it->mapRectToScene(it->boundingRect());
+      QVERIFY2(dr.contains(r), n);
+      const QColor c = homeShot.pixelColor(int(r.center().x()), int(r.top()) + 3);
+      if (QByteArray(n) == "nav:home") QVERIFY2(nearRgb(c, 0xea, 0xea, 0xe7), qPrintable(c.name()));
+      else QVERIFY2(nearRgb(c, 255, 255, 255), qPrintable(QString::fromLatin1(n) + c.name()));
+      ++places;
     }
-    QVERIFY2(railButtons >= 11, qPrintable(QString::number(railButtons)));
+    QCOMPARE(places, 4);
 
     // 2. Red danger button requires secondary confirmation with default focus on "取消"; Enter on default focus cancels
     h.click(QStringLiteral("nav:hardware"));

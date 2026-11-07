@@ -10,6 +10,8 @@ TextField {
     property bool sensitive: false
     property string placeholder: ""
     property bool enterSubmits: false
+    /** no box: for fields that sit inside a composed surface (the desktop composer) */
+    property bool flat: false
     signal submitted(string value)
     placeholderText: placeholder || label
     echoMode: sensitive ? TextInput.Password : TextInput.Normal
@@ -35,5 +37,5 @@ TextField {
         ignoreUnknownSignals: true
         function onScopeCleared(reason) { ime.discard(f); f.boundValue = ""; f.text = "" }
     }
-    background: FocusRing { implicitWidth: 200; implicitHeight: Theme.px(38); on: f.activeFocus; hovered: f.hovered; color: f.enabled ? Theme.bgSurface : Theme.bgSubtle }
+    background: FocusRing { implicitWidth: 200; implicitHeight: Theme.px(38); on: f.activeFocus && !f.flat; hovered: f.hovered; color: f.flat ? "transparent" : (f.enabled ? Theme.bgSurface : Theme.bgSubtle); border.width: f.flat ? 0 : (focusOn ? Theme.focusWidth : Theme.borderThin) }
 }

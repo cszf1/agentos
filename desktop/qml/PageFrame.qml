@@ -41,22 +41,24 @@ Item {
                 width: parent.width
                 spacing: Theme.s4
 
-                // Page Header Row
+                // Page header: title, one quiet line, refresh as an icon
                 RowLayout {
                     Layout.fillWidth: true
                     Layout.topMargin: Theme.s4
                     Layout.leftMargin: Theme.s5
-                    Layout.rightMargin: Theme.s5
+                    Layout.rightMargin: Theme.s4
                     spacing: Theme.s3
 
                     ColumnLayout {
                         Layout.fillWidth: true
-                        spacing: Theme.s1
+                        spacing: Theme.px(2)
 
                         PText {
+                            visible: root.title !== ""
+                            Layout.fillWidth: true
                             text: root.title
                             variant: "display"
-                            bold: true
+                            font.weight: Font.Medium
                         }
 
                         PText {
@@ -68,26 +70,20 @@ Item {
                         }
                     }
 
-                    AButton {
+                    IconButton {
                         visible: root.showRefreshButton
-                        label: Strings.common.refresh
+                        Layout.alignment: Qt.AlignTop
                         iconName: "refresh"
-                        variant: "secondary"
-                        onConfirmed: {
+                        Accessible.name: Strings.common.refresh
+                        ToolTip.visible: hovered
+                        ToolTip.delay: 500
+                        ToolTip.text: Strings.common.refresh
+                        onClicked: {
                             if (typeof shell !== "undefined" && shell) {
                                 shell.refreshPage()
                             }
                         }
                     }
-                }
-
-                // 1px Divider
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.leftMargin: Theme.s5
-                    Layout.rightMargin: Theme.s5
-                    height: Theme.borderThin
-                    color: Theme.border
                 }
 
                 // Standardized List States: Loading / Error / Empty
@@ -96,11 +92,11 @@ Item {
                     Layout.fillWidth: true
                     Layout.leftMargin: Theme.s5
                     Layout.rightMargin: Theme.s5
-                    Layout.preferredHeight: Theme.px(240)
+                    Layout.preferredHeight: Theme.px(220)
                     radius: Theme.radiusCard
-                    color: Theme.bgSurface
-                    border.width: Theme.borderThin
-                    border.color: root.listState === "error" ? Theme.dangerBorder : Theme.border
+                    color: Theme.bgSubtle
+                    border.width: root.listState === "error" ? Theme.borderThin : 0
+                    border.color: Theme.dangerBorder
 
                     ColumnLayout {
                         anchors.centerIn: parent
@@ -112,13 +108,13 @@ Item {
                             width: Theme.px(40)
                             height: Theme.px(40)
                             radius: Theme.px(20)
-                            color: root.listState === "error" ? Theme.dangerSubtle : (root.listState === "loading" ? Theme.accentSubtle : Theme.bgSubtle)
+                            color: root.listState === "error" ? Theme.dangerSubtle : Theme.bgMuted
 
                             Image {
                                 anchors.centerIn: parent
                                 source: Theme.iconSource(
                                     root.listState === "error" ? "incidents" : (root.listState === "loading" ? "refresh" : "apps"),
-                                    (root.listState === "error" ? Theme.danger : (root.listState === "loading" ? Theme.accent : Theme.textSecondary)).toString()
+                                    root.listState === "error" ? "danger" : "secondary"
                                 )
                                 sourceSize.width: Theme.iconMd
                                 sourceSize.height: Theme.iconMd

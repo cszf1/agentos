@@ -2,8 +2,8 @@ import QtQuick
 import QtQuick.Layouts
 
 PageFrame {
-    title: "运行时诊断"
-    subtitle: "查看连接状态、系统操作与诊断日志"
+    title: "诊断"
+    subtitle: "连接状态、系统操作与诊断日志"
     Rectangle {
         Layout.fillWidth: true
         implicitHeight: diagToolbar.implicitHeight + Theme.s4 * 2

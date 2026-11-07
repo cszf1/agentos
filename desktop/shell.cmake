@@ -6,6 +6,7 @@ set(AGENTOS_QML
   qml/LoginPage.qml qml/WorkspacesPage.qml qml/AppDetailPage.qml qml/TaskCenterPage.qml qml/PoliciesPage.qml
   qml/IncidentsPage.qml qml/ProposalsPage.qml qml/DiagnosticsPage.qml qml/BackupPage.qml qml/UpdatePage.qml
   qml/HardwarePage.qml
+  qml/TopBar.qml qml/BarButton.qml qml/Dock.qml qml/DockItem.qml qml/ControlCenter.qml qml/MenuRow.qml qml/Segmented.qml qml/NotificationsPanel.qml qml/SettingsPage.qml qml/ModelPage.qml qml/LinkButton.qml qml/IconButton.qml
   qml/Theme.qml qml/Strings.js qml/qmldir qml/ServiceBlocked.qml)
 
 add_library(agentos_ui STATIC
