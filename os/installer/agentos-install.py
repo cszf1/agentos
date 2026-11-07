@@ -20,13 +20,16 @@ carrying that id) still matches. major:minor numbers are never used as an identi
                                                            the target's ESP (read-only); --resume adopts it so `run`
                                                            continues (review F05)
 
+For disks without a stable by-id name, auto prints a command-local AGENTOS_INSTALL_ALLOW_PATH=1 override for
+read-only recovery inspection. Recheck the displayed device path after every reboot.
+
 The plan binds WWN/serial, major:minor, size, the partition-table digest and the install-medium identity. Before the
 first destructive write every value is read again; the install medium itself, a mounted/swap/held device, a
 changed identity and a disk below 64 GiB are refused. After a crash `run` inspects the real GPT and the install id
 on the ESP; it never re-formats a different disk with the same name. The system closure is copied from the ISO's
 own store (no network). The LUKS passphrase is read from stdin only, never from argv, and is not written anywhere.
 """
-import hashlib, json, os, re, subprocess, sys, time, uuid
+import hashlib, json, os, re, shlex, subprocess, sys, time, uuid
 
 STATE_DIR = "/run/agentos-install"
 STATE = f"{STATE_DIR}/state.json"
@@ -762,7 +765,14 @@ def cmd_auto(args):
             say(PARTITIONING_INTERRUPTED)
         else:
             say("Keep the ISO attached. Inspect the interrupted or existing installation with:")
-            say(f"  sudo agentos-install recover --disk {d['path']}")
+            ids = sorted(d["byId"], key=lambda name: name.startswith("wwn-"))
+            if ids:
+                command = ["sudo", "agentos-install", "recover", "--disk", "/dev/disk/by-id/" + ids[0]]
+            else:
+                say("No stable by-id name is available. This command allows the displayed path for read-only inspection.")
+                say("Device paths can change after reboot. Verify the target again before reusing this command.")
+                command = ["sudo", "env", "AGENTOS_INSTALL_ALLOW_PATH=1", "agentos-install", "recover", "--disk", d["path"]]
+            say("  " + shlex.join(command))
             say("For copying/configuring/verifying checkpoints, recover --resume can adopt the saved state.")
         kmsg("stopped: AgentOS install incomplete or unverified")
         return 1

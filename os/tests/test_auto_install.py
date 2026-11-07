@@ -2,7 +2,11 @@
 Offline: the installer is loaded as a module with its disk listing, plan/confirm/run and every command faked."""
 import importlib.util
 import io
+import json
 import os
+import shlex
+import subprocess
+import sys
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -151,6 +155,51 @@ class InterruptedInstallTest(unittest.TestCase):
         self.assertIn("will not reformat", output)
         self.assertNotIn("Disconnect this ISO", output)
         self.assertEqual(self.wrote(), [])
+
+
+class RecoveryHintTest(unittest.TestCase):
+    def test_printed_recover_command_runs_without_ambient_path_override(self):
+        cases = [
+            (disk(parts=["agentos-luks"], byid=("wwn-A1", "virtio-A1")), "/dev/disk/by-id/virtio-A1"),
+            (disk("/dev/sda", parts=["agentos-luks"], byid=()), "/dev/sda"),
+            (disk(parts=["agentos-luks"], byid=("virtio-A 1;literal",)), "/dev/disk/by-id/virtio-A 1;literal"),
+        ]
+        for target, expected in cases:
+            with self.subTest(target=expected), tempfile.TemporaryDirectory() as tmp:
+                m = load()
+                m.disks = lambda: [target]
+                m.esp_read = lambda dev: (None, {"state": "copying"})
+                m.logger = m.kmsg = lambda msg: None
+                m.open = lambda *a, **kw: io.StringIO("")
+                m.cmd_plan = mock.Mock()
+                with redirect_stdout(io.StringIO()) as output:
+                    self.assertEqual(m.cmd_auto({}), 1)
+                hint = next(line.strip() for line in output.getvalue().splitlines() if "sudo " in line and " recover " in line)
+                self.assertNotIn("--resume", shlex.split(hint))
+                m.cmd_plan.assert_not_called()
+                root = Path(tmp)
+                sudo = root / "sudo"
+                sudo.write_text('#!/bin/sh\nexec "$@"\n')
+                sudo.chmod(0o700)
+                cli = root / "agentos-install"
+                cli.write_text(f"#!{sys.executable}\n" +
+                               "import importlib.util\n" +
+                               f"s = importlib.util.spec_from_file_location('installer', {str(SRC)!r})\n" +
+                               "m = importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\n" +
+                               f"m.STATE_DIR = {tmp!r}\nm.STATE = {str(root / 'state.json')!r}\n" +
+                               f"target = {target!r}\n" +
+                               f"def find(p):\n    assert p == {expected!r}, p\n    return target\n" +
+                               "m.find = find\nm.esp_read = lambda dev: (None, {'state': 'copying'})\nm.main()\n")
+                cli.chmod(0o700)
+                env = dict(os.environ, PATH=tmp + os.pathsep + os.environ.get("PATH", ""))
+                env.pop("AGENTOS_INSTALL_ALLOW_PATH", None)
+                result = subprocess.run(hint, shell=True, env=env, capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                found = json.loads(result.stdout)
+                self.assertTrue(found["ok"])
+                self.assertTrue(found["readOnly"])
+                self.assertEqual(found["recover"]["disk"], target["path"])
+                self.assertFalse((root / "state.json").exists())
 
 
 class DiskDetectorTest(unittest.TestCase):
