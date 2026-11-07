@@ -827,6 +827,57 @@ class FlowsTest : public QObject {
     QCOMPARE(key->property("text").toString(), QString());
   }
 
+  void modelPagePrefillsAfterScopeReset_data() {
+    QTest::addColumn<bool>("workspaceSwitch");
+    QTest::newRow("workspace") << true;
+    QTest::newRow("lock-scope") << false;
+  }
+
+  void modelPagePrefillsAfterScopeReset() {
+    QFETCH(bool, workspaceSwitch);
+    Harness h;
+    QVERIFY(h.up());
+    h.click(QStringLiteral("nav:model"));
+    QTRY_VERIFY(h.find(QStringLiteral("modelBaseUrl")));
+    auto* page = h.find(QStringLiteral("modelPage"));
+    auto* url = h.find(QStringLiteral("modelBaseUrl"));
+    auto* id = h.find(QStringLiteral("modelIdField"));
+    auto* key = h.find(QStringLiteral("modelApiKey"));
+    QTRY_COMPARE(url->property("text").toString(), QStringLiteral("https://model.example.test/v1"));
+    url->setProperty("text", QStringLiteral("https://old-edit.example.test/v1"));
+    id->setProperty("text", QStringLiteral("old-edited-model"));
+    key->setProperty("text", QStringLiteral("faux-scope-key"));
+    h.be.modelDown = true;
+    h.shell->refreshPage();
+    QTRY_VERIFY(!h.shell->modelAvailable());
+    if (workspaceSwitch) {
+      h.shell->switchWorkspace(WS_B);
+      QTRY_COMPARE(h.shell->workspaceId(), WS_B);
+    } else {
+      emit h.shell->scopeCleared(QStringLiteral("lock"));
+    }
+    QCOMPARE(h.find(QStringLiteral("modelPage")), page);
+    QCOMPARE(url->property("text").toString(), QString());
+    QCOMPARE(id->property("text").toString(), QString());
+    QCOMPARE(key->property("text").toString(), QString());
+    h.be.modelDown = false;
+    h.shell->refreshPage();
+    QTRY_COMPARE(url->property("text").toString(), QStringLiteral("https://model.example.test/v1"));
+    QTRY_COMPARE(id->property("text").toString(), QStringLiteral("fake-model-1"));
+    QCOMPARE(key->property("text").toString(), QString());
+    url->setProperty("text", QStringLiteral("https://new-edit.example.test/v1"));
+    id->setProperty("text", QStringLiteral("new-edited-model"));
+    h.be.modelDown = true;
+    h.shell->refreshPage();
+    QTRY_VERIFY(!h.shell->modelAvailable());
+    h.be.modelDown = false;
+    h.shell->refreshPage();
+    QTRY_VERIFY(h.shell->modelAvailable());
+    QCOMPARE(url->property("text").toString(), QStringLiteral("https://new-edit.example.test/v1"));
+    QCOMPARE(id->property("text").toString(), QStringLiteral("new-edited-model"));
+    QCOMPARE(key->property("text").toString(), QString());
+  }
+
   void modelMissingIsSaidOnTheDesktopWithTheWayToConnect() {
     Harness h;
     h.be.modelDown = true;

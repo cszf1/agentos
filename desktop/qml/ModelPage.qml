@@ -97,14 +97,16 @@ PageFrame {
             spacing: Theme.s1
             PText { text: "接口地址"; variant: "caption"; tone: "secondary" }
             AField { id: baseUrl; objectName: "modelBaseUrl"; label: "接口地址"; placeholder: "https://api.example.com/v1"; Layout.fillWidth: true; enabled: root.owner
-                onBoundValueChanged: if (root.fieldsReady && !root.prefilling) root.urlEdited = true }
+                onBoundValueChanged: if (root.fieldsReady && !root.prefilling) root.urlEdited = true
+                onScopeReset: root.urlEdited = false }
         }
         ColumnLayout {
             Layout.fillWidth: true
             spacing: Theme.s1
             PText { text: "模型 ID"; variant: "caption"; tone: "secondary" }
             AField { id: modelId; objectName: "modelIdField"; label: "模型 ID"; placeholder: "例如 gpt-4.1-mini"; Layout.fillWidth: true; enabled: root.owner
-                onBoundValueChanged: if (root.fieldsReady && !root.prefilling) root.idEdited = true }
+                onBoundValueChanged: if (root.fieldsReady && !root.prefilling) root.idEdited = true
+                onScopeReset: root.idEdited = false }
         }
         ColumnLayout {
             Layout.fillWidth: true

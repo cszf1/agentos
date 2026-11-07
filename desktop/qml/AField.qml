@@ -13,6 +13,7 @@ TextField {
     /** no box: for fields that sit inside a composed surface (the desktop composer) */
     property bool flat: false
     signal submitted(string value)
+    signal scopeReset()
     placeholderText: placeholder || label
     echoMode: sensitive ? TextInput.Password : TextInput.Normal
     onTextChanged: if (boundValue !== text) boundValue = text
@@ -35,7 +36,12 @@ TextField {
     Connections {
         target: (typeof shell !== "undefined") ? shell : null
         ignoreUnknownSignals: true
-        function onScopeCleared(reason) { ime.discard(f); f.boundValue = ""; f.text = "" }
+        function onScopeCleared(reason) {
+            ime.discard(f)
+            f.boundValue = ""
+            f.text = ""
+            f.scopeReset()
+        }
     }
     background: FocusRing { implicitWidth: 200; implicitHeight: Theme.px(38); on: f.activeFocus && !f.flat; hovered: f.hovered; color: f.flat ? "transparent" : (f.enabled ? Theme.bgSurface : Theme.bgSubtle); border.width: f.flat ? 0 : (focusOn ? Theme.focusWidth : Theme.borderThin) }
 }
