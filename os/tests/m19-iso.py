@@ -295,6 +295,9 @@ def install_iso(cmd, name, serial):
     iso.send_console("poweroff\n")
     assert powered_off(iso), "the ISO system did not power off"
 
+# the disk unlock prompt; OCR has read "passphrase" as "passphrasze" (run 42371708331)
+PASSPHRASE_PROMPT = r"(?i)pass ?phra[sz]+e|enter pass|for disk agentos"
+
 with subtest("install from the ISO alone: its own kernel/initrd/command line, offline, to a blank disk by serial (U01, review F11)"), kill_on_fail():
     install_iso(common, "iso", "AGENTOS-T1")
 
@@ -332,7 +335,7 @@ def operator_reboot(m, user, pw):
     assert m.process.wait(timeout=180) == 0, "operator reboot QEMU exited unsuccessfully"
     m.wait_for_shutdown()  # pinned driver has no timeout argument; finalize only after the bounded wait
     m.start()
-    wait_screen(m, r"(?i)passphrase", timeout=900)
+    wait_screen(m, PASSPHRASE_PROMPT, timeout=900)
     keyed(m, PASS + "\n")
     wait_screen(m, r"(?i)(Welcome back|Login)", timeout=600)  # do NOT log in graphically: the trial must fail the Wayland health gate
     operator_login(m, user, pw)
@@ -341,7 +344,7 @@ with subtest("the installed disk alone: first unlock, first-boot administrator o
     target = create_machine(common + carry_options, name="installed")
     extra.append(target)
     target.start()
-    wait_screen(target, r"(?i)passphrase", timeout=900)
+    wait_screen(target, PASSPHRASE_PROMPT, timeout=900)
     time.sleep(2)
     keyed(target, PASS + "\n")
     wait_screen(target, r"(?i)administrator login", timeout=900)
@@ -446,7 +449,7 @@ with subtest("O09 continuation: the SAME release ISO installs a second machine; 
     dest = create_machine(common2 + carry_options, name="destination")
     extra.append(dest)
     dest.start()
-    wait_screen(dest, r"(?i)passphrase", timeout=900)
+    wait_screen(dest, PASSPHRASE_PROMPT, timeout=900)
     keyed(dest, PASS + "\n")
     wait_screen(dest, r"(?i)administrator login", timeout=900)
     keyed(dest, "bea\n")

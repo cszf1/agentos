@@ -146,6 +146,9 @@ def operator_login(m, user, pw):
     wait_screen(m, user + r"@", timeout=120, before_poll=lambda: m.send_key("ctrl-alt-f2"), stable_polls=2)
 
 
+# the disk unlock prompt; OCR has read "passphrase" as "passphrasze" (run 42371708331)
+PASSPHRASE_PROMPT = r"(?i)pass ?phra[sz]+e|enter pass|for disk agentos"
+
 with subtest("the ISO alone, untouched: countdown, install to the one empty disk, restart (no key, no command)"), kill_on_fail():
     iso = create_machine(iso_cmd, name="iso")
     extra.append(iso)
@@ -187,7 +190,7 @@ with subtest("first start of the installed disk: one password, typed twice, then
 
 with subtest("next start: the same password once at the disk unlock, then the login screen; no setup again"), kill_on_fail():
     target.start()
-    wait_screen(target, r"(?i)passphrase", timeout=900)
+    wait_screen(target, PASSPHRASE_PROMPT, timeout=900)
     time.sleep(2)
     keyed(target, PW + "\n")
     wait_greeter(target, timeout=900)
