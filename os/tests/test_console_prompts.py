@@ -71,3 +71,23 @@ class ConsoleRequestsTest(unittest.TestCase):
 
     def test_two_requests_remain_two_entries(self):
         self.run_helper([(0, self.banner + "\n" + self.prompt), (0.2, "\n" + self.banner + "\n" + self.prompt)], 2)
+
+
+class QuickstartCoverageTest(unittest.TestCase):
+    def test_normal_and_powercut_overlays_share_all_completion_checks(self):
+        source = Path(__file__).with_name("m23-quickstart.nix")
+        tree = ast.parse(assembled_script(source))
+        scenarios = [node for node in tree.body if isinstance(node, ast.For)]
+        self.assertEqual(len(scenarios), 1)
+        cases = ast.literal_eval(scenarios[0].iter)
+        self.assertEqual([(name, powercut) for name, image, powercut in cases], [("quick-normal", False), ("quick-recovery", True)])
+        cuts = [node for node in ast.walk(scenarios[0]) if isinstance(node, ast.If) and isinstance(node.test, ast.Name) and node.test.id == "powercut"]
+        self.assertEqual(len(cuts), 1)
+        crash = [node for node in ast.walk(scenarios[0]) if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "crash"]
+        self.assertEqual(len(crash), 1)
+        self.assertIn(crash[0], list(ast.walk(cuts[0])))
+        text = source.read_text()
+        self.assertIn("normalInstalled = mkSystem baseModules;", text)
+        self.assertIn('normalImage = imageFor normalInstalled "agentos-qcow2-quick-normal";', text)
+        self.assertIn('("quick-normal", "${normalImage}/agentos.qcow2", False)', text)
+        self.assertIn('("quick-recovery", "${image}/agentos.qcow2", True)', text)

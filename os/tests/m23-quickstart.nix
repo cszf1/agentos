@@ -4,11 +4,16 @@
 # console, the handed-over password leaves no file and no log line, and the next boot asks for it once to unlock.
 { pkgs, mkSystem, releaseModules, nixpkgs }:
 let
-  installed = mkSystem (releaseModules ++ [
+  baseModules = releaseModules ++ [
     "${nixpkgs}/nixos/modules/testing/test-instrumentation.nix"
     ({ lib, ... }: {
       boot.kernelParams = [ "console=ttyS0" ];
       users.users.root.hashedPasswordFile = lib.mkForce null;
+    })
+  ];
+  normalInstalled = mkSystem baseModules;
+  installed = mkSystem (baseModules ++ [
+    ({ ... }: {
       systemd.services.agentos-first-setup.serviceConfig.ExecStartPre = pkgs.writeShellScript "powercut-before-admin-once" ''
         if [ ! -e /var/lib/agentos-test-before-admin ]; then
           touch /var/lib/agentos-test-before-admin
@@ -19,9 +24,13 @@ let
       '';
     })
   ]);
-  top = installed.config.system.build.toplevel;
-  installer = pkgs.callPackage ./../packages/installer.nix { system = top; };
-  image = pkgs.callPackage ./../packages/qcow2.nix { system = top; inherit installer; qemu = pkgs.qemu-utils; name = "agentos-qcow2-quick"; luksGiB = 10; };
+  imageFor = system: name:
+    let
+      top = system.config.system.build.toplevel;
+      installer = pkgs.callPackage ./../packages/installer.nix { system = top; };
+    in pkgs.callPackage ./../packages/qcow2.nix { system = top; inherit installer name; qemu = pkgs.qemu-utils; luksGiB = 10; };
+  image = imageFor installed "agentos-qcow2-quick-recovery";
+  normalImage = imageFor normalInstalled "agentos-qcow2-quick-normal";
 in
 pkgs.testers.runNixOSTest {
   name = "agentos-m23-quickstart";
@@ -29,7 +38,6 @@ pkgs.testers.runNixOSTest {
   testScript = ''
     import json, os, re, shutil, subprocess
     import time as _t
-    IMG = "${image}/agentos.qcow2"
     PW = "quick-start-pw-1"
     extra = []
     import contextlib
@@ -111,59 +119,64 @@ pkgs.testers.runNixOSTest {
 
     d = os.path.join(os.environ.get("TMPDIR", "/tmp"), "quick")
     os.makedirs(d, exist_ok=True)
-    disk = os.path.join(d, "disk.qcow2")
-    subprocess.run(["${pkgs.qemu_test}/bin/qemu-img", "create", "-f", "qcow2", "-F", "qcow2", "-b", IMG, disk], check=True)
-    vars_ = os.path.join(d, "ovmf-vars.fd")
-    shutil.copy("${pkgs.OVMF.variables}", vars_)
-    os.chmod(vars_, 0o644)
-    start = (f"${pkgs.qemu_test}/bin/qemu-kvm -m 3072 -smp 2 -vga none -device virtio-gpu-pci "
-             f"-drive if=pflash,format=raw,unit=0,readonly=on,file=${pkgs.OVMF.firmware} "
-             f"-drive if=pflash,format=raw,unit=1,file={vars_} -drive file={disk},if=virtio,format=qcow2")
-    m = create_machine(start, name="quick")
-    extra.append(m)
+    for name, IMG, powercut in [
+        ("quick-normal", "${normalImage}/agentos.qcow2", False),
+        ("quick-recovery", "${image}/agentos.qcow2", True),
+    ]:
+        disk = os.path.join(d, name + "-disk.qcow2")
+        subprocess.run(["${pkgs.qemu_test}/bin/qemu-img", "create", "-f", "qcow2", "-F", "qcow2", "-b", IMG, disk], check=True)
+        vars_ = os.path.join(d, name + "-ovmf-vars.fd")
+        shutil.copy("${pkgs.OVMF.variables}", vars_)
+        os.chmod(vars_, 0o644)
+        start = (f"${pkgs.qemu_test}/bin/qemu-kvm -m 3072 -smp 2 -vga none -device virtio-gpu-pci "
+                 f"-drive if=pflash,format=raw,unit=0,readonly=on,file=${pkgs.OVMF.firmware} "
+                 f"-drive if=pflash,format=raw,unit=1,file={vars_} -drive file={disk},if=virtio,format=qcow2")
+        m = create_machine(start, name=name)
+        extra.append(m)
 
-    with subtest("first boot: one password, asked twice, is all a person types; then the login screen"), kill_on_fail():
-        m.start()
-        wait_console(m, "template disk detected", timeout=900)
-        wait_console(m, "Choose the password for this machine", timeout=120)
-        feed(m, PW, "disk passphrase set")
-        wait_console(m, "agentos-test: rekey complete, admin setup held", timeout=300)
-        m.crash()
-        m.start()
-        assert unlock_existing(m, PW) == 1, "recovery required more than one password entry"
-        m.wait_for_unit("agentos-machine.service", timeout=600)
-        # first setup takes the handed-over password: nothing is typed on tty1
-        m.wait_until_succeeds("test -e /var/lib/agentos-machine/first-boot-closed", timeout=300)
-        m.wait_for_unit("greetd.service", timeout=300)
-        j = m.succeed("journalctl -b -t agentos-first-setup -o cat --no-pager")
-        print(j)
-        assert "first boot completed for administrator admin (quick start)" in j, j
-        assert "quick start refused" not in j, j
-        m.fail("test -e /run/agentos-first-setup/password")
-        m.fail(f"journalctl -b --no-pager | grep -F {PW}")
-        m.fail(f"grep -rsF {PW} /var/lib/agentos-machine /var/lib/agentos-first-setup /etc /run/agentos-first-setup 2>/dev/null")
-        st = json.loads(m.succeed("agentosctl status"))
-        print("workspaces", st.get("workspaceList"))
-        assert len(st["workspaceList"]) == 1, st["workspaceList"]
-        # the status list carries no names (machine/src/dir.rs); `workspace list` does, with the owner
-        wl = json.loads(m.succeed("agentosctl workspace list"))["workspaces"]
-        print("workspace list", wl)
-        assert [(w.get("displayName"), w.get("owner")) for w in wl] == [("\u6211\u7684\u5de5\u4f5c\u533a", "admin")], wl
-        m.succeed("getent passwd admin")
-        # the account was made from the handed-over password (agentosctl firstboot read it on stdin: see
-        # test_first_setup.py); the same password unlocks the disk
-        m.succeed(f"printf {PW} | cryptsetup open --test-passphrase --key-file=- /dev/disk/by-partlabel/agentos-luks")
-        m.fail("cryptsetup open --test-passphrase --key-file=/etc/agentos/template-disk.key /dev/disk/by-partlabel/agentos-luks")
-        m.screenshot("quick-first-login")
+        with subtest(f"{name}: first boot: one password, asked twice, is all a person types; then the login screen"), kill_on_fail():
+            m.start()
+            wait_console(m, "template disk detected", timeout=900)
+            wait_console(m, "Choose the password for this machine", timeout=120)
+            feed(m, PW, "disk passphrase set")
+            if powercut:
+                wait_console(m, "agentos-test: rekey complete, admin setup held", timeout=300)
+                m.crash()
+                m.start()
+                assert unlock_existing(m, PW) == 1, "recovery required more than one password entry"
+            m.wait_for_unit("agentos-machine.service", timeout=600)
+            # first setup takes the handed-over password: nothing is typed on tty1
+            m.wait_until_succeeds("test -e /var/lib/agentos-machine/first-boot-closed", timeout=300)
+            m.wait_for_unit("greetd.service", timeout=300)
+            j = m.succeed("journalctl -b -t agentos-first-setup -o cat --no-pager")
+            print(j)
+            assert "first boot completed for administrator admin (quick start)" in j, j
+            assert "quick start refused" not in j, j
+            m.fail("test -e /run/agentos-first-setup/password")
+            m.fail(f"journalctl -b --no-pager | grep -F {PW}")
+            m.fail(f"grep -rsF {PW} /var/lib/agentos-machine /var/lib/agentos-first-setup /etc /run/agentos-first-setup 2>/dev/null")
+            st = json.loads(m.succeed("agentosctl status"))
+            print("workspaces", st.get("workspaceList"))
+            assert len(st["workspaceList"]) == 1, st["workspaceList"]
+            # the status list carries no names (machine/src/dir.rs); `workspace list` does, with the owner
+            wl = json.loads(m.succeed("agentosctl workspace list"))["workspaces"]
+            print("workspace list", wl)
+            assert [(w.get("displayName"), w.get("owner")) for w in wl] == [("\u6211\u7684\u5de5\u4f5c\u533a", "admin")], wl
+            m.succeed("getent passwd admin")
+            # the account was made from the handed-over password (agentosctl firstboot read it on stdin: see
+            # test_first_setup.py); the same password unlocks the disk
+            m.succeed(f"printf {PW} | cryptsetup open --test-passphrase --key-file=- /dev/disk/by-partlabel/agentos-luks")
+            m.fail("cryptsetup open --test-passphrase --key-file=/etc/agentos/template-disk.key /dev/disk/by-partlabel/agentos-luks")
+            m.screenshot(name + "-first-login")
 
-    with subtest("next boot: the same password unlocks the disk; no setup again, straight to the login screen"), kill_on_fail():
-        m.shutdown()
-        m.start()
-        assert unlock_existing(m, PW) == 1, "closed machine required more than one password entry"
-        m.wait_for_unit("greetd.service", timeout=600)
-        assert m.succeed("systemctl show -p ActiveState --value agentos-first-setup.service").strip() == "inactive"
-        m.succeed("test -e /var/lib/agentos-machine/first-boot-closed")
-        m.screenshot("quick-second-boot")
-        m.shutdown()
+        with subtest(f"{name}: next boot: the same password unlocks the disk; no setup again, straight to the login screen"), kill_on_fail():
+            m.shutdown()
+            m.start()
+            assert unlock_existing(m, PW) == 1, "closed machine required more than one password entry"
+            m.wait_for_unit("greetd.service", timeout=600)
+            assert m.succeed("systemctl show -p ActiveState --value agentos-first-setup.service").strip() == "inactive"
+            m.succeed("test -e /var/lib/agentos-machine/first-boot-closed")
+            m.screenshot(name + "-second-boot")
+            m.shutdown()
   '';
 }
