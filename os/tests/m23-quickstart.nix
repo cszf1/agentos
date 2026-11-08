@@ -72,6 +72,9 @@ pkgs.testers.runNixOSTest {
         import select, socket
         marker = b"Spawning backdoor root shell..."
         end, seen, entries = _t.monotonic() + timeout, 0, 0
+        tail, pending_kind = "", None
+        request = r"Please enter passphrase|Starting password query on /dev/ttyS0"
+        overlap = len("Starting password query on /dev/ttyS0") - 1
         while _t.monotonic() < end:
             if m.connected:
                 return entries
@@ -90,9 +93,19 @@ pkgs.testers.runNixOSTest {
                     m.shell.recv(discard, socket.MSG_WAITALL)
             console = m.get_console_log()
             new, seen = console[seen:], len(console)
-            if re.search(r"Please enter passphrase|Starting password query on /dev/ttyS0", new):
-                m.send_console(text + "\n")
-                entries += 1
+            tail += new
+            consumed = 0
+            for match in re.finditer(request, tail):
+                kind = "prompt" if match.group().startswith("Please") else "banner"
+                # The agent banner and its prompt describe one request, in either order.
+                if pending_kind is not None and kind != pending_kind:
+                    pending_kind = None
+                else:
+                    m.send_console(text + "\n")
+                    entries += 1
+                    pending_kind = kind
+                consumed = match.end()
+            tail = tail[consumed:][-overlap:]
             _t.sleep(0.2)
         raise Exception("the encrypted disk did not unlock and boot")
 
