@@ -13,7 +13,7 @@ let
         if [ ! -e /var/lib/agentos-test-before-admin ]; then
           touch /var/lib/agentos-test-before-admin
           sync
-          echo "agentos-test: rekey complete, admin setup held" > /dev/console
+          echo "<2>agentos-test: rekey complete, admin setup held" > /dev/kmsg
           sleep infinity
         fi
       '';

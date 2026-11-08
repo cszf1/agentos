@@ -25,6 +25,21 @@ def offenders():
 
 
 class VmScriptsLintTest(unittest.TestCase):
+    def test_m23_powercut_marker_targets_kernel_log_with_console_priority(self):
+        source = (HERE / "m23-quickstart.nix").read_text()
+        start = re.search(r'pkgs.writeShellScript "powercut-before-admin-once"\s*', source)
+        self.assertIsNotNone(start)
+        script, _ = nix_string(source, start.end())
+        marker = "agentos-test: rekey complete, admin setup held"
+        lines = [line.strip() for line in script.splitlines() if marker in line]
+        self.assertEqual(len(lines), 1)
+        self.assertIn("> /dev/kmsg", lines[0])
+        with tempfile.TemporaryDirectory() as root:
+            target = Path(root) / "kmsg"
+            subprocess.run(["sh", "-eu", "-c", lines[0].replace("/dev/kmsg", str(target))], check=True)
+            self.assertEqual(target.read_text(), "<2>" + marker + "\n")
+        self.assertIn('wait_console(m, "' + marker + '", timeout=300)', source)
+
     def test_no_bare_grep_q_after_a_pipe(self):
         bad = offenders()
         self.assertEqual(bad, [], "`cmd | grep -q P` fails under pipefail when grep exits at its first match and cmd "
