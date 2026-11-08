@@ -173,7 +173,7 @@ class FirstSetupTest(unittest.TestCase):
 
     def test_disk_rekey_hands_the_password_over_only_on_graphical_systems(self):
         layout = (ROOT / "os/modules/disk-layout.nix").read_text()
-        self.assertEqual(layout.count("/run/agentos-first-setup/password"), 2)   # fresh template and resumed re-key
+        self.assertEqual(len(re.findall(r'(?:> |cp "\$f" )/run/agentos-first-setup/password', layout)), 2)   # fresh template and resumed re-key
         self.assertIn("[ -e /etc/agentos/first-setup-handoff ]", layout)
         self.assertIn('environment.etc."agentos/first-setup-handoff" = lib.mkIf cfg.graphical', NIX)
 

@@ -6,7 +6,18 @@
 let
   installed = mkSystem (releaseModules ++ [
     "${nixpkgs}/nixos/modules/testing/test-instrumentation.nix"
-    ({ lib, ... }: { boot.kernelParams = [ "console=ttyS0" ]; users.users.root.hashedPasswordFile = lib.mkForce null; })
+    ({ lib, ... }: {
+      boot.kernelParams = [ "console=ttyS0" ];
+      users.users.root.hashedPasswordFile = lib.mkForce null;
+      systemd.services.agentos-first-setup.serviceConfig.ExecStartPre = pkgs.writeShellScript "powercut-before-admin-once" ''
+        if [ ! -e /var/lib/agentos-test-before-admin ]; then
+          touch /var/lib/agentos-test-before-admin
+          sync
+          echo "agentos-test: rekey complete, admin setup held" > /dev/console
+          sleep infinity
+        fi
+      '';
+    })
   ]);
   top = installed.config.system.build.toplevel;
   installer = pkgs.callPackage ./../packages/installer.nix { system = top; };
@@ -60,10 +71,10 @@ pkgs.testers.runNixOSTest {
         # as m6-qcow2: answer only a new passphrase request until the guest's test backdoor connects
         import select, socket
         marker = b"Spawning backdoor root shell..."
-        end, seen = _t.monotonic() + timeout, 0
+        end, seen, entries = _t.monotonic() + timeout, 0, 0
         while _t.monotonic() < end:
             if m.connected:
-                return
+                return entries
             if select.select([m.shell], [], [], 0)[0]:
                 data = m.shell.recv(65536, socket.MSG_PEEK)
                 if not data:
@@ -73,7 +84,7 @@ pkgs.testers.runNixOSTest {
                     if pos:
                         m.shell.recv(pos, socket.MSG_WAITALL)
                     m.connect()
-                    return
+                    return entries
                 discard = len(data) - len(marker) + 1
                 if discard > 0:
                     m.shell.recv(discard, socket.MSG_WAITALL)
@@ -81,6 +92,7 @@ pkgs.testers.runNixOSTest {
             new, seen = console[seen:], len(console)
             if re.search(r"Please enter passphrase|Starting password query on /dev/ttyS0", new):
                 m.send_console(text + "\n")
+                entries += 1
             _t.sleep(0.2)
         raise Exception("the encrypted disk did not unlock and boot")
 
@@ -102,6 +114,10 @@ pkgs.testers.runNixOSTest {
         wait_console(m, "template disk detected", timeout=900)
         wait_console(m, "Choose the password for this machine", timeout=120)
         feed(m, PW, "disk passphrase set")
+        wait_console(m, "agentos-test: rekey complete, admin setup held", timeout=300)
+        m.crash()
+        m.start()
+        assert unlock_existing(m, PW) == 1, "recovery required more than one password entry"
         m.wait_for_unit("agentos-machine.service", timeout=600)
         # first setup takes the handed-over password: nothing is typed on tty1
         m.wait_until_succeeds("test -e /var/lib/agentos-machine/first-boot-closed", timeout=300)
@@ -130,7 +146,7 @@ pkgs.testers.runNixOSTest {
     with subtest("next boot: the same password unlocks the disk; no setup again, straight to the login screen"), kill_on_fail():
         m.shutdown()
         m.start()
-        unlock_existing(m, PW)
+        assert unlock_existing(m, PW) == 1, "closed machine required more than one password entry"
         m.wait_for_unit("greetd.service", timeout=600)
         assert m.succeed("systemctl show -p ActiveState --value agentos-first-setup.service").strip() == "inactive"
         m.succeed("test -e /var/lib/agentos-machine/first-boot-closed")

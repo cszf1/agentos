@@ -367,6 +367,7 @@ in {
         TimeoutStartSec = "infinity";
         StateDirectory = "agentos-first-setup";
         StateDirectoryMode = "0700";
+        LimitCORE = 0;
       };
     };
 

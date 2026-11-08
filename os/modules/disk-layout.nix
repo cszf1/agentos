@@ -2,17 +2,30 @@
 # LUKS2 container (PARTLABEL agentos-luks) holding one Btrfs filesystem (label agentos-root) with fixed subvolumes.
 # Everything is addressed by label, so the base release closure is the same on every machine; the installer only
 # writes /etc/agentos/install.json (hashed as hardwareConfigHash) and never a per-machine Nix fragment.
-{ lib, pkgs, ... }:
+{ config, lib, pkgs, utils, ... }:
 let
   # Public, well-known key of the qcow2 TEMPLATE disk only (spec §19.1 "空白 qcow2"). It protects nothing: a template
   # carries no identity, account or data. First boot refuses to start machined until the operator has replaced it
-  # with their own passphrase. On an installed disk the key never matches and systemd-cryptsetup falls back to the passphrase prompt.
+  # with their own passphrase. The initrd keeps a verified unlock password only in /run for unfinished setup.
   templateKey = ./template-disk.key;
+  rootCryptUnit = "systemd-cryptsetup@${utils.escapeSystemdPath "agentos-root"}.service";
+  rootDeviceUnit = "${utils.escapeSystemdPath "/dev/disk/by-partlabel/agentos-luks"}.device";
   sub = name: extra: { device = "/dev/mapper/agentos-root"; fsType = "btrfs"; options = [ "subvol=${name}" "noatime" "compress=zstd:1" ] ++ extra; };
 in {
   boot.initrd.systemd.enable = true;   # scripted stage 1 is deprecated in 26.05; the installed and qcow2 disks use this one
-  boot.initrd.luks.devices."agentos-root" = { device = "/dev/disk/by-partlabel/agentos-luks"; allowDiscards = true; keyFile = "/etc/agentos-template-disk.key"; };
+  boot.initrd.luks.devices."agentos-root" = { device = "/dev/disk/by-partlabel/agentos-luks"; allowDiscards = true; keyFile = "/run/agentos-disk-unlock/key"; crypttabExtraOpts = [ "headless=yes" ]; };
   boot.initrd.systemd.contents."/etc/agentos-template-disk.key".source = templateKey;
+  boot.initrd.systemd.contents."/etc/agentos-first-setup-handoff" = lib.mkIf config.agentos.graphical { source = pkgs.emptyFile; };
+  boot.initrd.systemd.services.agentos-disk-unlock = {
+    requiredBy = [ rootCryptUnit ];
+    before = [ rootCryptUnit ];
+    requires = [ rootDeviceUnit ];
+    after = [ rootDeviceUnit ];
+    unitConfig.DefaultDependencies = false;
+    path = [ pkgs.cryptsetup pkgs.systemd pkgs.coreutils pkgs.util-linux ];
+    serviceConfig = { Type = "oneshot"; RemainAfterExit = true; UMask = "0077"; LimitCORE = 0; TimeoutStartSec = "infinity"; };
+    script = builtins.readFile ./disk-unlock.sh;
+  };
   environment.etc."agentos/template-disk.key".source = templateKey;
 
   # Template disk guard (review F01): before machined or the greeter start, a disk that still opens with the public
@@ -27,8 +40,14 @@ in {
     after = [ "local-fs.target" ];
     unitConfig.DefaultDependencies = false;
     path = [ pkgs.cryptsetup pkgs.systemd pkgs.coreutils pkgs.util-linux pkgs.gnused pkgs.gnugrep pkgs.btrfs-progs ];
-    serviceConfig = { Type = "oneshot"; RemainAfterExit = true; StandardOutput = "journal+console"; UMask = "0077"; TimeoutStartSec = "infinity"; };
+    serviceConfig = { Type = "oneshot"; RemainAfterExit = true; StandardOutput = "journal+console"; UMask = "0077"; TimeoutStartSec = "infinity"; LimitCORE = 0; };
     script = ''
+      unlock=/run/agentos-disk-unlock/key
+      f=""
+      trap 'rm -f "$unlock"; if [ -n "$f" ]; then shred -u "$f" 2>/dev/null || rm -f "$f"; fi' EXIT
+      if [ ! -e /etc/agentos/first-setup-handoff ] || [ -e /var/lib/agentos-machine/first-boot-closed ]; then
+        rm -f /run/agentos-first-setup/password
+      fi
       dev=/dev/disk/by-partlabel/agentos-luks
       key=/etc/agentos/template-disk.key
       [ -e "$dev" ] || exit 0
@@ -43,7 +62,6 @@ in {
       case "$label" in agentos-rekey-*) pending=1 ;; *) pending=$reenc ;; esac
       [ "$tpl" = 1 ] || [ "$pending" = 1 ] || exit 0
       f=$(mktemp -p /run agentos-newkey.XXXXXX)
-      trap 'shred -u "$f" 2>/dev/null || rm -f "$f"' EXIT
       if [ "$tpl" = 1 ]; then
         echo "agentos: template disk detected; a new disk passphrase is required"
         # Quick start (graphical VM images): this one password also becomes the administrator's (agentos-first-setup)
@@ -78,7 +96,12 @@ in {
       else
         echo "agentos: the first-boot disk re-key was interrupted; enter the disk passphrase to finish it"
         ok=0
+        if [ -s "$unlock" ] && cryptsetup open --test-passphrase --key-file="$unlock" "$real" 2>/dev/null; then
+          cp "$unlock" "$f"
+          ok=1
+        fi
         for i in 1 2 3 4 5; do
+          [ "$ok" = 0 ] || break
           a=$(systemd-ask-password --timeout=0 --no-tty "AgentOS disk passphrase (finishing the first-boot re-key):") || continue
           printf '%s' "$a" > "$f"; a=""
           if cryptsetup open --test-passphrase --key-file="$f" "$real" 2>/dev/null; then ok=1; break; fi
