@@ -326,7 +326,7 @@ class Initialization:
 
     def subvolumes(self):
         self.command("mkdir", "-p", self.top)
-        self.command("mount", "-o", "ro,nologreplay,subvolid=5", self.mapper, self.top)
+        self.command("mount", "-o", "ro,rescue=nologreplay,subvolid=5", self.mapper, self.top)
         try:
             names = set(os.listdir(self.top))
             if not names <= set(SUBVOLS):
