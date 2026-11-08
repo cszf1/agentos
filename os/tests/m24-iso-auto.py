@@ -218,10 +218,10 @@ with subtest("new-install journal reuses matching LUKS after power loss before i
     recovered.start()
     wait_console(recovered, r"agentos-auto-install: resuming initialization", timeout=900)
     wait_console(recovered, r"agentos-auto-install: (installed|failed)", timeout=3600)
-    log = recovered.get_console_log()
-    assert "agentos-auto-install: failed" not in log, log[-3000:]
-    assert "agentos-auto-install: reusing precommitted LUKS UUID" in log, "the resumed path did not verify its existing LUKS"
-    assert "agentos-auto-install: formatting precommitted LUKS" not in log, "the resumed path reformatted LUKS"
+    recovered_log = recovered.get_console_log()
+    assert "agentos-auto-install: failed" not in recovered_log, recovered_log[-3000:]
+    assert "agentos-auto-install: reusing precommitted LUKS UUID" in recovered_log, "the resumed path did not verify its existing LUKS"
+    assert "agentos-auto-install: formatting precommitted LUKS" not in recovered_log, "the resumed path reformatted LUKS"
     assert recovered.process is not None, "the resumed ISO VM has no QEMU process"
     assert recovered.process.wait(timeout=300) == 0, "the resumed installation did not restart the VM"
     recovered.wait_for_shutdown()
