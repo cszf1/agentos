@@ -144,6 +144,32 @@ class Harness:
 
 
 class InitializationTest(unittest.TestCase):
+    def test_reused_luks_is_announced_on_kernel_log_without_formatting(self):
+        with tempfile.TemporaryDirectory() as root:
+            h = Harness(root)
+            h.seed("luks-before", 3)
+            h.ops.kmsg = mock.Mock()
+            with mock.patch.object(h.p, "zero_except", side_effect=h.zeros):
+                h.run.run(b"public-faux-template")
+            h.ops.kmsg.assert_called_once_with(f"reusing precommitted LUKS UUID {h.spec['luks']}")
+            self.assertFalse(any(call[:2] == ("cryptsetup", "luksFormat") for call in h.calls))
+
+    def test_luks_format_is_announced_on_kernel_log_before_the_command(self):
+        with tempfile.TemporaryDirectory() as root:
+            h = Harness(root)
+            h.seed("luks-before", 2)
+            h.ops.kmsg = mock.Mock()
+            message = f"formatting precommitted LUKS UUID {h.spec['luks']}"
+            def command(*args, **kwargs):
+                if args[:2] == ("cryptsetup", "luksFormat"):
+                    h.ops.kmsg.assert_called_once_with(message)
+                return h.command(*args, **kwargs)
+            h.ops.sh = command
+            with mock.patch.object(h.p, "zero_except", side_effect=h.zeros):
+                h.run.run(b"public-faux-template")
+            h.ops.kmsg.assert_called_once_with(message)
+            self.assertEqual(sum(call[:2] == ("cryptsetup", "luksFormat") for call in h.calls), 1)
+
     def test_each_before_and_after_boundary_resumes_only_missing_writes(self):
         cases = [(phase, observed) for phase, allowed in module().initialization.ALLOWED.items() for observed in sorted(allowed)]
         for phase, observed in cases:

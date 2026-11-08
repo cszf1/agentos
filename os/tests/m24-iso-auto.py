@@ -207,7 +207,11 @@ with subtest("new-install journal reuses matching LUKS after power loss before i
     interrupted = create_machine(fault_cmd, name="init-powercut")
     extra.append(interrupted)
     interrupted.start()
-    wait_console(interrupted, r"agentos-auto-install: fault window install.init.luks-written", timeout=3600)
+    interrupted_log = wait_console(interrupted, r"agentos-auto-install: fault window install.init.luks-written", timeout=3600)
+    formatting = "agentos-auto-install: formatting precommitted LUKS UUID"
+    fault = "agentos-auto-install: fault window install.init.luks-written"
+    assert formatting in interrupted_log, "the interrupted run did not announce LUKS formatting on serial"
+    assert interrupted_log.index(formatting) < interrupted_log.index(fault), "formatting was not observed before the fault"
     interrupted.crash()
     recovered = create_machine(recovery_cmd, name="init-resume")
     extra.append(recovered)
@@ -216,8 +220,8 @@ with subtest("new-install journal reuses matching LUKS after power loss before i
     wait_console(recovered, r"agentos-auto-install: (installed|failed)", timeout=3600)
     log = recovered.get_console_log()
     assert "agentos-auto-install: failed" not in log, log[-3000:]
-    assert "reusing precommitted LUKS UUID" in log, "the resumed path did not verify its existing LUKS"
-    assert "run cryptsetup luksFormat" not in log, "the resumed path reformatted LUKS"
+    assert "agentos-auto-install: reusing precommitted LUKS UUID" in log, "the resumed path did not verify its existing LUKS"
+    assert "agentos-auto-install: formatting precommitted LUKS" not in log, "the resumed path reformatted LUKS"
     assert recovered.process is not None, "the resumed ISO VM has no QEMU process"
     assert recovered.process.wait(timeout=300) == 0, "the resumed installation did not restart the VM"
     recovered.wait_for_shutdown()

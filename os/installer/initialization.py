@@ -363,6 +363,7 @@ class Initialization:
         if not luks:
             return 2
         self.ops.progress(f"reusing precommitted LUKS UUID {s['luks']}")
+        self.ops.kmsg(f"reusing precommitted LUKS UUID {s['luks']}")
         values = self.filesystem(self.mapper)
         if values.get("TYPE") != "btrfs" or values.get("UUID", "").lower() != s["btrfs"]:
             if not values.get("TYPE") and self.raw_blank(self.p2, s["luksSize"], s["dataOffset"]):
@@ -389,6 +390,7 @@ class Initialization:
             if not self.esp():
                 raise Unsafe("new ESP did not match the precommit")
         elif stage == "luks":
+            self.ops.kmsg(f"formatting precommitted LUKS UUID {s['luks']}")
             self.command("cryptsetup", "luksFormat", "--type", "luks2", "--batch-mode", "--uuid", s["luks"],
                          "--offset", str(s["dataOffset"] // 512), "--pbkdf", "argon2id", "--pbkdf-force-iterations", "4",
                          "--pbkdf-memory", "65536", "--pbkdf-parallel", "1", "--key-file=-", self.p2, input=password)
