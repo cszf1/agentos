@@ -29,7 +29,14 @@ changed identity and a disk below 64 GiB are refused. After a crash `run` inspec
 on the ESP; it never re-formats a different disk with the same name. The system closure is copied from the ISO's
 own store (no network). The LUKS passphrase is read from stdin only, never from argv, and is not written anywhere.
 """
-import hashlib, json, os, re, shlex, subprocess, sys, time, uuid
+import contextlib, fcntl, hashlib, importlib.util, json, os, re, shlex, subprocess, sys, time, types, uuid
+
+_initializer_path = "@INITIALIZER@"
+if _initializer_path.startswith("@"):
+    _initializer_path = os.path.join(os.path.dirname(__file__), "initialization.py")
+_initializer_spec = importlib.util.spec_from_file_location("agentos_initialization", _initializer_path)
+initialization = importlib.util.module_from_spec(_initializer_spec)
+_initializer_spec.loader.exec_module(initialization)
 
 STATE_DIR = "/run/agentos-install"
 STATE = f"{STATE_DIR}/state.json"
@@ -58,6 +65,28 @@ def progress(msg):
 # Every external command has a deadline, so a stuck tool fails the install naming itself instead of hanging it.
 SH_TIMEOUT = int(os.environ.get("AGENTOS_INSTALL_CMD_TIMEOUT", "600"))
 COPY_TIMEOUT = int(os.environ.get("AGENTOS_INSTALL_COPY_TIMEOUT", "5400"))
+INSTALL_LOCK_FD = None
+
+
+@contextlib.contextmanager
+def installer_lock(writing):
+    global INSTALL_LOCK_FD
+    if not writing:
+        yield
+        return
+    os.makedirs(STATE_DIR, mode=0o700, exist_ok=True)
+    previous = INSTALL_LOCK_FD
+    fd = os.open(f"{STATE_DIR}/lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise Refuse("another installer or its disk tool is still running; nothing new was written") from None
+        INSTALL_LOCK_FD = fd
+        yield
+    finally:
+        os.close(fd)
+        INSTALL_LOCK_FD = previous
 
 
 def sh(*a, input=None, check=True, timeout=None, stream=False, env=None):
@@ -65,7 +94,8 @@ def sh(*a, input=None, check=True, timeout=None, stream=False, env=None):
     lim = timeout or SH_TIMEOUT
     progress(f"run {' '.join(a[:3])}{' …' if len(a) > 3 else ''}")
     try:
-        r = subprocess.run(list(a), input=input, stdout=subprocess.PIPE, stderr=None if stream else subprocess.PIPE, timeout=lim, env=env)
+        r = subprocess.run(list(a), input=input, stdout=subprocess.PIPE, stderr=None if stream else subprocess.PIPE, timeout=lim, env=env,
+                           pass_fds=() if INSTALL_LOCK_FD is None else (INSTALL_LOCK_FD,))
     except subprocess.TimeoutExpired:
         progress(f"TIMEOUT {a[0]} after {lim}s")
         raise Refuse(f"{a[0]} did not finish within {lim}s")
@@ -239,6 +269,12 @@ def cmd_plan(args):
         plan["quick"] = True
         plan["layout"] = dict(plan["layout"], luks2=f"{gib} GiB (password set and grown to the disk at first boot)")
         plan["templateLuksGiB"] = gib
+    if plan.get("quick") and os.path.dirname(disk) == "/dev/disk/by-id" and (d["serial"] or d["wwn"]):
+        try:
+            sector = int(sh("blockdev", "--getss", d["path"]).strip())
+            plan["initialization"] = initialization.plan_spec(d, plan["templateLuksGiB"], sector)
+        except (ValueError, TypeError):
+            raise Refuse("unsupported new-install geometry; inspect with: " + init_hint(disk)) from None
     st = {"state": "plan_ready", "plan": plan, "planHash": phash(plan), "updatedAt": time.time()}
     save(st)
     return {"planHash": st["planHash"], "plan": plan, "confirmWith": f"type {plan['confirmToken']} (the disk serial, else its WWN, else no-serial:<size in bytes>)"}
@@ -286,6 +322,13 @@ ESP_STATE = "EFI/agentos/install-state.json"
 
 
 def esp_write_state(st):
+    try:
+        _esp_write_state(st)
+    except (OSError, ValueError, KeyError, TypeError):
+        raise Refuse("cannot durably persist the target ESP checkpoint") from None
+
+
+def _esp_write_state(st):
     """Keep the install state on the target ESP from partitioning on (review F05): /run is gone after a power cut.
     No secret is in it (the passphrase never is). The template build keeps none (its ESP must be reproducible)."""
     if st["plan"].get("template"):
@@ -293,28 +336,49 @@ def esp_write_state(st):
     dev = os.path.realpath(st["plan"]["disk"])
     esp = part(dev, 1)
     if not os.path.exists(esp):
-        return
+        raise Refuse("cannot persist checkpoint: target ESP is missing")
     body = json.dumps({"formatVersion": 1, "kind": "agentos-install-state", **{k: st[k] for k in st if k not in ("lastError",)}}, indent=1)
     mounted_here = subprocess.run(["mountpoint", "-q", f"{MNT}/boot"]).returncode == 0
-    root = f"{MNT}/boot" if mounted_here else "/run/agentos-install/esp"
+    if mounted_here:
+        source = sh("findmnt", "-n", "-o", "SOURCE", "--target", f"{MNT}/boot").strip()
+        if os.path.realpath(source) != esp:
+            raise Refuse("checkpoint mount is not the target ESP")
+    root = f"{MNT}/boot" if mounted_here else f"{STATE_DIR}/esp"
     if not mounted_here:
         os.makedirs(root, exist_ok=True)
         if subprocess.run(["mount", esp, root], capture_output=True).returncode != 0:
-            return
+            raise Refuse("cannot mount target ESP to persist checkpoint")
     try:
         os.makedirs(f"{root}/EFI/agentos", exist_ok=True)
+        if st["plan"].get("initialization"):
+            marker_path = f"{root}/EFI/agentos/install.json"
+            if not os.path.exists(marker_path):
+                with open(marker_path, "x") as marker:
+                    json.dump(esp_marker(st), marker)
+                    marker.flush()
+                    os.fsync(marker.fileno())
+            else:
+                with open(marker_path) as stream:
+                    marker = json.load(stream)
+                if not isinstance(marker, dict):
+                    raise Refuse("invalid initialization marker")
+                if any(marker.get(key) != esp_marker(st)[key] for key in ("installId", "planHash")):
+                    raise Refuse("foreign marker on target ESP")
         tmp = f"{root}/{ESP_STATE}.tmp"
         with open(tmp, "w") as f:
             f.write(body)
             f.flush()
             os.fsync(f.fileno())
         os.replace(tmp, f"{root}/{ESP_STATE}")
-        fd = os.open(f"{root}/EFI/agentos", os.O_RDONLY)
-        os.fsync(fd)
-        os.close(fd)
+        for directory in (f"{root}/EFI/agentos", f"{root}/EFI", root):
+            fd = os.open(directory, os.O_RDONLY)
+            try:
+                os.fsync(fd)
+            finally:
+                os.close(fd)
     finally:
-        if not mounted_here:
-            subprocess.run(["umount", root])
+        if not mounted_here and subprocess.run(["umount", root]).returncode != 0:
+            raise Refuse("cannot flush/unmount target ESP checkpoint")
 
 
 def step(st, name):
@@ -393,6 +457,72 @@ def resume_check(st):
         subprocess.run(["umount", "/run/agentos-install/esp"])
 
 
+def init_protocol(st):
+    ops = types.SimpleNamespace(sh=sh, find=find, disks=disks, phash=phash, SYSTEM=SYSTEM,
+                                medium_identity=medium_identity, save=save, esp_write_state=esp_write_state,
+                                check_init_esp=check_init_esp, wait_for=wait_for, progress=progress, kmsg=kmsg, time=time)
+    return initialization.Initialization(st, ops)
+
+
+def init_hint(disk):
+    if os.path.dirname(disk) == "/dev/disk/by-id":
+        return shlex.join(["sudo", "agentos-install", "recover", "--disk", disk])
+    return shlex.join(["sudo", "env", "AGENTOS_INSTALL_ALLOW_PATH=1", "agentos-install", "recover", "--disk", disk])
+
+
+INIT_ESP_RO = "/run/agentos-install/init-esp-ro"
+
+
+def check_init_checkpoint(saved, st):
+    if not isinstance(saved, dict):
+        raise Refuse("invalid initialization ESP checkpoint")
+    old, current = saved.get("initCheckpoint"), st.get("initCheckpoint")
+    if not isinstance(old, dict) or not isinstance(current, dict):
+        raise Refuse("missing initialization ESP checkpoint identity")
+    try:
+        initialization.decode(initialization.encode(old))
+    except initialization.Unsafe:
+        raise Refuse("invalid initialization ESP checkpoint") from None
+    if old != current and (initialization.digest(old) != current.get("previous") or old["sequence"] + 1 != current["sequence"]):
+        raise Refuse("ESP and raw initialization checkpoints disagree")
+    if saved.get("planHash") != st["planHash"] or phash(saved["plan"]) != st["planHash"]:
+        raise Refuse("ESP plan does not match initialization checkpoint")
+
+
+def check_init_esp(st, esp):
+    root = INIT_ESP_RO
+    sh("mkdir", "-p", root)
+    sh("mount", "-o", "ro", esp, root)
+    try:
+        allowed = {"EFI", "EFI/agentos", "EFI/agentos/install.json", ESP_STATE}
+        for directory, dirs, files in os.walk(root):
+            for name in dirs + files:
+                rel = os.path.relpath(os.path.join(directory, name), root)
+                if rel not in allowed:
+                    raise Refuse("unknown data or torn checkpoint on initialization ESP")
+        marker_path = f"{root}/EFI/agentos/install.json"
+        if os.path.exists(marker_path):
+            with open(marker_path) as stream:
+                marker = json.load(stream)
+            if not isinstance(marker, dict):
+                raise Refuse("invalid initialization marker")
+            if any(marker.get(key) != esp_marker(st)[key] for key in ("installId", "planHash")):
+                raise Refuse("foreign initialization marker")
+        state_path = f"{root}/{ESP_STATE}"
+        if os.path.exists(state_path):
+            if os.path.getsize(state_path) > 2 * initialization.SLOT_SIZE:
+                raise Refuse("oversized initialization ESP checkpoint")
+            with open(state_path) as stream:
+                saved = json.load(stream)
+            check_init_checkpoint(saved, st)
+        elif st["initCheckpoint"]["phase"] not in ("esp-before", "esp-after"):
+            raise Refuse("initialization ESP checkpoint disappeared")
+    except (ValueError, KeyError, TypeError):
+        raise Refuse("torn initialization ESP checkpoint") from None
+    finally:
+        sh("umount", root)
+
+
 PARTITIONING_INTERRUPTED = (
     "installation was interrupted during partitioning; it is NOT a completed installation. "
     "Automatic resume is unsafe because LUKS or the filesystem may already be initialized. "
@@ -405,8 +535,11 @@ def cmd_run(args):
     st = load()
     if st["state"] not in ("confirmed", "partitioning", "copying", "configuring", "verifying"):
         raise Refuse(f"state is {st['state']}; plan and confirm first")
-    if st["state"] == "partitioning":
+    new_init = bool(st.get("plan", {}).get("initialization"))
+    if st["state"] == "partitioning" and not new_init:
         raise Refuse(PARTITIONING_INTERRUPTED)
+    if new_init and "--passphrase-stdin" in args:
+        raise Refuse("version 1 quick initialization requires the public template key; omit --passphrase-stdin")
     if st["plan"].get("quick") and "--passphrase-stdin" not in args:
         with open(TEMPLATE_KEY, "rb") as f:
             pw = f.read().rstrip(b"\n")
@@ -415,7 +548,16 @@ def cmd_run(args):
     if len(pw) < 8:
         raise Refuse("a LUKS passphrase of at least 8 characters is required on stdin")
     dev = os.path.realpath(st["plan"]["disk"])
-    if st["state"] == "confirmed":
+    if new_init and st["state"] in ("confirmed", "partitioning"):
+        fresh = st["state"] == "confirmed"
+        if fresh:
+            recheck(st)
+        try:
+            init_protocol(st).run(pw, fresh=fresh)
+        except initialization.Unsafe as error:
+            raise Refuse(f"initialization refused: {error}. Inspect with: {init_hint(st['plan']['disk'])}") from None
+        step(st, "copying")
+    elif st["state"] == "confirmed":
         recheck(st)
         step(st, "partitioning")
         sh("wipefs", "-a", dev)
@@ -446,11 +588,29 @@ def cmd_run(args):
             kdf += ["--pbkdf-force-iterations", "4", "--pbkdf-memory", "65536", "--pbkdf-parallel", "1"]
         sh("cryptsetup", "luksFormat", "--type", "luks2", "--batch-mode", *kdf, "--key-file=-", part(dev, 2), input=pw)
     else:
+        if new_init:
+            try:
+                protocol = init_protocol(st)
+                protocol.bind()
+                if not protocol.gpt():
+                    raise initialization.Unsafe("precommitted GPT is missing")
+                spec = st["plan"]["initialization"]
+                for path, kind, value in ((part(dev, 1), "vfat", spec["fat"][:4] + "-" + spec["fat"][4:]),
+                                           (part(dev, 2), "crypto_LUKS", spec["luks"])):
+                    actual = protocol.filesystem(path)
+                    if actual.get("TYPE") != kind or actual.get("UUID", "").lower() != value:
+                        raise initialization.Unsafe("copy target filesystem identity changed")
+            except initialization.Unsafe as error:
+                raise Refuse(f"initialization refused: {error}. Inspect with: {init_hint(st['plan']['disk'])}") from None
         if not resume_check(st):
             raise Refuse("resume refused: the disk does not carry this install's id (different disk or wiped); start a new plan")
     if not os.path.exists("/dev/mapper/agentos-root"):
         sh("cryptsetup", "open", "--key-file=-", part(dev, 2), "agentos-root", input=pw)
     pw = b"\0" * len(pw)
+    if new_init:
+        actual = init_protocol(st).filesystem("/dev/mapper/agentos-root")
+        if actual.get("TYPE") != "btrfs" or actual.get("UUID", "").lower() != st["plan"]["initialization"]["btrfs"]:
+            raise Refuse("copy target Btrfs identity changed; refusing to mount it")
     if st["state"] == "partitioning":
         sh("mkfs.btrfs", "-f", "-L", "agentos-root", "/dev/mapper/agentos-root")
         sh("mkdir", "-p", "/run/agentos-install/top")
@@ -471,6 +631,14 @@ def cmd_run(args):
         sh("mkdir", "-p", f"{MNT}/boot")
         sh("mount", "-o", "umask=0077", part(dev, 1), f"{MNT}/boot")
     if st["state"] == "copying":
+        if new_init:
+            try:
+                checkpoint = initialization.read_journal(dev)
+            except initialization.Unsafe as error:
+                raise Refuse(f"payload copy refused: {error}. Inspect with: {init_hint(st['plan']['disk'])}") from None
+            if not checkpoint or checkpoint["phase"] != "copying" or checkpoint["planHash"] != st["planHash"]:
+                raise Refuse("payload copy refused: no durable initialization copying barrier")
+        esp_write_state(st)
         # Offline: the closure comes from the ISO's store; no substituters, no channel.
         sh("nixos-install", "--system", SYSTEM, "--root", MNT, "--no-root-passwd", "--no-channel-copy", "--option", "substituters", "",
            timeout=COPY_TIMEOUT, stream=True)
@@ -550,7 +718,9 @@ def esp_read(dev):
     try:
         def rd(p):
             try:
-                return json.load(open(f"{mp}/{p}"))
+                with open(f"{mp}/{p}") as stream:
+                    value = json.load(stream)
+                return value if isinstance(value, dict) else None
             except Exception:
                 return None
         return rd("EFI/agentos/install.json"), rd(ESP_STATE)
@@ -572,6 +742,17 @@ def cmd_recover(args):
     if not disk.startswith("/dev/disk/by-id/") and not os.environ.get("AGENTOS_INSTALL_ALLOW_PATH"):
         raise Refuse("name the target by /dev/disk/by-id/…")
     cur = find(disk)
+    try:
+        journal = initialization.read_journal(cur["path"])
+    except initialization.Unsafe as error:
+        if "--resume" not in args:
+            return {"recover": {"disk": cur["path"], "checkpointError": str(error)}, "readOnly": True, "automaticResume": False}
+        raise Refuse(f"initialization refused: {error}; nothing was written. Inspect with: {init_hint(disk)}") from None
+    if journal:
+        try:
+            return recover_initialization(args, disk, cur, journal)
+        except (Refuse, initialization.Unsafe, OSError, ValueError, KeyError, TypeError) as error:
+            raise Refuse(f"initialization refused: {error}. Inspect with: {init_hint(disk)}") from None
     marker, st = esp_read(cur["path"])
     found = {"disk": cur["path"], "marker": marker is not None, "state": (st or {}).get("state"), "installId": (marker or {}).get("installId")}
     if "--resume" not in args:
@@ -613,6 +794,34 @@ def cmd_recover(args):
     st["recoveredAt"] = time.time()
     save(st)
     return {"recover": found, "readOnly": False, "state": st["state"], "next": "agentos-install run --passphrase-stdin"}
+
+
+def recover_initialization(args, disk, cur, journal):
+    st = initialization.adopt(journal)
+    found = {"disk": cur["path"], "recordedTarget": st["plan"]["disk"], "state": st["state"], "phase": journal["phase"], "installId": st["plan"]["installId"]}
+    marker, esp_state = esp_read(cur["path"]) if journal["phase"] == "copying" else (None, None)
+    completed = marker and marker.get("state") == "installed" and marker.get("planHash") == st["planHash"] and marker.get("installId") == st["plan"]["installId"]
+    if completed:
+        if "--resume" in args:
+            raise Refuse("this installation is complete; nothing to resume")
+        return {"recover": dict(found, state="installed"), "readOnly": True}
+    if "--resume" not in args:
+        return {"recover": found, "readOnly": True}
+    if disk != st["plan"]["disk"]:
+        raise Refuse("resume requires the checkpoint's stable by-id name; inspect the recorded plan")
+    try:
+        init_protocol(st).bind()
+    except initialization.Unsafe as error:
+        raise Refuse(f"initialization refused: {error}") from None
+    if journal["phase"] == "copying":
+        if not esp_state:
+            raise Refuse("copying checkpoint is missing from the ESP; refusing")
+        try:
+            check_init_checkpoint(esp_state, st)
+        except (ValueError, KeyError, TypeError):
+            raise Refuse("invalid initialization ESP checkpoint") from None
+    save(st)
+    return {"recover": found, "readOnly": False, "state": st["state"], "next": "sudo agentos-install run"}
 
 
 # ---- auto: the ISO's console at boot (os/flake.nix, agentos-auto-install.service on tty1) ----
@@ -753,6 +962,33 @@ def cmd_auto(args):
         kmsg(f"stopped: {len(ds)} disks")
         return 1
     d = ds[0]
+    journal = None
+    try:
+        journal = initialization.read_journal(d["path"])
+        if journal:
+            target = journal["plan"]["disk"]
+            if os.path.realpath(target) != d["path"]:
+                raise Refuse("the checkpoint's by-id name resolves to a different disk")
+            init_protocol(initialization.adopt(journal)).bind()
+            if journal["phase"] == "copying":
+                marker, _ = esp_read(d["path"])
+                if marker and marker.get("state") == "installed" and marker.get("planHash") == journal["planHash"] and marker.get("installId") == journal["plan"]["installId"]:
+                    say(f"AgentOS is already installed on {d['path']}. Nothing was changed.")
+                    say("Disconnect this ISO from the VM's CD/DVD drive and restart the VM to start AgentOS.")
+                    kmsg("stopped: AgentOS already installed")
+                    return 0
+                raise Refuse("payload copying may have started; inspect and explicitly recover --resume")
+            say(f"An interrupted new AgentOS initialization was found on {d['path']}; verifying its precommitted identities.")
+            cmd_recover({"--disk": target, "--resume": True})
+            kmsg("resuming initialization")
+            result = cmd_run({})
+            return finish_auto(args, target, result)
+    except (initialization.Unsafe, Refuse) as error:
+        say(f"Initialization stopped without a new destructive plan: {error}")
+        target = "/dev/disk/by-id/" + sorted(d["byId"])[0] if d["byId"] else d["path"]
+        say("Inspect without writing: " + init_hint(target))
+        kmsg("stopped: initialization proof unavailable")
+        return 1
     if "agentos-luks" in d["partitions"]:
         marker, state = esp_read(d["path"])
         if marker and marker.get("state") == "installed" and marker.get("installId") and marker.get("planHash"):
@@ -827,6 +1063,10 @@ def cmd_auto(args):
             say(line)
         kmsg(f"failed: {e}")
         return 1
+    return finish_auto(args, target, r)
+
+
+def finish_auto(args, target, r):
     loader = os.path.exists(f"{MNT}/boot/EFI/systemd/systemd-bootx64.efi")
     subprocess.run(["sync"], check=False)
     subprocess.run(["umount", "-R", MNT], check=False)
@@ -864,6 +1104,15 @@ def main():
                 continue
             args[a[i]] = True
         i += 1
+    try:
+        with installer_lock(cmd in ("auto", "plan", "confirm", "run") or (cmd == "recover" and "--resume" in args)):
+            dispatch(cmd, args)
+    except Refuse as error:
+        print(json.dumps({"ok": False, "error": str(error)}))
+        sys.exit(1)
+
+
+def dispatch(cmd, args):
     if cmd == "auto":
         sys.exit(cmd_auto(args))
     try:
@@ -884,10 +1133,13 @@ def main():
         print(json.dumps({"ok": True, **out}))
     except Refuse as e:
         st = load()
-        st["lastError"] = str(e)
+        message = str(e)
+        if st.get("plan", {}).get("initialization") and "Inspect with:" not in message:
+            message += ". Inspect with: " + init_hint(st["plan"]["disk"])
+        st["lastError"] = message
         if st.get("state") not in (None, "inspecting"):
             save(st)
-        print(json.dumps({"ok": False, "error": str(e), "state": st.get("state")}))
+        print(json.dumps({"ok": False, "error": message, "state": st.get("state")}))
         sys.exit(1)
 
 

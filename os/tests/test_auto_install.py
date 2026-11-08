@@ -32,6 +32,7 @@ def disk(path="/dev/vda", size=64 * GIB, parts=(), problems=(), byid=("virtio-A1
 class AutoInstallTest(unittest.TestCase):
     def setUp(self):
         self.m = load()
+        self.m.initialization.read_journal = lambda dev: None
         self.calls = []
         self.m.logger = lambda msg: None
         self.m.kmsg = lambda msg: self.calls.append(("kmsg", msg))
@@ -142,6 +143,7 @@ class InterruptedInstallTest(unittest.TestCase):
             m.cmd_run({})
         m.sh.assert_not_called()
         m.find = lambda p: disk()
+        m.initialization.read_journal = lambda dev: None
         m.esp_read = lambda dev: ({"installId": "i"}, {"kind": "agentos-install-state", "state": "partitioning"})
         with self.assertRaisesRegex(m.Refuse, "NEW destructive plan"):
             m.cmd_recover({"--disk": "/dev/disk/by-id/virtio-A1", "--resume": True})
@@ -167,6 +169,7 @@ class RecoveryHintTest(unittest.TestCase):
         for target, expected in cases:
             with self.subTest(target=expected), tempfile.TemporaryDirectory() as tmp:
                 m = load()
+                m.initialization.read_journal = lambda dev: None
                 m.disks = lambda: [target]
                 m.esp_read = lambda dev: (None, {"state": "copying"})
                 m.logger = m.kmsg = lambda msg: None
@@ -189,7 +192,7 @@ class RecoveryHintTest(unittest.TestCase):
                                f"m.STATE_DIR = {tmp!r}\nm.STATE = {str(root / 'state.json')!r}\n" +
                                f"target = {target!r}\n" +
                                f"def find(p):\n    assert p == {expected!r}, p\n    return target\n" +
-                               "m.find = find\nm.esp_read = lambda dev: (None, {'state': 'copying'})\nm.main()\n")
+                               "m.find = find\nm.initialization.read_journal = lambda dev: None\nm.esp_read = lambda dev: (None, {'state': 'copying'})\nm.main()\n")
                 cli.chmod(0o700)
                 env = dict(os.environ, PATH=tmp + os.pathsep + os.environ.get("PATH", ""))
                 env.pop("AGENTOS_INSTALL_ALLOW_PATH", None)
@@ -305,6 +308,10 @@ class QuickPlanTest(unittest.TestCase):
             m.STATE = f"{d}/state.json"
             m.find = lambda p: disk()
             m.medium_identity = lambda: "sha256:m"
+            def sector_probe(*args, **kwargs):
+                self.assertEqual(args, ("blockdev", "--getss", "/dev/vda"))
+                return "512\n"
+            m.sh = sector_probe
             os.environ.pop("AGENTOS_INSTALL_TEMPLATE_BUILD", None)
             a = m.cmd_plan({"--disk": "/dev/disk/by-id/virtio-A1", "--quick": True, "--timezone": "UTC"})
             b = m.cmd_plan({"--disk": "/dev/disk/by-id/virtio-A1", "--quick": True, "--timezone": "UTC"})
@@ -312,6 +319,9 @@ class QuickPlanTest(unittest.TestCase):
             self.assertNotIn("template", a["plan"])
             self.assertEqual(a["plan"]["templateLuksGiB"], 16)
             self.assertNotEqual(a["plan"]["installId"], b["plan"]["installId"])
+            for identifier in ("gpt", "espPart", "luksPart", "luks", "btrfs", "fat"):
+                self.assertNotEqual(a["plan"]["initialization"][identifier], b["plan"]["initialization"][identifier])
+            self.assertEqual(a["plan"]["initialization"]["version"], 1)
             os.unlink(key)
             with self.assertRaises(m.Refuse):
                 m.cmd_plan({"--disk": "/dev/disk/by-id/virtio-A1", "--quick": True, "--timezone": "UTC"})

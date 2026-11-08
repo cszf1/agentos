@@ -195,3 +195,29 @@ with subtest("next start: the same password once at the disk unlock, then the lo
     target.send_monitor_command("system_powerdown")
     if not powered_off(target, 300):
         target.crash()
+
+with subtest("new-install journal reuses matching LUKS after power loss before its after-checkpoint"), kill_on_fail():
+    recovery_disk = os.path.join(tmp, "init-recovery.qcow2")
+    recovery_vars = os.path.join(tmp, "init-recovery-vars.fd")
+    subprocess.run([QEMU_IMG, "create", "-f", "qcow2", recovery_disk, "64G"], check=True)
+    shutil.copy(OVMF_VARS, recovery_vars)
+    os.chmod(recovery_vars, 0o644)
+    recovery_cmd = iso_cmd.replace(f"file={disk},", f"file={recovery_disk},").replace(f"file={vars_} ", f"file={recovery_vars} ")
+    fault_cmd = recovery_cmd.replace(f"-append '{append}'", f"-append '{append} agentos.install-fault=install.init.luks-written'")
+    interrupted = create_machine(fault_cmd, name="init-powercut")
+    extra.append(interrupted)
+    interrupted.start()
+    wait_console(interrupted, r"agentos-auto-install: fault window install.init.luks-written", timeout=3600)
+    interrupted.crash()
+    recovered = create_machine(recovery_cmd, name="init-resume")
+    extra.append(recovered)
+    recovered.start()
+    wait_console(recovered, r"agentos-auto-install: resuming initialization", timeout=900)
+    wait_console(recovered, r"agentos-auto-install: (installed|failed)", timeout=3600)
+    log = recovered.get_console_log()
+    assert "agentos-auto-install: failed" not in log, log[-3000:]
+    assert "reusing precommitted LUKS UUID" in log, "the resumed path did not verify its existing LUKS"
+    assert "run cryptsetup luksFormat" not in log, "the resumed path reformatted LUKS"
+    assert recovered.process is not None, "the resumed ISO VM has no QEMU process"
+    assert recovered.process.wait(timeout=300) == 0, "the resumed installation did not restart the VM"
+    recovered.wait_for_shutdown()
