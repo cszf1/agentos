@@ -174,6 +174,7 @@ class ShellController : public QObject, public RequestSink {
   /** Administrator: create a machine user. The new user's initial password travels only in this one local request's
    *  `password` field (the gateway puts it in machined's one-time secret store); the plan is confirmed on the trusted
    *  layer with the administrator's own password. */
+  Q_INVOKABLE bool passwordValid(const QString& password) const;
   Q_INVOKABLE void createUser(const QString& loginName, const QString& role, const QString& initialPassword);
   /** The body actually sent for the last machine plan, with any secret replaced (tests only). */
   QString lastPlanSentForTest() const { return lastPlanSent_; }

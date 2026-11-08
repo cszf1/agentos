@@ -1,11 +1,11 @@
-{ lib, rustPlatform, src, pkg-config, dbus, linux-pam, systemdLibs, libbpf, nftables, llvmPackages, linuxHeaders }:
+{ lib, rustPlatform, src, pkg-config, dbus, linux-pam, systemdLibs, libbpf, nftables, llvmPackages, linuxHeaders, libxcrypt }:
 rustPlatform.buildRustPackage {
   pname = "agentos-native";
   version = "1.0.0";
   src = "${src}/native";
   cargoLock.lockFile = "${src}/native/Cargo.lock";
   nativeBuildInputs = [ pkg-config llvmPackages.clang-unwrapped ];
-  buildInputs = [ dbus linux-pam systemdLibs libbpf nftables ];
+  buildInputs = [ dbus linux-pam systemdLibs libbpf nftables libxcrypt ];
   # Contracts and fixtures the crates include at compile time live outside native/.
   postUnpack = ''
     mkdir -p docs fixtures

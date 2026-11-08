@@ -171,7 +171,8 @@ fn main() {
             }
             let mut pw = String::new();
             std::io::stdin().read_to_string(&mut pw).unwrap_or_else(|_| die("password on stdin"));
-            let pw = pw.trim_end_matches('\n').to_string();
+            let pw = pw.strip_suffix('\n').unwrap_or(&pw).to_string();
+            agentos_machine::sys::validate_password(pw.as_bytes()).unwrap_or_else(|_| die("password must be 1..511 UTF-8 bytes without newline or NUL; colons are allowed"));
             let pid = std::fs::read_to_string("/var/lib/agentos-machine/first-boot-admin").ok().map(|s| s.trim().to_string()).unwrap_or_else(|| {
                 let id = uuid();
                 let _ = agentos_machine::dir::write_private(std::path::Path::new("/var/lib/agentos-machine/first-boot-admin"), id.as_bytes());
@@ -1173,11 +1174,12 @@ fn admin_client(a: &[String]) {
     if plan["admin"] == true {
         let pw = if has("--password-stdin") {
             let mut s = String::new();
-            std::io::stdin().read_line(&mut s).unwrap_or_else(|_| die("password on stdin"));
-            s.trim_end_matches(['\n', '\r']).to_string()
+            std::io::stdin().read_to_string(&mut s).unwrap_or_else(|_| die("password on stdin"));
+            s.strip_suffix('\n').unwrap_or(&s).to_string()
         } else {
-            read_password("Administrator password: ")
+            read_password("Administrator password (maximum 511 UTF-8 bytes): ")
         };
+        agentos_machine::sys::validate_password(pw.as_bytes()).unwrap_or_else(|_| die("password must be 1..511 UTF-8 bytes without newline or NUL; colons are allowed"));
         body["password"] = json!(pw);
     } else if !has("--yes") {
         eprint!("Confirm {kind}? [y/N] ");
@@ -1239,7 +1241,7 @@ fn read_password(prompt: &str) -> String {
         eprintln!();
     }
     r.unwrap_or_else(|_| die("no password"));
-    s.trim_end_matches(['\n', '\r']).to_string()
+    s.strip_suffix('\n').unwrap_or(&s).to_string()
 }
 
 /// native-rpc/1 over the gateway socket: 4-byte big-endian length + JSON (spec §9.2).

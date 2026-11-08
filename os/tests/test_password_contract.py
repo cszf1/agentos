@@ -8,14 +8,15 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 LAYOUT = (ROOT / "os/modules/disk-layout.nix").read_text()
-BRANCH = LAYOUT.split("        valid_account_password() {", 1)[1].split("\n      else\n", 1)[0]
-BRANCH = "valid_account_password() {" + textwrap.dedent(BRANCH).replace("''${", "${")
+VALIDATOR = "valid_account_password() {" + LAYOUT.split("        valid_account_password() {", 1)[1].split("\n        }", 1)[0] + "\n}"
+BRANCH = VALIDATOR + "\nnew=\"\"" + LAYOUT.split('        new=""', 1)[1].split("\n      else\n", 1)[0]
+BRANCH = textwrap.dedent(BRANCH).replace("''${", "${")
 
 
 class PasswordContractTest(unittest.TestCase):
     def test_password_boundaries_before_any_luks_mutation(self):
-        cases = [("safe:password", False), ("x" * 511, True), ("x" * 512, True), ("x" * 513, False),
-                 ("界" * 170 + "ab", True), ("界" * 171, False), ("safe\npassword", False)]
+        cases = [("safe:password", True), ("x" * 511, True), ("x" * 512, False), ("x" * 513, False),
+                 ("界" * 170 + "a", True), ("界" * 170 + "ab", False), ("界" * 171, False), ("safe\npassword", False)]
         for password, accepted in cases:
             with self.subTest(bytes=len(password.encode()), accepted=accepted), tempfile.TemporaryDirectory() as td:
                 script = '''set -e

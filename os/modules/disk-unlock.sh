@@ -13,8 +13,13 @@ if cryptsetup open --test-passphrase --key-file=/etc/agentos-template-disk.key "
   ok=1
   exit 0
 fi
+valid_account_password() {
+  [ -n "$1" ] && [ "$(printf '%s' "$1" | wc -c)" -le 511 ] || return 1
+  case "$1" in *$'\n'*) return 1 ;; esac
+}
 for i in 1 2 3 4 5; do
-  a=$(systemd-ask-password --timeout=0 --no-tty "Please enter passphrase for disk AgentOS:") || continue
+  a=$(systemd-ask-password --timeout=0 --no-tty "Please enter passphrase for disk AgentOS (maximum 511 UTF-8 bytes):") || continue
+  valid_account_password "$a" || { a=""; echo "agentos: password must be 1..511 UTF-8 bytes without newline"; continue; }
   printf '%s' "$a" > "$key"
   a=""
   if cryptsetup open --test-passphrase --key-file="$key" "$dev" 2>/dev/null; then

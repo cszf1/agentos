@@ -940,9 +940,13 @@ QString ShellController::sessionAgent(const QString& op, const QJsonObject& args
   return r.value(QStringLiteral("error")).toObject().value(QStringLiteral("message")).toString(S("会话代理拒绝了请求"));
 }
 
+bool ShellController::passwordValid(const QString& password) const {
+  return !password.isEmpty() && password.toUtf8().size() <= 511 && !password.contains(QLatin1Char('\n')) && !password.contains(QChar(0));
+}
+
 void ShellController::createUser(const QString& loginName, const QString& role, const QString& initialPassword) {
-  if (initialPassword.isEmpty()) {
-    setNotice(S("新用户需要一个初始密码"));
+  if (!passwordValid(initialPassword)) {
+    setNotice(S("密码须为 1..511 个 UTF-8 字节，允许冒号，不支持换行或 NUL"));
     return;
   }
   pendingSecret_ = initialPassword;
@@ -1155,8 +1159,8 @@ void ShellController::withdrawConfirms() {
 
 void ShellController::confirmAccept(const QString& adminPassword) {
   if (!confirm_.value(QStringLiteral("visible")).toBool()) return;
-  if (confirm_.value(QStringLiteral("admin")).toBool() && adminPassword.isEmpty()) {
-    setNotice(S("这是管理员操作：请先输入你自己的管理员密码"));
+  if (confirm_.value(QStringLiteral("admin")).toBool() && !passwordValid(adminPassword)) {
+    setNotice(S("请输入自己的管理员密码，1..511 个 UTF-8 字节，允许冒号，不支持换行或 NUL"));
     return;
   }
   // A confirmation is bound to the identity/epochs it was shown under; anything else is a stale plan.

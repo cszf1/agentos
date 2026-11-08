@@ -219,11 +219,56 @@ pub fn user_unit_ctl(uid: u32, args: &[&str]) -> R<String> {
         .env("PATH", std::env::var("PATH").unwrap_or_else(|_| "/run/current-system/sw/bin:/usr/bin:/bin".into())))
 }
 
+pub const MAX_PASSWORD_BYTES: usize = 511;
+
 pub fn validate_password(password: &[u8]) -> R<()> {
-    if password.is_empty() || password.len() > 512 || password.iter().any(|b| matches!(*b, b':' | b'\n' | 0)) {
-        return Err(MErr::new("INVALID_REQUEST", "password must be 1..512 bytes without colon, newline or NUL"));
+    if password.is_empty() || password.len() > MAX_PASSWORD_BYTES || password.iter().any(|b| matches!(*b, b'\n' | 0)) {
+        return Err(MErr::new("INVALID_REQUEST", "password must be 1..511 UTF-8 bytes without newline or NUL; colons are allowed"));
     }
     Ok(())
+}
+
+#[link(name = "crypt")]
+extern "C" {
+    fn crypt_gensalt_rn(prefix: *const libc::c_char, count: libc::c_ulong, random: *const libc::c_char, random_size: libc::c_int, output: *mut libc::c_char, output_size: libc::c_int) -> *mut libc::c_char;
+    fn crypt_ra(phrase: *const libc::c_char, setting: *const libc::c_char, data: *mut *mut libc::c_void, size: *mut libc::c_int) -> *mut libc::c_char;
+}
+
+struct CryptMemory { data: *mut libc::c_void, size: libc::c_int }
+impl Drop for CryptMemory {
+    fn drop(&mut self) {
+        if !self.data.is_null() {
+            for i in 0..self.size.max(0) as usize {
+                unsafe { std::ptr::write_volatile(self.data.cast::<u8>().add(i), 0) };
+            }
+            unsafe { libc::free(self.data) };
+        }
+    }
+}
+
+fn crypt_password(password: &[u8], setting: &std::ffi::CStr) -> R<Vec<u8>> {
+    validate_password(password)?;
+    let mut phrase = password.to_vec();
+    phrase.push(0);
+    let mut memory = CryptMemory { data: std::ptr::null_mut(), size: 0 };
+    let result = unsafe { crypt_ra(phrase.as_ptr().cast(), setting.as_ptr(), &mut memory.data, &mut memory.size) };
+    for byte in &mut phrase { unsafe { std::ptr::write_volatile(byte, 0) }; }
+    if result.is_null() { return Err(MErr::new("SYSTEM_FAILED", "password hashing failed")); }
+    let hash = unsafe { std::ffi::CStr::from_ptr(result) }.to_bytes();
+    if !hash.starts_with(b"$y$") || hash.iter().any(|b| !b.is_ascii_graphic() || matches!(*b, b':' | b'\n')) {
+        return Err(MErr::new("SYSTEM_FAILED", "password hashing failed"));
+    }
+    Ok(hash.to_vec())
+}
+
+fn password_hash(password: &[u8]) -> R<Vec<u8>> {
+    validate_password(password)?;
+    let mut random = [0u8; 16];
+    getrandom::getrandom(&mut random).map_err(|_| MErr::new("SYSTEM_FAILED", "password salt generation failed"))?;
+    let mut salt = [0 as libc::c_char; 256];
+    let result = unsafe { crypt_gensalt_rn(b"$y$\0".as_ptr().cast(), 0, random.as_ptr().cast(), random.len() as _, salt.as_mut_ptr(), salt.len() as _) };
+    if result.is_null() { return Err(MErr::new("SYSTEM_FAILED", "password salt generation failed")); }
+    crypt_password(password, unsafe { std::ffi::CStr::from_ptr(salt.as_ptr()) })
 }
 
 /// Real Linux implementation used by the daemon.
@@ -252,14 +297,15 @@ impl System for HostSystem {
         run(Command::new("usermod").args(["-c", gecos, name])).map(|_| ())
     }
     fn set_password(&mut self, name: &str, password: &[u8]) -> R<()> {
-        validate_password(password)?;
-        let mut child = Command::new("chpasswd").stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::piped()).spawn().map_err(|e| MErr::new("SYSTEM_FAILED", format!("chpasswd: {e}")))?;
+        let mut hash = password_hash(password)?;
+        let mut child = Command::new("chpasswd").arg("--encrypted").stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::piped()).spawn().map_err(|e| MErr::new("SYSTEM_FAILED", format!("chpasswd: {e}")))?;
         {
             let mut stdin = child.stdin.take().expect("piped");
-            let mut line = Vec::with_capacity(name.len() + password.len() + 2);
+            let mut line = Vec::with_capacity(name.len() + hash.len() + 2);
             line.extend_from_slice(name.as_bytes());
             line.push(b':');
-            line.extend_from_slice(password);
+            line.extend_from_slice(&hash);
+            hash.fill(0);
             line.push(b'\n');
             stdin.write_all(&line).map_err(|e| MErr::new("SYSTEM_FAILED", format!("chpasswd stdin: {e}")))?;
             for b in line.iter_mut() {
@@ -396,11 +442,25 @@ mod secure_directory_tests {
     use super::*;
     #[test]
     fn password_contract_counts_bytes_and_rejects_separators() {
-        for value in [vec![], vec![b'a'; 513], b"safe:password".to_vec(), b"safe\npassword".to_vec(), b"safe\0password".to_vec(), "界".repeat(171).into_bytes()] {
+        for value in [vec![], vec![b'a'; 512], b"safe\npassword".to_vec(), b"safe\0password".to_vec(), ("界".repeat(170) + "ab").into_bytes(), "界".repeat(171).into_bytes()] {
             assert!(validate_password(&value).is_err());
+            assert!(password_hash(&value).is_err());
         }
-        for value in [vec![b'a'; 511], vec![b'a'; 512], "界".repeat(170).into_bytes()] {
+        for value in [b"safe:password".to_vec(), vec![b'a'; 511], ("界".repeat(170) + "a").into_bytes()] {
             assert!(validate_password(&value).is_ok());
+        }
+    }
+
+    #[test]
+    fn colon_and_full_length_passwords_roundtrip_through_system_crypt() {
+        for password in [b"faux:colon:password:".to_vec(), b"faux\rpassword".to_vec(),
+                         [vec![b'x'; 510], vec![b':']].concat(), ("界".repeat(170) + "a").into_bytes()] {
+            let hash = password_hash(&password).unwrap();
+            let setting = std::ffi::CString::new(hash.clone()).unwrap();
+            assert_eq!(crypt_password(&password, &setting).unwrap(), hash);
+            assert_ne!(crypt_password(&password[..password.len() - 1], &setting).unwrap(), hash);
+            assert_ne!(password_hash(&password).unwrap(), hash);
+            assert!(!hash.contains(&b':'));
         }
     }
 

@@ -160,6 +160,7 @@
         m19-iso = import ./tests/m19-iso.nix { inherit pkgs release; iso = installerSystem.config.system.build.isoImage; };
         # the ISO installs by itself to the one empty disk; first start asks one password (docs/VM_QUICKSTART.md)
         m24-iso-auto = import ./tests/m24-iso-auto.nix { inherit pkgs; iso = installerSystem.config.system.build.isoImage; };
+        m25-password = test "m25-password" ./tests/m25-password.nix {};
         m5-desktop = import ./tests/m5-desktop.nix { inherit pkgs; modules = [ ./modules/base.nix ./modules/graphics.nix ./modules/agentos.nix ]; };
         m20-sway = import ./tests/m20-sway.nix { inherit pkgs; modules = [ ./modules/base.nix ./modules/graphics.nix ./modules/agentos.nix ]; };
         m21-vmware = import ./tests/m21-vmware.nix { inherit pkgs; modules = [ ./modules/base.nix ./modules/graphics.nix ./modules/agentos.nix ]; };

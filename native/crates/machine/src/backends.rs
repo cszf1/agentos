@@ -30,10 +30,11 @@ pub struct SecretStore {
 
 impl SecretStore {
     pub fn put(&mut self, kind: &str, value: &[u8]) -> R<String> {
-        if !matches!(kind, "password" | "wifi-psk" | "provider-key") || value.is_empty() || value.len() > 512 {
+        if kind == "password" {
+            crate::sys::validate_password(value)?;
+        } else if !matches!(kind, "wifi-psk" | "provider-key") || value.is_empty() || value.len() > 512 {
             return Err(MErr::new("INVALID_REQUEST", "bad secret"));
         }
-        if kind == "password" { crate::sys::validate_password(value)?; }
         let id = format!("secret:{}", uuid());
         self.items.insert(id.clone(), (kind.to_string(), value.to_vec(), now_ms() + 120_000));
         Ok(id)
@@ -584,6 +585,23 @@ fn write_model_credential(ws: &str, uid: u32, p: &Value, key: &[u8]) -> R<()> {
 fn publish_model_credential(parent: &std::path::Path, ws: &str, uid: u32, text: &[u8]) -> std::io::Result<()> {
     if !crate::util::is_uuid(ws) { return Err(std::io::Error::other("invalid workspace")); }
     crate::sys::write_workspace_file(parent, std::path::Path::new(ws), "model.env", uid, text)
+}
+
+#[cfg(test)]
+mod password_policy_tests {
+    use super::*;
+
+    #[test]
+    fn password_secrets_share_the_account_byte_contract() {
+        let mut store = SecretStore::default();
+        for value in [vec![b'x'; 510].into_iter().chain([b':']).collect::<Vec<_>>(), ("界".repeat(170) + ":").into_bytes()] {
+            let id = store.put("password", &value).unwrap();
+            assert_eq!(store.take(&id).unwrap(), value);
+        }
+        for value in [vec![b'x'; 512], ("界".repeat(170) + ":a").into_bytes()] {
+            assert!(store.put("password", &value).is_err());
+        }
+    }
 }
 
 #[cfg(test)]

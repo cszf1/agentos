@@ -125,6 +125,7 @@ let
         problem "The login name may only use lowercase letters, digits, _ and -, and must not start with a digit or -."
         continue
       fi
+      echo "Passwords may contain colons and must be at most 511 UTF-8 bytes. Newline and NUL are unsupported."
       ask "Password: " -s; pw=$REPLY
       ask "Password again: " -s; pw2=$REPLY
       if [ -z "$pw" ] || [ "$pw" != "$pw2" ]; then pw=; pw2=; problem "The passwords were empty or did not match."; continue; fi

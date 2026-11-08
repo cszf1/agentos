@@ -531,6 +531,14 @@ PARTITIONING_INTERRUPTED = (
     "run will not reformat this checkpoint automatically.")
 
 
+MAX_PASSWORD_BYTES = 511
+
+
+def validate_password(password):
+    if not password or len(password) > MAX_PASSWORD_BYTES or b"\n" in password or b"\0" in password:
+        raise Refuse("password must be 1..511 UTF-8 bytes without newline or NUL; colons are allowed")
+
+
 def cmd_run(args):
     st = load()
     if st["state"] not in ("confirmed", "partitioning", "copying", "configuring", "verifying"):
@@ -544,9 +552,10 @@ def cmd_run(args):
         with open(TEMPLATE_KEY, "rb") as f:
             pw = f.read().rstrip(b"\n")
     else:
-        pw = sys.stdin.buffer.read().rstrip(b"\n") if "--passphrase-stdin" in args else b""
+        pw = sys.stdin.buffer.read().removesuffix(b"\n") if "--passphrase-stdin" in args else b""
+    validate_password(pw)
     if len(pw) < 8:
-        raise Refuse("a LUKS passphrase of at least 8 characters is required on stdin")
+        raise Refuse("a LUKS passphrase of at least 8 characters and at most 511 UTF-8 bytes is required on stdin")
     dev = os.path.realpath(st["plan"]["disk"])
     if new_init and st["state"] in ("confirmed", "partitioning"):
         fresh = st["state"] == "confirmed"

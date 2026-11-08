@@ -93,7 +93,7 @@ FocusScope {
             id: footer
             anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom
             anchors.margins: Theme.s4; spacing: Theme.s2
-            PText { Layout.fillWidth: true; visible: root.needsPassword; text: "管理员密码（当前管理员自己的密码）"; bold: true }
+            PText { Layout.fillWidth: true; visible: root.needsPassword; text: "管理员密码（最多 511 个 UTF-8 字节，允许冒号）"; bold: true }
             AField {
                 id: adminPwdField
                 objectName: "confirmAdminPassword"
@@ -119,7 +119,7 @@ FocusScope {
                 AButton {
                     id: acceptBtn; objectName: "confirmAccept"
                     label: "确认执行"; variant: "primary"; askSure: false; enterActivates: false
-                    enabled: !root.c.stale && (!root.needsPassword || adminPwdField.boundValue.length > 0)
+                    enabled: !root.c.stale && (!root.needsPassword || (root.shellRef && root.shellRef.passwordValid(adminPwdField.boundValue)))
                     KeyNavigation.tab: cancelBtn
                     KeyNavigation.backtab: root.needsPassword ? adminPwdField : cancelBtn
                     onConfirmed: {

@@ -51,6 +51,10 @@ extern "C" fn conv(n: c_int, msgs: *mut *const PamMessage, resp: *mut *mut PamRe
 }
 
 pub fn authenticate(service: &str, user: &str, password: &mut Vec<u8>) -> bool {
+    if agentos_machine::sys::validate_password(password).is_err() {
+        password.fill(0);
+        return false;
+    }
     let pw = match CString::new(password.clone()) {
         Ok(c) => c,
         Err(_) => return false,

@@ -986,6 +986,42 @@ class FlowsTest : public QObject {
     else qputenv("XDG_RUNTIME_DIR", oldRt);
   }
 
+  void passwordPolicyRejects512BytesWithoutTruncatingAndAllowsColons() {
+    Harness h;
+    QVERIFY(h.up());
+    h.click(QStringLiteral("nav:workspaces"));
+    QTRY_VERIFY(h.find(QStringLiteral("createUser")));
+    h.find(QStringLiteral("newUserLogin"))->setProperty("text", QStringLiteral("bea"));
+    const QString multi = QString::fromUtf8("界").repeated(170) + QStringLiteral(":");
+    for (const auto& pw : {QString(511, QLatin1Char('x')), multi, QStringLiteral("faux:password:")}) {
+      QVERIFY(h.shell->passwordValid(pw));
+      h.find(QStringLiteral("newUserPassword"))->setProperty("text", pw);
+      QTRY_VERIFY(h.find(QStringLiteral("createUser"))->property("enabled").toBool());
+    }
+    const auto before = h.sent(QStringLiteral("machine.users.create")).size();
+    for (const auto& pw : {QString(512, QLatin1Char('x')), multi + QStringLiteral("a"), QStringLiteral("faux\npassword"), QString(1, QChar(0))}) {
+      QVERIFY(!h.shell->passwordValid(pw));
+      h.find(QStringLiteral("newUserPassword"))->setProperty("text", pw);
+      QCOMPARE(h.find(QStringLiteral("newUserPassword"))->property("text").toString(), pw);
+      QTRY_VERIFY(!h.find(QStringLiteral("createUser"))->property("enabled").toBool());
+      h.shell->createUser(QStringLiteral("bea"), QStringLiteral("user"), pw);
+      QCOMPARE(h.sent(QStringLiteral("machine.users.create")).size(), before);
+    }
+    h.shell->createUser(QStringLiteral("bea"), QStringLiteral("user"), multi);
+    QTRY_VERIFY(h.shell->confirm().value(QStringLiteral("visible")).toBool());
+    QCOMPARE(h.sent(QStringLiteral("machine.users.create")).last().get(QStringLiteral("body")).get(QStringLiteral("password")).str(), multi);
+    h.shell->confirmAccept(multi + QStringLiteral("a"));
+    QVERIFY(h.shell->confirm().value(QStringLiteral("visible")).toBool());
+    QCOMPARE(h.sent(QStringLiteral("machine.actions.confirm")).size(), 0);
+    h.find(QStringLiteral("confirmAdminPassword"))->setProperty("text", multi + QStringLiteral("a"));
+    QTRY_VERIFY(!h.find(QStringLiteral("confirmAccept"))->property("enabled").toBool());
+    h.find(QStringLiteral("confirmAdminPassword"))->setProperty("text", multi);
+    QTRY_VERIFY(h.find(QStringLiteral("confirmAccept"))->property("enabled").toBool());
+    h.shell->confirmAccept(multi);
+    QTRY_COMPARE(h.sent(QStringLiteral("machine.actions.confirm")).size(), 1);
+    QCOMPARE(h.sent(QStringLiteral("machine.actions.confirm")).last().get(QStringLiteral("body")).get(QStringLiteral("password")).str(), multi);
+  }
+
   void adminCreatesAndDisablesUsersThroughTheTrustedLayer() {
     Harness h;
     QVERIFY(h.up());

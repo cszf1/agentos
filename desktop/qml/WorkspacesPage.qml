@@ -91,9 +91,10 @@ PageFrame {
                 // Machine account type is a separate system concept, not a fourth workspace role.
                 ASelect { id: sysRole; label: "机器账户类型"; value: "user"; options: [{value:"user",label:"普通用户"},{value:"admin",label:"管理员"}] }
                 AButton { objectName: "createUser"; label: "创建机器用户"; variant: "primary"; writeAction: true
-                    enabled: newLogin.boundValue !== "" && newPw.boundValue !== ""
+                    enabled: newLogin.boundValue !== "" && shell.passwordValid(newPw.boundValue)
                     onConfirmed: { shell.createUser(newLogin.boundValue,sysRole.currentValue,newPw.boundValue); newPw.boundValue = "" } }
             }
+            PText { text: "密码最多 511 个 UTF-8 字节，允许冒号；超限会拒绝，不会截断。"; variant: "muted" }
             RowLayout {
                 Layout.fillWidth: true; spacing: Theme.s2
                 AField { id: disableId; objectName: "disableUserId"; label: "停用用户 ID"; Layout.preferredWidth: Theme.px(280) }

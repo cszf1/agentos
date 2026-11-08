@@ -42,6 +42,11 @@ in {
     path = [ pkgs.cryptsetup pkgs.systemd pkgs.coreutils pkgs.util-linux pkgs.gnused pkgs.gnugrep pkgs.btrfs-progs ];
     serviceConfig = { Type = "oneshot"; RemainAfterExit = true; StandardOutput = "journal+console"; UMask = "0077"; TimeoutStartSec = "infinity"; LimitCORE = 0; };
     script = ''
+      [ "$(findmnt -n -o FSTYPE --target /run)" = tmpfs ] || { echo "agentos: refusing password custody outside tmpfs"; exit 1; }
+        valid_account_password() {
+          [ -n "$1" ] && [ "$(printf '%s' "$1" | wc -c)" -le 511 ] || return 1
+          case "$1" in *$'\n'*) return 1 ;; esac
+        }
       unlock=/run/agentos-disk-unlock/key
       f=""
       trap 'rm -f "$unlock"; if [ -n "$f" ]; then shred -u "$f" 2>/dev/null || rm -f "$f"; fi' EXIT
@@ -72,17 +77,13 @@ in {
         else
           ask1="New AgentOS disk passphrase (at least 8 characters):"; ask2="Repeat the disk passphrase:"
         fi
-        valid_account_password() {
-          [ -n "$1" ] && [ "$(printf '%s' "$1" | wc -c)" -le 512 ] || return 1
-          case "$1" in *:*|*$'\n'*) return 1 ;; esac
-        }
-        echo "agentos: passwords must be at most 512 UTF-8 bytes; colon and newline are not supported."
+        echo "agentos: passwords must be at most 511 UTF-8 bytes; newline is not supported."
         new=""
         for i in 1 2 3 4 5; do
           a=$(systemd-ask-password --timeout=0 --no-tty "$ask1") || continue
           b=$(systemd-ask-password --timeout=0 --no-tty "$ask2") || continue
           if [ "$a" = "$b" ] && [ ''${#a} -ge 8 ] && valid_account_password "$a"; then new=$a; break; fi
-          echo "agentos: passphrases differ, are shorter than 8 characters, exceed 512 bytes, or contain unsupported colon/newline"
+          echo "agentos: passphrases differ, are shorter than 8 characters, exceed 511 bytes, or contain an unsupported newline"
         done
         [ -n "$new" ] || { echo "agentos: no disk passphrase set; machined stays stopped"; exit 1; }
         printf '%s' "$new" > "$f"
@@ -96,13 +97,14 @@ in {
       else
         echo "agentos: the first-boot disk re-key was interrupted; enter the disk passphrase to finish it"
         ok=0
-        if [ -s "$unlock" ] && cryptsetup open --test-passphrase --key-file="$unlock" "$real" 2>/dev/null; then
+        if [ -s "$unlock" ] && valid_account_password "$(cat "$unlock")" && cryptsetup open --test-passphrase --key-file="$unlock" "$real" 2>/dev/null; then
           cp "$unlock" "$f"
           ok=1
         fi
         for i in 1 2 3 4 5; do
           [ "$ok" = 0 ] || break
-          a=$(systemd-ask-password --timeout=0 --no-tty "AgentOS disk passphrase (finishing the first-boot re-key):") || continue
+          a=$(systemd-ask-password --timeout=0 --no-tty "AgentOS disk passphrase (finishing the first-boot re-key, maximum 511 bytes):") || continue
+          valid_account_password "$a" || { a=""; echo "agentos: password must be 1..511 UTF-8 bytes without newline"; continue; }
           printf '%s' "$a" > "$f"; a=""
           if cryptsetup open --test-passphrase --key-file="$f" "$real" 2>/dev/null; then ok=1; break; fi
           echo "agentos: that passphrase does not open the disk"

@@ -26,7 +26,7 @@ case "$1" in
   firstboot)
     cat > "$T/password"
     bytes=$(wc -c < "$T/password")
-    if [ "$bytes" -eq 0 ] || [ "$bytes" -gt 512 ] || grep -q ':' "$T/password"; then
+    if [ "$bytes" -eq 0 ] || [ "$bytes" -gt 511 ]; then
       echo "agentosctl: INVALID_REQUEST: unsupported password" >&2; exit 1
     fi
     if [ -e "$T/provision-then-refuse" ]; then   # the account was created, then the attempt broke off
@@ -132,8 +132,18 @@ class FirstSetupTest(unittest.TestCase):
         self.assertNotIn("quick-pw-1", p.stdout + log)
         self.assertTrue(p.stdout.isascii(), p.stdout)
 
+    def test_quick_start_preserves_colons_without_echoing_the_password(self):
+        original = "faux:quick:password:"
+        (self.t / "run/password").write_text(original)
+        p, calls, log = self.run_setup("")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual((self.t / "password").read_text(), original)
+        self.assertNotIn(original, p.stdout + p.stderr + calls + log)
+        self.assertNotIn("Administrator login", p.stdout)
+        self.assertFalse((self.t / "run/password").exists())
+
     def test_quick_start_never_truncates_overlong_passwords(self):
-        original = "x" * 513
+        original = "x" * 512
         (self.t / "run/password").write_text(original)
         p, calls, log = self.run_setup("\nbea\npw-2\npw-2\n\n")
         self.assertEqual(p.returncode, 0, p.stderr)
@@ -142,9 +152,29 @@ class FirstSetupTest(unittest.TestCase):
         self.assertNotIn(original, p.stdout + log)
         self.assertFalse((self.t / "run/password").exists())
 
-    def test_quick_start_preserves_512_bytes(self):
+    def test_quick_start_rejects_multibyte_512_bytes_without_truncation(self):
         original = "界" * 170 + "ab"
         self.assertEqual(len(original.encode()), 512)
+        (self.t / "run/password").write_text(original)
+        p, calls, log = self.run_setup("\nbea\npw-2\npw-2\n\n")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual((self.t / "password").read_text(), "pw-2")
+        self.assertNotIn(original, p.stdout + p.stderr + calls + log)
+        self.assertFalse((self.t / "run/password").exists())
+
+    def test_quick_start_preserves_ascii_511_bytes(self):
+        original = "x" * 510 + ":"
+        self.assertEqual(len(original.encode()), 511)
+        (self.t / "run/password").write_text(original)
+        p, calls, log = self.run_setup("")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual((self.t / "password").read_text(), original)
+        self.assertNotIn(original, p.stdout + p.stderr + calls + log)
+        self.assertFalse((self.t / "run/password").exists())
+
+    def test_quick_start_preserves_511_bytes(self):
+        original = "界" * 170 + "a"
+        self.assertEqual(len(original.encode()), 511)
         (self.t / "run/password").write_text(original)
         p, calls, log = self.run_setup("")
         self.assertEqual(p.returncode, 0, p.stderr)
