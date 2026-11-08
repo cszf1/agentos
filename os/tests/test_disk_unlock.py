@@ -16,7 +16,7 @@ findmnt() { printf '%s\n' "$RAM_TYPE"; }
 systemd-ask-password() { echo request >> "$T/requests"; cat "$T/answer"; }
 cryptsetup() {
   printf '%s\n' "$*" >> "$T/argv"
-  if [ "$1" = luksDump ]; then echo 'Label: agentos-luks'; return; fi
+  if [ "$1" = luksDump ]; then echo "Label:          ${LUKS_LABEL-agentos-luks}"; return; fi
   local key=""
   for arg in "$@"; do case "$arg" in --key-file=*) key=${arg#--key-file=} ;; esac; done
   if [ "$key" = "$T/etc/agentos-template-disk.key" ] || [ "$key" = "$T/etc/agentos/template-disk.key" ]; then
@@ -45,11 +45,11 @@ class DiskUnlockTest(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def run_script(self, script, ram_type="tmpfs"):
+    def run_script(self, script, ram_type="tmpfs", label="agentos-luks"):
         for prefix in ("/run/", "/etc/", "/var/lib/", "/dev/disk/"):
             script = script.replace(prefix, str(self.t) + prefix)
         result = subprocess.run(["bash", "-c", ADAPTERS + script], capture_output=True,
-                                env=dict(os.environ, T=str(self.t), RAM_TYPE=ram_type), timeout=10)
+                                env=dict(os.environ, T=str(self.t), RAM_TYPE=ram_type, LUKS_LABEL=label), timeout=10)
         exposed = result.stdout + result.stderr
         if (self.t / "argv").exists():
             exposed += (self.t / "argv").read_bytes()
@@ -85,6 +85,18 @@ class DiskUnlockTest(unittest.TestCase):
         self.assertFalse(key.exists())
         self.assertEqual(handoff.read_bytes(), self.password)
         self.assertEqual((self.t / "requests").read_text().splitlines(), ["request"])
+
+    def test_installed_disk_without_label_unlocks_but_hands_nothing_to_first_setup(self):
+        # the installer's disks carry no LUKS label: their administrator is set up on the console
+        result = self.run_script(UNLOCK, label="")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.t / "run/agentos-disk-unlock/key").read_bytes(), self.password)
+        self.assertFalse((self.t / "run/agentos-first-setup/password").exists())
+
+    def test_interrupted_rekey_label_hands_off(self):
+        result = self.run_script(UNLOCK, label="agentos-rekey-pending")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.t / "run/agentos-first-setup/password").read_bytes(), self.password)
 
     def test_pending_rekey_reuses_the_verified_initrd_password_without_another_prompt(self):
         self.assertEqual(self.run_script(UNLOCK).returncode, 0)

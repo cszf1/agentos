@@ -23,7 +23,14 @@ for i in 1 2 3 4 5; do
   printf '%s' "$a" > "$key"
   a=""
   if cryptsetup open --test-passphrase --key-file="$key" "$dev" 2>/dev/null; then
-    if [ -e /etc/agentos-first-setup-handoff ]; then
+    # Hand the password to first setup only on a quick-start disk (its LUKS label is set by the first-boot re-key).
+    # A disk the installer wrote has no label and its administrator is created by hand on the console (m19-iso,
+    # run 42451921917: the handoff made every installed graphical disk create "admin" with the disk password).
+    dump=$(cryptsetup luksDump "$dev" 2>/dev/null || true)
+    label=""
+    case "$dump" in *Label:*) label=${dump#*Label:}; label=${label%%$'\n'*}; label=${label//[[:space:]]/} ;; esac
+    case "$label" in agentos-rekey-*|agentos-luks) quick=1 ;; *) quick=0 ;; esac
+    if [ "$quick" = 1 ] && [ -e /etc/agentos-first-setup-handoff ]; then
       install -d -m 0700 /run/agentos-first-setup
       cp "$key" "$handoff"
     fi
