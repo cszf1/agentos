@@ -264,6 +264,21 @@ fn expired_reservations_stop_blocking_capacity() {
 }
 
 #[test]
+fn a_delayed_reservation_report_cannot_make_a_used_permit_expire() {
+    let (mut t, w) = setup();
+    let a = &w[0];
+    let p = t.m.request_permit(&a.0, &rq(a, mv(&t, a), false)).unwrap();
+    let id = p["permitId"].as_str().unwrap();
+    t.m.use_permit(&a.0, id, mv(&t, a)).unwrap();
+    t.m.c.execute("UPDATE machine_permits SET deadline_at = 0 WHERE permit_id = ?1", [id]).unwrap();
+    t.m.reconcile_permits().unwrap();
+    assert_eq!(state(&t.m.permit(id).unwrap()), "reconciling");
+
+    let reported = t.m.report_permit(&a.0, id, "reserved").unwrap();
+    assert_eq!(state(&reported), "in_use");
+}
+
+#[test]
 fn s07_background_yields_to_foreground() {
     let (t, w) = setup();
     let (a, b) = (&w[0], &w[1]);

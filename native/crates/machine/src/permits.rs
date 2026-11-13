@@ -30,7 +30,7 @@ const HELD: &str = "('reserved','in_use','reconciling')";
 fn expire_waiting(c: &Connection) -> R<()> {
     c.execute(
         "UPDATE machine_permits SET state = 'revoked', usage_status = 'unused'
-         WHERE state IN ('queued','reserved') AND deadline_at < ?1",
+         WHERE state IN ('queued','reserved') AND used_at IS NULL AND deadline_at < ?1",
         [now_ms()],
     )?;
     Ok(())
@@ -262,7 +262,7 @@ impl Machine {
     /// A Host that reconnected reports the true state of an attempt it held before machined restarted.
     pub fn report_permit(&self, ws_of_peer: &str, permit_id: &str, holder_state: &str) -> R<Value> {
         self.tx(|c| {
-            let (ws, state): (String, String) = c.query_row("SELECT workspace_id, state FROM machine_permits WHERE permit_id = ?1", [permit_id], |r| Ok((r.get(0)?, r.get(1)?))).optional()?.ok_or_else(MErr::hidden)?;
+            let (ws, state, used_at): (String, String, Option<i64>) = c.query_row("SELECT workspace_id, state, used_at FROM machine_permits WHERE permit_id = ?1", [permit_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).optional()?.ok_or_else(MErr::hidden)?;
             if ws != ws_of_peer {
                 return Err(MErr::hidden());
             }
@@ -271,7 +271,11 @@ impl Machine {
             }
             match holder_state {
                 "in_use" => c.execute("UPDATE machine_permits SET state = 'in_use', used_at = COALESCE(used_at, ?2) WHERE permit_id = ?1", params![permit_id, now_ms()])?,
-                "reserved" => c.execute("UPDATE machine_permits SET state = 'reserved' WHERE permit_id = ?1", [permit_id])?,
+                "reserved" => {
+                    // A delayed report must not downgrade an already committed use.
+                    let state = if used_at.is_some() { "in_use" } else { "reserved" };
+                    c.execute("UPDATE machine_permits SET state = ?2 WHERE permit_id = ?1", params![permit_id, state])?
+                }
                 "unused" => c.execute("UPDATE machine_permits SET state = 'revoked', usage_status = 'unused' WHERE permit_id = ?1", [permit_id])?,
                 "used" | "unknown" => c.execute("UPDATE machine_permits SET state = 'released', usage_status = ?2 WHERE permit_id = ?1", params![permit_id, holder_state])?,
                 _ => return Err(MErr::new("INVALID_REQUEST", "unknown holder state")),
