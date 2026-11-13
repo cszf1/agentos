@@ -48,6 +48,7 @@ RELEASE = os.environ.get("AGENTOS_RELEASE_FILE", "@RELEASE@")
 # slot and re-encrypts with a fresh volume key before anything is written, exactly as on a template disk.
 TEMPLATE_KEY = os.environ.get("AGENTOS_TEMPLATE_KEY_FILE", "@TEMPLATE_KEY@")
 MNT = "/mnt"
+ROOT_MAPPER = "/dev/mapper/agentos-root"
 SUBVOLS = ["@root", "@nix", "@home", "@machine", "@broker", "@snapshots"]
 MOUNTS = [("@nix", "nix"), ("@home", "home"), ("@machine", "var/lib/agentos-machine"), ("@broker", "var/lib/agentos-broker"), ("@snapshots", "var/lib/agentos-snapshots")]
 
@@ -539,6 +540,55 @@ def validate_password(password):
         raise Refuse("password must be 1..511 UTF-8 bytes without newline or NUL; colons are allowed")
 
 
+def install_mounts(dev):
+    return [
+        (MNT, ROOT_MAPPER, "btrfs", "/@root", "subvol=@root,compress=zstd:1"),
+        *((f"{MNT}/{mp}", ROOT_MAPPER, "btrfs", f"/{sv}", f"subvol={sv},compress=zstd:1") for sv, mp in MOUNTS),
+        (f"{MNT}/boot", part(dev, 1), "vfat", "/", "umask=0077"),
+    ]
+
+
+def check_install_mounts(dev, resuming):
+    expected = {target: (os.path.realpath(source), fstype, fsroot)
+                for target, source, fstype, fsroot, _ in install_mounts(dev)}
+    try:
+        table = json.loads(sh("findmnt", "--kernel", "--list", "--json", "--nofsroot", "--output", "TARGET,SOURCE,FSTYPE,FSROOT,VFS-OPTIONS"))
+        mounts = table["filesystems"]
+        found = set()
+        for mount in mounts:
+            target = mount["target"]
+            if target != MNT and not target.startswith(f"{MNT}/"):
+                continue
+            actual = (os.path.realpath(mount["source"]), mount["fstype"], mount["fsroot"])
+            if (not resuming or target in found or expected.get(target) != actual
+                    or "rw" not in mount["vfs-options"].split(",")):
+                raise Refuse(f"unexpected mount at {target}; unmount it before running the installer")
+            found.add(target)
+    except (ValueError, KeyError, TypeError, AttributeError):
+        raise Refuse("cannot verify the installer mount table") from None
+    return found
+
+
+def check_install_mapper(dev, resuming):
+    if not os.path.exists(ROOT_MAPPER):
+        return
+    if not resuming:
+        raise Refuse("the agentos-root mapping is already open; close it before starting another install")
+    status = sh("cryptsetup", "status", "agentos-root", env={**os.environ, "LC_ALL": "C"})
+    device = re.search(r"^\s*device:\s*(\S+)\s*$", status, re.M)
+    if not device or os.path.realpath(device[1]) != part(dev, 2):
+        raise Refuse("the agentos-root mapping is not backed by the selected disk")
+
+
+def mount_install_target(dev, mounted):
+    for target, source, fstype, _fsroot, options in install_mounts(dev):
+        if os.path.realpath(target) != target:
+            raise Refuse(f"installer mount path {target} follows a symbolic link")
+        if target not in mounted:
+            sh("mkdir", "-p", target)
+            sh("mount", "-t", fstype, "-o", options, source, target)
+
+
 def cmd_run(args):
     st = load()
     if st["state"] not in ("confirmed", "partitioning", "copying", "configuring", "verifying"):
@@ -557,6 +607,9 @@ def cmd_run(args):
     if len(pw) < 8:
         raise Refuse("a LUKS passphrase of at least 8 characters and at most 511 UTF-8 bytes is required on stdin")
     dev = os.path.realpath(st["plan"]["disk"])
+    resuming = st["state"] in ("copying", "configuring", "verifying")
+    mounted = check_install_mounts(dev, resuming)
+    check_install_mapper(dev, resuming)
     if new_init and st["state"] in ("confirmed", "partitioning"):
         fresh = st["state"] == "confirmed"
         if fresh:
@@ -613,32 +666,22 @@ def cmd_run(args):
                 raise Refuse(f"initialization refused: {error}. Inspect with: {init_hint(st['plan']['disk'])}") from None
         if not resume_check(st):
             raise Refuse("resume refused: the disk does not carry this install's id (different disk or wiped); start a new plan")
-    if not os.path.exists("/dev/mapper/agentos-root"):
+    if not os.path.exists(ROOT_MAPPER):
         sh("cryptsetup", "open", "--key-file=-", part(dev, 2), "agentos-root", input=pw)
     pw = b"\0" * len(pw)
     if new_init:
-        actual = init_protocol(st).filesystem("/dev/mapper/agentos-root")
+        actual = init_protocol(st).filesystem(ROOT_MAPPER)
         if actual.get("TYPE") != "btrfs" or actual.get("UUID", "").lower() != st["plan"]["initialization"]["btrfs"]:
             raise Refuse("copy target Btrfs identity changed; refusing to mount it")
     if st["state"] == "partitioning":
-        sh("mkfs.btrfs", "-f", "-L", "agentos-root", "/dev/mapper/agentos-root")
+        sh("mkfs.btrfs", "-f", "-L", "agentos-root", ROOT_MAPPER)
         sh("mkdir", "-p", "/run/agentos-install/top")
-        sh("mount", "/dev/mapper/agentos-root", "/run/agentos-install/top")
+        sh("mount", ROOT_MAPPER, "/run/agentos-install/top")
         for s in SUBVOLS:
             sh("btrfs", "subvolume", "create", f"/run/agentos-install/top/{s}")
         sh("umount", "/run/agentos-install/top")
         step(st, "copying")
-    # mount the target (idempotent)
-    if subprocess.run(["mountpoint", "-q", MNT]).returncode != 0:
-        sh("mkdir", "-p", MNT)
-        sh("mount", "-o", "subvol=@root,compress=zstd:1", "/dev/mapper/agentos-root", MNT)
-    for sv, mp in MOUNTS:
-        if subprocess.run(["mountpoint", "-q", f"{MNT}/{mp}"]).returncode != 0:
-            sh("mkdir", "-p", f"{MNT}/{mp}")
-            sh("mount", "-o", f"subvol={sv},compress=zstd:1", "/dev/mapper/agentos-root", f"{MNT}/{mp}")
-    if subprocess.run(["mountpoint", "-q", f"{MNT}/boot"]).returncode != 0:
-        sh("mkdir", "-p", f"{MNT}/boot")
-        sh("mount", "-o", "umask=0077", part(dev, 1), f"{MNT}/boot")
+    mount_install_target(dev, mounted)
     if st["state"] == "copying":
         if new_init:
             try:

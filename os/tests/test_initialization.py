@@ -92,6 +92,8 @@ class Harness:
 
     def command(self, *args, **kwargs):
         self.calls.append(args)
+        if args[:2] == ("findmnt", "--kernel"):
+            return json.dumps({"filesystems": []})
         if args[:2] == ("blockdev", "--getss"):
             return "512\n"
         if args[:2] == ("sfdisk", "--json"):
@@ -359,6 +361,51 @@ class JournalTest(unittest.TestCase):
                 stream.write(b"unknown existing bytes")
             self.assertFalse(h.p.zero_except(h.dev, size, excluded))
             self.assertFalse(h.p.zero_except(h.dev, size + 1, excluded))
+
+
+class InstallTargetTest(unittest.TestCase):
+    def test_run_refuses_foreign_mount_before_rechecking_or_writing_the_disk(self):
+        with tempfile.TemporaryDirectory() as root:
+            m = module()
+            key = Path(root) / "key"
+            key.write_bytes(b"public-faux-template")
+            m.TEMPLATE_KEY = str(key)
+            m.load = lambda: {"state": "confirmed", "plan": {"disk": "/dev/vda", "quick": True}}
+            m.recheck = mock.Mock(side_effect=AssertionError("the installer reached the disk plan"))
+            m.sh = mock.Mock(return_value=json.dumps({"filesystems": [
+                {"target": f"{m.MNT}/nix", "source": "tmpfs", "fstype": "tmpfs", "fsroot": "/"},
+            ]}))
+            with self.assertRaisesRegex(m.Refuse, "mount"):
+                m.cmd_run({})
+            m.recheck.assert_not_called()
+
+    def test_resume_refuses_mapper_backed_by_another_disk_before_using_it(self):
+        with tempfile.TemporaryDirectory() as root:
+            m = module()
+            key = Path(root) / "key"
+            key.write_bytes(b"public-faux-template")
+            m.TEMPLATE_KEY = str(key)
+            m.load = lambda: {"state": "copying", "plan": {"disk": "/dev/vda", "quick": True}}
+            m.resume_check = mock.Mock(side_effect=AssertionError("the installer began resuming the copy"))
+            m.sh = mock.Mock(side_effect=[json.dumps({"filesystems": []}), "  type: LUKS2\n  device: /dev/vdb2\n"])
+            exists = os.path.exists
+            with mock.patch.object(os.path, "exists", side_effect=lambda p: p == "/dev/mapper/agentos-root" or exists(p)):
+                with self.assertRaisesRegex(m.Refuse, "mapper|mapping"):
+                    m.cmd_run({})
+            m.resume_check.assert_not_called()
+
+    def test_resume_accepts_matching_subvolumes_but_refuses_another_filesystem_root(self):
+        m = module()
+        mounts = [
+            {"target": m.MNT, "source": m.ROOT_MAPPER, "fstype": "btrfs", "fsroot": "/@root", "vfs-options": "rw,relatime"},
+            {"target": f"{m.MNT}/nix", "source": m.ROOT_MAPPER, "fstype": "btrfs", "fsroot": "/@nix", "vfs-options": "rw,relatime"},
+            {"target": f"{m.MNT}/boot", "source": "/dev/vda1", "fstype": "vfat", "fsroot": "/", "vfs-options": "rw"},
+        ]
+        m.sh = lambda *args, **kwargs: json.dumps({"filesystems": mounts})
+        self.assertEqual(m.check_install_mounts("/dev/vda", True), {mount["target"] for mount in mounts})
+        mounts[1]["fsroot"] = "/@home"
+        with self.assertRaisesRegex(m.Refuse, f"unexpected mount at {m.MNT}/nix"):
+            m.check_install_mounts("/dev/vda", True)
 
 
 class EspProofTest(unittest.TestCase):

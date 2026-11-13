@@ -140,7 +140,11 @@ pkgs.testers.runNixOSTest {
         machine.fail("printf 'correct horse battery' | AGENTOS_INSTALL_ALLOW_PATH=1 AGENTOS_FAULT_POINT=install.copying agentos-install run --passphrase-stdin")
         assert inst("status")["state"] == "copying"
         machine.succeed("sgdisk -p /dev/vdb | grep -q agentos-luks")
-        machine.succeed("umount -R /mnt || true; cryptsetup close agentos-root || true")
+        machine.succeed("mount -t tmpfs -o size=1m tmpfs /mnt/home && touch /mnt/home/foreign-mount")
+        v = inst("run --passphrase-stdin", ok=False, stdin="correct horse battery")
+        assert "unexpected mount at /mnt/home" in v["error"], v
+        assert inst("status")["state"] == "copying"
+        machine.succeed("test -e /mnt/home/foreign-mount && umount /mnt/home")
         v = inst("run --passphrase-stdin", stdin="correct horse battery")
         assert v["state"] == "installed", v
         machine.succeed("test -s /mnt/etc/agentos/install.json")
