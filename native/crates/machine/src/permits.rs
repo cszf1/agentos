@@ -26,6 +26,16 @@ fn capacity(class: &str) -> i64 {
 
 const HELD: &str = "('reserved','in_use','reconciling')";
 
+// A reconciling permit may still have a live holder after machined restarts.
+fn expire_waiting(c: &Connection) -> R<()> {
+    c.execute(
+        "UPDATE machine_permits SET state = 'revoked', usage_status = 'unused'
+         WHERE state IN ('queued','reserved') AND deadline_at < ?1",
+        [now_ms()],
+    )?;
+    Ok(())
+}
+
 #[derive(Debug, Clone)]
 pub struct PermitRequest {
     pub workspace_id: String,
@@ -73,6 +83,7 @@ impl Machine {
         }
         self.require_restore_idle()?;
         let p = self.tx(|c| {
+            expire_waiting(c)?;
             let existing: Option<(String, String)> = c
                 .query_row(
                     "SELECT permit_id, body_hash FROM machine_permits WHERE workspace_id = ?1 AND execution_epoch = ?2 AND owner_kind = ?3 AND owner_id = ?4 AND attempt_id = ?5 AND resource_class = ?6",
@@ -130,6 +141,7 @@ impl Machine {
     /// other background permit is held (spec §13.2).
     pub fn schedule(&self) -> R<Vec<String>> {
         self.tx(|c| {
+            expire_waiting(c)?;
             let mut granted = vec![];
             for class in ["model", "build", "io"] {
                 loop {

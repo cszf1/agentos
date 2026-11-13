@@ -226,6 +226,44 @@ fn s05_s06_restart_never_frees_held_slots_until_the_holder_is_gone_unknown_is_ch
 }
 
 #[test]
+fn expired_waiters_do_not_take_slots_and_in_use_permits_stay_held() {
+    let (t, w) = setup();
+    let (a, b) = (&w[0], &w[1]);
+    let build = |ws| PermitRequest { resource_class: "build".into(), ..rq(ws, mv(&t, ws), false) };
+    let running = t.m.request_permit(&a.0, &build(a)).unwrap();
+    let running_id = running["permitId"].as_str().unwrap();
+    t.m.use_permit(&a.0, running_id, mv(&t, a)).unwrap();
+    let stale = t.m.request_permit(&b.0, &build(b)).unwrap();
+    assert_eq!(state(&stale), "queued");
+    let stale_id = stale["permitId"].as_str().unwrap();
+    t.m.c.execute("UPDATE machine_permits SET deadline_at = 0 WHERE permit_id IN (?1, ?2)", [running_id, stale_id]).unwrap();
+
+    let next = t.m.request_permit(&b.0, &build(b)).unwrap();
+    let next_id = next["permitId"].as_str().unwrap();
+    assert_eq!(state(&next), "queued");
+    assert_eq!(state(&t.m.permit(running_id).unwrap()), "in_use");
+    t.m.release_permit(&a.0, running_id, "used", None).unwrap();
+
+    let stale = t.m.permit(stale_id).unwrap();
+    assert_eq!(state(&stale), "revoked");
+    assert_eq!(stale["usageStatus"], "unused");
+    assert_eq!(state(&t.m.permit(next_id).unwrap()), "reserved");
+}
+
+#[test]
+fn expired_reservations_stop_blocking_capacity() {
+    let (t, w) = setup();
+    let a = &w[0];
+    let p = t.m.request_permit(&a.0, &PermitRequest { resource_class: "build".into(), ..rq(a, mv(&t, a), false) }).unwrap();
+    let id = p["permitId"].as_str().unwrap();
+    t.m.c.execute("UPDATE machine_permits SET deadline_at = 0 WHERE permit_id = ?1", [id]).unwrap();
+
+    let next = t.m.request_permit(&a.0, &PermitRequest { resource_class: "build".into(), ..rq(a, mv(&t, a), false) }).unwrap();
+    assert_eq!(state(&next), "reserved");
+    assert_eq!(state(&t.m.permit(id).unwrap()), "revoked");
+}
+
+#[test]
 fn s07_background_yields_to_foreground() {
     let (t, w) = setup();
     let (a, b) = (&w[0], &w[1]);

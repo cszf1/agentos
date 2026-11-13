@@ -127,6 +127,7 @@ CREATE TABLE IF NOT EXISTS machine_permits (
   created_at INTEGER NOT NULL,
   UNIQUE (workspace_id, execution_epoch, owner_kind, owner_id, attempt_id, resource_class)
 ) STRICT;
+CREATE INDEX IF NOT EXISTS machine_permits_waiting_deadline ON machine_permits(deadline_at) WHERE state IN ('queued','reserved');
 CREATE TABLE IF NOT EXISTS machine_operations (
   operation_id TEXT PRIMARY KEY,
   principal_user_id TEXT NOT NULL,

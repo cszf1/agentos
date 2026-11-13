@@ -41,6 +41,11 @@ mv = int(sql(f"SELECT member_version FROM workspace_members WHERE workspace_id='
 r = call(1, [{"methodId": "members.setRole", "workspaceId": ws_a, "idempotencyKey": str(uuid.uuid4()), "body": {"userId": bob, "role": "editor", "expectedMemberVersion": mv}}], "be")[0]
 assert r["status"] == 200, r
 
+with subtest("expired reservations are revoked by the running scheduler"):
+    permit_id = str(uuid.uuid4())
+    sql(f"INSERT INTO machine_permits (permit_id, workspace_id, execution_epoch, owner_kind, owner_id, attempt_id, resource_class, priority, body_hash, member_version, instance_id, boot_id, seq, state, deadline_at, usage_status, created_at) VALUES ('{permit_id}', '{ws_a}', 1, 'deployment', '{permit_id}', '{permit_id}', 'build', 'foreground', 'test', 1, 'seed', 'seed', (SELECT COALESCE(MAX(seq), 0) + 1 FROM machine_permits), 'reserved', 0, 'none', 0)")
+    machine.wait_until_succeeds(f"test $(sqlite3 /var/lib/agentos-machine/machine.sqlite \"SELECT state || ':' || usage_status FROM machine_permits WHERE permit_id='{permit_id}'\") = revoked:unused", timeout=30)
+
 with subtest("runWhenLoggedOut: off by default, owner only (W08)"):
     # §16.1 has no settings route: the owner changes it through a fixed machine action (plan → confirm).
     def rwlo(n, enabled, tag):
