@@ -11,6 +11,7 @@ use agentos_protocol::peer::peer_cred;
 use serde_json::{json, Value};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::mpsc;
+use std::time::{Duration, Instant};
 
 pub const MAX_FRAME: usize = 512 * 1024;
 
@@ -302,15 +303,19 @@ pub fn run(listener: UnixListener, mut m: Machine, mut ex: Box<dyn Executor + Se
             std::thread::spawn(move || serve_conn(s, tx));
         }
     });
+    let interval = Duration::from_secs(2);
+    let mut next_tick = Instant::now() + interval;
     loop {
-        let (uid, pid, req, reply) = match rx.recv_timeout(std::time::Duration::from_secs(2)) {
+        // Hosts poll the registry frequently enough that a receive timeout alone can starve maintenance.
+        if Instant::now() >= next_tick {
+            let _ = m.schedule();
+            secrets.lock().unwrap().expire();
+            next_tick = Instant::now() + interval;
+        }
+        let (uid, pid, req, reply) = match rx.recv_timeout(next_tick.saturating_duration_since(Instant::now())) {
             Ok(v) => v,
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                let _ = m.schedule();
-                secrets.lock().unwrap().expire();
-                continue;
-            }
-            Err(_) => std::process::exit(1),
+            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(mpsc::RecvTimeoutError::Disconnected) => std::process::exit(1),
         };
         let out = match classify(&m, uid, pid) {
             None => json!({ "ok": false, "error": MErr::new("NOT_FOUND_OR_FORBIDDEN", "peer is not a machine client").json() }),

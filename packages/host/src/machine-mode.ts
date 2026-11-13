@@ -562,15 +562,16 @@ export class MachineMode {
         );
         if (!r.ok) return r;
         let p = r.permit;
-        while (p.state === "queued") {
+        for (;;) {
           if (Date.now() > deadlineMs) {
-            this.#release(p.permitId, "unused");
+            if (p.state === "queued" || p.state === "reserved") this.#release(p.permitId, "unused");
             return { ok: false, reason: "no machine build slot before the deadline", code: "DEADLINE" };
           }
+          if (p.state !== "queued") break;
           await new Promise((res) => setTimeout(res, 200));
           try {
-            p = await link.call("permits.get", { permitId: p.permitId });
-            if (p.state === "reconciling") p = await link.call("permits.report", { permitId: p.permitId, holderState: "reserved" });
+            const status = await link.call<typeof p>("permits.get", { permitId: p.permitId });
+            p = status.state === "reconciling" ? await link.call("permits.report", { permitId: status.permitId, holderState: "reserved" }) : status;
           } catch {
             /* machined restarting: keep waiting until the deadline */
           }
@@ -606,15 +607,16 @@ export class MachineMode {
         if (!r.ok) return r;
         p = r.permit;
         // Wait without holding anything else (spec §13.2): queued → reserved, or revoked / deadline.
-        while (p.state === "queued") {
+        for (;;) {
           if (signal?.aborted || Date.now() > req.deadlineMs) {
-            this.#release(p.permitId, "unused");
+            if (p.state === "queued" || p.state === "reserved") this.#release(p.permitId, "unused");
             return { ok: false, reason: "no machine permit before the deadline", code: "DEADLINE" };
           }
+          if (p.state !== "queued") break;
           await new Promise((r) => setTimeout(r, 100));
           try {
-            p = await link.call("permits.get", { permitId: p.permitId });
-            if (p.state === "reconciling") p = await link.call("permits.report", { permitId: p.permitId, holderState: "reserved" });
+            const status = await link.call<typeof p>("permits.get", { permitId: p.permitId });
+            p = status.state === "reconciling" ? await link.call("permits.report", { permitId: status.permitId, holderState: "reserved" }) : status;
           } catch {
             /* machined restarting: keep waiting until the deadline */
           }

@@ -146,6 +146,33 @@ describe("machine gateway event watermarks", () => {
     expect(releases).toBe(0);
   });
 
+  it.each(["model", "build"] as const)("treats an expired %s permit as a deadline even if the poll returns a revoked row", async (kind) => {
+    if (!mode) throw new Error("mode not started");
+    const running = mode;
+    const original = running.link.call.bind(running.link);
+    const deadline = Date.now() + 1000;
+    let now = deadline - 500;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+    try {
+      const permitId = "expired-permit";
+      running.link.call = (async (op: string, args: unknown) => {
+        if (op === "permits.request") return { permitId, state: "queued" };
+        if (op === "permits.get") {
+          now = deadline + 1;
+          return { permitId, state: "revoked" };
+        }
+        return original(op, args);
+      }) as typeof running.link.call;
+      const result = kind === "build" ? await running.buildGate().acquire("job", deadline) : await running.gate().acquire({
+        ownerKind: "run", ownerId: "run", executionEpoch: 1, attemptId: "attempt", background: false,
+        userId: "test-user", memberVersion: 1, deadlineMs: deadline, bodyHash: "sha256:faux",
+      });
+      expect(result).toMatchObject({ ok: false, code: "DEADLINE" });
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
   it("captures the wire watermark before an asynchronous snapshot, not the later cursor or Store eventSeq", async () => {
     await reply(send("POST"));
     await vi.waitFor(() => expect(frames.some((f) => f.t === "evt" && f.seq === 1)).toBe(true));
