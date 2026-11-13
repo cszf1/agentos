@@ -439,23 +439,13 @@ def esp_marker(st):
     return {"installId": st["plan"]["installId"], "planHash": st["planHash"], "identity": st["plan"]["identity"]}
 
 
-def resume_check(st):
+def resume_check(st, mounted):
     """After a crash past partitioning: the disk must carry OUR install id; otherwise refuse (never re-format)."""
-    dev = os.path.realpath(st["plan"]["disk"])
-    esp = part(dev, 1)
-    if not os.path.exists(esp):
-        return False
-    sh("mkdir", "-p", "/run/agentos-install/esp")
-    r = subprocess.run(["mount", "-o", "ro", esp, "/run/agentos-install/esp"], capture_output=True)
-    if r.returncode != 0:
-        return False
-    try:
-        m = json.load(open("/run/agentos-install/esp/EFI/agentos/install.json"))
-        return m.get("installId") == st["plan"]["installId"]
-    except Exception:
-        return False
-    finally:
-        subprocess.run(["umount", "/run/agentos-install/esp"])
+    if f"{MNT}/boot" in mounted:
+        marker = read_esp_json(f"{MNT}/boot/EFI/agentos/install.json")
+    else:
+        marker, _ = esp_read(os.path.realpath(st["plan"]["disk"]))
+    return bool(marker and marker.get("installId") == st["plan"]["installId"])
 
 
 def init_protocol(st):
@@ -607,6 +597,8 @@ def cmd_run(args):
     if len(pw) < 8:
         raise Refuse("a LUKS passphrase of at least 8 characters and at most 511 UTF-8 bytes is required on stdin")
     dev = os.path.realpath(st["plan"]["disk"])
+    if os.path.realpath(MNT) != MNT:
+        raise Refuse(f"installer mount path {MNT} follows a symbolic link")
     resuming = st["state"] in ("copying", "configuring", "verifying")
     mounted = check_install_mounts(dev, resuming)
     check_install_mapper(dev, resuming)
@@ -664,7 +656,7 @@ def cmd_run(args):
                         raise initialization.Unsafe("copy target filesystem identity changed")
             except initialization.Unsafe as error:
                 raise Refuse(f"initialization refused: {error}. Inspect with: {init_hint(st['plan']['disk'])}") from None
-        if not resume_check(st):
+        if not resume_check(st, mounted):
             raise Refuse("resume refused: the disk does not carry this install's id (different disk or wiped); start a new plan")
     if not os.path.exists(ROOT_MAPPER):
         sh("cryptsetup", "open", "--key-file=-", part(dev, 2), "agentos-root", input=pw)
@@ -758,6 +750,15 @@ def cmd_run(args):
     return {"state": "installed", "installId": st["plan"]["installId"], "hardwareConfigHash": st.get("hardwareConfigHash")}
 
 
+def read_esp_json(path):
+    try:
+        with open(path) as stream:
+            value = json.load(stream)
+            return value if isinstance(value, dict) else None
+    except (OSError, ValueError):
+        return None
+
+
 def esp_read(dev):
     """Read-only look at a disk's ESP: (marker, state) or (None, None). Mounted ro; nothing is written."""
     esp = part(dev, 1)
@@ -768,14 +769,7 @@ def esp_read(dev):
     if subprocess.run(["mount", "-o", "ro", esp, mp], capture_output=True).returncode != 0:
         return None, None
     try:
-        def rd(p):
-            try:
-                with open(f"{mp}/{p}") as stream:
-                    value = json.load(stream)
-                return value if isinstance(value, dict) else None
-            except Exception:
-                return None
-        return rd("EFI/agentos/install.json"), rd(ESP_STATE)
+        return read_esp_json(f"{mp}/EFI/agentos/install.json"), read_esp_json(f"{mp}/{ESP_STATE}")
     finally:
         subprocess.run(["umount", mp])
 

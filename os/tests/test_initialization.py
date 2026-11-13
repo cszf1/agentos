@@ -407,6 +407,20 @@ class InstallTargetTest(unittest.TestCase):
         with self.assertRaisesRegex(m.Refuse, f"unexpected mount at {m.MNT}/nix"):
             m.check_install_mounts("/dev/vda", True)
 
+    def test_resume_reads_the_verified_esp_mount_without_a_second_mount(self):
+        with tempfile.TemporaryDirectory() as root:
+            m = module()
+            m.MNT = root
+            esp = Path(root) / "boot/EFI/agentos"
+            esp.mkdir(parents=True)
+            marker = esp / "install.json"
+            st = {"plan": {"disk": "/dev/vda", "installId": "current-install"}}
+            m.subprocess = mock.Mock()
+            for install_id in ("current-install", "foreign-install"):
+                marker.write_text(json.dumps({"installId": install_id}))
+                self.assertEqual(m.resume_check(st, {f"{root}/boot"}), install_id == "current-install")
+            m.subprocess.run.assert_not_called()
+
 
 class EspProofTest(unittest.TestCase):
     def test_unknown_or_torn_esp_contents_refuse(self):
