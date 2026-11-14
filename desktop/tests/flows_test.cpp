@@ -754,10 +754,13 @@ class FlowsTest : public QObject {
     QCOMPARE(key->property("text").toString(), QString());
     QCOMPARE(key->property("echoMode").toInt(), 2);  // TextInput.Password
     QVERIFY(!save->isEnabled());
-    url->setProperty("text", QStringLiteral("not a url"));
     key->setProperty("text", QStringLiteral("sk-model-5e1d77"));
-    QTRY_VERIFY(h.find(QStringLiteral("modelFormHint"))->isVisible());
-    QVERIFY(!save->isEnabled());
+    for (const QString& invalid : {QStringLiteral("not a url"), QStringLiteral("https://example.test/v1?key=fixture"),
+                                   QStringLiteral("https://user:fixture@example.test/v1")}) {
+      url->setProperty("text", invalid);
+      QTRY_VERIFY(h.find(QStringLiteral("modelFormHint"))->isVisible());
+      QVERIFY(!save->isEnabled());
+    }
     url->setProperty("text", QStringLiteral("https://llm.example.test/v1"));
     id->setProperty("text", QStringLiteral("qwen3.8-flash"));
     QTRY_VERIFY(save->isEnabled());

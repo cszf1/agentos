@@ -4,9 +4,10 @@
 use crate::dir::Machine;
 use crate::err::{MErr, R};
 use crate::ops::Executor;
-use crate::util::{hash, now_ms, uuid};
+use crate::util::{hash, uuid};
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 use zbus::blocking::Connection;
 use zbus::zvariant::{OwnedObjectPath, OwnedValue, Value as ZValue};
 
@@ -21,11 +22,17 @@ pub fn static_code(c: &str) -> &'static str {
     CODES.iter().find(|x| **x == c).copied().unwrap_or("INTERNAL")
 }
 
-/// Short-lived in-memory secrets (passwords, Wi-Fi keys) handed in on a protected frame and consumed once by id.
+struct StoredSecret {
+    kind: String,
+    value: Vec<u8>,
+    expires_at: Instant,
+}
+
+/// Short-lived in-memory secrets handed in on a protected frame and consumed once by id.
 /// Never persisted, never logged; zeroed on use and after 120 s.
 #[derive(Default)]
 pub struct SecretStore {
-    items: HashMap<String, (String, Vec<u8>, i64)>,
+    items: HashMap<String, StoredSecret>,
 }
 
 impl SecretStore {
@@ -36,23 +43,41 @@ impl SecretStore {
             return Err(MErr::new("INVALID_REQUEST", "bad secret"));
         }
         let id = format!("secret:{}", uuid());
-        self.items.insert(id.clone(), (kind.to_string(), value.to_vec(), now_ms() + 120_000));
+        self.items.insert(id.clone(), StoredSecret {
+            kind: kind.to_string(),
+            value: value.to_vec(),
+            expires_at: Instant::now() + Duration::from_secs(120),
+        });
         Ok(id)
     }
-    pub fn take(&mut self, id: &str) -> R<Vec<u8>> {
-        self.items.remove(id).map(|(_, v, _)| v).ok_or_else(|| MErr::new("SESSION_STALE", "secret reference expired"))
+    pub fn take(&mut self, id: &str, kind: &str) -> R<Vec<u8>> {
+        let missing = || MErr::new("SESSION_STALE", "secret reference is unavailable or expired");
+        let entry = self.items.get(id).ok_or_else(missing)?;
+        if entry.kind != kind {
+            return Err(missing());
+        }
+        let mut entry = self.items.remove(id).ok_or_else(missing)?;
+        if entry.expires_at <= Instant::now() {
+            entry.value.fill(0);
+            return Err(missing());
+        }
+        Ok(entry.value)
     }
     pub fn expire(&mut self) {
-        let now = now_ms();
-        self.items.retain(|_, (_, v, exp)| {
-            if *exp < now {
-                v.iter_mut().for_each(|b| *b = 0);
+        let now = Instant::now();
+        self.items.retain(|_, entry| {
+            if entry.expires_at <= now {
+                entry.value.fill(0);
                 false
             } else {
                 true
             }
         });
     }
+}
+
+fn take_plan_secret(secrets: &std::sync::Mutex<SecretStore>, reference: &str, kind: &str) -> R<Vec<u8>> {
+    secrets.lock().unwrap().take(reference, kind).map_err(|e| MErr::new("FAILED_NO_EFFECT", e.message))
 }
 
 fn dbus() -> R<Connection> {
@@ -313,7 +338,7 @@ impl Executor for RealExecutor {
                 let iface = p["device"].as_str().unwrap_or_default();
                 let ssid = p["ssid"].as_str().ok_or_else(|| MErr::new("INVALID_REQUEST", "ssid"))?;
                 let psk = match p["secretRef"].as_str() {
-                    Some(r) => Some(self.secrets.lock().unwrap().take(r)?),
+                    Some(r) => Some(take_plan_secret(&self.secrets, r, "wifi-psk")?),
                     None => None,
                 };
                 let c = dbus()?;
@@ -424,12 +449,15 @@ impl Executor for RealExecutor {
             }
             "users.create" => {
                 let pid = p["provisioningId"].as_str().map(String::from).unwrap_or_else(uuid);
-                let u = m.provision_user(&pid, p["loginName"].as_str().unwrap_or_default(), p["role"].as_str().unwrap_or("user"))?;
-                if let Some(r) = p["secretRef"].as_str() {
-                    let pw = self.secrets.lock().unwrap().take(r)?;
-                    m.set_password(u["userId"].as_str().unwrap_or_default(), &pw)?;
-                }
-                Ok(u)
+                let reference = p["secretRef"].as_str().ok_or_else(|| MErr::new("INVALID_REQUEST", "the password is required"))?;
+                let mut pw = take_plan_secret(&self.secrets, reference, "password")?;
+                let result = (|| {
+                    let user = m.provision_user(&pid, p["loginName"].as_str().unwrap_or_default(), p["role"].as_str().unwrap_or("user"))?;
+                    m.set_password(user["userId"].as_str().unwrap_or_default(), &pw)?;
+                    Ok(user)
+                })();
+                pw.fill(0);
+                result
             }
             "users.disable" => m.disable_user(p["userId"].as_str().unwrap_or_default(), &uuid()),
             "workspaces.runWhenLoggedOut" => {
@@ -443,12 +471,12 @@ impl Executor for RealExecutor {
                 if role != crate::dir::Role::Owner {
                     return Err(MErr::hidden());
                 }
-                let key = self.secrets.lock().unwrap().take(p["secretRef"].as_str().ok_or_else(|| MErr::new("INVALID_REQUEST", "the key is required"))?)?;
                 let row = m.ws_row(ws)?;
                 let uid = row["executionUid"].as_u64().unwrap_or(0) as u32;
+                let reference = p["secretRef"].as_str().ok_or_else(|| MErr::new("INVALID_REQUEST", "the key is required"))?;
+                let mut key = take_plan_secret(&self.secrets, reference, "provider-key")?;
                 let r = write_model_credential(ws, uid, p, &key);
-                let mut key = key;
-                key.iter_mut().for_each(|b| *b = 0);
+                key.fill(0);
                 r?;
                 Machine::audit(&m.c, op["initiator"].as_str().unwrap_or_default(), "workspace.model_credential", Some(ws), "set", op["operationId"].as_str())?;
                 // the Host reads it at start: restart it if it runs (a stopped workspace picks it up on its next start)
@@ -505,7 +533,8 @@ impl Executor for RealExecutor {
                     Some(true)
                 }
             }
-            "users.create" | "users.disable" | "workspaces.runWhenLoggedOut" | "workspaces.deleteConsent" => Some(!dispatched.is_null() && dispatched.get("code").is_none()),
+            "users.create" => dispatched["userId"].as_str().map(|_| true),
+            "users.disable" | "workspaces.runWhenLoggedOut" | "workspaces.deleteConsent" => Some(!dispatched.is_null() && dispatched.get("code").is_none()),
             // Phase 1 of a deletion is applied once the workspace is `deleting` (the broker verdict finishes it).
             "workspaces.delete" => Some(matches!(dispatched["state"].as_str(), Some("deleting") | Some("deleted"))),
             // administrator helpers settle when their exit code is read (Machine::settle_admin)
@@ -535,7 +564,7 @@ pub fn upower() -> Value {
     json!({ "available": on_battery.is_some(), "batteryPresent": present, "percentage": if present { json!(pct) } else { Value::Null }, "onBattery": on_battery })
 }
 
-/// Validate the non-secret parts of a model credential (they end up in a systemd EnvironmentFile: no quoting games).
+/// Validate the public fields before putting them in an EnvironmentFile or a persisted plan.
 pub fn model_credential_params(p: &Value) -> R<()> {
     let ok = |v: &str, max: usize, extra: &str| !v.is_empty() && v.len() <= max && v.chars().all(|c| c.is_ascii_alphanumeric() || extra.contains(c));
     let prov = p["provider"].as_str().unwrap_or_default();
@@ -546,8 +575,11 @@ pub fn model_credential_params(p: &Value) -> R<()> {
         return Err(MErr::new("INVALID_REQUEST", "modelId"));
     }
     if let Some(u) = p["baseUrl"].as_str() {
-        if !(u.starts_with("https://") || u.starts_with("http://")) || !ok(u, 300, "-_.:/@%?=&~+") {
-            return Err(MErr::new("INVALID_REQUEST", "baseUrl"));
+        let authority = u.strip_prefix("https://").or_else(|| u.strip_prefix("http://"))
+            .and_then(|rest| rest.split('/').next())
+            .unwrap_or_default();
+        if authority.is_empty() || authority.contains('@') || !ok(u, 300, "-_.:/@%=&~+") {
+            return Err(MErr::new("INVALID_REQUEST", "the model endpoint must use HTTP or HTTPS without credentials or a query; use the separate API key field"));
         }
     } else if !p["baseUrl"].is_null() {
         return Err(MErr::new("INVALID_REQUEST", "baseUrl"));
@@ -571,7 +603,14 @@ pub fn model_credential_text(p: &Value, key: &[u8]) -> R<String> {
     if let Some(u) = p["baseUrl"].as_str() {
         t.push_str(&format!("AGENTOS_MODEL_BASE_URL={u}\n"));
     }
-    t.push_str(&format!("AGENTOS_MODEL_API_KEY={k}\n"));
+    t.push_str("AGENTOS_MODEL_API_KEY=\"");
+    for c in k.chars() {
+        if matches!(c, '\\' | '"' | '$' | '`') {
+            t.push('\\');
+        }
+        t.push(c);
+    }
+    t.push_str("\"\n");
     Ok(t)
 }
 
@@ -596,11 +635,29 @@ mod password_policy_tests {
         let mut store = SecretStore::default();
         for value in [vec![b'x'; 510].into_iter().chain([b':']).collect::<Vec<_>>(), ("界".repeat(170) + ":").into_bytes()] {
             let id = store.put("password", &value).unwrap();
-            assert_eq!(store.take(&id).unwrap(), value);
+            assert_eq!(store.take(&id, "password").unwrap(), value);
         }
         for value in [vec![b'x'; 512], ("界".repeat(170) + ":a").into_bytes()] {
             assert!(store.put("password", &value).is_err());
         }
+    }
+
+    #[test]
+    fn consuming_a_secret_checks_its_deadline_even_without_a_cleanup_tick() {
+        let mut store = SecretStore::default();
+        let id = store.put("password", b"fixture-password").unwrap();
+        store.items.get_mut(&id).unwrap().expires_at = Instant::now() - Duration::from_secs(1);
+        assert_eq!(store.take(&id, "password").unwrap_err().code, "SESSION_STALE");
+        assert!(!store.items.contains_key(&id));
+    }
+
+    #[test]
+    fn a_reference_only_supplies_its_original_secret_kind_once() {
+        let mut store = SecretStore::default();
+        let id = store.put("provider-key", b"fixture-key").unwrap();
+        assert_eq!(store.take(&id, "password").unwrap_err().code, "SESSION_STALE");
+        assert_eq!(store.take(&id, "provider-key").unwrap(), b"fixture-key");
+        assert_eq!(store.take(&id, "provider-key").unwrap_err().code, "SESSION_STALE");
     }
 }
 
@@ -659,7 +716,7 @@ mod wifi_tests {
     fn i11_model_credential_file_is_plain_env_and_refuses_injection() {
         let p = json!({ "workspaceId": "00000000-0000-4000-8000-000000000001", "provider": "openai-compatible", "modelId": "qwen3.8-flash", "baseUrl": "https://example.invalid/v1" });
         let t = model_credential_text(&p, b"sk-test123").unwrap();
-        assert!(t.ends_with("AGENTOS_MODEL_API_KEY=sk-test123\n") && t.contains("AGENTOS_MODEL_BASE_URL=https://example.invalid/v1\n"), "{t}");
+        assert!(t.ends_with("AGENTOS_MODEL_API_KEY=\"sk-test123\"\n") && t.contains("AGENTOS_MODEL_BASE_URL=https://example.invalid/v1\n"), "{t}");
         assert!(model_credential_text(&p, b"a b").is_err());
         assert!(model_credential_text(&p, b"x\nAGENTOS_MODEL_MODE=faux").is_err());
         let mut q = p.clone();
@@ -668,5 +725,26 @@ mod wifi_tests {
         q = p.clone();
         q["baseUrl"] = json!("file:///etc/shadow");
         assert!(model_credential_text(&q, b"k").is_err());
+    }
+
+    #[test]
+    fn model_credential_file_encodes_environment_file_metacharacters() {
+        let p = json!({ "workspaceId": "00000000-0000-4000-8000-000000000001", "provider": "openai-compatible", "modelId": "model" });
+        let key = br#""fixture\'${HOME}`end""#;
+        let text = model_credential_text(&p, key).unwrap();
+        assert!(text.ends_with(concat!(r#"AGENTOS_MODEL_API_KEY="\"fixture\\'\${HOME}\`end\"""#, "\n")));
+    }
+
+    #[test]
+    fn model_credential_plan_refuses_endpoints_with_inline_secrets() {
+        let mut p = json!({ "workspaceId": "00000000-0000-4000-8000-000000000001", "provider": "openai-compatible", "modelId": "model" });
+        for url in ["https://user:fixture@model.example/v1", "https://model.example/v1?api-key=fixture", "https:///v1", "https://"] {
+            p["baseUrl"] = json!(url);
+            let error = model_credential_params(&p).unwrap_err();
+            assert_eq!(error.code, "INVALID_REQUEST");
+            assert!(!error.message.contains("fixture"));
+        }
+        p["baseUrl"] = json!("http://127.0.0.1:18080/project@team/v1");
+        assert!(model_credential_params(&p).is_ok());
     }
 }

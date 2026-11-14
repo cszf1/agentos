@@ -104,8 +104,11 @@ pub fn dispatch(m: &mut Machine, ex: &mut dyn Executor, secrets: &std::sync::Mut
             "users.provision" => m.provision_user(s(&a, "provisioningId")?, s(&a, "loginName")?, s(&a, "role")?),
             "users.setPassword" => {
                 // The password itself arrives in a separate secret frame and is referenced here only by id.
-                let pw = secrets.lock().unwrap().take(s(&a, "secretRef")?)?;
-                m.set_password(s(&a, "userId")?, &pw).map(|_| json!({ "ok": true }))
+                let user = s(&a, "userId")?;
+                let mut pw = secrets.lock().unwrap().take(s(&a, "secretRef")?, "password")?;
+                let result = m.set_password(user, &pw);
+                pw.fill(0);
+                result.map(|_| json!({ "ok": true }))
             }
             "users.byUid" => Ok(m.user_by_uid(i(&a, "uid")? as u32)?.unwrap_or(Value::Null)),
             "users.get" => m.user(s(&a, "userId")?),

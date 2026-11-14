@@ -8,8 +8,10 @@ import hashlib
 FM = "/run/fake-model"
 PSK = "agentos-wifi-key-5b7e21c9"
 BAD = "wrong-wifi-key-0a9d33f1"
-PKEY = "sk-provider-key-e41c88f0a7b3"
-SECRETS = [PSK, BAD, PKEY, "alice-pw-1"]
+PKEY_MARKER = "sk-provider-key-e41c88f0a7b3"
+PKEY = '"' + PKEY_MARKER + r'''\'${HOME}`end"'''
+# The marker is present whether the credential is intact, escaped for disk, or JSON-encoded.
+SECRETS = [PSK, BAD, PKEY_MARKER, "alice-pw-1"]
 
 def b64(t):
     return base64.b64encode(t.encode()).decode()
@@ -119,8 +121,11 @@ with subtest("model credential: the owner sets it with the key in the secret fie
     base = f"http://127.0.0.1:18080/{ws_a}/v1"
     r = plan("workspaces.modelCredential.set", {"workspaceId": ws_a, "provider": "openai-compatible", "modelId": "fake", "baseUrl": base, "apiKey": PKEY}, tag="mk0")
     assert r["status"] != 201 and code(r) == "INVALID_REQUEST", r
+    r = plan("workspaces.modelCredential.set", {"workspaceId": ws_a, "provider": "openai-compatible", "modelId": "fake", "baseUrl": base + "?api-key=inline-key-fixture"}, secret=PKEY, tag="mkurl")
+    assert r["status"] != 201 and code(r) == "INVALID_REQUEST", r
+    assert "inline-key-fixture" not in sql("SELECT params_json FROM machine_operations WHERE kind='workspaces.modelCredential.set'")
     p = plan("workspaces.modelCredential.set", {"workspaceId": ws_a, "provider": "openai-compatible", "modelId": "fake", "baseUrl": base}, secret=PKEY, tag="mk")
-    assert p["status"] == 201 and PKEY not in json.dumps(p), p
+    assert p["status"] == 201 and PKEY_MARKER not in json.dumps(p), p
     op = confirm_and_wait(p, "mkc")
     assert op["state"] == "succeeded", op
     machine.succeed(f"test \"$(stat -c '%a %u' /var/lib/agentos/workspaces/{ws_a}/model.env)\" = '600 {ua}'")
@@ -133,6 +138,9 @@ with subtest("model credential: the owner sets it with the key in the secret fie
         time.sleep(10)   # the Host restarts with the new credential
     assert rr["status"] in (200, 202), rr
     machine.wait_until_succeeds(f"grep -q '\"auth\": \"{want}\"' {FM}/log.jsonl", timeout=180)
+    reference = p["body"]["params"]["secretRef"]
+    replay = plan("workspaces.modelCredential.set", {"workspaceId": ws_a, "provider": "openai-compatible", "modelId": "fake", "baseUrl": base, "secretRef": reference}, tag="mkref")
+    assert replay["status"] != 201 and code(replay) == "INVALID_REQUEST", replay
     # a non-owner cannot set it: bob, viewer of A
     bob = make_user("bob", "bob-pw-1", "ub")
     r = call(1, [{"methodId": "members.setRole", "workspaceId": ws_a, "idempotencyKey": str(uuid.uuid4()), "body": {"userId": bob, "role": "viewer"}}], "bv")[0]
@@ -159,7 +167,7 @@ with subtest("no Wi-Fi, provider or PAM secret in argv, the journal, state, a su
         machine.fail(f"grep -raF -- {s} /var/lib/agentos-snapshots /var/lib/agentos-machine /var/lib/agentos-broker /var/log /run/agentos /etc /home /var/lib/NetworkManager /run/NetworkManager 2>/dev/null")
         # the workspace tree: only its own credential file may hold the model key (outside data/, in no checkpoint)
         hits = machine.succeed(f"grep -rlaF -- {s} /var/lib/agentos 2>/dev/null || true").split()
-        assert hits == ([f"/var/lib/agentos/workspaces/{ws_a}/model.env"] if s == PKEY else []), (s, hits)
+        assert hits == ([f"/var/lib/agentos/workspaces/{ws_a}/model.env"] if s == PKEY_MARKER else []), (s, hits)
         machine.fail(f"xargs -a /root/i11-closure grep -rlaF -- {s} 2>/dev/null")
         machine.fail(f"grep -aF -- {s} {FM}/bodies.log")
     machine.succeed(f"test -s {FM}/bodies.log")

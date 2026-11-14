@@ -42,7 +42,8 @@ PageFrame {
     readonly property string keyText: apiKey.boundValue
     readonly property string problem: {
         if (urlText === "" && idText === "" && keyText === "") return ""
-        if (!(urlText.indexOf("https://") === 0 || urlText.indexOf("http://") === 0) || !okChars(urlText, 300, "-_.:/@%?=&~+")) return "接口地址需以 https:// 或 http:// 开头，且不含空格"
+        var endpoint = /^https?:\/\/([^/]+)/.exec(urlText)
+        if (!endpoint || endpoint[1].indexOf("@") >= 0 || !okChars(urlText, 300, "-_.:/@%=&~+")) return "请填写不含登录凭据或查询参数的 HTTP 或 HTTPS 接口地址"
         if (!okChars(idText, 120, "-_.:/@")) return "模型 ID 只能包含字母、数字和 - _ . : / @"
         if (keyText.length === 0) return "请填写 API 密钥"
         if (keyText.length > 512 || !/^[\x21-\x7e]+$/.test(keyText)) return "API 密钥只能是可打印字符，不含空格"

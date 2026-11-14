@@ -692,6 +692,9 @@ fn plan(gw: &Gw, e: &Envelope, principal: Value) -> Result<(u16, Value), Value> 
     if !params.is_object() {
         return Err(err("INVALID_REQUEST", "params must be an object"));
     }
+    if params.as_object().unwrap().keys().any(|k| k.eq_ignore_ascii_case("secretRef")) {
+        return Err(err("INVALID_REQUEST", "secret references are assigned by the gateway; use the secret field"));
+    }
     if let Some(k) = params.as_object().unwrap().keys().find(|k| agentos_machine::ops::action_secret_param(&kind, &params, k)) {
         return Err(err("INVALID_REQUEST", &format!("{k}: a secret never travels in params; use the secret field")));
     }
@@ -1175,6 +1178,20 @@ mod o07_tests {
         }
         e.body["params"] = public;
         e.body["secret"] = json!("not-a-provider-key-action");
+        assert_eq!(plan(&gw, &e, json!({})).unwrap_err()["code"], "INVALID_REQUEST");
+    }
+
+    #[test]
+    fn machine_plan_rejects_a_client_supplied_secret_reference() {
+        let gw = Gw::new("/nonexistent/agentos-test-secret-ref.sock");
+        let e = parse_envelope(&json!({
+            "requestId": "11111111-1111-4111-8111-111111111111", "workspaceId": MACHINE_SCOPE,
+            "clientEpoch": 1, "sessionEpoch": 1, "methodId": "machine.actions.plan", "idempotencyKey": "test-plan",
+            "body": { "actionKind": "workspaces.modelCredential.set", "params": {
+                "workspaceId": "22222222-2222-4222-8222-222222222222", "provider": "openai-compatible",
+                "modelId": "model", "secretRef": "secret:from-another-plan"
+            } }
+        })).unwrap();
         assert_eq!(plan(&gw, &e, json!({})).unwrap_err()["code"], "INVALID_REQUEST");
     }
 

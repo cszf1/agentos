@@ -1028,6 +1028,39 @@ fn o09_release_public_key_plan_keeps_secret_and_admin_guards() {
 }
 
 #[test]
+fn an_expired_user_creation_password_leaves_no_account_and_is_reported_as_no_effect() {
+    use crate::backends::{RealExecutor, SecretStore};
+    use crate::ops::Principal;
+    use serde_json::{json, Value};
+
+    let (mut t, _) = setup();
+    let admin = t.m.provision_user(&uuid(), "admin", "admin").unwrap();
+    let p = Principal { user_id: admin["userId"].as_str().unwrap().into(), session_epoch: 1, admin: true, locked: false };
+    let mut ex = RealExecutor { secrets: Arc::new(Mutex::new(SecretStore::default())), drain: Box::new(|_, _| Ok(Value::Null)) };
+    let secret = ex.secrets.lock().unwrap().put("password", b"fixture-password").unwrap();
+    let params = json!({ "loginName": "carol", "role": "user", "provisioningId": uuid(), "secretRef": secret });
+    let plan = t.m.plan_operation(&mut ex, &p, &uuid(), "users.create", &params).unwrap();
+    let id = plan["operationId"].as_str().unwrap();
+    let hash = plan["planHash"].as_str().unwrap();
+    // A restarted service retains the plan and loses the in-memory secret.
+    *ex.secrets.lock().unwrap() = SecretStore::default();
+    let ticket = t.m.issue_ticket(&p, id, hash, true).unwrap();
+    let result = t.m.confirm_operation(&mut ex, &p, id, hash, &ticket).unwrap();
+    let count: i64 = t.m.c.query_row("SELECT COUNT(*) FROM users WHERE login_name = 'carol'", [], |r| r.get(0)).unwrap();
+    assert_eq!(count, 0, "the missing password must be detected before provisioning");
+    assert_eq!(result["state"], "failed_no_effect");
+    assert_eq!(result["result"]["code"], "FAILED_NO_EFFECT");
+
+    let retry_secret = ex.secrets.lock().unwrap().put("password", b"fixture-password").unwrap();
+    let retry_params = json!({ "loginName": "carol", "role": "user", "provisioningId": uuid(), "secretRef": retry_secret });
+    let retry = t.m.plan_operation(&mut ex, &p, &uuid(), "users.create", &retry_params).unwrap();
+    let id = retry["operationId"].as_str().unwrap();
+    let hash = retry["planHash"].as_str().unwrap();
+    let ticket = t.m.issue_ticket(&p, id, hash, true).unwrap();
+    assert_eq!(t.m.confirm_operation(&mut ex, &p, id, hash, &ticket).unwrap()["state"], "succeeded");
+}
+
+#[test]
 fn o09_admin_actions_take_only_confined_validated_params() {
     use crate::admin::argv;
     use serde_json::json;

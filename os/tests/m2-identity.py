@@ -5,6 +5,21 @@ RPC = "python3 /etc/agentos-test/rpc.py /run/agentos/gateway.sock"
 def rpc_as_root(reqs):
     return [json.loads(l) for l in machine.succeed(f"{RPC} '{json.dumps(reqs)}'").strip().splitlines()]
 
+def machine_rpc_as_root(op, args):
+    program = """
+import json, socket, struct, sys
+with socket.socket(socket.AF_UNIX) as client:
+    client.connect('/run/agentos/machine/machine.sock')
+    body = sys.argv[1].encode()
+    client.sendall(struct.pack('>I', len(body)) + body)
+    with client.makefile('rb') as stream:
+        size, = struct.unpack('>I', stream.read(4))
+        reply = json.loads(stream.read(size))
+        print(json.dumps(reply))
+"""
+    import shlex
+    return json.loads(machine.succeed(f"python3 -c {shlex.quote(program)} {shlex.quote(json.dumps({'op': op, 'args': args}))}"))
+
 def tty_login(n, user, pw):
     machine.send_key(f"alt-f{n}")
     machine.wait_until_tty_matches(str(n), "login: ")
@@ -77,6 +92,24 @@ with subtest("create user bob through a confirmed machine plan with admin re-aut
     assert '"succeeded"' in ok, ok
     machine.succeed("id bob")
     machine.fail("id -nG bob | grep -wE 'wheel|sudo'")
+
+with subtest("confirming a saved user plan after losing its password leaves no account"):
+    body = {"loginName": "pendinguser", "role": "user", "password": "pending-user-fixture"}
+    reqs = [{"methodId": "session.bind"}, {"methodId": "machine.users.create", "idempotencyKey": "4c099f1a-078d-4c50-95e8-fbe19eccb2c3", "body": body}]
+    plan = tty_run(1, f"{RPC} '{json.dumps(reqs)}'", "/tmp/pending-user")
+    bind, planned = [json.loads(l) for l in plan.splitlines() if l.startswith("{")]
+    assert planned["status"] == 201 and planned["body"]["state"] == "planned", planned
+    principal = {"userId": bind["body"]["userId"], "sessionEpoch": bind["body"]["sessionEpoch"], "admin": True, "locked": False}
+    proof = {"operationId": planned["body"]["operationId"], "planHash": planned["body"]["planHash"], "principal": principal}
+    machine.succeed("systemctl restart agentos-machine.service")
+    machine.wait_for_unit("agentos-machine.service")
+    # Exercise the previously saved plan after the daemon loses the in-memory password.
+    issued = machine_rpc_as_root("ops.ticket", {**proof, "authenticated": True})
+    assert issued["ok"], issued
+    result = machine_rpc_as_root("ops.confirm", {**proof, "ticket": issued["data"]["ticket"]})
+    assert result["ok"] and result["data"]["state"] == "failed_no_effect", result
+    assert result["data"]["result"]["code"] == "FAILED_NO_EFFECT", result
+    machine.fail("getent passwd pendinguser")
 
 with subtest("bob's workspace gets its own execution UID, sub-ID range and roots (W01)"):
     tty_login(2, "bob", "bob-pw-1")
